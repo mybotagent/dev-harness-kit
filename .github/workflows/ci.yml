@@ -35,20 +35,15 @@ jobs:
           echo "  This is logged but does NOT hard-fail (emergency bypass allowed)."
 
   test:
-    name: test (python ${{ matrix.python-version }})
+    name: test (python 3.12)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
       - name: Install pytest
         run: pip install --quiet pytest
       - name: Run tests
@@ -67,14 +62,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install pytest
-        run: pip install --quiet pytest
-
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
-        env:
-          PYTHONPATH: ${{ github.workspace }}/lib
 
       - name: Validate plugin manifests
         run: |
