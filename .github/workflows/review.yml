@@ -257,20 +257,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: [review, security]
     if: always()
-    permissions:
-      # Auto-approve requires write on pull-requests; GITHUB_TOKEN default is read-only.
-      pull-requests: write
-      # `gh pr review` invokes git internally, so checkout is required.
-      contents: read
+    # No permissions: gate only needs `gh api` (read) for verdict extraction
+    # and does NOT auto-approve. Actual PR approval is the human's job.
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # Minimal checkout — `gh pr review` uses git only to identify the repo.
-          fetch-depth: 1
       - name: Combined verdict gate
         run: |
           # Read verdicts directly from each job's outputs (set by the
@@ -305,20 +298,3 @@ jobs:
             Blocked) echo "::error::Blocked (review=$R security=$S)"; exit 1 ;;
             *) echo "::error::Unexpected worst verdict: $worst"; exit 1 ;;
           esac
-
-      - name: Auto-approve on combined Approve
-        if: success() && github.event_name == 'pull_request' && !contains(github.event.pull_request.title, 'do not merge')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ env.PR_NUMBER }}
-        run: |
-          set -uo pipefail
-          R="${{ needs.review.outputs.verdict }}"
-          S="${{ needs.security.outputs.verdict }}"
-          if [ "$R" = "Approve" ] && [ "$S" = "Approve" ]; then
-            echo "Both review + security = Approve → auto-approving."
-            gh pr review "$PR_NUMBER" --approve \
-              --body "Auto-approved by /dev-kit:review + /dev-kit:security: lowest severity in both (no 🔴 critical, no 🟠 major)."
-          else
-            echo "Not auto-approving (review='$R' security='$S')."
-          fi
