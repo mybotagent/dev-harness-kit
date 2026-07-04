@@ -9,6 +9,7 @@ allowed-tools: Read Glob Bash
 disallowed-tools: Write Edit WebFetch Agent
 model: haiku
 disable-model-invocation: false
+user-invocable: false
 ---
 
 # bootstrap-codebase-map — Auto Codebase Context

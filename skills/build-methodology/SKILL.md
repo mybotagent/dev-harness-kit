@@ -8,6 +8,7 @@ when_to_use: |
 allowed-tools: Read Write Bash
 disallowed-tools: WebFetch Agent
 model: haiku
+user-invocable: false
 ---
 
 # build-methodology — Verification Artifact Router

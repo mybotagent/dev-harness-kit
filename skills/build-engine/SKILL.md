@@ -7,6 +7,7 @@ when_to_use: |
 allowed-tools: Read Write Bash
 disallowed-tools: Edit WebFetch Agent
 model: sonnet
+user-invocable: false
 ---
 
 # build-engine — Phase Step Executor

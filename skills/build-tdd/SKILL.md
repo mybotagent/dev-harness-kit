@@ -8,6 +8,7 @@ when_to_use: |
 allowed-tools: Read Write Edit Bash
 disallowed-tools: WebFetch Agent
 model: opus
+user-invocable: false
 ---
 
 # build-tdd — Red-Green-Refactor

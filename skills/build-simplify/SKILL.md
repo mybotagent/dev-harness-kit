@@ -7,6 +7,7 @@ when_to_use: |
 allowed-tools: Read Write Bash Glob Grep
 disallowed-tools: WebFetch Agent
 model: sonnet
+user-invocable: false
 ---
 
 # build-simplify — 4-Pass Cleanup

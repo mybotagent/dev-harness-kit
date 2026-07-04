@@ -8,6 +8,7 @@ when_to_use: |
 allowed-tools: Read Write Glob
 disallowed-tools: Bash WebFetch Agent
 model: haiku
+user-invocable: false
 ---
 
 # bootstrap-active-hooks — Stage-Aware Hook Matrix (SSOT)
