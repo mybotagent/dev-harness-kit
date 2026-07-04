@@ -260,11 +260,17 @@ jobs:
     permissions:
       # Auto-approve requires write on pull-requests; GITHUB_TOKEN default is read-only.
       pull-requests: write
+      # `gh pr review` invokes git internally, so checkout is required.
+      contents: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # Minimal checkout — `gh pr review` uses git only to identify the repo.
+          fetch-depth: 1
       - name: Combined verdict gate
         run: |
           # Read verdicts directly from each job's outputs (set by the
