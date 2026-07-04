@@ -1,5 +1,6 @@
 ---
 name: security-scan
+category: security
 description: Full OWASP Top 10 2025 fan-out (A01–A10) with verifier pass. Per-category breakdown table. Trigger via /security-scan in /dev-kit.
 when_to_use: |
   - User types /dev-kit:security OR /security-scan
