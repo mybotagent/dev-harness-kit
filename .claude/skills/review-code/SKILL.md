@@ -1,5 +1,6 @@
 ---
 name: review-code
+category: review
 description: Parallel multi-dimension code review with a false-positive filter. Fans out to specialized subagents (MVP dimensions: correctness, security, architecture) that run at the same time and return structured, evidence-backed findings; a verification pass then confirms or rejects each candidate before rendering per-line inline comments plus one PR-style summary with a verdict. Use when the user types /review-code, or asks to review code, review a diff, review a PR, or "check this before merge".
 when_to_use: |
   - User types /review-code [paths] [--diff] [--diff --staged] [--fast]
@@ -182,10 +183,12 @@ Fix:
 ## Regression testing
 
 After any prompt change, run:
-- `bash .claude/skills/review-code/fixtures/check.sh real-bugs` → MUST catch all
-- `bash .claude/skills/review-code/fixtures/check.sh traps` → MUST NOT flag
-- `bash .claude/skills/review-code/fixtures/check.sh clean` → MUST return Approve
-- Compare against `expected.md` (source of truth).
+- `bash .claude/skills/review-code/fixtures/check.sh real-bugs` → list fixture files (then `/review-code` should catch them all)
+- `bash .claude/skills/review-code/fixtures/check.sh traps` → list fixture files (then `/review-code` should flag none)
+- `bash .claude/skills/review-code/fixtures/check.sh clean` → list fixture files (then `/review-code` should return Approve)
+- Compare against `fixtures/expected.md` (source of truth).
+
+Fixtures: `real-bugs/sql_injection.py` (must catch), `traps/parameterized_query.py` (must not flag), `clean/addition.py` (Approve).
 
 ## Scaling 3 → 10 dimensions
 

@@ -51,19 +51,18 @@ class TestNaming(unittest.TestCase):
         self.assertEqual(mismatches, [], f"Naming mismatches (MUST-NOT-15):\n" + "\n".join(mismatches))
 
     def test_skill_categories_valid(self):
-        skills_dir = PROJECT_ROOT / "skills"
-        if not skills_dir.exists():
-            self.skipTest("no skills dir yet")
+        # Walk both `skills/` (plugin internal) and `.claude/skills/` (action auto-load)
         invalid = []
-        for skill_dir in skills_dir.rglob("SKILL.md"):
-            text = skill_dir.read_text(encoding="utf-8")
-            cat = extract_frontmatter_field(text, "category")
-            # category field may be omitted; fall back to directory name
-            if cat is None:
-                rel = skill_dir.relative_to(skills_dir.parent)
-                cat = rel.parts[1] if len(rel.parts) >= 3 else None
-            if cat not in ALLOWED_CATEGORIES:
-                invalid.append(f"{skill_dir}: category={cat}")
+        for skills_dir_name in ("skills", ".claude/skills"):
+            skills_dir = PROJECT_ROOT / skills_dir_name
+            if not skills_dir.exists():
+                continue
+            for skill_dir in skills_dir.rglob("SKILL.md"):
+                text = skill_dir.read_text(encoding="utf-8")
+                cat = extract_frontmatter_field(text, "category")
+                # category is REQUIRED (MUST-NOT-15). No fallback to dir name.
+                if cat is None or cat not in ALLOWED_CATEGORIES:
+                    invalid.append(f"{skill_dir}: category={cat}")
         self.assertEqual(invalid, [], f"Invalid categories: {invalid}")
 
     def test_skills_kebab_case(self):

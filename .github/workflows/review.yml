@@ -7,11 +7,19 @@ name: PR Review
 #
 # Severity gate + auto-approve (per claude-review-plugins spec):
 #   Approve            (no critical, no major) → check success + auto-approve
-#   Changes Requested  (≥1 major, no critical) → check failure
+#   Changes Requested  (no critical, ≥1 major) → check failure
 #   Blocked            (≥1 critical)             → check failure
 #
-# Requires the Claude GitHub App installed on the repo + MINMAX_API_KEY
-# (default) or ANTHROPIC_API_KEY (opt-in) as repo secrets.
+# Each job uses ONE auth channel (env: or with.anthropic_api_key:),
+# not both. Mixing both caused action confusion in earlier review.
+#
+# Verdict discovery uses startswith('claude') rather than literal
+# 'claude[bot]' so org-scoped or renamed GitHub App installations
+# (e.g., <org>[bot]) still get found.
+#
+# Empty-verdict gate: for pull_request events, missing verdict = exit 1
+# (strict). For workflow_dispatch, missing verdict = warn + exit 0
+# (manual override allowed).
 
 on:
   pull_request:
@@ -63,6 +71,7 @@ jobs:
 
       - name: Run /review-code via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
+        # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINMAX_API_KEY }}
@@ -72,7 +81,6 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: MiniMax-M3[1m]
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.MINMAX_API_KEY }}
           track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /review-code --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
@@ -96,9 +104,8 @@ jobs:
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
 
       - name: Run /review-code via Claude Code opt-in
+        # Anthropic channel: with-only (no env: ANTHROPIC_API_KEY duplicate).
         if: steps.provider.outputs.provider == 'anthropic'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -121,10 +128,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.provider.outputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -uo pipefail
+          # Use startswith('claude') to support org-scoped or renamed App
+          # installations like <org-name>[bot]. Hardcoded 'claude[bot]' was
+          # brittle (rejected in earlier review).
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select(.user.login == "claude[bot]") | .body' \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
           echo "Captured verdict: ${verdict:-<none>}"
           case "$verdict" in
@@ -132,17 +143,28 @@ jobs:
             "Changes"*) echo "::error::Changes Requested"; exit 1 ;;
             Blocked) echo "::error::Blocked"; exit 1 ;;
             "")
-              # No verdict found. Likely the action was skipped due to first-time
-              # workflow validation. Pass with a warning so PR isn't blocked.
-              echo "::warning::No Verdict comment found from claude-code-action."
-              echo "  This is normal on the first run after adding the workflow file."
-              echo "  Once the workflow is merged to default branch, future PRs will post Verdicts."
-              exit 0
+              # For pull_request events: missing verdict = strict fail.
+              # This catches real action errors (rate limit, secret missing,
+              # App mis-config) instead of silently passing. For
+              # workflow_dispatch: warn + pass (manual override allowed).
+              if [ "$EVENT_NAME" = "pull_request" ]; then
+                echo "::error::No Verdict comment from claude-code-action."
+                echo "  Action may have been skipped, rate-limited, or failed."
+                echo "  Re-run /review-code manually via workflow_dispatch if needed."
+                exit 1
+              else
+                echo "::warning::No Verdict comment found (workflow_dispatch run)."
+                exit 0
+              fi
               ;;
             *) echo "::error::Unexpected verdict: $verdict"; exit 1 ;;
           esac
 
       - name: Auto-approve on Approve
+        # Gated on severity gate's output (success() cascades from the
+        # gate's exit code). For PR events with verdict=Approve, the
+        # gate exits 0 → this step runs. For Blocked/Changes/empty
+        # (PR), gate exits 1 → this step is skipped.
         if: success() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -150,8 +172,8 @@ jobs:
         run: |
           set -uo pipefail
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select(.user.login == "claude[bot]") | .body' \
-            | grep -E '^\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
           if [ "$verdict" = "Approve" ]; then
             echo "Verdict Approve → auto-approving."
             gh pr review "$PR_NUMBER" --approve \

@@ -1,9 +1,10 @@
-# Expected outcomes (source of truth for regression)
+# Expected outcomes (source of truth for /review-code regression)
 
-| fixture | path | expected findings |
+| fixture | category | expected verdict |
 |---|---|---|
-| real-bugs/sql_injection.py | fixtures/real-bugs/sql_injection.py | security / major+ (SQL injection) |
-| traps/parameterized_query.py | fixtures/traps/parameterized_query.py | (none — parameterized is safe) |
-| clean/correct.py | fixtures/clean/correct.py | (none — Approve) |
+| real-bugs/sql_injection.py | security | major+ (or higher) |
+| traps/parameterized_query.py | (none — safe) | (no findings) |
+| clean/addition.py | (none — clean) | Approve |
 
-See `.claude/skills/review-code/SKILL.md` Step 3 (verifier pass).
+Drive with: `bash fixtures/check.sh {real-bugs|traps|clean}`
+Then run `/review-code fixtures/<category>` and compare.
