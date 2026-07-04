@@ -125,7 +125,7 @@ jobs:
           set -uo pipefail
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.user.login == "claude[bot]") | .body' \
-            | grep -E '^\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
+            | grep -E '\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
           echo "Captured verdict: ${verdict:-<none>}"
           case "$verdict" in
             Approve) exit 0 ;;
