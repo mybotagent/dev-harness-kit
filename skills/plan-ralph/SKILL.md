@@ -1,7 +1,7 @@
 ---
 name: plan-ralph
 category: plan
-description: PM/기획 전 과정을 단일 Ralph 루프로. 아이디어 → PRD.md까지. 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence. Socratic gate is the grill-me interview — sharpen the plan by questioning the user. PRD.md 외 다른 산출물 절대 ❌.
+description: Integrated PM in a single Ralph loop: idea → PRD.md. 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence. Socratic gate is the grill-me interview — sharpen the plan by questioning the user. PRD.md is the only output (no code, build, or deploy).
 when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
@@ -58,7 +58,7 @@ This is the **grill-me** phase. Ask the user **5 questions in order**, one per r
 |---|---|---|
 | 1 | "What specifically breaks if you ship nothing in the next 2 weeks?" | names a concrete failure mode (not "we'd be sad") |
 | 2 | "Who is the *first* user, and what's the smallest thing they'd pay or click for?" | names a real person/role and a specific action |
-| 3 | "What's the cheapest experiment that would invalidate the bet in 1 week?" | answer is testable by ≤5 people with ≤1 day of work |
+| 3 | "What's the cheapest experiment that would invalidate the bet?" (within 1 calendar week AND ≤1 person-day of effort) | answer names a specific experiment with both a time window (≤1 week) and an effort budget (≤1 person-day) |
 | 4 | "What did you try before that didn't work, and what did you learn?" | names a real prior attempt + a non-tautological lesson |
 | 5 | "If this works, what's the *next* thing you build, and why?" | identifies a downstream dependency or follow-on |
 

@@ -1,9 +1,10 @@
 ---
-paths:
-  - "**/api/**"
-  - "**/routes/**"
-  - "**/route.ts"
-  - "**/route.tsx"
+# Reference-only — not auto-loaded.
+# This file was moved from .claude/rules/ because the path globs matched
+# no files in this repo (no `api/` or `routes/` directories). The content
+# is kept as a reference for the dev-kit authors and for forks that
+# include API routes. To re-enable auto-load, move back to .claude/rules/
+# and the `paths:` frontmatter will resume auto-loading.
 ---
 
 # API route authoring rules

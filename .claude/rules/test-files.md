@@ -3,8 +3,10 @@ paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
   - "**/*.spec.ts"
-  - "**/tests/**"
-  - "**/__tests__/**"
+  - "**/tests/**/*.test.ts"
+  - "**/tests/**/*.test.tsx"
+  - "**/__tests__/**/*.test.ts"
+  - "**/__tests__/**/*.test.tsx"
 ---
 
 # Test file authoring rules

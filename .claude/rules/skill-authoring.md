@@ -31,6 +31,34 @@ user-invocable: true           # false for MODEL-USE only
 ---
 ```
 
+### Human-use frontmatter example
+
+```yaml
+---
+name: build
+category: build
+description: 0-arg build stage. Run per-step sub-agents via harness-runner.
+disable-model-invocation: true   # prevent self-invocation
+user-invocable: true             # expose as /dev-kit:build
+---
+```
+
+### Model-use frontmatter example (contrast)
+
+```yaml
+---
+name: build-tdd
+category: build
+description: Red-Green-Refactor cycle. Internal sub-skill of /dev-kit:build.
+disable-model-invocation: false  # model may auto-invoke
+user-invocable: false            # hidden from /dev-kit: skill list
+safety:
+  safety_valve: 8
+  convergence: composite
+  dedup_metric: identical-answer-cycle=2
+---
+```
+
 ## Human-use vs Model-use (mandatory classification)
 
 | Class | `user-invocable` | `disable-model-invocation` | Slash exposed? |
