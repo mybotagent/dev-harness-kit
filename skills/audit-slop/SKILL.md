@@ -8,6 +8,7 @@ when_to_use: |
 allowed-tools: Read Grep Bash
 disallowed-tools: Write Edit
 model: haiku
+user-invocable: false
 ---
 
 # audit-slop — Read-Only Slop Audit

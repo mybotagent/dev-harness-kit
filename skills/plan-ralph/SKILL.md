@@ -1,11 +1,11 @@
 ---
 name: plan-ralph
 category: plan
-description: PM/기획 전 과정을 하나의 Ralph 루프로. 아이디어 → PRD.md까지 단일 stage (Plan+Design 통합, MUST-50). 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence (5 cycles, in-loop). PRD.md 외 다른 산출물 절대 ❌ (코드·빌드·배포).
+description: Integrated PM in a single Ralph loop: idea → PRD.md. 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence. Socratic gate is the grill-me interview — sharpen the plan by questioning the user. PRD.md is the only output (no code, build, or deploy).
 when_to_use: |
-  - User types `/dev-kit:plan` with idea
+  - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
-  - Resume from .pm-prd-fast/decision-log.md (HOLD 후 재개)
+  - Resume from .pm-prd-fast/decision-log.md (HOLD after pause)
 allowed-tools: Read Write Glob AskUserQuestion
 disallowed-tools: Bash Edit NotebookEdit WebFetch
 model: opus
@@ -16,58 +16,83 @@ safety:
   narrowed_delta: bool
   dedup_metric: identical-answer-cycle=2
   user_interrupt: true
+user-invocable: false
 ---
 
 # plan-ralph — Integrated PM (Plan+Design merged, MUST-50)
 
 ## Core Goal
-**오직 플랜과 기획만 만든다.** 실제 구현·빌드·배포 절대 ❌. 사용자 goal + AC + non-goals 받아 → 6 gates + Seed convergence 단일 Ralph 루프 → `PRD.md` + `phases/<name>/step<N>.md` 자동 산출.
+**Only planning artifacts.** No code, build, or deploy. Take user goal + AC + non-goals → run 6 gates + Seed convergence in a single Ralph loop → emit `PRD.md` + `phases/<name>/step<N>.md`.
 
-## 입력 / 출력
+## Inputs / Outputs
 
-- **입력**: 사용자 1-line idea + AC (1~5개) + non-goals (1~3개)
-- **출력**: `PRD.md` + `.pm-prd-fast/*.md` + `phases/<name>/{index.json, step<N>.md}` + `.dev-kit/hand-off/plan→build.md`
-- **공통 누적**: `.pm-prd-fast/decision-log.md` + `.dev-kit/loop-log.json`
+- **Input**: user 1-line idea + AC (1–5) + non-goals (1–3)
+- **Output**: `PRD.md` + `.pm-prd-fast/*.md` + `phases/<name>/{index.json, step<N>.md}` + `.dev-kit/hand-off/plan→build.md`
+- **Cumulative**: `.pm-prd-fast/decision-log.md` + `.dev-kit/loop-log.json`
 
-## 6 통합 단계 (1 Ralph 루프)
+## 6 integrated gates (1 Ralph loop)
 
 ```
-[1/8] frame-problem      ← idea + customer + situation + cause + cost
+[1/8] frame-problem       — idea + customer + situation + cause + cost
        ↓
-[2/8] evidence-gate     ← rubric ≥ 75 OR 3+ independent sources
+[2/8] evidence-gate      — rubric ≥ 75 OR 3+ independent sources
        ↓
-[3/8] diff-profit-gate  ← 3 alternatives + customer-language differentiation + positive unit margin
+[3/8] diff-profit-gate   — 3 alternatives + customer-language differentiation + positive unit margin
        ↓
-[4/8] non-goals         ← 3+ non-goals with rationale + breach-response
+[4/8] non-goals          — 3+ non-goals with rationale + breach-response
        ↓
-[5/8] socratic-deepen   ← Cut Line 5-question check (≥3 pass)
+[5/8] socratic-deepen    — GRILL-ME interview (5 questions, ≥3 must pass)
        ↓
-[6/8] Phase 분해         ← phases/<name>/index.json 자동 (MUST-50 absorption)
+[6/8] phase-decompose    — phases/<name>/index.json auto (MUST-50 absorption)
        ↓
-[7/8] Seed convergence   ← interview-harness 통합: similarity ≥ 0.85
+[7/8] seed-convergence   — interview-harness: similarity ≥ 0.85
        ↓
-[8/8] prd-writer        ← PRD.md 6-section DoD 5 conditions
+[8/8] prd-writer         — PRD.md 6-section DoD 5 conditions
 ```
 
-## 규칙 (예외 없음)
+## Gate 5/8 — Socratic deepen (grill-me interview)
 
-- 5필드 loop 선언 (MUST-15): safety_valve=8, convergence composite, narrowed_delta, dedup_metric, user_interrupt
-- PRD.md 외 산출물 ❌ (코드 / package.json / Dockerfile / test 코드)
-- 사용자 "코드 짜줘" 요청에도 PRD 완성 전엔 코드 작성 ❌
-- HOLD 발생 시 `/dev-kit:plan` 재호출로 재개
-- loop-log.json 매 cycle narrowing append (MUST-16)
+This is the **grill-me** phase. Ask the user **5 questions in order**, one per round. The user must answer at least 3. If a round answer is too vague, sharpen once, then accept whatever the user says.
 
-## Hook 정렬
+| # | Question | Pass criterion |
+|---|---|---|
+| 1 | "What specifically breaks if you ship nothing in the next 2 weeks?" | names a concrete failure mode (not "we'd be sad") |
+| 2 | "Who is the *first* user, and what's the smallest thing they'd pay or click for?" | names a real person/role and a specific action |
+| 3 | "What's the cheapest experiment that would invalidate the bet?" (within 1 calendar week AND ≤1 person-day of effort) | answer names a specific experiment with both a time window (≤1 week) and an effort budget (≤1 person-day) |
+| 4 | "What did you try before that didn't work, and what did you learn?" | names a real prior attempt + a non-tautological lesson |
+| 5 | "If this works, what's the *next* thing you build, and why?" | identifies a downstream dependency or follow-on |
 
-Plan/Design 단계:
-- `slop-detector=OFF` (기획 문서는 LLM-typical 표현 정당)
+For each round, use `AskUserQuestion` to ask. Record the answer in `.pm-prd-fast/decision-log.md`. If the user gives the same answer to the same question in 2 consecutive rounds, mark that round as "best effort" and move on (don't loop).
+
+After all 5 rounds (or 3 passes), write the **Socratic section** in PRD.md:
+
+```markdown
+## Socratic interview summary
+- Q1 [PASS/FAIL]: <question> — <answer>
+- Q2 [PASS/FAIL]: <question> — <answer>
+- ...
+- Passes: 3/5 (≥3 required)
+```
+
+## Rules (no exceptions)
+
+- 5-field loop declared (MUST-15): safety_valve=8, convergence composite, narrowed_delta, dedup_metric, user_interrupt
+- No artifacts other than PRD.md (no code, package.json, Dockerfile, test code)
+- User requesting "just write the code" before PRD is complete → still no code
+- After HOLD, user re-invokes `/dev-kit:plan` to resume
+- `loop-log.json` appends narrowing per cycle (MUST-16)
+
+## Hook alignment
+
+Plan/Design stage:
+- `slop-detector=OFF` (planning docs tolerate LLM-typical phrasing)
 - `stop-verify=ON`
-- 그 외 OFF
+- Others OFF
 
 ## Hand-off
 
-PRD.md 완성 시:
+On PRD.md complete:
 - `state_codec.transition_stage(root, "build")`
-- `state_codec.append_hand_off(root, "plan", "build", "...")` 자동
-- `.dev-kit/hand-off/plan→build.md` 작성
-- `/dev-kit:build` 호출 대기
+- `state_codec.append_hand_off(root, "plan", "build", "...")` auto
+- Write `.dev-kit/hand-off/plan→build.md`
+- Wait for `/dev-kit:build` invocation

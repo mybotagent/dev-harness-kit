@@ -7,6 +7,7 @@ when_to_use: |
 allowed-tools: Read Bash
 disallowed-tools: Write Edit WebFetch
 model: haiku
+user-invocable: false
 ---
 
 # build-verify — Evidence-Before-Done

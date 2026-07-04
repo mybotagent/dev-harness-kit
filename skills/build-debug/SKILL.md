@@ -7,6 +7,7 @@ when_to_use: |
 allowed-tools: Read Bash
 disallowed-tools: Edit Write WebFetch
 model: opus
+user-invocable: false
 ---
 
 # build-debug — Systematic Debugging (4 Phase)

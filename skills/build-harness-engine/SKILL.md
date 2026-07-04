@@ -8,6 +8,7 @@ when_to_use: |
 allowed-tools: Read Write
 disallowed-tools: Bash WebFetch Agent
 model: sonnet
+user-invocable: false
 ---
 
 # build-harness-engine — Phase Decomposition (Plan+Design subgraph)
