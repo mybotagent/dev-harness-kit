@@ -262,6 +262,11 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # Minimal checkout: gate only needs `gh pr review` which internally
+          # uses git. Don't pull history (faster).
+          fetch-depth: 0
       - name: Combined verdict gate
         run: |
           # Read verdicts directly from each job's outputs (set by the
