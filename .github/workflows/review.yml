@@ -39,6 +39,8 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
       contents: read
       pull-requests: write
@@ -123,10 +125,31 @@ jobs:
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
 
+      - name: Extract review verdict
+        id: extract_verdict
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          set -uo pipefail
+          # Most recent claude[bot] comment that contains a **Verdict:** line.
+          # In track_progress mode the action updates ONE comment per job, so
+          # "most recent" = this job's comment.
+          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
+          echo "review_verdict=${verdict:-<none>}"
+          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+
   security:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
       contents: read
       pull-requests: write
@@ -208,6 +231,27 @@ jobs:
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
 
+      - name: Extract security verdict
+        id: extract_verdict
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          set -uo pipefail
+          # Most recent claude[bot] comment that contains a **Verdict:** line.
+          # In track_progress mode the action updates ONE comment per job, so
+          # "most recent" = this job's comment (review job's older comments
+          # come before security's in chronological order, so we still want
+          # the latest = security's).
+          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
+          echo "security_verdict=${verdict:-<none>}"
+          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+
   gate:
     name: severity gate (review + security)
     runs-on: ubuntu-latest
@@ -218,43 +262,13 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      - name: Extract latest verdict from each skill's comment
-        id: verdicts
-        run: |
-          set -uo pipefail
-          # Fetch all claude[bot] comments with id + body + created_at
-          mapfile -t comments < <(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | "\(.created_at)\t\(.id)\t\(.body)"' 2>/dev/null)
-
-          # Helper: get latest verdict from the latest comment whose body
-          # invokes the given skill (e.g. /dev-kit:review). The action embeds
-          # the skill name in each comment via the job badge / prompt text.
-          get_verdict() {
-            local skill="$1"
-            local latest=""
-            # iterate from most recent → oldest, return first match
-            for ((i=${#comments[@]}-1; i>=0; i--)); do
-              local line="${comments[$i]}"
-              if [[ "$line" == *"/${skill}"* ]] && [[ "$line" == *"Verdict:"* ]]; then
-                echo "$line" | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' | head -1 | awk '{print $NF}'
-                return
-              fi
-            done
-            echo ""
-          }
-
-          REVIEW_VERDICT="$(get_verdict 'dev-kit:review')"
-          SECURITY_VERDICT="$(get_verdict 'dev-kit:security')"
-
-          echo "review_verdict=${REVIEW_VERDICT:-<none>}"
-          echo "security_verdict=${SECURITY_VERDICT:-<none>}"
-          echo "review_verdict=${REVIEW_VERDICT:-<none>}" >> "$GITHUB_OUTPUT"
-          echo "security_verdict=${SECURITY_VERDICT:-<none>}" >> "$GITHUB_OUTPUT"
-
       - name: Combined verdict gate
         run: |
-          R="${{ steps.verdicts.outputs.review_verdict }}"
-          S="${{ steps.verdicts.outputs.security_verdict }}"
+          # Read verdicts directly from each job's outputs (set by the
+          # 'Extract <skill> verdict' post-step in review + security jobs).
+          # This is robust: no fragile comment-body matching required.
+          R="${{ needs.review.outputs.verdict }}"
+          S="${{ needs.security.outputs.verdict }}"
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
 
@@ -290,8 +304,8 @@ jobs:
           PR_NUMBER: ${{ env.PR_NUMBER }}
         run: |
           set -uo pipefail
-          R="${{ steps.verdicts.outputs.review_verdict }}"
-          S="${{ steps.verdicts.outputs.security_verdict }}"
+          R="${{ needs.review.outputs.verdict }}"
+          S="${{ needs.security.outputs.verdict }}"
           if [ "$R" = "Approve" ] && [ "$S" = "Approve" ]; then
             echo "Both review + security = Approve → auto-approving."
             gh pr review "$PR_NUMBER" --approve \
