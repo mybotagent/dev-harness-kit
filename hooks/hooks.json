@@ -1,6 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "_comment": "All hooks default to exit 0 (advisory). Hard-block (exit 2) only with --strict mode (MUST-12).",
+  "_personal_vs_team": {
+    "_doc": "Hooks below are split by adoption level. 'personal' = auto-on when dev-kit is installed at user-level (User/). 'team' = OFF by default; opt in per-project via .claude/settings.json (see docs/team-hooks.md).",
+    "personal": ["tdd-guard", "bash-guard", "secret-scan", "slop-detector", "stop-verify"],
+    "team": ["prettier-format", "block-dangerous-commands", "eslint-fix"]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -20,6 +25,12 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/bash-guard.sh",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/block-dangerous-commands.sh",
+            "timeout": 3,
+            "_doc": "team hook — opt in per-project (see docs/team-hooks.md)"
           }
         ]
       }
@@ -37,6 +48,18 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/slop-detector.sh",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/prettier-format.sh",
+            "timeout": 15,
+            "_doc": "team hook — opt in per-project (see docs/team-hooks.md)"
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/eslint-fix.sh",
+            "timeout": 15,
+            "_doc": "team hook — opt in per-project (see docs/team-hooks.md)"
           }
         ]
       }
