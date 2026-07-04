@@ -194,3 +194,4 @@ Fixtures: `real-bugs/sql_injection.py` (must catch), `traps/parameterized_query.
 
 Add a charter line + one more `Agent` call **in the same fan-out message**. The
 Step 3 verifier handles whatever candidates arrive.
+
