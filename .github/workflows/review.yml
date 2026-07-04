@@ -39,9 +39,6 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      job_id: ${{ github.job }}
-      run_id: ${{ github.run_id }}
     permissions:
       contents: read
       pull-requests: write
@@ -130,9 +127,6 @@ jobs:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      job_id: ${{ github.job }}
-      run_id: ${{ github.run_id }}
     permissions:
       contents: read
       pull-requests: write
@@ -223,11 +217,6 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
-      # Per-job IDs (used to match each claude[bot] PR comment to its job).
-      # The claude-code-action embeds the job link in each comment body, so we
-      # match by job_id (run_id is shared across jobs in the same workflow).
-      REVIEW_JOB_ID: ${{ needs.review.result == 'success' && needs.review.outputs.job_id || '' }}
-      SECURITY_JOB_ID: ${{ needs.security.result == 'success' && needs.security.outputs.job_id || '' }}
     steps:
       - name: Extract latest verdict from each skill's comment
         id: verdicts
@@ -237,25 +226,26 @@ jobs:
           mapfile -t comments < <(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | "\(.created_at)\t\(.id)\t\(.body)"' 2>/dev/null)
 
-          # Helper: get latest verdict from the comment whose body references
-          # the given job id (e.g. /jobs/12345). One comment per job per run.
+          # Helper: get latest verdict from the latest comment whose body
+          # invokes the given skill (e.g. /dev-kit:review). The action embeds
+          # the skill name in each comment via the job badge / prompt text.
           get_verdict() {
-            local job_id="$1"
-            [ -z "$job_id" ] && { echo ""; return; }
+            local skill="$1"
             local latest=""
-            for line in "${comments[@]}"; do
-              if [[ "$line" == *"/jobs/${job_id}"* ]]; then
-                latest="$(echo "$line" | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' | head -1 | awk '{print $NF}')"
+            # iterate from most recent → oldest, return first match
+            for ((i=${#comments[@]}-1; i>=0; i--)); do
+              local line="${comments[$i]}"
+              if [[ "$line" == *"/${skill}"* ]] && [[ "$line" == *"Verdict:"* ]]; then
+                echo "$line" | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' | head -1 | awk '{print $NF}'
+                return
               fi
             done
-            echo "$latest"
+            echo ""
           }
 
-          REVIEW_VERDICT="$(get_verdict "$REVIEW_JOB_ID")"
-          SECURITY_VERDICT="$(get_verdict "$SECURITY_JOB_ID")"
+          REVIEW_VERDICT="$(get_verdict 'dev-kit:review')"
+          SECURITY_VERDICT="$(get_verdict 'dev-kit:security')"
 
-          echo "review_job_id=${REVIEW_JOB_ID:-<no-success>}"
-          echo "security_job_id=${SECURITY_JOB_ID:-<no-success>}"
           echo "review_verdict=${REVIEW_VERDICT:-<none>}"
           echo "security_verdict=${SECURITY_VERDICT:-<none>}"
           echo "review_verdict=${REVIEW_VERDICT:-<none>}" >> "$GITHUB_OUTPUT"
