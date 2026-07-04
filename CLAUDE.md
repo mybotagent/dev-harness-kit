@@ -38,8 +38,7 @@ tree:
   - lib/{state_codec,active_hooks_codec,write_claude_md,eval_runner,llm_judge,
         sub_agent_runner,a2a_codec,fixers/*,install.sh}.py
   - eval/{golden,prompts,fixtures}/ (golden 13 + judge prompts 3)
-  - docs/{STAGES,ARCHITECTURE,NAMING,COST-ANALYSIS,PRIVATE-REPO-SETUP,
-         INTEGRATION,AX,PRE-IMPL-CHECK,METHODOLOGY}.md
+  - docs/{STAGES,ARCHITECTURE,NAMING,COST-ANALYSIS,PRE-IMPL-CHECK}.md
 ```
 
 <!-- Run `/dev-kit:bootstrap --full-claude-md` to embed complete tree (depth 4), manifest, deps -->
@@ -99,16 +98,16 @@ adapter_path: lib/methodology/<name>.py
 
 ```
 user_does:
-  - 기획 (1-line goal + AC 1~5 + non-goals)
-  - 스펙 (PRD.md 1 page)
-  - 판단 (gate 결정 + cost review + 단계 approve)
-  - 리뷰 (PR 단위 + Eval-Repair Human Review)
+  - Planning (1-line goal + AC 1~5 + non-goals)
+  - Spec (PRD.md, 1 page)
+  - Decisions (gate decisions + cost review + stage approvals)
+  - Review (PR-level + Eval-Repair Human Review)
 
 user_does_NOT:
-  - 단계 쪼개기 (system = decompose)
-  - implementation (system = execute)
-  - cost 질문 형식 작성 (AI = present)
-  - pre-commit hook + CI 관리 (auto)
+  - Decompose stages (system = decompose)
+  - Implementation (system = execute)
+  - Write cost-question format (AI = present)
+  - Manage pre-commit hook + CI (auto)
 ```
 
 ## §9 Iron Laws Validation (eval targets)

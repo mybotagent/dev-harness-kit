@@ -2,13 +2,13 @@
 
 **Status**: Accepted
 
-## 결정
-Iron Law L1 = "no prod code without verification artifact" 일반화. 사용자가 방법론 선택. adapter 1 파일 / doc 1개 / test 1개로 신규 방법론 추가.
+## Decision
+Generalize Iron Law L1 to "no prod code without verification artifact". User picks the methodology. Adding a new methodology needs 1 adapter file + 1 doc + 1 test.
 
-## 왜 L1 일반화?
-TDD는 test artifact. SDD는 contract artifact. DDD는 domain test. BDD는 Gherkin scenario. FDD는 feature flag. Iron Law L1은 "artifact 없는 prod code"로 일반화.
+## Why generalize L1?
+TDD uses a test artifact. SDD uses a contract artifact. DDD uses a domain test. BDD uses a Gherkin scenario. FDD uses a feature flag. Iron Law L1 generalizes to "prod code without any artifact".
 
-## Adapter 인터페이스
+## Adapter interface
 ```python
 class Methodology(ABC):
     name: str  # "tdd" | "sdd" | ...
@@ -18,7 +18,7 @@ class Methodology(ABC):
     def report_status(self, worktree, step) -> Dict: ...
 ```
 
-## 5 default
+## 5 defaults
 - TDD: pytest / vitest. cycle: red, green, refactor.
 - SDD: pact-contract. cycle: spec, impl, contract.
 - DDD: domain-test. cycle: model, test, refine.
@@ -26,4 +26,4 @@ class Methodology(ABC):
 - FDD: feature-flag eval. cycle: plan/design/build.
 
 ## Selector
-`lib/methodology.json` (active: "tdd" default). `/dev-kit:config` picker 변경.
+`lib/methodology.json` (active: "tdd" default). Change via `/dev-kit:config` picker.
