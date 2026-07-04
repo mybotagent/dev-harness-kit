@@ -31,7 +31,7 @@
 
 ## Markdown docs / hand-off
 
-- `docs/{STAGES,NAMING,COST-ANALYSIS,PRIVATE-REPO-SETUP,INTEGRATION,AX,PRE-IMPL-CHECK,METHODOLOGY}.md` (PascalCase or kebab-case singular)
+- `docs/{STAGES,NAMING,COST-ANALYSIS,PRE-IMPL-CHECK}.md` (PascalCase or kebab-case singular)
 - ADR: `docs/adr/ADR-NNNN-kebab-slug.md` (zero-padded)
 - Hand-off: `hand-off/<from>→<to>.md` (Unicode arrow →; debug retry uses ↔)
 - Loop log: `.dev-kit/loop-log.json` (singular)

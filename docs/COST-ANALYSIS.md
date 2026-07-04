@@ -56,7 +56,7 @@ Hook bypass requires explicit opt-in (`DEV_KIT_HOOK_OFF`). Secret scan runs Post
 
 Provider outage fallback: manual `/dev-kit:eval`. **MEDIUM** (mitigated).
 
-## Summary
+## §9 Summary
 
 **6 LOW + 2 MEDIUM (mitigated) = PASS**
 

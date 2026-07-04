@@ -38,8 +38,7 @@ tree:
   - lib/{state_codec,active_hooks_codec,write_claude_md,eval_runner,llm_judge,
         sub_agent_runner,a2a_codec,fixers/*,install.sh}.py
   - eval/{golden,prompts,fixtures}/ (golden 13 + judge prompts 3)
-  - docs/{STAGES,ARCHITECTURE,NAMING,COST-ANALYSIS,PRIVATE-REPO-SETUP,
-         INTEGRATION,AX,PRE-IMPL-CHECK,METHODOLOGY}.md
+  - docs/{STAGES,ARCHITECTURE,NAMING,COST-ANALYSIS,PRE-IMPL-CHECK}.md
 ```
 
 <!-- Run `/dev-kit:bootstrap --full-claude-md` to embed complete tree (depth 4), manifest, deps -->
