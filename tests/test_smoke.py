@@ -37,7 +37,7 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(len(found), SKILL_COUNT, f"Expected {SKILL_COUNT} skills, got {len(found)}")
 
     def test_commands_count(self):
-        commands_dir = PROJECT_ROOT / "commands"
+        commands_dir = PROJECT_ROOT / ".claude-plugin" / "plugin" / "commands"
         found = list(commands_dir.glob("*.md"))
         self.assertEqual(len(found), COMMAND_COUNT, f"Expected {COMMAND_COUNT} commands, got {len(found)}")
 

@@ -112,8 +112,8 @@ class TestNaming(unittest.TestCase):
         import json
         m_name = json.loads(mp.read_text())["name"]
         p_name = json.loads(pl.read_text())["name"]
-        self.assertEqual(m_name, "dev-harness-kit")
-        self.assertEqual(p_name, "dev-harness-kit")
+        self.assertEqual(m_name, "dev-kit")
+        self.assertEqual(p_name, "dev-kit")
 
 
 if __name__ == "__main__":
