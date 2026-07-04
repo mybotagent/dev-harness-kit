@@ -99,16 +99,16 @@ adapter_path: lib/methodology/<name>.py
 
 ```
 user_does:
-  - 기획 (1-line goal + AC 1~5 + non-goals)
-  - 스펙 (PRD.md 1 page)
-  - 판단 (gate 결정 + cost review + 단계 approve)
-  - 리뷰 (PR 단위 + Eval-Repair Human Review)
+  - Planning (1-line goal + AC 1~5 + non-goals)
+  - Spec (PRD.md, 1 page)
+  - Decisions (gate decisions + cost review + stage approvals)
+  - Review (PR-level + Eval-Repair Human Review)
 
 user_does_NOT:
-  - 단계 쪼개기 (system = decompose)
-  - implementation (system = execute)
-  - cost 질문 형식 작성 (AI = present)
-  - pre-commit hook + CI 관리 (auto)
+  - Decompose stages (system = decompose)
+  - Implementation (system = execute)
+  - Write cost-question format (AI = present)
+  - Manage pre-commit hook + CI (auto)
 ```
 
 ## §9 Iron Laws Validation (eval targets)

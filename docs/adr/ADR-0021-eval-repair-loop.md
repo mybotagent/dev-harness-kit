@@ -2,24 +2,24 @@
 
 **Status**: Accepted
 
-## 결정
-자산 drift 감지 → 자동 repair 루프. 마지막 단계 = 사용자가 diff 1회 approve.
+## Decision
+Detect asset drift → automatic repair loop. Final step = user 1× approve on the diff.
 
-## 8단계
+## 8 steps
 ```
 [1] golden_set
-[2] LLM as Judge (4축: semantic_drift / completeness / correctness / consistency)
-[3] 실패 점수화 + root cause
-[4] Specialized Fixer (9개 category 전문)
-[5] Fix candidate → 재평가 (loop max 3)
-[6] A/B Validation Regression (golden 불변)
-[7] Diff 초안 자동 작성
-[8] Human Review ← 동기 STOP, 사용자 approve|reject|defer
+[2] LLM as Judge (4 axes: semantic_drift / completeness / correctness / consistency)
+[3] Score failures + root cause
+[4] Specialized Fixer (9 category experts)
+[5] Fix candidate → re-evaluate (loop max 3)
+[6] A/B validation regression (golden must not change)
+[7] Auto-write diff draft
+[8] Human Review ← sync STOP, user approve|reject|defer
 ```
 
-## 금지
-- Auto commit diff ❌ (MUST-NOT-31).
-- 자동 reject ❌ (사용자 결정).
+## Forbidden
+- Auto-commit diff ❌ (MUST-NOT-31).
+- Auto-reject ❌ (user decides).
 
 ## Specialized Fixers
-9개 (bootstrap/plan/build/review/security/audit/iron_law/hooks/a2a). 각 category 5필드 frontmatter, hooks, scripts 정확히 알고 자가 수정.
+9 (bootstrap / plan / build / review / security / audit / iron_law / hooks / a2a). Each knows the category's 5-field frontmatter, hooks, and scripts and self-fixes.

@@ -1,18 +1,18 @@
-# ADR-0001 — 5 → 1 흡수
+# ADR-0001 — 5 → 1 absorption
 
 **Status**: Accepted
 
-## 결정
-외부 의존 0. 5개 repo를 완전히 흡수(코드/스킬/훅 그대로 이동, namespace만 변경). 옛 repo는 `DEPRECATED.md` 1줄 + archive 안내.
+## Decision
+Zero external dependency. Fully absorb the 5 repos (code/skills/hooks moved as-is, only namespace changes). Old repos get `DEPRECATED.md` 1-liner + archive pointer.
 
-## 배경
+## Context
 - `pm-prd-fast/`, `interview-harness-skills/`, `dev-harness/`, `claude-review-plugins/`, `slop-shield/`
-- 같은 워크플로우 단계 중복 → 5 plugin 동시 관리 부담.
+- Same workflow stages duplicated → 5 plugins to maintain in parallel.
 
-## 근거
-- dev-harness의 `install.sh --with-plugins`가 이미 외부 의존 0 회피 권장.
-- absorption은 한 install로 모든 단계 활성화.
+## Rationale
+- dev-harness's `install.sh --with-plugins` already recommended zero external deps.
+- Absorption activates every stage in a single install.
 
-## 결과
-- 옛 repo 코드 보존. `DEPRECATED.md` 1줄.
-- namespace: kebab-case (ADR-0010).
+## Outcome
+- Old repo code preserved. `DEPRECATED.md` 1 line per repo.
+- Namespace: kebab-case (ADR-0010).
