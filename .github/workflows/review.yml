@@ -79,11 +79,11 @@ jobs:
         # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
-          ANTHROPIC_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_SONNET_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_OPUS_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: MiniMax-M3[1m]
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINMAX_API_KEY }}
+          ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
           track_progress: ${{ github.event_name == 'pull_request' }}
@@ -164,11 +164,11 @@ jobs:
         if: steps.provider.outputs.provider == 'minimax'
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
-          ANTHROPIC_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_SONNET_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_OPUS_MODEL: MiniMax-M3[1m]
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: MiniMax-M3[1m]
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINMAX_API_KEY }}
+          ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
           track_progress: ${{ github.event_name == 'pull_request' }}
