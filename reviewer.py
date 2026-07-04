@@ -109,7 +109,7 @@ def main() -> int:
              "## LLM Review (skipped)\n\n"
              "No `MINMAX_API_KEY` secret configured. "
              "Set it in repo Settings → Secrets."],
-            cwd=str(project_root), env=dict(os.environ),
+            cwd=str(project_root),
         )
         return 0
 
@@ -129,7 +129,7 @@ def main() -> int:
         subprocess.run(
             ["gh", "pr", "comment", "--body",
              f"## LLM Review (failed)\n\n`{e}`"],
-            cwd=str(project_root), env=dict(os.environ),
+            cwd=str(project_root),
         )
         return 0
 
@@ -144,7 +144,7 @@ def main() -> int:
         pass
 
     body = render_review(scores, summary_match or "(no summary)")
-    subprocess.run(["gh", "pr", "comment", "--body", body], cwd=str(project_root), env=dict(os.environ))
+    subprocess.run(["gh", "pr", "comment", "--body", body], cwd=str(project_root))
 
     print(f"tokens_in={result['tokens_in']} tokens_out={result['tokens_out']}")
     print(f"scores={scores}")
