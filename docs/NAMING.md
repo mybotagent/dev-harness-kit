@@ -65,3 +65,7 @@
 ## 회귀 검증
 
 `tests/test_naming.py` — SKILL.md `name` = directory name. category ∈ 9종. 등.
+
+<!-- test: trigger /dev-kit:review + /dev-kit:security (do not merge) -->
+<!-- re-trigger 2026-07-04T12:35:07Z -->
+<!-- retrigger 2026-07-04T12:37:00Z post main push -->
