@@ -39,6 +39,9 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      job_id: ${{ github.job }}
+      run_id: ${{ github.run_id }}
     permissions:
       contents: read
       pull-requests: write
@@ -127,6 +130,9 @@ jobs:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      job_id: ${{ github.job }}
+      run_id: ${{ github.run_id }}
     permissions:
       contents: read
       pull-requests: write
@@ -217,27 +223,43 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
+      # Per-job IDs (used to match each claude[bot] PR comment to its job).
+      # The claude-code-action embeds the job link in each comment body, so we
+      # match by job_id (run_id is shared across jobs in the same workflow).
+      REVIEW_JOB_ID: ${{ needs.review.result == 'success' && needs.review.outputs.job_id || '' }}
+      SECURITY_JOB_ID: ${{ needs.security.result == 'success' && needs.security.outputs.job_id || '' }}
     steps:
       - name: Extract latest verdict from each skill's comment
         id: verdicts
         run: |
           set -uo pipefail
-          comments="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | {body: .body, id: .id}' 2>/dev/null || echo "")"
+          # Fetch all claude[bot] comments with id + body + created_at
+          mapfile -t comments < <(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | "\(.created_at)\t\(.id)\t\(.body)"' 2>/dev/null)
 
-          # /dev-kit:review comment carries "## Review summary"
-          review_verdict="$(echo "$comments" \
-            | grep -B2 -A20 'Review summary' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
-          # /dev-kit:security comment carries "## Security summary"
-          security_verdict="$(echo "$comments" \
-            | grep -B2 -A20 'Security summary' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 | awk '{print $NF}' || true)"
+          # Helper: get latest verdict from the comment whose body references
+          # the given job id (e.g. /jobs/12345). One comment per job per run.
+          get_verdict() {
+            local job_id="$1"
+            [ -z "$job_id" ] && { echo ""; return; }
+            local latest=""
+            for line in "${comments[@]}"; do
+              if [[ "$line" == *"/jobs/${job_id}"* ]]; then
+                latest="$(echo "$line" | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' | head -1 | awk '{print $NF}')"
+              fi
+            done
+            echo "$latest"
+          }
 
-          echo "review_verdict=${review_verdict:-<none>}"
-          echo "security_verdict=${security_verdict:-<none>}"
-          echo "review_verdict=${review_verdict:-<none>}" >> "$GITHUB_OUTPUT"
-          echo "security_verdict=${security_verdict:-<none>}" >> "$GITHUB_OUTPUT"
+          REVIEW_VERDICT="$(get_verdict "$REVIEW_JOB_ID")"
+          SECURITY_VERDICT="$(get_verdict "$SECURITY_JOB_ID")"
+
+          echo "review_job_id=${REVIEW_JOB_ID:-<no-success>}"
+          echo "security_job_id=${SECURITY_JOB_ID:-<no-success>}"
+          echo "review_verdict=${REVIEW_VERDICT:-<none>}"
+          echo "security_verdict=${SECURITY_VERDICT:-<none>}"
+          echo "review_verdict=${REVIEW_VERDICT:-<none>}" >> "$GITHUB_OUTPUT"
+          echo "security_verdict=${SECURITY_VERDICT:-<none>}" >> "$GITHUB_OUTPUT"
 
       - name: Combined verdict gate
         run: |
