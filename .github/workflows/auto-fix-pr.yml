@@ -1,0 +1,132 @@
+name: Auto-fix on review
+
+# Triggers when a PR review comes in requesting changes. The LLM agent
+# (claude-code-action) reads the review body + inline comments, applies
+# targeted fixes, commits, and pushes back to the same branch. The
+# reviewer re-runs on the new push; loop continues until approval or
+# human interrupt.
+#
+# Self-loop guard:
+#   - Skips reviews from claude[bot] itself (the agent that just acted).
+#   - Skips if the same commit SHA is already addressed.
+#   - Caps at 5 fix iterations per PR (workflow_run won't re-trigger past this).
+#
+# Required secret: MINIMAX_API_KEY (same as review.yml).
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  auto-fix:
+    if: |
+      github.event.review.state == 'changes_requested' &&
+      !startsWith(github.event.review.user.login, 'github-actions') &&
+      !startsWith(github.event.review.user.login, 'claude[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    env:
+      MINIMAX_BASE_URL: https://api.minimax.io/anthropic
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if already iterated too many times
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Count commits by the auto-fix bot on this branch
+          COUNT=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" \
+            --jq '[.[] | select(.commit.author.email == "41898282+github-actions[bot]@users.noreply.github.com")] | length')
+          echo "Auto-fix commits so far: $COUNT"
+          if [ "$COUNT" -ge 5 ]; then
+            echo "::warning::Reached 5 auto-fix iterations. Stopping to avoid infinite loop. Human review required."
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --body "🤖 Auto-fix reached 5-iteration cap. Handing off to human review."
+            exit 0
+          fi
+
+      - name: Collect review feedback
+        id: review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR="${{ github.event.pull_request.number }}"
+          REVIEW_ID="${{ github.event.review.id }}"
+          {
+            echo "body<<EOF_BODY"
+            gh api "repos/${{ github.repository }}/pulls/${PR}/reviews/${REVIEW_ID}" --jq '.body // "(empty)"'
+            echo "EOF_BODY"
+            echo "inline<<EOF_INLINE"
+            gh api "repos/${{ github.repository }}/pulls/${PR}/reviews/${REVIEW_ID}/comments" \
+              --jq '.[] | "[\(.path):\(.line // "?")] \(.body)"' 2>/dev/null || true
+            echo "EOF_INLINE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply fixes via dev-kit:review agent
+        env:
+          ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_MODEL: "MiniMax-M3[1m]"
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1m]"
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1m]"
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1m]"
+        uses: anthropics/claude-code-action@v1
+        with:
+          track_progress: false
+          prompt: |
+            You are the auto-fix agent for PR #${{ github.event.pull_request.number }} on branch
+            `${{ github.event.pull_request.head.ref }}`. A human or AI reviewer requested
+            changes. Read the feedback below and apply the **minimal, targeted fixes** that
+            address each finding. Then commit and push.
+
+            ## Review feedback (top-level body)
+
+            ```
+            ${{ steps.review.outputs.body }}
+            ```
+
+            ## Review feedback (inline comments, file:line → note)
+
+            ```
+            ${{ steps.review.outputs.inline }}
+            ```
+
+            ## Rules
+
+            1. **One commit per fix wave.** If you make changes, commit them all in a
+               single commit with message `fix(pr): address review feedback — <one-line summary>`.
+            2. **Push the commit** with `git push` (no force-push).
+            3. **Do NOT modify** any file under `.github/workflows/` (the action
+               compares workflow content against the base branch; modifying it
+               will cause the next run to skip).
+            4. **Do NOT modify** any file under `CLAUDE.md` or `docs/` unless
+               the review specifically asks for it (reviewer feedback is usually
+               about code, not docs).
+            5. **If a finding is unclear or contradictory**, do not guess — leave
+               a short comment on the PR explaining what's blocking you.
+            6. **If no actual code change is needed** (e.g. the review is
+               informational only), commit an empty change with a noop message
+               to record the iteration, then push.
+
+            ## After pushing
+
+            Post a single PR comment summarizing what you changed and why, with
+            a Markdown bullet list mapping each finding → fix (or "deferred
+            because …" if you couldn't address it).
+          claude_args: |
+            --allowedTools "Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Read,Edit,Write,Grep,Glob"
+
+      - name: Done marker (prevents re-loop on workflow file changes)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body "🤖 Auto-fix iteration complete. Reviewer will re-trigger." || true
