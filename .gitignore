@@ -1,0 +1,25 @@
+# Build / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.cache/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local env / runtime
+.env
+.claude-plugin/plugin/hooks/.strict
+
+# Plugin test artifacts (NOT shipped)
+.dev-kit/
+.eval-cache/
+*.tmp
+
+# Deps (added per-project)
+node_modules/
+.venv/

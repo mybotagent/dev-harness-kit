@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: |
+          pip install --quiet pytest
+          python -m pytest tests/ -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}/lib
+
+      - name: Validate manifests
+        run: |
+          python -c "
+          import json, pathlib
+          mp = json.loads(pathlib.Path('.claude-plugin/marketplace.json').read_text())
+          pl = json.loads(pathlib.Path('.claude-plugin/plugin/.claude-plugin/plugin.json').read_text())
+          assert mp['name'] == 'dev-harness-kit'
+          assert pl['name'] == 'dev-harness-kit'
+          assert pl['version'] == '0.1.0'
+          print('manifests OK')
+          "
+
+      - name: Bash hook syntax
+        run: |
+          for h in .claude-plugin/plugin/hooks/*.sh; do
+            bash -n "$h"
+          done
+          echo "hooks OK"
+
+      - name: Python module imports
+        run: |
+          PYTHONPATH=lib python -c "
+          import state_codec, active_hooks_codec, write_claude_md, execute
+          print('all 4 modules importable')
+          "
