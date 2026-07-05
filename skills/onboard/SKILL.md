@@ -1,7 +1,7 @@
 ---
 name: onboard
 category: onboard
-description: 0-arg 신규 팀원 onboarding (MUST-47). 30분 productive. CLAUDE.md + .dev-kit + eval baseline 자동.
+description: 0-arg new team member onboarding (MUST-47). 30 min productive. CLAUDE.md + .dev-kit + eval baseline auto.
 when_to_use: |
   - User types /dev-kit:onboard <github_username>
 allowed-tools: Read Write Bash Glob Grep
@@ -9,17 +9,17 @@ model: opus
 disable-model-invocation: false
 ---
 
-# /dev-kit:onboard — 신규 팀원 30분 productive
+# /dev-kit:onboard — New team member 30-min productive
 
-## 자동 액션
+## Auto actions
 
-1. CLAUDE.md 갱신 (§0 "team member: <name>")
-2. codebase-map §3 갱신
-3. first task 자동 위임 (`build-tdd`)
-4. PR 자동 (hand-off 첨부)
-5. eval baseline 캡처 (golden 13개에 사용자 signature 추가)
+1. Update CLAUDE.md (§0 "team member: <name>")
+2. Update codebase-map §3
+3. Auto-delegate first task (`build-tdd`)
+4. Auto PR (hand-off attached)
+5. Capture eval baseline (add user signature to golden set)
 
-## 출력
+## Output
 
-- `.dev-kit/onboarding-<username>.md` (진행 가이드)
-- 첫 PR 자동 생성
+- `.dev-kit/onboarding-<username>.md` (progress guide)
+- First PR auto-created

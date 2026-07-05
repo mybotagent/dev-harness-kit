@@ -1,37 +1,37 @@
 ---
 name: shortcut-tdd-fast
 category: shortcuts
-description: Bootstrap+Plan 우회 → Build 직행. hand-off stub 마킹. 긴급 핫픽스용.
+description: Bootstrap+Plan bypass → straight to Build. Marks hand-off stub. For urgent hotfix.
 when_to_use: |
   - User types /dev-kit:tdd-fast
-  - 긴급 핫픽스 (hotfix)
+  - urgent hotfix
 allowed-tools: Read Write Bash
 disallowed-tools: WebFetch Agent
 model: sonnet
 ---
 
-# shortcut-tdd-fast — 우회 Build 직행
+# shortcut-tdd-fast — Bypass to Build
 
 ## Iron Law
-**사용자가 명시 우회 의도를 표현했을 때만.** urgent hotfix / prototype 일 때.
+**Only when user explicitly expresses bypass intent.** Urgent hotfix / prototype scenarios.
 
-## 동작
+## Behavior
 
-1. Plan/Design hand-off stub 자동 마킹 (`.dev-kit/hand-off/plan→build.md` 빈 파일)
-2. `.dev-kit/state.json` `shortcut_used: "tdd-fast"` 기록
-3. 즉시 Build 호출 (harness-runner engine)
-4. Review/Security stage는 후속 호출에서
+1. Plan/Design hand-off stub auto-marked (`.dev-kit/hand-off/plan→build.md` empty file)
+2. `.dev-kit/state.json` `shortcut_used: "tdd-fast"` recorded
+3. Build immediate (harness-runner engine)
+4. Review/Security stages follow on subsequent calls
 
-## 규칙
+## Rules
 
-- Plan 단계의 6 gates 자동 skip (사용자 명시 OK만)
-- `/dev-kit:plan` 후속 호출 시 정상 흐름 복귀
-- 사용자 코드 자동 변경 ❌ (TDD 사이클은 유지)
+- 6 gates of Plan stage auto-skip (only on explicit user OK)
+- Subsequent `/dev-kit:plan` call returns to normal flow
+- No automatic user-code changes (TDD cycle preserved)
 
-## 훅 정렬
+## Hook integration
 
-Build stage와 동일.
+Same as Build stage.
 
-## 후속 hand-off
+## Subsequent hand-off
 
-`build→review.md` (full chain 정상) + 별도 `plan→build.md` stub 으로 audit 가능.
+`build→review.md` (full chain normal) + separate `plan→build.md` stub for audit.

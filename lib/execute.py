@@ -15,21 +15,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
-import tempfile
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
-KST = timezone(timedelta(hours=9))
+from atomic import atomic_write_json, now_iso  # noqa: E402
 MAX_RETRIES = 3
 SCHEMA_VERSION = "1.0.0"
 VALID_STATUSES = ("pending", "completed", "error", "blocked")
-
-
-def now_iso() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 # ---------- Phase / Step readers ----------
@@ -53,47 +46,6 @@ def read_step(project_root: Path, phase: str, step: int) -> str:
     if not path.exists():
         raise FileNotFoundError(f"step file not found: {path}")
     return path.read_text(encoding="utf-8")
-
-
-# ---------- Preamble composition ----------
-
-def build_preamble(project_root: Path, phase: str, step_index: int) -> str:
-    """Build injected context for the agent per step.
-
-    Composition:
-      CLAUDE.md + docs/*.md (alphabetical) + active hand-off chain (resolved)
-      + step prompt (file body)
-    """
-    parts: List[str] = []
-
-    # §1 CLAUDE.md (auto-loaded into Claude Code, but we explicitly include it here)
-    claude_md = project_root / "CLAUDE.md"
-    if claude_md.exists():
-        parts.append("# Auto-generated CLAUDE.md (SSOT)\n")
-        parts.append(claude_md.read_text(encoding="utf-8"))
-        parts.append("\n---\n")
-
-    # §2 docs/*.md alphabetical
-    docs_dir = project_root / "docs"
-    if docs_dir.exists():
-        for doc in sorted(docs_dir.glob("*.md")):
-            parts.append(f"# docs/{doc.name}\n")
-            parts.append(doc.read_text(encoding="utf-8"))
-            parts.append("\n---\n")
-
-    # §3 Hand-off chain pointer (only most recent completed stages)
-    hand_off_dir = project_root / ".dev-kit" / "hand-off"
-    if hand_off_dir.exists():
-        for f in sorted(hand_off_dir.glob("*.md")):
-            parts.append(f"# Hand-off: {f.name}\n")
-            parts.append(f.read_text(encoding="utf-8"))
-            parts.append("\n---\n")
-
-    # §4 Step prompt
-    parts.append(f"# Step prompt: phases/{phase}/step{step_index}.md\n")
-    parts.append(read_step(project_root, phase, step_index))
-
-    return "".join(parts)
 
 
 # ---------- Step status state machine ----------
@@ -141,19 +93,10 @@ def update_step_status(
             break
     else:
         raise ValueError(f"step {step} not found in {phase}")
-    _atomic_write_json(idx_path, data)
+    atomic_write_json(idx_path, data)
 
 
-def _atomic_write_json(path: Path, data: Dict) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+# ---------- Step output writer ----------
 
 
 # ---------- Step output writer ----------
@@ -179,7 +122,7 @@ def write_step_output(
         "duration_seconds": duration_seconds,
         "timestamp": now_iso(),
     }
-    _atomic_write_json(path, data)
+    atomic_write_json(path, data)
     return path
 
 

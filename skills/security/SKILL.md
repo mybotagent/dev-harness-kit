@@ -62,10 +62,10 @@ CONFIRMED | PLAUSIBLE | REJECTED. Drop every REJECTED.
 CONFIRMED ≥ 5 → Approve. 0-2 → Blocked. Inline comments per finding use the
 **same Layer 1 format as `/dev-kit:review`**.
 
-## Hook 정렬
+## Hook integration
 
-Review와 동일 (`slop-detector, secret-scan, stop-verify` ON).
+Same as Review (`slop-detector, secret-scan, stop-verify` ON).
 
-## 다음 단계
+## Next step
 
-`/dev-kit:review` 또는 `/dev-kit:ship`.
+`/dev-kit:review` or `/dev-kit:ship`.

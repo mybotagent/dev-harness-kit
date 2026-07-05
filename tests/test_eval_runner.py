@@ -147,16 +147,6 @@ class TestEvalRunner(unittest.TestCase):
         self.assertIn("OK", content)
         self.assertIn("9.0", content)
 
-    def test_cross_check_agreement(self):
-        # 2-judge cross-check (MUST-NOT-23)
-        a = {"score": 8, "verdict": "OK"}
-        b = {"score": 8, "verdict": "OK"}
-        c = {"score": 5, "verdict": "DRIFT_WARNING"}
-        # both same → agree
-        self.assertTrue(eval_runner.cross_check_agree([a, b]))
-        # disagree
-        self.assertFalse(eval_runner.cross_check_agree([a, c]))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

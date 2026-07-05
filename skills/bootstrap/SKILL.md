@@ -13,26 +13,26 @@ disable-model-invocation: false
 
 # /dev-kit:bootstrap — First-Run Orchestrator
 
-## Iron Law (예외 없음)
-**인자 0개로 디폴트 OK 동작.** Hidden flags (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`)만 허용.
+## Iron Law (no exceptions)
+**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`).
 
 ## 4-Step Orchestration (3 autonomous + 1 user confirm)
 
 ```
-[1] sanity bootstrap-sanity           → .dev-kit/sanity-report.md
+[1] sanity bootstrap-sanity              → .dev-kit/sanity-report.md
        ↓ (auto, deterministic regex + glob)
-[2] codebase-map bootstrap-codebase-map → §3 (5-line STUB default)
+[2] codebase-map bootstrap-codebase-map  → §3 (5-line STUB default)
        ↓ (auto, Read + Glob + Bash)
-[3] active-hooks bootstrap-active-hooks → .dev-kit/.active-hooks.json (SSOT)
+[3] active-hooks bootstrap-active-hooks  → .dev-kit/.active-hooks.json (SSOT)
        ↓ (auto)
 [4] write-claude-md lib/write_claude_md.py → CLAUDE.md (§1~§5 atomic)
        ↓ (auto)
-[5] user review 1회 (HOTL, MUST-29)
+[5] user review 1x (HOTL, MUST-29)
        ↓
-[6] exit / hand-off → /dev-kit:plan 호출 대기
+[6] exit / hand-off → wait for /dev-kit:plan call
 ```
 
-## Hook 정렬 (stage=bootstrap)
+## Hook integration (stage=bootstrap)
 
 | Hook | Mode |
 |---|---|
@@ -42,21 +42,21 @@ disable-model-invocation: false
 | slop-detector | OFF |
 | stop-verify | OFF |
 
-`active-hooks.json` SSOT 자동 초기화 (MUST-13). `--strict` 시 모든 hook `exit 2`.
+`active-hooks.json` SSOT auto-initialized (MUST-13). With `--strict` all hooks `exit 2`.
 
-## 규칙 (예외 없음)
+## Rules (no exceptions)
 
-- **0-arg UX (MUST-21)**: 인자 0개. 분기는 `when_to_use` 자동 매칭.
-- **HOTL (MUST-29)**: 단계 1~4 자동 진행. §5 hand-off pointer 자동 갱신.
-- **YAGNI**: 별도 옵션 prompt ❌ (MUST-NOT-13). `--slim|--full` 등 hidden flag만.
-- **No-over-engineering (MUST-25)**: 디폴트 동작으로 80% 해결. 추가 기능 = ADR 필요.
+- **0-arg UX (MUST-21)**: zero args. Branching via `when_to_use` auto-match.
+- **HOTL (MUST-29)**: steps 1~4 auto. §5 hand-off pointer auto-updated.
+- **YAGNI**: no extra option prompts ❌ (MUST-NOT-13). Only hidden flags like `--slim|--full`.
+- **No-over-engineering (MUST-25)**: defaults handle 80%. Extra features require ADR.
 
-## Hand-off 결과
+## Hand-off result
 
-성공 시 `.dev-kit/hand-off/bootstrap→plan.md` 자동 작성 (state_codec.py). 다음 `/dev-kit:plan` 호출 시 preamble 자동 주입.
+On success, `.dev-kit/hand-off/bootstrap→plan.md` auto-written (state_codec.py). Next `/dev-kit:plan` call auto-injects preamble.
 
-## Hot Failure (FAIL 시)
+## Hot failure (on FAIL)
 
-- sanity FAIL → Plan 진입 차단. `/dev-kit:plan` 호출 시 stderr 경고.
-- Hook override (`DEV_KIT_HOOK_OFF=*`) 자동 감지 → sanity report WARN.
-- `eval/golden/*.json` 부재 → bootstrap은 영향 없음 (Phase 3 이후 도입).
+- sanity FAIL → Plan entry blocked. `/dev-kit:plan` call warns on stderr.
+- Hook override (`DEV_KIT_HOOK_OFF=*`) auto-detected → sanity report WARN.
+- Missing `eval/golden/*.json` → bootstrap unaffected (Phase 3+ introduces).

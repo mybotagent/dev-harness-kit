@@ -1,7 +1,7 @@
 ---
 name: build-harness-engine
 category: design
-description: phase step files 생성. plan-ralph의 6단계 출력으로 phases/<name>/{index.json, step<N>.md} 자동 합성. plan-ralph가 dispatch.
+description: phase step file generation. Synthesizes plan-ralph 6-step output into phases/<name>/{index.json, step<N>.md}. Dispatched by plan-ralph.
 when_to_use: |
   - Auto-invoked by plan-ralph after gate-pass
   - User triggers manual regeneration via `@dev-kit:plan`
@@ -14,9 +14,9 @@ user-invocable: false
 # build-harness-engine — Phase Decomposition (Plan+Design subgraph)
 
 ## Core Goal
-PRD.md + non-goals를 받아 `phases/<name>/{index.json, step<N>.md}` 자동 생성.
+Take PRD.md + non-goals and auto-generate `phases/<name>/{index.json, step<N>.md}`.
 
-## 출력
+## Output
 
 ```
 phases/<phase-alias>/
@@ -26,7 +26,7 @@ phases/<phase-alias>/
 └── stepN-output.json   # after execution
 ```
 
-각 step file 형식:
+Each step file format:
 
 ```markdown
 # Step N: <title>
@@ -50,12 +50,12 @@ expected exit code 0, count 5+
 - ❌ Don't skip tests — Iron Law L1
 ```
 
-## 규칙
+## Rules
 
-- 한 step = 한 layer / 한 module (harness-runner의 step 별개 사이클)
-- must-read / AC / Don't do X because Y 필수 3섹션
-- function signature-level instruction (body ❌)
+- One step = one layer / one module (harness-runner's step is a separate cycle)
+- must-read / AC / Don't do X because Y are mandatory 3 sections
+- Function signature-level instruction (no body)
 
-## Hook 정렬
+## Hook integration
 
-`stop-verify=ON` 만. 그 외 OFF (Plan 단계와 동일).
+Only `stop-verify=ON`. Others OFF (same as Plan stage).

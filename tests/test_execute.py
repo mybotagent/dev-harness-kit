@@ -4,10 +4,8 @@ test_execute.py — RED-first tests for execute.py (harness-runner engine).
 
 Tests cover:
 - read_step prompt text from phases/<phase>/step<N>.md
-- build_preamble injects CLAUDE.md + docs/*.md + hand-off chain
 - parse_step_index step status transitions
 - write_step_output atomic
-- --parallel worktree runner (no real subprocess; mocked)
 """
 from __future__ import annotations
 
@@ -56,15 +54,6 @@ class TestExecute(unittest.TestCase):
     def test_read_step_missing_raises(self):
         with self.assertRaises(FileNotFoundError):
             execute.read_step(self.root, "0-mvp", 99)
-
-    def test_build_preamble_injects_claude_md(self):
-        preamble = execute.build_preamble(self.root, "0-mvp", step_index=0)
-        self.assertIn("# CLAUDE.md", preamble)
-        self.assertIn("Iron laws", preamble)
-
-    def test_build_preamble_includes_step_prompt(self):
-        preamble = execute.build_preamble(self.root, "0-mvp", step_index=0)
-        self.assertIn("Setup", preamble)
 
     def test_parse_step_index_pending(self):
         idx_path = self.root / "phases" / "0-mvp" / "index.json"
