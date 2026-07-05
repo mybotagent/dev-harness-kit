@@ -48,47 +48,6 @@ def read_step(project_root: Path, phase: str, step: int) -> str:
     return path.read_text(encoding="utf-8")
 
 
-# ---------- Preamble composition ----------
-
-def build_preamble(project_root: Path, phase: str, step_index: int) -> str:
-    """Build injected context for the agent per step.
-
-    Composition:
-      CLAUDE.md + docs/*.md (alphabetical) + active hand-off chain (resolved)
-      + step prompt (file body)
-    """
-    parts: List[str] = []
-
-    # §1 CLAUDE.md (auto-loaded into Claude Code, but we explicitly include it here)
-    claude_md = project_root / "CLAUDE.md"
-    if claude_md.exists():
-        parts.append("# Auto-generated CLAUDE.md (SSOT)\n")
-        parts.append(claude_md.read_text(encoding="utf-8"))
-        parts.append("\n---\n")
-
-    # §2 docs/*.md alphabetical
-    docs_dir = project_root / "docs"
-    if docs_dir.exists():
-        for doc in sorted(docs_dir.glob("*.md")):
-            parts.append(f"# docs/{doc.name}\n")
-            parts.append(doc.read_text(encoding="utf-8"))
-            parts.append("\n---\n")
-
-    # §3 Hand-off chain pointer (only most recent completed stages)
-    hand_off_dir = project_root / ".dev-kit" / "hand-off"
-    if hand_off_dir.exists():
-        for f in sorted(hand_off_dir.glob("*.md")):
-            parts.append(f"# Hand-off: {f.name}\n")
-            parts.append(f.read_text(encoding="utf-8"))
-            parts.append("\n---\n")
-
-    # §4 Step prompt
-    parts.append(f"# Step prompt: phases/{phase}/step{step_index}.md\n")
-    parts.append(read_step(project_root, phase, step_index))
-
-    return "".join(parts)
-
-
 # ---------- Step status state machine ----------
 
 def update_step_status(

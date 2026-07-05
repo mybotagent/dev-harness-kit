@@ -149,14 +149,6 @@ def score_asset(project_root: Path, asset: Dict, config: Optional[Dict] = None) 
     return _judge_asset(project_root, asset, config)
 
 
-def cross_check_agree(results: List[Dict], tolerance: float = 0.5) -> bool:
-    """MUST-NOT-23: 2-judge cross-check. Agree if all scores within tolerance."""
-    if not results:
-        return True
-    base = results[0].get("score", 0)
-    return all(abs(r.get("score", 0) - base) <= tolerance for r in results)
-
-
 def write_report(project_root: Path, results: List[Dict], config: Optional[Dict] = None) -> Path:
     """Write .dev-kit/eval-report.md human-readable summary."""
     path = project_root / ".dev-kit" / "eval-report.md"
