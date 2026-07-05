@@ -54,57 +54,76 @@ Loaded on top of project rules for every session. Used for:
 - Cross-project shortcuts
 - Things you never want to commit to a repo
 
-## Team hooks (opt-in)
+## Team hooks (opt-in templates, NOT in the plugin)
 
-The plugin ships 8 hooks. 5 are **personal** (auto-on at user install), 3 are **team** (opt in per-project).
+The plugin ships **5 personal hooks** (auto-on at user install). The 3 team hooks are **NOT** registered in the plugin's `hooks/hooks.json` — they live in `docs/team-hooks/` as **copy-paste templates** that each project copies into its own `.claude/hooks/` and wires up in `.claude/settings.json`.
 
-| Hook | Stage | Mode | Default |
+| Hook | Stage | Mode | Where |
 |---|---|---|---|
-| `tdd-guard` | PreToolUse (Edit/Write) | advisory | personal ✅ |
-| `bash-guard` | PreToolUse (Bash) | advisory | personal ✅ |
-| `secret-scan` | PostToolUse (Edit/Write) | advisory | personal ✅ |
-| `slop-detector` | PostToolUse (Edit/Write) | advisory | personal ✅ |
-| `stop-verify` | Stop | advisory | personal ✅ |
-| `prettier-format` | PostToolUse (Edit/Write) | advisory | **team** (opt in) |
-| `block-dangerous-commands` | PreToolUse (Bash) | **hard-block** | **team** (opt in) |
-| `eslint-fix` | PostToolUse (Edit/Write) | advisory | **team** (opt in) |
+| `tdd-guard` | PreToolUse (Edit/Write) | advisory | plugin (auto-on) |
+| `bash-guard` | PreToolUse (Bash) | advisory | plugin (auto-on) |
+| `secret-scan` | PostToolUse (Edit/Write) | advisory | plugin (auto-on) |
+| `slop-detector` | PostToolUse (Edit/Write) | advisory | plugin (auto-on) |
+| `stop-verify` | Stop | advisory | plugin (auto-on) |
+| `prettier-format` | PostToolUse (Edit/Write) | advisory | `docs/team-hooks/` (copy) |
+| `block-dangerous-commands` | PreToolUse (Bash) | **hard-block** | `docs/team-hooks/` (copy) |
+| `eslint-fix` | PostToolUse (Edit/Write) | advisory | `docs/team-hooks/` (copy) |
 
-### Why team hooks are opt-in, not auto-on
+### Why team hooks are templates, not plugin content
 
-Auto-formatting (`prettier`, `eslint --fix`) and hard-blocks on `rm -rf` are team policies, not personal preferences. A solo dev who works in 5 repos shouldn't be forced into a 6th repo's formatter. So the plugin ships them but doesn't auto-activate them. Each repo opts in.
+Auto-formatting and hard-blocks are team policy, not personal preference. A solo dev who works in 5 repos shouldn't be forced into a 6th repo's formatter. And the plugin cannot enforce a team hook per-project: the plugin is **scoped** by Claude Code (one hooks.json per install), so a hook either fires on every project or none.
 
-### Enable team hooks in a project
+**Solution**: ship the scripts in `docs/team-hooks/` as copy-paste templates. Each team commits the copy that matches their policy.
 
-Edit `<project>/.claude/settings.json`:
+### Enable a team hook in a project
+
+```bash
+# 1. Copy the templates into the project
+mkdir -p .claude/hooks
+cp docs/team-hooks/prettier-format.sh .claude/hooks/
+cp docs/team-hooks/block-dangerous-commands.sh .claude/hooks/
+cp docs/team-hooks/eslint-fix.sh .claude/hooks/
+chmod +x .claude/hooks/*.sh
+
+# 2. Wire them in .claude/settings.json
+```
 
 ```json
 {
-  "permissions": {
-    "allow": ["Edit", "Write", "Bash"]
-  },
+  "permissions": { "allow": ["Edit", "Write", "Bash"] },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/block-dangerous-commands.sh" }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          { "type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/prettier-format.sh" },
-          { "type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/eslint-fix.sh" }
-        ]
-      }
-    ]
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{ "type": "command", "command": "bash .claude/hooks/block-dangerous-commands.sh" }]
+    }],
+    "PostToolUse": [{
+      "matcher": "Write|Edit|MultiEdit",
+      "hooks": [
+        { "type": "command", "command": "bash .claude/hooks/prettier-format.sh" },
+        { "type": "command", "command": "bash .claude/hooks/eslint-fix.sh" }
+      ]
+    }]
   }
 }
 ```
 
-This file is committed. The team shares the policy.
+The team shares this file via PR.
+
+### Why hard-block only on `block-dangerous-commands` (not the others)
+
+Auto-format is reversible (git checkout). A blocked `rm -rf` or `git push --force` is **not** — it can destroy work or rewrite shared history. Only `block-dangerous-commands` hard-blocks. The other two are advisory (exit 0, print warning).
+
+### Coverage non-overlap with `bash-guard.sh`
+
+| Concern | bash-guard | block-dangerous-commands |
+|---|---|---|
+| Destructive file ops | `rm -rf /`, `chmod 777` | `rm -rf` tokenized, curl\|sh, fork bomb |
+| Destructive git | `git push --force.* main`, `git reset --hard`, `git clean -f` | `git push --force` (any), `git reset --hard`, `git clean -fd/-fdx` |
+| DDL/data | `DROP TABLE`, `DROP DATABASE` | (out of scope) |
+| Supply chain | `npm publish`, `eval $`, `>/etc/passwd` | (out of scope) |
+| Mode | advisory → hard-block with `DEV_KIT_STRICT=1` | always hard-block |
+
+No double-coverage. Either hook alone is safe; running both is also safe (the second hook sees a no-op and exits 0).
 
 ### Override per-folder
 
