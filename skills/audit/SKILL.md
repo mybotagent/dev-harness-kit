@@ -1,7 +1,7 @@
 ---
 name: audit
 category: audit
-description: 0-arg cross-cutting. slop + secret 일괄 감사. READ-ONLY.
+description: 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY.
 when_to_use: |
   - User types /dev-kit:audit
   - Bulk audit before release
@@ -13,10 +13,10 @@ disable-model-invocation: false
 
 # /dev-kit:audit — Cross-cutting audit
 
-read-only. HIGH/MEDIUM/LOW buckets 출력. 절대 write ❌.
+read-only. HIGH/MEDIUM/LOW buckets output. Never write ❌.
 
-## 규칙
+## Rules
 
-- `/dev-kit:audit --secrets-only` → secret 만
-- `/dev-kit:audit --slop-only` → slop 만
-- combined mode (default) → 둘 다
+- `/dev-kit:audit --secrets-only` → secrets only
+- `/dev-kit:audit --slop-only` → slop only
+- combined mode (default) → both

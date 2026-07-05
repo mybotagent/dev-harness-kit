@@ -14,30 +14,30 @@ user-invocable: false
 
 # bootstrap-sanity — Read-Only Precondition Audit
 
-## Iron Law (예외 없음)
-**파일을 절대 수정하지 않는다.** 입력 디렉토리만 읽고 결과를 `.dev-kit/sanity-report.md`로 emit.
+## Iron Law (no exceptions)
+**Never modify files.** Read input directory only; emit result to `.dev-kit/sanity-report.md`.
 
-## Gate 출력
+## Gate output
 
 | Result | Condition |
 |---|---|
-| **PASS** | 모든 필수 precondition 통과 |
-| **WARN** | 1~3개 WARN (pass-through 허용) |
-| **FAIL** | 4+ WARN 또는 critical 1+ — Plan 진입 ❌ |
+| **PASS** | All required preconditions pass |
+| **WARN** | 1~3 WARN (pass-through allowed) |
+| **FAIL** | 4+ WARN or 1+ critical — Plan entry ❌ |
 
-## 7-Check Audit (결정론)
+## 7-Check Audit (deterministic)
 
 | # | Check | Tool | Severity |
 |---|---|---|---|
-| 1 | `package.json` 또는 `pyproject.toml` 존재 (manifest) | `Glob` | WARN |
-| 2 | `.git/` 디렉토리 정상 (HEAD 존재) | `Bash: git rev-parse --git-dir` | WARN |
-| 3 | `docs/` 디렉토리 4개 템플릿 placeholder (`ARCHITECTURE.md`, `PRD.md`, `ADR.md`, `DESIGN.md`) | `Glob` | WARN |
+| 1 | `package.json` or `pyproject.toml` exists (manifest) | `Glob` | WARN |
+| 2 | `.git/` directory healthy (HEAD exists) | `Bash: git rev-parse --git-dir` | WARN |
+| 3 | `docs/` directory has 4 template placeholders (`ARCHITECTURE.md`, `PRD.md`, `ADR.md`, `DESIGN.md`) | `Glob` | WARN |
 | 4 | banned-phrase scan (slop-detector SSOT regex) | `Bash: slop-detector.sh` (read-only) | WARN |
 | 5 | secret-scan (credential pattern) | `Bash: secret-scan.sh` (read-only) | **CRITICAL FAIL** |
-| 6 | hook bypass detection (`DEV_KIT_HOOK_OFF=*` 환경) | `Bash: env \| grep` | WARN |
-| 7 | methodology lockfile (`lib/methodology.json` 일관성) | `Read` | WARN |
+| 6 | hook bypass detection (`DEV_KIT_HOOK_OFF=*` env) | `Bash: env \| grep` | WARN |
+| 7 | methodology lockfile (`lib/methodology.json` consistency) | `Read` | WARN |
 
-## 출력 형식
+## Output format
 
 ```markdown
 # Sanity Report — dev-harness-kit
@@ -54,15 +54,15 @@ user-invocable: false
   - "ok to proceed to /dev-kit:plan"
 ```
 
-## 규칙 (예외 없음)
+## Rules (no exceptions)
 
-- **Read-only invariant**: 어떤 파일도 수정 ❌. 검증은 Read + Glob + Bash (stat/grep/cat)만.
-- **LLM 호출 0회**: 결정론. 결과 재현 가능.
-- **빠른 실패**: critical 1개라도 발견 시 즉시 FAIL + Plan 진입 차단.
+- **Read-only invariant**: no file modifications ❌. Validation uses Read + Glob + Bash (stat/grep/cat) only.
+- **Zero LLM calls**: deterministic. Result reproducible.
+- **Fail fast**: 1 critical → immediate FAIL + Plan entry blocked.
 
-## Hook 정렬
+## Hook integration
 
-이 스킬은 active-hooks.json의 Bootstrap stage에서:
-- `slop-detector=OFF` (sanity 자체가 slop 검증 = 자체)
-- `secret-scan=read-only` (sanity 결과로 secret 발견 가능)
-- `bash-guard=OFF` (sanity는 안전한 Bash만 호출)
+In Bootstrap stage via active-hooks.json:
+- `slop-detector=OFF` (sanity itself is the slop check)
+- `secret-scan=read-only` (sanity result can detect secrets)
+- `bash-guard=OFF` (sanity only calls safe Bash)

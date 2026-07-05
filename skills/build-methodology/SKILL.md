@@ -1,7 +1,7 @@
 ---
 name: build-methodology
 category: build
-description: methodology router. TDD/SDD/DDD/BDD/FDD custom 선택 (MUST-48). lib/methodology/<name>.py 자동 dispatch.
+description: methodology router. TDD/SDD/DDD/BDD/FDD/custom selection (MUST-48). Auto-dispatched via lib/methodology/<name>.py.
 when_to_use: |
   - User runs /dev-kit:config "methodology" question
   - Auto-invoked by build-engine per step
@@ -16,7 +16,7 @@ user-invocable: false
 ## Iron Law
 **L1 = "no prod code without verification artifact"** (artifact type varies by methodology).
 
-## Adapter 인터페이스 (`lib/methodology/abc.py`)
+## Adapter interface (`lib/methodology/abc.py`)
 
 ```python
 class Methodology(ABC):
@@ -31,7 +31,7 @@ class Methodology(ABC):
     def report_status(self, worktree: Path, step: Dict) -> Dict: ...
 ```
 
-## 5 Adapter (default 가능)
+## 5 Adapters (default-able)
 
 | Methodology | Artifact | Verification | Cycle | Hook |
 |---|---|---|---|---|
@@ -43,15 +43,15 @@ class Methodology(ABC):
 
 ## Selector
 
-`/dev-kit:config` 의 multiSelect "methodology" answer → `lib/methodology.json` 자동 기록.
+`/dev-kit:config` multiSelect "methodology" answer → `lib/methodology.json` auto-recorded.
 
-## Hook 정렬
+## Hook integration
 
-`.dev-kit/.active-hooks.json`의 stage-cell `tdd-guard` value:
-- `true` (모든 hook ON)
-- `false` (전체 OFF, 사용자가 opt-out)
-- methodology adapter 별도 register 시 자동 매핑
+`.dev-kit/.active-hooks.json` stage-cell `tdd-guard` value:
+- `true` (all hooks ON)
+- `false` (all OFF, user opt-out)
+- methodology adapter registers its own mapping
 
-## 신규 방법론 추가
+## Adding a new methodology
 
-`lib/methodology/<name>.py` 1 파일 + `lib/test_methodology.py` 회귀 1개로 끝 (YAGNI). ADR 필요 + migration 없음.
+One file `lib/methodology/<name>.py` + one regression in `lib/test_methodology.py` (YAGNI). No ADR or migration required.
