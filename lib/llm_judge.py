@@ -46,8 +46,6 @@ def load_config(project_root: Path) -> Dict[str, str]:
         "model": _env_get(env, "JUDGE_MODEL", "MiniMax-M3[1m]"),
         "api_key": _env_get(env, api_key_var, ""),
         "base_url": _env_get(env, "JUDGE_BASE_URL", "https://api.minimax.io/anthropic"),
-        "minimax_api_key": env.get("MINMAX_API_KEY", ""),
-        "anthropic_api_key": env.get("ANTHROPIC_API_KEY", ""),
     }
 
 

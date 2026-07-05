@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -63,15 +62,14 @@ def discover_assets(project_root: Path) -> List[Dict]:
             })
     iron_law_src = project_root / "lib" / "write_claude_md.py"
     if iron_law_src.exists():
-        body = iron_law_src.read_text(encoding="utf-8")
-        for line in body.splitlines():
-            if line.startswith("L1_") or line.startswith("L2_") or line.startswith("L3_") or line.startswith("L4_") or line.startswith("L5_"):
+        for line in iron_law_src.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if any(stripped.startswith(f"L{n}_") for n in range(1, 6)):
                 assets.append({
-                    "path": f"lib/write_claude_md.py: {line.strip()[:40]}",
+                    "path": f"lib/write_claude_md.py: {stripped[:40]}",
                     "kind": "iron_law",
-                    "content": line.strip(),
+                    "content": stripped,
                 })
-                break  # one representative entry
     method_dir = project_root / "lib" / "methodology"
     if method_dir.exists():
         for m in sorted(method_dir.glob("*.py")):
@@ -246,10 +244,11 @@ def run_eval(project_root: Path, config: Optional[Dict] = None, *, dry_run: bool
                     "error": str(e),
                 })
     write_report(project_root, results, config)
+    summary = {v: results.count(v) for v in ("OK", "DRIFT_WARNING", "ROT")}
     return {
         "results": results,
         "config": {k: v for k, v in config.items() if k != "api_key"},
-        "summary": {k: results.count(v) for k in ["OK", "DRIFT_WARNING", "ROT"] for v in []},
+        "summary": summary,
     }
 
 

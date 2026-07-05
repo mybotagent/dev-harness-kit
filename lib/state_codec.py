@@ -15,7 +15,7 @@ import os
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 KST = timezone(timedelta(hours=9))
 SCHEMA_VERSION = "1.0.0"
