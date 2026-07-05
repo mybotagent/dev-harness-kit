@@ -1,117 +1,99 @@
 #!/usr/bin/env bash
 # install.sh — Bootstrap dev-harness-kit into target project.
 # Modes:
-#   --team        : include .dev-kit/ in git (100x AX)
-#   --strict      : enable hard-block hooks (default advisory)
-#   --config      : launch /dev-kit:config picker auto
-#   --skip-sanity : skip sanity stage
-#   --skip-map    : skip codebase-map stage
+#   --team   : include .dev-kit/ in git (override .gitignore)
+#   --strict : set DEV_KIT_STRICT=1 in plugin.json env (hard-block hooks)
 #
-# Adapted from dev-harness/install.sh.
+# Source layout (this script lives at lib/install.sh):
+#   ../.claude-plugin/{marketplace,plugin/{plugin,hooks}}.json
+#   ../hooks/*.sh                              (actual hook scripts)
+#   ./*.py                                     (lib modules)
+#   ../skills/<name>/SKILL.md                  (skills)
+#   ../../tests/*.py                           (regression tests)
 
 set -eo pipefail
 
 TARGET="${1:-$PWD}"
+SRC_LIB="$(cd "$(dirname "$0")" && pwd)"
+SRC_REPO="$(cd "$SRC_LIB/.." && pwd)"
 WITH_TEAM=false
 WITH_STRICT=false
-WITH_CONFIG=false
-SKIP_SANITY=false
-SKIP_MAP=false
 
 for arg in "$@"; do
   case "$arg" in
     --team) WITH_TEAM=true ;;
     --strict) WITH_STRICT=true ;;
-    --config) WITH_CONFIG=true ;;
-    --skip-sanity) SKIP_SANITY=true ;;
-    --skip-map) SKIP_MAP=true ;;
+    *) ;;
   esac
 done
 
-SRC="$(cd "$(dirname "$0")" && pwd)"
 echo "→ Installing dev-harness-kit into: $TARGET"
-mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills" "$TARGET/.claude/commands"
-mkdir -p "$TARGET/.claude-plugin/plugin/.claude-plugin" "$TARGET/.claude-plugin/plugin/hooks"
-mkdir -p "$TARGET/lib" "$TARGET/tests" "$TARGET/eval"
+mkdir -p "$TARGET/.claude-plugin/plugin/.claude-plugin" \
+         "$TARGET/.claude-plugin/plugin/hooks" \
+         "$TARGET/lib" \
+         "$TARGET/tests"
 
-# Plugin manifest
-cp "$SRC/../.claude-plugin/marketplace.json" "$TARGET/.claude-plugin/" 2>/dev/null || \
-    cp "$SRC/../../.claude-plugin/marketplace.json" "$TARGET/.claude-plugin/" 2>/dev/null || \
-    echo "  ! marketplace.json not found (skip)"
+copy() {
+  # copy <src> <dst_dir>; skip silently if src missing
+  [ -e "$1" ] && cp "$1" "$2" || echo "  ! skip (missing): $1"
+}
 
-# Try to copy from local plugin layout
-for p in "$SRC/../.claude-plugin/plugin" "$SRC/../../.claude-plugin/plugin"; do
-  if [ -d "$p" ]; then
-    SRC_PLUGIN="$p"
-    break
-fi
+# Plugin manifests
+copy "$SRC_REPO/.claude-plugin/marketplace.json" "$TARGET/.claude-plugin/"
+copy "$SRC_REPO/.claude-plugin/plugin/plugin.json" "$TARGET/.claude-plugin/plugin/.claude-plugin/"
+copy "$SRC_REPO/.claude-plugin/plugin/hooks/hooks.json" "$TARGET/.claude-plugin/plugin/hooks/"
+
+# Hook scripts (real location: <repo>/hooks/)
+for sh in "$SRC_REPO"/hooks/*.sh; do
+  copy "$sh" "$TARGET/.claude-plugin/plugin/hooks/"
 done
 
-if [ -n "${SRC_PLUGIN:-}" ]; then
-  cp "$SRC_PLUGIN/.claude-plugin/plugin.json" "$TARGET/.claude-plugin/plugin/.claude-plugin/" 2>/dev/null || true
-  cp "$SRC_PLUGIN/hooks/hooks.json" "$TARGET/.claude-plugin/plugin/hooks/" 2>/dev/null || true
-  cp "$SRC_PLUGIN/hooks/"*.sh "$TARGET/.claude-plugin/plugin/hooks/" 2>/dev/null || true
-fi
+# Lib modules (all *.py in lib/)
+for py in "$SRC_LIB"/*.py; do
+  copy "$py" "$TARGET/lib/"
+done
 
-# lib (3 critical modules)
-cp "$SRC/state_codec.py" "$TARGET/lib/" 2>/dev/null || true
-cp "$SRC/active_hooks_codec.py" "$TARGET/lib/" 2>/dev/null || true
-cp "$SRC/write_claude_md.py" "$TARGET/lib/" 2>/dev/null || true
-cp "$SRC/execute.py" "$TARGET/lib/" 2>/dev/null || true
-
-# Skills (flat: skills/<skill-name>/SKILL.md — one level, Claude Code plugin convention)
-if [ -d "$SRC/../skills" ]; then
-  for skill_dir in "$SRC/../skills"/*/; do
+# Skills (flat: skills/<skill-name>/SKILL.md)
+if [ -d "$SRC_REPO/skills" ]; then
+  for skill_dir in "$SRC_REPO/skills"/*/; do
+    [ -d "$skill_dir" ] || continue
     skill_name=$(basename "$skill_dir")
     mkdir -p "$TARGET/.claude/skills/$skill_name"
-    cp "$skill_dir/SKILL.md" "$TARGET/.claude/skills/$skill_name/" 2>/dev/null || true
+    copy "$skill_dir/SKILL.md" "$TARGET/.claude/skills/$skill_name/"
   done
 fi
 
-# Commands
-if [ -d "$SRC/../../commands" ]; then
-  cp "$SRC/../../commands"/*.md "$TARGET/.claude/commands/" 2>/dev/null || true
-fi
-
-# Tests
-if [ -d "$SRC/../../tests" ]; then
-  cp "$SRC/../../tests"/*.py "$TARGET/tests/" 2>/dev/null || true
-fi
-
-# Templates
-if [ -d "$SRC/../../templates" ]; then
-  cp "$SRC/../../templates"/*.md "$TARGET/templates/" 2>/dev/null || true
-fi
-
-# Mode flags
-if $WITH_STRICT; then
-  echo "" > "$TARGET/.claude-plugin/plugin/hooks/.strict"
-  echo "  ✓ strict mode enabled (hooks will hard-block)"
-fi
-
-# Team mode — include .dev-kit/ in git (NOT gitignore)
-if $WITH_TEAM; then
-  if [ -f "$TARGET/.gitignore" ]; then
-    grep -v "^\.dev-kit" "$TARGET/.gitignore" > "$TARGET/.gitignore.tmp" || true
-    mv "$TARGET/.gitignore.tmp" "$TARGET/.gitignore"
-  fi
-  echo "  ✓ team mode: .dev-kit/ will be git-included"
-fi
-
-# Verification
-echo "→ Verifying:"
-for f in "$TARGET/.claude-plugin/plugin/.claude-plugin/plugin.json" \
-         "$TARGET/.claude-plugin/plugin/hooks/hooks.json" \
-         "$TARGET/lib/state_codec.py"; do
-  [ -f "$f" ] && echo "  ✓ $f" || { echo "  ✗ MISSING: $f"; exit 1; }
+# Regression tests
+for py in "$SRC_REPO"/tests/*.py; do
+  copy "$py" "$TARGET/tests/"
 done
 
-if $WITH_CONFIG; then
-  echo "  → Auto-launch /dev-kit:config picker (next session)"
+# Strict mode — set DEV_KIT_STRICT=1 in plugin.json env block so hooks can read it.
+if $WITH_STRICT; then
+  plugin_json="$TARGET/.claude-plugin/plugin/.claude-plugin/plugin.json"
+  if [ -f "$plugin_json" ] && command -v jq >/dev/null 2>&1; then
+    tmp=$(mktemp)
+    jq '.env = (.env // {}) + {"DEV_KIT_STRICT": "1"}' "$plugin_json" > "$tmp" && mv "$tmp" "$plugin_json"
+    echo "  ✓ strict mode: DEV_KIT_STRICT=1 set in plugin.json env"
+  else
+    echo "  ! strict mode requested but jq missing or plugin.json absent"
+  fi
 fi
+
+# Team mode — keep .dev-kit/ tracked (strip any pre-existing ignore).
+if $WITH_TEAM && [ -f "$TARGET/.gitignore" ]; then
+  grep -v "^\.dev-kit" "$TARGET/.gitignore" > "$TARGET/.gitignore.tmp" || true
+  mv "$TARGET/.gitignore.tmp" "$TARGET/.gitignore"
+  echo "  ✓ team mode: .dev-kit/ kept in git"
+fi
+
+echo "→ Verifying:"
+for f in "$TARGET/.claude-plugin/marketplace.json" \
+         "$TARGET/.claude-plugin/plugin/.claude-plugin/plugin.json" \
+         "$TARGET/lib/state_codec.py"; do
+  if [ -f "$f" ]; then echo "  ✓ $f"; else echo "  ✗ MISSING: $f"; exit 1; fi
+done
 
 echo ""
 echo "✅ dev-harness-kit installed."
-echo "   Next:  cd $TARGET"
-echo "          claude (auto-loads plugin via plugin.json)"
-echo "          /dev-kit:bootstrap  (or wait for Stage B auto-load)"
+echo "   Next:  cd $TARGET && claude"

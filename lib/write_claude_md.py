@@ -21,6 +21,22 @@ sys.path.insert(0, str(Path(__file__).parent))
 from active_hooks_codec import DEFAULT_MATRIX  # noqa: E402
 from atomic import atomic_write_text  # noqa: E402
 
+# §3 tree-walk limits
+TREE_DEPTH_MAX = 4
+TREE_LINES_MAX = 80
+FILES_PER_DIR_MAX = 20
+SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", ".pytest_cache"}
+
+# Candidate files for existence-based sections
+MANIFEST_CANDIDATES = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"]
+CONVENTION_CANDIDATES = [".editorconfig", ".eslintrc.json", ".prettierrc", "pyproject.toml"]
+LOCKFILES = [
+    ("pnpm-lock.yaml", 30),
+    ("package-lock.json", 30),
+    ("requirements.txt", 20),
+    ("Pipfile.lock", 20),
+]
+
 # Iron Law definitions (MUST-8 SSOT)
 L1_NO_TEST_NO_CODE = "No prod code without verification artifact (test/contract/domain/scenario/feature per methodology)"
 L2_ROOT_CAUSE_FIRST = "No fix without reproducing the bug (Phase 1 = reproduce)"
@@ -59,9 +75,9 @@ def render_stub_section_3(project_root: Path) -> str:
 def render_full_section_3(project_root: Path) -> str:
     """Full 4-section codebase map."""
     tree = _safe_tree(project_root)
-    manifest = _safe_manifest(project_root)
+    manifest = _safe_existence_list(project_root, MANIFEST_CANDIDATES, "no manifest detected")
     deps = _safe_deps(project_root)
-    conventions = _safe_conventions(project_root)
+    conventions = _safe_existence_list(project_root, CONVENTION_CANDIDATES, "no conventions file detected")
     return (
         f"### Tree (depth 4)\n```\n{tree}\n```\n\n"
         f"### Manifest\n{manifest}\n\n"
@@ -75,54 +91,34 @@ def _safe_tree(root: Path) -> str:
         out: List[str] = []
         for dirpath, dirnames, filenames in os.walk(root):
             depth = dirpath[len(str(root)):].count(os.sep)
-            if depth > 4:
+            if depth > TREE_DEPTH_MAX:
                 dirnames.clear()
                 continue
-            dirnames[:] = [d for d in dirnames if d not in {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", ".pytest_cache"}]
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             indent = "  " * depth
             out.append(f"{indent}{os.path.basename(dirpath) or '.'}/")
-            for f in sorted(filenames)[:20]:
+            for f in sorted(filenames)[:FILES_PER_DIR_MAX]:
                 out.append(f"{indent}  {f}")
-        return "\n".join(out[:80]) or "(empty)"
+        return "\n".join(out[:TREE_LINES_MAX]) or "(empty)"
     except Exception:
         return "(tree extraction failed — STALE)"
 
 
-def _safe_manifest(root: Path) -> str:
-    candidates = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"]
-    found = []
-    for c in candidates:
-        if (root / c).exists():
-            found.append(f"- `{c}` ✓")
-    return "\n".join(found) if found else "- (no manifest detected)"
+def _safe_existence_list(root: Path, candidates: List[str], fallback: str) -> str:
+    found = [f"- `{c}` ✓" for c in candidates if (root / c).exists()]
+    return "\n".join(found) if found else f"- {fallback}"
 
 
 def _safe_deps(root: Path) -> str:
-    candidates = [
-        ("pnpm-lock.yaml", 30),
-        ("package-lock.json", 30),
-        ("requirements.txt", 20),
-        ("Pipfile.lock", 20),
-    ]
-    for filename, n in candidates:
-        f = root / filename
-        if f.exists():
+    for filename, n in LOCKFILES:
+        path = root / filename
+        if path.exists():
             try:
-                lines = f.read_text(encoding="utf-8").splitlines()[:n]
+                lines = path.read_text(encoding="utf-8").splitlines()[:n]
                 return "\n".join(lines) or f"({filename} empty)"
             except Exception:
                 return f"(read failed for {filename})"
     return "- (no lockfile detected)"
-
-
-def _safe_conventions(root: Path) -> str:
-    items = []
-    for c in [".editorconfig", ".eslintrc.json", ".prettierrc", "pyproject.toml"]:
-        if (root / c).exists():
-            items.append(f"- `{c}` ✓")
-    if not items:
-        items.append("- (no conventions file detected)")
-    return "\n".join(items)
 
 
 def render_hook_matrix_table() -> str:
