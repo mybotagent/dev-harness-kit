@@ -1,7 +1,7 @@
 ---
 name: ship
 category: ship
-description: 0-arg. Release tag 발행. gate check only (hooks auto). Review verdict=Approve + main-block 통과 필수.
+description: 0-arg. Release tag emit. Gate check only (hooks auto). Requires Review verdict=Approve + main-block pass.
 when_to_use: |
   - User types /dev-kit:ship
   - Release cutoff
@@ -13,19 +13,19 @@ disable-model-invocation: false
 
 # /dev-kit:ship — Release Gate
 
-## 동작
+## Behavior
 
-1. Verify pre-push main-block 통과 (gh-autoswitch).
-2. Review verdict=Approve 확인 (security scan 별도 통과이면 OK).
-3. CHANGELOG entry 자동.
+1. Verify pre-push main-block pass (gh-autoswitch).
+2. Check Review verdict=Approve (separate security scan pass also OK).
+3. CHANGELOG entry auto.
 4. git tag + push.
 
 ## Iron Law
 
-- main 직접 push ❌. PR only.
-- --no-verify 남용 ❌.
-- auto-merge 미포함 (사용자 검토 후).
+- No direct push to main ❌. PR only.
+- No --no-verify abuse ❌.
+- No auto-merge (after user review).
 
-## Hook 정렬
+## Hook integration
 
-`stop-verify=ON`. main-block hook 검증.
+`stop-verify=ON`. main-block hook validation.

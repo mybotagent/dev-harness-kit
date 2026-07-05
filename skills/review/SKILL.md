@@ -180,13 +180,13 @@ Fix:
 
 ---
 
-## Hook 정렬 (Stage Review)
+## Hook integration (Stage Review)
 
-`slop-detector, secret-scan, stop-verify` ON. `tdd-guard` OFF (review 단계).
+`slop-detector, secret-scan, stop-verify` ON. `tdd-guard` OFF (review stage).
 
-## 다음 단계
+## Next step
 
-`/dev-kit:security` (10-dim OWASP) 또는 `/dev-kit:ship`.
+`/dev-kit:security` (10-dim OWASP) or `/dev-kit:ship`.
 
 ---
 
