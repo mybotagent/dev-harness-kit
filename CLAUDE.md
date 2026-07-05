@@ -31,7 +31,7 @@
 /Users/sanghee/dev/dev-harness-kit/.claude/worktrees/simplify
   ├─ .claude-plugin/{marketplace,plugin/{plugin,hooks}}.json
   ├─ skills/<skill-name>/SKILL.md  (27 skills, flat; category in frontmatter)
-  ├─ lib/{active_hooks_codec.py, eval_runner.py, execute.py, llm_judge.py, state_codec.py, write_claude_md.py}
+  ├─ lib/{active_hooks_codec.py, atomic.py, eval_runner.py, execute.py, llm_judge.py, state_codec.py, write_claude_md.py}
   └─ eval/{golden, prompts}
 ```
 <!-- Run `/dev-kit:bootstrap --full-claude-md` to embed complete tree (depth 4), manifest, deps -->

@@ -8,20 +8,15 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
+from atomic import atomic_write_json, now_iso  # noqa: E402
 
-KST = timezone(timedelta(hours=9))
 GOLDEN_SCHEMA_VERSION = "1.0.0"
 ASSET_KINDS = ("claude_md", "skill", "hook", "iron_law", "methodology")
-
-
-def now_iso() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def discover_assets(project_root: Path) -> List[Dict]:
@@ -101,17 +96,7 @@ def load_golden(path: Path) -> Dict:
 
 def save_golden(path: Path, data: Dict) -> None:
     """Save golden baseline. Atomic write."""
-    import os, tempfile
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    atomic_write_json(path, data)
 
 
 def _judge_asset(project_root: Path, asset: Dict, config: Dict) -> Dict:

@@ -5,24 +5,16 @@ state_codec.py — .dev-kit/state.json ↔ hand-off markdown conversion.
 Single source of truth for global state. Per MUST-22 dual-source SSOT:
 - CLAUDE.md §2 active stage (auto-loaded into context)
 - .dev-kit/state.json (machine-readable, atomic write)
-
-Atomic write: write to .tmp then rename (POSIX atomic).
 """
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
-KST = timezone(timedelta(hours=9))
+from atomic import atomic_write_json, atomic_write_text, now_iso  # noqa: E402
+
 SCHEMA_VERSION = "1.0.0"
-
-
-def now_iso() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def read_state(project_root: Path) -> Dict:
@@ -45,23 +37,9 @@ def read_state(project_root: Path) -> Dict:
 
 def write_state(project_root: Path, state: Dict) -> None:
     """Atomic write to .dev-kit/state.json. POSIX atomic via rename."""
-    state_path = project_root / ".dev-kit" / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
     state["last_transition_at"] = now_iso()
     state["schema_version"] = SCHEMA_VERSION
-    fd, tmp_path = tempfile.mkstemp(
-        dir=state_path.parent,
-        prefix=".state.",
-        suffix=".json.tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp_path, state_path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    atomic_write_json(project_root / ".dev-kit" / "state.json", state)
 
 
 def transition_stage(
@@ -110,15 +88,7 @@ def append_hand_off(project_root: Path, from_stage: str, to_stage: str, goal: st
 ## §4 Next Stage Trigger
 `/dev-kit:{to_stage}` (0-arg). Preamble 자동 주입: CLAUDE.md §2 + 이 hand-off.
 """
-    fd, tmp_path = tempfile.mkstemp(dir=hand_off_dir, prefix=".hand-off.", suffix=".md.tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    atomic_write_text(path, content)
     return path
 
 

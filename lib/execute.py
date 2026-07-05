@@ -16,19 +16,13 @@ import argparse
 import json
 import os
 import sys
-import tempfile
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
-KST = timezone(timedelta(hours=9))
+from atomic import atomic_write_json, now_iso  # noqa: E402
 MAX_RETRIES = 3
 SCHEMA_VERSION = "1.0.0"
 VALID_STATUSES = ("pending", "completed", "error", "blocked")
-
-
-def now_iso() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 # ---------- Phase / Step readers ----------
@@ -140,19 +134,10 @@ def update_step_status(
             break
     else:
         raise ValueError(f"step {step} not found in {phase}")
-    _atomic_write_json(idx_path, data)
+    atomic_write_json(idx_path, data)
 
 
-def _atomic_write_json(path: Path, data: Dict) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+# ---------- Step output writer ----------
 
 
 # ---------- Step output writer ----------
@@ -178,7 +163,7 @@ def write_step_output(
         "duration_seconds": duration_seconds,
         "timestamp": now_iso(),
     }
-    _atomic_write_json(path, data)
+    atomic_write_json(path, data)
     return path
 
 

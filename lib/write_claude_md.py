@@ -14,12 +14,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 from active_hooks_codec import DEFAULT_MATRIX  # noqa: E402
+from atomic import atomic_write_text  # noqa: E402
 
 # Iron Law definitions (MUST-8 SSOT)
 L1_NO_TEST_NO_CODE = "No prod code without verification artifact (test/contract/domain/scenario/feature per methodology)"
@@ -205,15 +205,7 @@ def write_claude_md(project_root: Path, *, full_map: bool = False, stage: str = 
     """Atomic write CLAUDE.md. Returns path."""
     path = project_root / "CLAUDE.md"
     content = render_claude_md(project_root, stage=stage, full_map=full_map)
-    fd, tmp = tempfile.mkstemp(dir=project_root, prefix=".CLAUDE.md.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    atomic_write_text(path, content)
     return path
 
 
