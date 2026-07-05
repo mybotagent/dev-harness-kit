@@ -47,6 +47,6 @@ Build stage에서 모두 ON:
 
 - `step<N>-output.json`: `{step, phase, exit_code, stdout, stderr, duration_seconds, timestamp}`
 
-## Sub-agent 위임
+## Sub-agent delegation
 
-MUST-36: 메인 오케스트레이터 = AC 위임. sub-agent는 `lib/sub_agent_runner.py` 통해 spawn (Phase 3 흡수 예정). worktree 격리 + 권한 (Bash/Read/Edit/Write/Glob/Grep/WebFetch/lint/browser).
+Phase 3 (planned): main orchestrator delegates AC execution to sub-agents in isolated worktrees with scoped permissions. Currently sequential-only.

@@ -18,6 +18,9 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional
 
+sys.path.insert(0, str(Path(__file__).parent))
+from active_hooks_codec import DEFAULT_MATRIX  # noqa: E402
+
 # Iron Law definitions (MUST-8 SSOT)
 L1_NO_TEST_NO_CODE = "No prod code without verification artifact (test/contract/domain/scenario/feature per methodology)"
 L2_ROOT_CAUSE_FIRST = "No fix without reproducing the bug (Phase 1 = reproduce)"
@@ -36,14 +39,18 @@ IRON_LAWS: List[str] = [
 
 def render_stub_section_3(project_root: Path) -> str:
     """5-line STUB (default `--slim-claude-md`). Compact 1-line tree + opt-in marker."""
+    lib_files = sorted(p.name for p in (project_root / "lib").glob("*.py")) if (project_root / "lib").exists() else []
+    eval_dirs = sorted(p.name for p in (project_root / "eval").iterdir() if p.is_dir()) if (project_root / "eval").exists() else []
+    skill_count = len(list((project_root / "skills").rglob("SKILL.md"))) if (project_root / "skills").exists() else 0
+    has_commands = (project_root / "commands").exists()
     return (
         "```\n"
         f"{project_root}\n"
         "  ├─ .claude-plugin/{marketplace,plugin/{plugin,hooks}}.json\n"
-        "  ├─ skills/<skill-name>/SKILL.md  (flat, 1 level; category in frontmatter)\n"
-        "  ├─ commands/<cmd>.md  (15 commands, 0-arg)\n"
-        "  ├─ lib/{state_codec,active_hooks_codec,write_claude_md,...}.py\n"
-        "  └─ eval/{golden,prompts,fixtures}/\n"
+        f"  ├─ skills/<skill-name>/SKILL.md  ({skill_count} skills, flat; category in frontmatter)\n"
+        + (f"  ├─ commands/<cmd>.md  (zero-arg)\n" if has_commands else "")
+        + f"  ├─ lib/{{{(', '.join(lib_files))}}}\n"
+        + f"  └─ eval/{{{(', '.join(eval_dirs))}}}\n"
         "```\n"
         "<!-- Run `/dev-kit:bootstrap --full-claude-md` to embed complete tree (depth 4), manifest, deps -->\n"
     )
@@ -118,6 +125,21 @@ def _safe_conventions(root: Path) -> str:
     return "\n".join(items)
 
 
+def render_hook_matrix_table() -> str:
+    """Render the hook matrix markdown table from DEFAULT_MATRIX (single source of truth)."""
+    stages = list(DEFAULT_MATRIX.keys())
+    hooks = list(DEFAULT_MATRIX[stages[0]].keys())
+    header = "| Hook           | " + " | ".join(s.capitalize() for s in stages) + " |"
+    sep =    "|----------------|" + "|".join(":----:" for _ in stages) + "|"
+    def cell(v):
+        return "R" if v == "read-only" else "✅" if v else "-"
+    rows = []
+    for h in hooks:
+        row = f"| {h:<14}  | " + " | ".join(f" {cell(DEFAULT_MATRIX[s][h])}   " for s in stages) + " |"
+        rows.append(row)
+    return "```\n" + "\n".join([header, sep] + rows) + "\n```\n(R = read-only)"
+
+
 def render_claude_md(
     project_root: Path,
     stage: str = "bootstrap",
@@ -129,18 +151,7 @@ def render_claude_md(
     """Compose full CLAUDE.md content."""
     laws = iron_laws if iron_laws is not None else IRON_LAWS
     section_3 = render_full_section_3(project_root) if full_map else render_stub_section_3(project_root)
-    section_4 = hook_matrix if hook_matrix is not None else (
-        "```\n"
-        "| Hook           | Boot | Plan | Design | Build | Review | Security | Ship |\n"
-        "|----------------|:----:|:----:|:------:|:-----:|:------:|:--------:|:----:|\n"
-        "| tdd-guard      |  -   |  -   |   -    |  ✅   |   -    |    -     |  -   |\n"
-        "| bash-guard     |  -   |  -   |   -    |  ✅   |   -    |    -     |  -   |\n"
-        "| secret-scan    |  R   |  -   |   -    |  ✅   |   ✅   |    ✅    |  -   |\n"
-        "| slop-detector  |  -   |  -   |   -    |  ✅   |   ✅   |    ✅    |  -   |\n"
-        "| stop-verify    |  -   |  ✅  |   ✅   |  ✅   |   ✅   |    ✅    |  ✅  |\n"
-        "```\n"
-        "(R = read-only)"
-    )
+    section_4 = hook_matrix if hook_matrix is not None else render_hook_matrix_table()
     section_5 = hand_off_chain if hand_off_chain is not None else (
         "next_stage_trigger: /dev-kit:plan\n"
         "shortcut_trigger: /dev-kit:tdd-fast"
