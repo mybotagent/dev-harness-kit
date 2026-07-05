@@ -139,7 +139,8 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -nE 's/.*\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested).*/\1/p' || true)"
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
@@ -246,7 +247,8 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -nE 's/.*\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested).*/\1/p' || true)"
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
