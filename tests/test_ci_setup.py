@@ -132,7 +132,7 @@ class TestCiSetup(unittest.TestCase):
                 "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
-            self.assertEqual(data["schema_version"], "1.1.0")
+            self.assertEqual(data["schema_version"], "1.2.0")
             self.assertEqual(data["ci_setup_version"], self.ci_setup.DEFAULT_CI_SETUP_VERSION)
             self.assertEqual(data["installed_by"], "dev-kit:ci-setup")
             self.assertEqual(set(data["runners"]), {"ci.yml", "auto-fix-pr.yml", "review.yml"})
@@ -256,10 +256,10 @@ class TestCiSetup(unittest.TestCase):
                 self.assertTrue(p.exists(), f"missing: {rel}")
                 self.assertTrue(p.stat().st_mode & stat.S_IXUSR, f"not +x: {rel}")
 
-    def test_marker_schema_version_bumped_to_1_1(self):
-        """Marker schema_version reflects the worktree-rule rollout (1.0 → 1.1)."""
-        self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.1.0")
-        self.assertEqual(self.ci_setup.DEFAULT_CI_SETUP_VERSION, "0.1.1")
+    def test_marker_schema_version_bumped_to_1_2(self):
+        """Marker schema_version reflects the consumer-install rollout (1.1 → 1.2)."""
+        self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.2.0")
+        self.assertEqual(self.ci_setup.DEFAULT_CI_SETUP_VERSION, "0.1.2")
 
     def test_marker_records_hooks_rules_tests(self):
         """Marker JSON lists the new categories (hooks / rules / tests)."""

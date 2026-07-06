@@ -70,8 +70,8 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
-MARKER_SCHEMA_VERSION = "1.1.0"  # bumped: worktree-guard rollout (PR #22)
-DEFAULT_CI_SETUP_VERSION = "0.1.1"  # bumped from 0.1.0: forces refresh on existing installs
+MARKER_SCHEMA_VERSION = "1.2.0"  # bumped: self-aware review.yml (consumer-install path)
+DEFAULT_CI_SETUP_VERSION = "0.1.2"  # bumped from 0.1.1: forces refresh for consumer-install fix
 
 
 @dataclass

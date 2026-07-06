@@ -73,8 +73,9 @@ jobs:
           mp_plugin = mp['plugins'][0]
           assert mp_plugin['name'] == 'dev-kit', f\"marketplace plugin name mismatch: {mp_plugin['name']}\"
           assert pl['name'] == 'dev-kit', f\"plugin name mismatch: {pl['name']}\"
-          assert pl['version'] == '0.1.0'
-          print('manifests OK (name=dev-kit, v0.1.0)')
+          assert pl['version'] == '0.1.1', f\"plugin version: {pl['version']}\"
+          assert mp_plugin['version'] == pl['version'], f\"marketplace/plugin version mismatch: {mp_plugin['version']} vs {pl['version']}\"
+          print(f\"manifests OK (name=dev-kit, v{pl['version']})\")
           "
 
       - name: Validate skill count + flat layout
