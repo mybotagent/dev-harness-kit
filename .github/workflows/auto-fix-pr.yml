@@ -143,6 +143,19 @@ jobs:
           claude_args: |
             --allowedTools "Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Read,Edit,Write,Grep,Glob"
 
+      - name: Verify fix touches only allowed paths
+        if: always()
+        run: |
+          # Compare against the pre-agent HEAD (parent of the latest commit).
+          # If the agent pushed nothing, fall back to the working-tree diff.
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
+          echo "Files changed by auto-fix:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(\.github/workflows/|CLAUDE\.md|docs/team-hooks/)'; then
+            echo "::error::Auto-fix touched a forbidden path (.github/workflows/, CLAUDE.md, or docs/team-hooks/); failing iteration to halt escalation."
+            exit 1
+          fi
+
       - name: Increment iteration label
         if: success()
         env:

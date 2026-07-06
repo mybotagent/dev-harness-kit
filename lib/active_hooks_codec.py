@@ -80,7 +80,7 @@ def init_matrix(project_root: Path) -> Dict:
             "env_override": {},
         },
     }
-    _atomic_write(path, data)
+    atomic_write_json(path, data)
     return data
 
 
@@ -112,7 +112,7 @@ def set_stage(project_root: Path, stage: str, hook: str, value: object) -> None:
     """Update a single cell in the matrix."""
     data = read_matrix(project_root)
     data.setdefault("matrix", {}).setdefault(stage, {})[hook] = value
-    _atomic_write(project_root / ".dev-kit" / ".active-hooks.json", data)
+    atomic_write_json(project_root / ".dev-kit" / ".active-hooks.json", data)
 
 
 def disable_override(project_root: Path, hook_name: str) -> None:
@@ -121,11 +121,7 @@ def disable_override(project_root: Path, hook_name: str) -> None:
     data.setdefault("override", {}).setdefault("disabled_hooks", [])
     if hook_name not in data["override"]["disabled_hooks"]:
         data["override"]["disabled_hooks"].append(hook_name)
-    _atomic_write(project_root / ".dev-kit" / ".active-hooks.json", data)
-
-
-def _atomic_write(path: Path, data: Dict) -> None:
-    atomic_write_json(path, data)
+    atomic_write_json(project_root / ".dev-kit" / ".active-hooks.json", data)
 
 
 if __name__ == "__main__":

@@ -57,8 +57,11 @@ elif command -v prettier >/dev/null 2>&1; then
 fi
 [ -z "$PRETTIER" ] && exit 0
 
-# Capture pre-format size (mtime) so we can detect "did prettier change anything?"
-PRE_MTIME="$(stat -f %m "$FILE" 2>/dev/null || stat -c %Y "$FILE" 2>/dev/null || echo 0)"
+# Capture pre-format content hash so we can detect "did prettier change anything?"
+# (using a hash, not mtime — mtime rounds to whole seconds and misses any
+# format run that completes within the same wall-clock second as the edit,
+# leaving Claude's in-memory view silently out of sync with disk.)
+PRE_HASH="$(shasum -a 256 "$FILE" 2>/dev/null | awk '{print $1}' || sha256sum "$FILE" 2>/dev/null | awk '{print $1}' || echo 0)"
 
 # Run prettier (advisory — never block). Capture stdout+stderr separately.
 LOG_FILE="$(mktemp -t prettier.XXXXXX.log)"
@@ -70,9 +73,9 @@ if ! $PRETTIER --write "$FILE" >"$LOG_FILE" 2>&1; then
 fi
 rm -f "$LOG_FILE"
 
-# Disk-drift warning: if mtime changed, Claude's in-memory copy is stale
-POST_MTIME="$(stat -f %m "$FILE" 2>/dev/null || stat -c %Y "$FILE" 2>/dev/null || echo 0)"
-if [ "$PRE_MTIME" != "$POST_MTIME" ] && [ "$PRE_MTIME" != "0" ]; then
+# Disk-drift warning: if content changed, Claude's in-memory copy is stale
+POST_HASH="$(shasum -a 256 "$FILE" 2>/dev/null | awk '{print $1}' || sha256sum "$FILE" 2>/dev/null | awk '{print $1}' || echo 0)"
+if [ "$PRE_HASH" != "$POST_HASH" ] && [ "$PRE_HASH" != "0" ]; then
   # MODIFIED line: Claude's hook stdout parser can pattern-match on this
   echo "MODIFIED $FILE"
   echo "prettier-format: $FILE was reformatted by prettier. Re-read before further edits." >&2

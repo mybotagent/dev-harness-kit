@@ -75,6 +75,28 @@ class TestBlockDangerousCommands(unittest.TestCase):
     def test_blocks_rm_rf_env_home(self):
         self._expect_blocked("rm -rf $HOME/.cache", "rm recursive")
 
+    # -- brace-expansion bypass: prior version only matched literal $HOME --
+    def test_blocks_rm_rf_brace_home(self):
+        self._expect_blocked("rm -rf ${HOME}/.cache", "rm recursive")
+
+    def test_blocks_rm_rf_brace_user(self):
+        self._expect_blocked("rm -rf ${USER}/.cache", "rm recursive")
+
+    def test_blocks_rm_rf_brace_tmpdir(self):
+        self._expect_blocked("rm -rf ${TMPDIR}/x", "rm recursive")
+
+    # -- end-of-options `--` bypass: prior version saw `--` as the target --
+    def test_blocks_rm_rf_dash_dash_root(self):
+        self._expect_blocked("rm -rf -- /", "rm recursive")
+
+    def test_blocks_rm_fr_dash_dash_absolute(self):
+        self._expect_blocked("rm -fr -- /etc", "rm recursive")
+
+    def test_allows_rm_simple_with_dash_dash_separator(self):
+        # Regression: `--` end-of-options must skip past the marker so a
+        # legitimate `rm -- file.txt` is checked against `file.txt` (allowed).
+        self._expect_allowed("rm -- file.txt")
+
     # -- chained-rm bypass: prior version only checked first rm token --
     def test_blocks_rm_rf_absolute_after_safe_rm(self):
         r = run_hook("block-dangerous-commands.sh", bash_payload("rm -rf safe.txt && rm -rf /"))
@@ -200,6 +222,52 @@ class TestPrettierFormat(unittest.TestCase):
             self.assertEqual(r.returncode, 0)
             self.assertEqual(target.read_text(), "x=1\n")  # untouched
 
+    # === MODIFIED detection (whole-second mtime → content hash) ===
+
+    def test_emits_modified_when_stub_formatter_changes_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "foo.json"
+            target.write_text("{}\n")
+            stub = tmp_path / "prettier"
+            stub.write_text("#!/usr/bin/env bash\n# Hook calls '$PRETTIER --write $FILE' — file is $2 (not $1).\necho \"// stub-format\" >> \"$2\"\n")
+            stub.chmod(0o755)
+            # Stub pnpm (see TestEslintFix comment for why).
+            pnpm_stub = tmp_path / "pnpm"
+            pnpm_stub.write_text("#!/usr/bin/env bash\nexec \"${@:2}\"\n")
+            pnpm_stub.chmod(0o755)
+            env_path = f"{tmp_path}:{os.environ.get('PATH', '')}"
+            r = subprocess.run(
+                ["bash", str(HOOKS / "prettier-format.sh")],
+                input=json.dumps(write_payload(str(target))),
+                capture_output=True, text=True, timeout=10,
+                cwd=str(tmp_path),
+                env={**os.environ, "PATH": env_path},
+            )
+            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
+            self.assertIn(f"MODIFIED {target}", r.stdout,
+                          f"expected MODIFIED line, got stdout={r.stdout!r}")
+
+    def test_no_modified_when_stub_formatter_does_not_change_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "foo.json"
+            target.write_text("{}\n")
+            stub = tmp_path / "prettier"
+            stub.write_text("#!/usr/bin/env bash\nexit 0\n")
+            stub.chmod(0o755)
+            env_path = f"{tmp_path}:{os.environ.get('PATH', '')}"
+            r = subprocess.run(
+                ["bash", str(HOOKS / "prettier-format.sh")],
+                input=json.dumps(write_payload(str(target))),
+                capture_output=True, text=True, timeout=10,
+                cwd=str(tmp_path),
+                env={**os.environ, "PATH": env_path},
+            )
+            self.assertEqual(r.returncode, 0)
+            self.assertNotIn("MODIFIED", r.stdout,
+                             f"unexpected MODIFIED: stdout={r.stdout!r}")
+
 
 class TestEslintFix(unittest.TestCase):
     """PostToolUse hook — advisory, exits 0, fixes if local eslint exists."""
@@ -231,6 +299,57 @@ class TestEslintFix(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 0)
             self.assertEqual(target.read_text(), "x = 1\n")  # untouched
+
+    # === MODIFIED detection (whole-second mtime → content hash) ===
+    # Stub eslint on PATH that appends a marker so content hash differs.
+    # When content changes, hook must print `MODIFIED <path>` to stdout.
+
+    def test_emits_modified_when_stub_linter_changes_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "foo.ts"
+            target.write_text("var x=1;\n")
+            stub = tmp_path / "eslint"
+            stub.write_text("#!/usr/bin/env bash\n# Hook calls '$ESLINT --fix $FILE' — file is $2 (not $1).\necho \"// stub-fix\" >> \"$2\"\n")
+            stub.chmod(0o755)
+            # Stub pnpm too: hook prefers `pnpm exec eslint` over `eslint` if pnpm is on PATH.
+            # Our pnpm stub pretends `pnpm exec <cmd> ...` just runs <cmd> ... so the eslint
+            # stub above gets the trailing args (file is $3 in this path).
+            pnpm_stub = tmp_path / "pnpm"
+            pnpm_stub.write_text("#!/usr/bin/env bash\n# Pretend pnpm exec succeeded; run the rest of the args directly.\nexec \"${@:2}\"\n")
+            pnpm_stub.chmod(0o755)
+            env_path = f"{tmp_path}:{os.environ.get('PATH', '')}"
+            r = subprocess.run(
+                ["bash", str(HOOKS / "eslint-fix.sh")],
+                input=json.dumps(write_payload(str(target))),
+                capture_output=True, text=True, timeout=10,
+                cwd=str(tmp_path),
+                env={**os.environ, "PATH": env_path},
+            )
+            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
+            self.assertIn(f"MODIFIED {target}", r.stdout,
+                          f"expected MODIFIED line, got stdout={r.stdout!r}")
+
+    def test_no_modified_when_stub_linter_does_not_change_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            target = tmp_path / "foo.ts"
+            target.write_text("var x=1;\n")
+            stub = tmp_path / "eslint"
+            # No-op stub — exits 0, writes nothing.
+            stub.write_text("#!/usr/bin/env bash\nexit 0\n")
+            stub.chmod(0o755)
+            env_path = f"{tmp_path}:{os.environ.get('PATH', '')}"
+            r = subprocess.run(
+                ["bash", str(HOOKS / "eslint-fix.sh")],
+                input=json.dumps(write_payload(str(target))),
+                capture_output=True, text=True, timeout=10,
+                cwd=str(tmp_path),
+                env={**os.environ, "PATH": env_path},
+            )
+            self.assertEqual(r.returncode, 0)
+            self.assertNotIn("MODIFIED", r.stdout,
+                             f"unexpected MODIFIED: stdout={r.stdout!r}")
 
 
 if __name__ == "__main__":

@@ -55,8 +55,11 @@ elif command -v eslint >/dev/null 2>&1; then
 fi
 [ -z "$ESLINT" ] && exit 0
 
-# Capture pre-fix mtime to detect "did eslint change anything?"
-PRE_MTIME="$(stat -f %m "$FILE" 2>/dev/null || stat -c %Y "$FILE" 2>/dev/null || echo 0)"
+# Capture pre-fix content hash to detect "did eslint change anything?"
+# (using a hash, not mtime — mtime rounds to whole seconds and misses
+# any lint run that completes within the same wall-clock second as the
+# edit, leaving Claude's in-memory view silently out of sync with disk.)
+PRE_HASH="$(shasum -a 256 "$FILE" 2>/dev/null | awk '{print $1}' || sha256sum "$FILE" 2>/dev/null | awk '{print $1}' || echo 0)"
 
 # Run eslint --fix. Capture stdout+stderr to a temp file (not a misnamed
 # STDERR_OUT variable) so we can include them in the warning if needed.
@@ -71,9 +74,9 @@ if ! $ESLINT --fix "$FILE" >"$LOG_FILE" 2>&1; then
 fi
 rm -f "$LOG_FILE"
 
-# Disk-drift warning: if mtime changed, Claude's in-memory copy is stale
-POST_MTIME="$(stat -f %m "$FILE" 2>/dev/null || stat -c %Y "$FILE" 2>/dev/null || echo 0)"
-if [ "$PRE_MTIME" != "$POST_MTIME" ] && [ "$PRE_MTIME" != "0" ]; then
+# Disk-drift warning: if content changed, Claude's in-memory copy is stale
+POST_HASH="$(shasum -a 256 "$FILE" 2>/dev/null | awk '{print $1}' || sha256sum "$FILE" 2>/dev/null | awk '{print $1}' || echo 0)"
+if [ "$PRE_HASH" != "$POST_HASH" ] && [ "$PRE_HASH" != "0" ]; then
   # MODIFIED line: Claude's hook stdout parser can pattern-match on this
   echo "MODIFIED $FILE"
   echo "eslint-fix: $FILE was modified by eslint --fix. Re-read before further edits." >&2

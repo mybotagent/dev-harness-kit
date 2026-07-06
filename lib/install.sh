@@ -90,7 +90,8 @@ fi
 echo "→ Verifying:"
 for f in "$TARGET/.claude-plugin/marketplace.json" \
          "$TARGET/.claude-plugin/plugin/.claude-plugin/plugin.json" \
-         "$TARGET/lib/state_codec.py"; do
+         "$TARGET/lib/state_codec.py" \
+         "$TARGET/lib/atomic.py"; do
   if [ -f "$f" ]; then echo "  ✓ $f"; else echo "  ✗ MISSING: $f"; exit 1; fi
 done
 
