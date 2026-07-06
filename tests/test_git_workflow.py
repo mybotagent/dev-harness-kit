@@ -168,10 +168,12 @@ class TestGitGuardBlocks(unittest.TestCase):
         Simulate by passing an env with empty PATH that contains no jq."""
         if not HOOK.exists():
             self.skipTest("git-guard not found")
-        # Find jq's path so we can remove it from PATH.
-        jq_real = subprocess.run(
-            ["command", "-v", "jq"], capture_output=True, text=True
-        ).stdout.strip()
+        # shutil.which() is the portable way to resolve a binary — works the
+        # same locally and on CI (unlike `subprocess.run(["command","-v",…])`
+        # which fails on CI because `command` is a shell builtin, not a
+        # binary, so the execvp lookup misses it).
+        import shutil
+        jq_real = shutil.which("jq")
         if not jq_real:
             self.skipTest("jq is not installed on this host — cannot simulate missing-jq")
         # Build a minimal PATH that has everything except the dir containing jq.
