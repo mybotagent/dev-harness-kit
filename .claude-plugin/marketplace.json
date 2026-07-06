@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "dev-kit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "owner": {
     "name": "sanghee",
     "url": "https://github.com/sanghee"
@@ -10,8 +10,8 @@
     {
       "name": "dev-kit",
       "description": "AI-native single plugin absorbing 5 dev-harness repos (pm-prd-fast + interview-harness + dev-harness + claude-review-plugins + slop-shield). 13 categories, 8 dimensions cost/risk, A2A typed, Eval-Repair loop, Human-on-the-Loop.",
-      "source": "./",
-      "version": "0.1.0"
+      "source": "https://github.com/sh-ai-x/dev-harness-kit",
+      "version": "0.1.1"
     }
   ]
 }
