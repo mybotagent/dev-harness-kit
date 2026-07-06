@@ -166,7 +166,8 @@ class TestGitGuardBlocks(unittest.TestCase):
     def test_blocks_when_jq_missing(self):
         """M2: if jq is not installed, the hook must DENY (not silently allow).
         Simulates by invoking the script with bash directly + a PATH that
-        contains no jq."""
+        contains no jq (but still has cat/echo/printf so the deny heredoc
+        can actually be printed)."""
         if not HOOK.exists():
             self.skipTest("git-guard not found")
         import shutil
@@ -176,13 +177,17 @@ class TestGitGuardBlocks(unittest.TestCase):
             self.skipTest("bash not on PATH — cannot run hook")
         if not jq_real:
             self.skipTest("jq is not installed on this host — cannot simulate missing-jq")
-        # PATH contains bash's dir (so bash can be re-execed if needed) but
-        # NOT jq's dir. Building a minimal PATH this way avoids the
-        # `jq_dir == bash_dir` collision on systems where both live in
-        # /usr/bin (e.g. CI Ubuntu).
-        bash_dir = os.path.dirname(bash_real)
-        jq_dir = os.path.dirname(jq_real)
-        minimal_path = bash_dir if bash_dir != jq_dir else "/nonexistent"
+        # Build a PATH that has bash + the common utility dirs (so the
+        # hook's deny-heredoc `cat` works) but NOT jq. We resolve each
+        # utility independently so the test works whether they live in
+        # /bin, /usr/bin, or both (CI Ubuntu has both).
+        util_dirs = set()
+        for util in ("bash", "cat", "echo", "printf", "command"):
+            p = shutil.which(util)
+            if p:
+                util_dirs.add(os.path.dirname(p))
+        util_dirs.discard(os.path.dirname(jq_real))  # ensure jq is excluded
+        minimal_path = os.pathsep.join(sorted(util_dirs)) or "/nonexistent"
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
         r = subprocess.run(
             [bash_real, str(HOOK)],
