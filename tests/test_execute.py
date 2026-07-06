@@ -6,6 +6,8 @@ Tests cover:
 - read_step prompt text from phases/<phase>/step<N>.md
 - parse_step_index step status transitions
 - write_step_output atomic
+- issue #18: state machine with unimplemented + in_progress + started_at + duration_seconds
+- issue #18: register_step() helper for unimplemented stubs
 """
 from __future__ import annotations
 
@@ -115,6 +117,85 @@ class TestExecute(unittest.TestCase):
         with self.assertRaises(ValueError):
             execute.update_step_status(self.root, "0-mvp", step=0, status="error")
 
+    # === New statuses (issue #18): unimplemented + in_progress ===
+
+    def test_in_progress_sets_started_at(self):
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["status"], "in_progress")
+        self.assertIn("started_at", parsed[0])
+
+    def test_in_progress_to_completed_records_duration_from_started_at(self):
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        # Back-date started_at so duration is non-zero + deterministic.
+        data = json.loads(idx_path.read_text())
+        for s in data["steps"]:
+            if s["step"] == 0:
+                s["started_at"] = "2026-07-04T00:00:00+09:00"
+        idx_path.write_text(json.dumps(data), encoding="utf-8")
+        execute.update_step_status(self.root, "0-mvp", step=0, status="completed")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["status"], "completed")
+        self.assertIn("completed_at", parsed[0])
+        self.assertIn("duration_seconds", parsed[0])
+        self.assertGreater(parsed[0]["duration_seconds"], 0.0)
+
+    def test_in_progress_to_completed_accepts_explicit_duration(self):
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        execute.update_step_status(self.root, "0-mvp", step=0, status="completed", duration_seconds=4.2)
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["duration_seconds"], 4.2)
+
+    def test_in_progress_does_not_overwrite_started_at_on_resume(self):
+        """If a crashed run left in_progress with started_at, resuming → in_progress
+        must keep the ORIGINAL started_at (so duration measures total elapsed time,
+        not just the post-resume chunk)."""
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        original_started = "2026-07-04T00:00:00+09:00"
+        data = json.loads(idx_path.read_text())
+        for s in data["steps"]:
+            if s["step"] == 0:
+                s["started_at"] = original_started
+                s["status"] = "in_progress"
+        idx_path.write_text(json.dumps(data), encoding="utf-8")
+        # Resume — should NOT overwrite started_at.
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["started_at"], original_started,
+                         "started_at was overwritten on re-in_progress")
+
+    def test_unimplemented_status_is_valid(self):
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="unimplemented")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["status"], "unimplemented")
+        self.assertNotIn("started_at", parsed[0])
+        self.assertNotIn("completed_at", parsed[0])
+
+    def test_full_cycle_pending_in_progress_completed(self):
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        execute.update_step_status(self.root, "0-mvp", step=0, status="completed")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["status"], "completed")
+        self.assertIn("started_at", parsed[0])
+        self.assertIn("completed_at", parsed[0])
+
+    def test_pending_reset_clears_started_at_and_duration(self):
+        """Transitioning any state → pending must clear started_at and duration
+        so a fresh execution measures cleanly from zero."""
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        execute.update_step_status(self.root, "0-mvp", step=0, status="in_progress")
+        execute.update_step_status(self.root, "0-mvp", step=0, status="completed", duration_seconds=9.9)
+        execute.update_step_status(self.root, "0-mvp", step=0, status="pending")
+        parsed = execute.parse_step_index(idx_path)
+        self.assertEqual(parsed[0]["status"], "pending")
+        self.assertNotIn("started_at", parsed[0])
+        self.assertNotIn("duration_seconds", parsed[0])
+
 
 class TestPhasesStructure(unittest.TestCase):
     def setUp(self):
@@ -131,6 +212,60 @@ class TestPhasesStructure(unittest.TestCase):
         result = execute.read_phases_index(self.root)
         self.assertEqual(len(result["phases"]), 1)
         self.assertEqual(result["phases"][0]["dir"], "0-mvp")
+
+
+class TestUnimplementedStubRegistration(unittest.TestCase):
+    """register_step() creates an `unimplemented` stub in index.json so plan-ralph
+    can mark 'this phase will have N steps' BEFORE any step<N>.md is written.
+    Then the runner SKIPS these entries (see SKIPPABLE_STATUSES)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        # Empty phase — no index.json yet.
+        self.assertFalse((self.root / "phases" / "0-mvp" / "index.json").exists())
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_register_step_creates_index_and_stub(self):
+        execute.register_step(self.root, "0-mvp", step=2, name="future-step")
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        self.assertTrue(idx_path.exists())
+        data = json.loads(idx_path.read_text())
+        self.assertEqual(len(data["steps"]), 1)
+        self.assertEqual(data["steps"][0]["step"], 2)
+        self.assertEqual(data["steps"][0]["name"], "future-step")
+        self.assertEqual(data["steps"][0]["status"], "unimplemented")
+
+    def test_register_step_is_idempotent(self):
+        execute.register_step(self.root, "0-mvp", step=2, name="future-step")
+        execute.register_step(self.root, "0-mvp", step=2, name="future-step")
+        data = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
+        self.assertEqual(len(data["steps"]), 1, "register_step must not duplicate entries")
+
+    def test_register_step_appends_to_existing_index(self):
+        # Pre-existing pending step 0.
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        idx_path.write_text(json.dumps({
+            "schema_version": execute.SCHEMA_VERSION,
+            "phase": "0-mvp",
+            "steps": [{"step": 0, "name": "setup", "status": "pending"}],
+        }), encoding="utf-8")
+        execute.register_step(self.root, "0-mvp", step=2, name="future-step")
+        data = json.loads(idx_path.read_text())
+        self.assertEqual(len(data["steps"]), 2)
+        self.assertEqual(data["steps"][0]["status"], "pending")  # existing step untouched
+        self.assertEqual(data["steps"][1]["status"], "unimplemented")
+
+    def test_register_step_does_not_overwrite_existing_unimplemented(self):
+        """If a stub already exists for this step number, preserve any user-set fields."""
+        execute.register_step(self.root, "0-mvp", step=2, name="future-step")
+        # Re-register with different name — should keep the FIRST name (idempotent).
+        execute.register_step(self.root, "0-mvp", step=2, name="renamed")
+        data = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
+        self.assertEqual(data["steps"][0]["name"], "future-step")
 
 
 if __name__ == "__main__":

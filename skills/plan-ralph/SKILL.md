@@ -5,7 +5,7 @@ description: Integrated PM in a single Ralph loop: idea → PRD.md. 6 gates (fra
 when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
-  - Resume from .pm-prd-fast/decision-log.md (HOLD after pause)
+  - Resume from .prd/decision-log.md (HOLD after pause)
 allowed-tools: Read Write Glob AskUserQuestion
 disallowed-tools: Bash Edit NotebookEdit WebFetch
 model: opus
@@ -27,8 +27,8 @@ user-invocable: false
 ## Inputs / Outputs
 
 - **Input**: user 1-line idea + AC (1–5) + non-goals (1–3)
-- **Output**: `PRD.md` + `.pm-prd-fast/*.md` + `phases/<name>/{index.json, step<N>.md}` + `.dev-kit/hand-off/plan→build.md`
-- **Cumulative**: `.pm-prd-fast/decision-log.md` + `.dev-kit/loop-log.json`
+- **Output**: `PRD.md` + `.prd/*.md` + `phases/<name>/{index.json, step<N>.md}` + `.dev-kit/hand-off/plan→build.md`
+- **Cumulative**: `.prd/decision-log.md` + `.dev-kit/loop-log.json`
 
 ## 6 integrated gates (1 Ralph loop)
 
@@ -62,7 +62,7 @@ This is the **grill-me** phase. Ask the user **5 questions in order**, one per r
 | 4 | "What did you try before that didn't work, and what did you learn?" | names a real prior attempt + a non-tautological lesson |
 | 5 | "If this works, what's the *next* thing you build, and why?" | identifies a downstream dependency or follow-on |
 
-For each round, use `AskUserQuestion` to ask. Record the answer in `.pm-prd-fast/decision-log.md`. If the user gives the same answer to the same question in 2 consecutive rounds, mark that round as "best effort" and move on (don't loop).
+For each round, use `AskUserQuestion` to ask. Record the answer in `.prd/decision-log.md`. If the user gives the same answer to the same question in 2 consecutive rounds, mark that round as "best effort" and move on (don't loop).
 
 After all 5 rounds (or 3 passes), write the **Socratic section** in PRD.md:
 
