@@ -12,6 +12,16 @@
 - **Active Hooks**: `secret-scan`=read-only. Others OFF.
 - **Hand-off out**: `bootstrap→plan.md` (after user OK)
 
+## Stage B.5 — CI Setup (`/dev-kit:ci-setup`)
+
+- **Goal**: Replicate dev-kit's CI shape (workflows + pre-push hook + local runner) into the target repo. One-command CI parity.
+- **Must**: (a) Idempotent install via `.dev-kit/ci-config.json` marker. (b) Mirror of `.githooks/pre-push` + 3 GitHub Actions workflows. (c) `validate.py` extracted from dev-kit's own `ci.yml` 5-step validate job. (d) `--force` flag for refresh; otherwise refuse overwrite.
+- **Must-Not**: Modify dev-kit's own repo. Drop the marker. Delete user-created files in target.
+- **AC**: All 8 expected files exist post-install. `python3 scripts/validate.py` exits 0. `.dev-kit/ci-config.json` has correct schema.
+- **Active Skills**: `ci-setup` (0-arg orchestrator; hidden `--force`, `--target DIR`)
+- **Active Hooks**: same as Bootstrap (`secret-scan`=read-only)
+- **Hand-off out**: gates `build` via marker file
+
 ## Stage 1 — Plan+Design (`/dev-kit:plan`)
 
 - **Goal**: idea → PRD.md + `phases/<name>/step<N>.md`
