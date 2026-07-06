@@ -90,4 +90,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly 27 skills total.
+- `tests/test_smoke.py` enforces: exactly 28 skills total.
