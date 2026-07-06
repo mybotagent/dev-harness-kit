@@ -32,8 +32,11 @@ _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES_ROOT = _PLUGIN_ROOT / "templates" / "ci"
 
 # Files installed into the target repo, relative to `target_dir`.
-# Order is preserved in reports (workflows first, then scripts).
+# Order is preserved in reports (workflows first, then scripts, then
+# worktree-rule files). Adding a path here also requires adding the
+# corresponding template under templates/ci/.
 EXPECTED_PATHS: tuple[str, ...] = (
+    # CI workflows + scripts
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
@@ -42,6 +45,15 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "scripts/test.sh",
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
+    # Worktree-rule enforcement (every task = new worktree + new session
+    # + new branch). See .claude/rules/git-workflow.md.
+    "hooks/worktree-guard.sh",
+    "hooks/task-detector.sh",
+    "hooks/session-start-check.sh",
+    "hooks/lib/worktree-detect.sh",
+    "hooks/hooks.json",
+    ".claude/rules/git-workflow.md",
+    "tests/test_worktree_guard.py",
 )
 
 # Files that need the executable bit after install.
@@ -51,10 +63,15 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
     "scripts/validate.py",
+    "hooks/worktree-guard.sh",
+    "hooks/task-detector.sh",
+    "hooks/session-start-check.sh",
+    "hooks/lib/worktree-detect.sh",
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
-MARKER_SCHEMA_VERSION = "1.0.0"
+MARKER_SCHEMA_VERSION = "1.1.0"  # bumped: worktree-guard rollout (PR #22)
+DEFAULT_CI_SETUP_VERSION = "0.1.1"  # bumped from 0.1.0: forces refresh on existing installs
 
 
 @dataclass
@@ -146,13 +163,22 @@ def _build_marker(version: str) -> dict:
             "scripts/ci-local.sh",
         ],
         "githooks": [".githooks/pre-push"],
+        "hooks": [
+            "hooks/worktree-guard.sh",
+            "hooks/task-detector.sh",
+            "hooks/session-start-check.sh",
+            "hooks/lib/worktree-detect.sh",
+            "hooks/hooks.json",
+        ],
+        "rules": [".claude/rules/git-workflow.md"],
+        "tests": ["tests/test_worktree_guard.py"],
     }
 
 
 def install_ci_config(
     target_dir: Path,
     *,
-    version: str = "0.1.0",
+    version: str = DEFAULT_CI_SETUP_VERSION,
     force: bool = False,
 ) -> InstallReport:
     """Install dev-kit's CI templates into `target_dir`. Idempotent + version-gated.
