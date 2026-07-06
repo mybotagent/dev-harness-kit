@@ -16,10 +16,10 @@ if [ -d "lib" ]; then
   export PYTHONPATH="${REPO_ROOT}/lib${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
-# Make sure pytest is available — install if missing.
+# Make sure pytest is available — install if missing (pinned for reproducibility).
 if ! python3 -c "import pytest" 2>/dev/null; then
-  echo "test.sh: installing pytest..."
-  python3 -m pip install --quiet pytest
+  echo "test.sh: installing pytest (pinned)..."
+  python3 -m pip install --quiet "pytest>=8.0,<9.0"
 fi
 
 python3 -m pytest tests/ -v --tb=short

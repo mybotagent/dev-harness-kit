@@ -66,7 +66,7 @@ safety:
 | **Human-use** (stage commands, utilities, shortcuts) | `true` | `false` (default) or `true` | ✅ Yes |
 | **Model-use** (internal building blocks) | **`false`** | `false` (default) | ❌ No |
 
-**Current human-use skills** (14): `bootstrap`, `plan`, `build`, `review`, `security`, `audit`, `eval`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`.
+**Current human-use skills** (15): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `eval`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`.
 
 **Current model-use skills** (13): `plan-ralph`, `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-simplify`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`.
 
@@ -90,4 +90,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly 28 skills total.
+- `tests/test_smoke.py` enforces: exactly 29 skills total.

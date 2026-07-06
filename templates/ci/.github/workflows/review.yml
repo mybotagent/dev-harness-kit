@@ -81,8 +81,8 @@ jobs:
         # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.MINMAX_API_KEY }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINMAX_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
           ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
           ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
           ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
@@ -140,7 +140,7 @@ jobs:
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
@@ -188,8 +188,8 @@ jobs:
         if: steps.provider.outputs.provider == 'minimax'
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.MINMAX_API_KEY }}
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINMAX_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
           ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
           ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
           ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
@@ -248,7 +248,7 @@ jobs:
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 

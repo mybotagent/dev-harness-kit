@@ -16,7 +16,7 @@ disable-model-invocation: false
 
 ## Iron Law
 **Sub-agent self-fix, single user interrupt, only proceed to next step on AC pass.**
-**Pre-flight gate: refuse to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup` first.**
+**Pre-flight gate: refuse to start if `.dev-kit/ci-config.json` is absent OR `ci_setup_version` < `0.1.0`. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first.**
 
 ## Behavior
 

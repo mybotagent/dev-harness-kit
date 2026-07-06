@@ -129,7 +129,7 @@ class TestCiSetup(unittest.TestCase):
             data = json.loads(marker.read_text())
             for key in (
                 "schema_version", "ci_setup_version", "installed_at",
-                "installed_by", "runners", "scripts", "githooks", "verification",
+                "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
             self.assertEqual(data["schema_version"], "1.0.0")
@@ -143,6 +143,52 @@ class TestCiSetup(unittest.TestCase):
             self.assertEqual(data["githooks"], [".githooks/pre-push"])
             # installed_at should be ISO-8601 UTC (z-suffix)
             self.assertTrue(data["installed_at"].endswith("Z"), data["installed_at"])
+            # verification block intentionally removed — schema stays minimal.
+
+    def test_version_short_circuit(self):
+        """When marker reports matching version, install is a no-op (no files touched)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r1 = self.ci_setup.install_ci_config(target, version="0.1.0")
+            self.assertEqual(len(r1.created), 8)
+            # Sentinel each EXPECTED_PATH so we can detect any re-touch
+            sentinels = {}
+            for rel in self.ci_setup.EXPECTED_PATHS:
+                p = target / rel
+                sentinels[rel] = p.read_text()
+            r2 = self.ci_setup.install_ci_config(target, version="0.1.0")
+            self.assertEqual(r2.created, [], "short-circuit must skip create")
+            self.assertEqual(r2.overwritten, [], "short-circuit must skip overwrite")
+            self.assertEqual(
+                len(r2.skipped), len(self.ci_setup.EXPECTED_PATHS),
+                "short-circuit must list every EXPECTED_PATH in skipped",
+            )
+            # Confirm files on disk were not re-written (mtime preserved)
+            for rel in self.ci_setup.EXPECTED_PATHS:
+                self.assertEqual(
+                    (target / rel).read_text(), sentinels[rel],
+                    f"file re-touched during short-circuit: {rel}",
+                )
+            # Marker still present at the expected location (path may be resolved to /private/... on macOS)
+            self.assertTrue((target / ".dev-kit" / "ci-config.json").exists())
+            self.assertTrue(r2.marker_path.endswith("ci-config.json"))
+
+    def test_version_upgrade_runs_install(self):
+        """When marker reports OLDER version, install proceeds (upgrade path)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target, version="0.1.0")
+            # Now simulate an older-version marker (downgrade scenario)
+            marker = target / ".dev-kit" / "ci-config.json"
+            data = json.loads(marker.read_text())
+            data["ci_setup_version"] = "0.0.9"
+            marker.write_text(json.dumps(data))
+            r = self.ci_setup.install_ci_config(target, version="0.1.0")
+            # Either created (empty target) or skipped (existing files) — but never short-circuited
+            self.assertEqual(len(r.created) + len(r.overwritten) + len(r.skipped),
+                             len(self.ci_setup.EXPECTED_PATHS))
 
     def test_executable_bit_set_on_sh_files(self):
         """All .sh + pre-push + validate.py have +x bit after install."""

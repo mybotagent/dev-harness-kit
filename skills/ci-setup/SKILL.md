@@ -1,7 +1,7 @@
 ---
 name: ci-setup
 category: bootstrap
-description: Install dev-kit's reusable CI workflow templates (.github/workflows/, .githooks/pre-push, scripts/) into a target project. Idempotent, marker-file gated, hand-off to /dev-kit:build.
+description: Install dev-kit's reusable CI workflow templates into a target project. Idempotent + version-gated via `.dev-kit/ci-config.json`. Hand-off to /dev-kit:build.
 when_to_use: |
   - User types `/dev-kit:ci-setup` after `/dev-kit:bootstrap`
   - User wants the same CI shape (branch-policy + validate + test + auto-fix) in a new repo
@@ -25,10 +25,7 @@ disable-model-invocation: false
 
 1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--skip-verify` skips Phase 3.
 1.2. Check `python3 ≥ 3.10` (dev-kit requirement).
-1.3. Probe marker `.dev-kit/ci-config.json`:
-  - present + `ci_setup_version` matches → print "already installed; pass `--force` to refresh" and **exit 0** unless `--force` given.
-  - present + version mismatch → print WARN, continue with `--force` semantics (refreshing is safe).
-  - absent → continue (fresh install).
+1.3. **Delegate version short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when `ci_setup_version` matches the current plugin's version AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0.
 1.4. Probe target prerequisites: `.git/` (warn if absent — CI is git-themed), `.github/` (create if absent).
 
 ### Phase 2 — Install (via `lib/ci_setup.py`)

@@ -16,6 +16,7 @@ Usage (from the skill body or directly):
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -145,7 +146,6 @@ def _build_marker(version: str) -> dict:
             "scripts/ci-local.sh",
         ],
         "githooks": [".githooks/pre-push"],
-        "verification": {"validate_exit": None, "test_exit": None, "act_listing": None},
     }
 
 
@@ -155,13 +155,14 @@ def install_ci_config(
     version: str = "0.1.0",
     force: bool = False,
 ) -> InstallReport:
-    """Install dev-kit's CI templates into `target_dir`. Idempotent.
+    """Install dev-kit's CI templates into `target_dir`. Idempotent + version-gated.
 
     Args:
         target_dir: absolute path to the target project root. Must exist
             and be a directory (raises FileNotFoundError otherwise).
-        version: semantic version written to the marker (allows /dev-kit:build
-            to refuse stale installs in a future bump).
+        version: semantic version written to the marker. When the target's
+            existing marker reports the same version AND `force=False`,
+            the install short-circuits (all files skipped, no marker rewrite).
         force: when True, overwrite existing target files matching
             EXPECTED_PATHS. Default False (skip + report).
 
@@ -186,6 +187,22 @@ def install_ci_config(
         raise NotADirectoryError(f"target_dir is not a directory: {target}")
 
     report = InstallReport()
+
+    # Version short-circuit: if the marker already reports our version and the
+    # user didn't ask for a force refresh, return a no-op report so Phase 1
+    # of the skill body can detect "already installed" without copying anything.
+    existing_marker = target / MARKER_REL
+    if existing_marker.exists() and not force:
+        try:
+            existing = json.loads(existing_marker.read_text())
+            if existing.get("ci_setup_version") == version:
+                report.skipped.extend(EXPECTED_PATHS)
+                report.marker_path = str(existing_marker)
+                report.elapsed_ms = int((time.monotonic() - started) * 1000)
+                return report
+        except (json.JSONDecodeError, OSError):
+            # Corrupt or unreadable marker → fall through and overwrite below.
+            pass
 
     for rel in EXPECTED_PATHS:
         try:

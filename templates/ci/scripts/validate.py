@@ -73,6 +73,11 @@ def validate_marker(repo_root: pathlib.Path) -> bool:
 
 
 def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
+    """Run `bash -n` on every installed .sh and `.githooks/pre-push`.
+
+    Covers `scripts/{test,branch-policy,ci-local}.sh` and the githook in one pass,
+    so no separate `validate_test_runner` step is needed.
+    """
     sh_files = list((repo_root / "scripts").glob("*.sh")) + [repo_root / ".githooks" / "pre-push"]
     failures = []
     for h in sh_files:
@@ -88,19 +93,6 @@ def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
     return True
 
 
-def validate_test_runner(repo_root: pathlib.Path) -> bool:
-    test_sh = repo_root / "scripts" / "test.sh"
-    if not test_sh.exists():
-        _skip("test runner: scripts/test.sh missing")
-        return True
-    r = subprocess.run(["bash", "-n", str(test_sh)], capture_output=True, text=True)
-    if r.returncode != 0:
-        _fail(f"test runner: bash -n error: {r.stderr.strip()}")
-        return False
-    _ok("test runner (bash -n clean)")
-    return True
-
-
 def main(repo_root: pathlib.Path | None = None) -> int:
     repo_root = repo_root or pathlib.Path.cwd()
     print(f"validate.py — repo_root={repo_root}")
@@ -108,7 +100,6 @@ def main(repo_root: pathlib.Path | None = None) -> int:
         validate_installation_complete,
         validate_marker,
         validate_bash_syntax,
-        validate_test_runner,
     ]
     results = [c(repo_root) for c in checks]
     if all(results):

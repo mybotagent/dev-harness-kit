@@ -25,6 +25,7 @@ jobs:
   auto-fix:
     if: |
       github.event.review.state == 'changes_requested' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
       !endsWith(github.event.review.user.login, '[bot]') &&
       !contains(github.event.pull_request.labels.*.name, 'no-auto-fix')
     runs-on: ubuntu-latest
