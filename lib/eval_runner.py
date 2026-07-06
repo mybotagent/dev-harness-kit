@@ -221,7 +221,10 @@ def run_eval(project_root: Path, config: Optional[Dict] = None, *, dry_run: bool
                     "error": str(e),
                 })
     write_report(project_root, results, config)
-    summary = {v: results.count(v) for v in ("OK", "DRIFT_WARNING", "ROT")}
+    summary = {
+        v: sum(1 for r in results if r.get("verdict") == v)
+        for v in ("OK", "DRIFT_WARNING", "ROT")
+    }
     return {
         "results": results,
         "config": {k: v for k, v in config.items() if k != "api_key"},
@@ -237,8 +240,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
     report = run_eval(root, dry_run=args.dry_run)
-    summary = {}
-    for r in report["results"]:
-        v = r.get("verdict", "?")
-        summary[v] = summary.get(v, 0) + 1
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(report["summary"], indent=2))

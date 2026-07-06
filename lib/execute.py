@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
 MAX_RETRIES = 3
 SCHEMA_VERSION = "1.0.0"
@@ -94,9 +95,6 @@ def update_step_status(
     else:
         raise ValueError(f"step {step} not found in {phase}")
     atomic_write_json(idx_path, data)
-
-
-# ---------- Step output writer ----------
 
 
 # ---------- Step output writer ----------

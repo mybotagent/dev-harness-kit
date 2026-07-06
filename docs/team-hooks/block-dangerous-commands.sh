@@ -31,38 +31,11 @@ CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 # case pattern `\$HOME/*` can match.
 read -ra TOKENS <<< "$CMD"
 
-# Helper: find the first occurrence of `$1` in TOKENS and capture
-# subsequent tokens. Returns via globals FIRST_CMD, FIRST_FLAGS, FIRST_ARG.
+# Helper: find the first occurrence of `$1` in TOKENS at index ≥ $2.
+# Returns via globals FIRST_CMD, FIRST_FLAGS, FIRST_ARG, FIRST_NEXT
+# (FIRST_NEXT = index AFTER the match, for chained re-invocation).
 # If not found, returns 1.
-find_cmd() {
-  # Returns 0 if $1 is present anywhere in TOKENS, sets FIRST_CMD / FIRST_FLAGS /
-  # FIRST_ARG for the *last* match. Use find_cmd_at() in a loop to iterate
-  # every occurrence (defeats "rm -rf safe.txt && rm -rf /" bypass).
-  local cmd_name="$1"
-  local i=0
-  local last_i=-1
-  while [ $i -lt ${#TOKENS[@]} ]; do
-    if [ "${TOKENS[$i]}" = "$cmd_name" ]; then
-      local j=$i
-      while [ $j -gt 0 ] && [[ "${TOKENS[$((j-1))]}" == *=* ]]; do
-        j=$((j-1))
-      done
-      last_i=$j
-    fi
-    i=$((i+1))
-  done
-  if [ $last_i -ge 0 ]; then
-    FIRST_CMD="$cmd_name"
-    FIRST_FLAGS="${TOKENS[$((last_i+1))]:-}"
-    FIRST_ARG="${TOKENS[$((last_i+2))]:-}"
-    return 0
-  fi
-  return 1
-}
-
 find_cmd_at() {
-  # Like find_cmd, but starts searching at index $2. Sets FIRST_NEXT to the
-  # index AFTER the match (for chained re-invocation).
   local cmd_name="$1"
   local start="$2"
   local i=$start
@@ -99,10 +72,17 @@ while find_cmd_at "rm" "$START"; do
   START=$FIRST_NEXT
   TARGET="$FIRST_ARG"
   FLAGS="$FIRST_FLAGS"
-  # Helper: does TARGET look "dangerous"? (absolute path, $HOME, ~, or wildcard)
+  # Skip end-of-options marker so 'rm -rf -- /' is checked against '/'.
+  # FIRST_NEXT = j+1 (rm index); -- is at j+2; the real target is at j+3.
+  if [ "$TARGET" = "--" ]; then
+    TARGET="${TOKENS[$((FIRST_NEXT+2))]:-}"
+    START=$((FIRST_NEXT+3))
+    if [ -z "$TARGET" ]; then continue; fi
+  fi
+  # Helper: does TARGET look "dangerous"? (absolute path, $HOME, ~, brace-expanded vars, or wildcard)
   is_dangerous_target() {
     case "$1" in
-      /*|~*|\$HOME/*|*\**) return 0 ;;
+      /*|~*|\$HOME/*|\$\{HOME\}/*|\$\{USER\}/*|\$\{TMPDIR\}/*|*\**) return 0 ;;
       *) return 1 ;;
     esac
   }

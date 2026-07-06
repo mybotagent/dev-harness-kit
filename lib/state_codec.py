@@ -9,9 +9,12 @@ Single source of truth for global state. Per MUST-22 dual-source SSOT:
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, atomic_write_text, now_iso  # noqa: E402
 
 SCHEMA_VERSION = "1.0.0"
