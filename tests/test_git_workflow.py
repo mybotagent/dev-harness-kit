@@ -216,6 +216,9 @@ class TestBranchNamingConvention(unittest.TestCase):
             line = line.strip().lstrip("*+").strip()
             if not line or line in ("main", "master", "HEAD"):
                 continue
+            # CI runs in detached HEAD at `pull/N/merge` refs — skip those.
+            if line.startswith("(") or "detached" in line:
+                continue
             branches.append(line)
         for b in branches:
             with self.subTest(branch=b):
