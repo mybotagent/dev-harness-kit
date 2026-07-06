@@ -16,9 +16,11 @@
 #     are stable across all environments.
 #
 # Usage:
-#   bin/devkit-refresh.sh                  # refresh dev-kit
-#   bin/devkit-refresh.sh --dry-run        # show what would change
-#   bin/devkit-refresh.sh --marketplace P  # override marketplace path
+#   bin/devkit-refresh.sh                   # refresh dev-kit
+#   bin/devkit-refresh.sh --dry-run         # show what would change
+#   bin/devkit-refresh.sh --marketplace P   # override marketplace path
+#   bin/devkit-refresh.sh --cache P         # override cache root
+#   bin/devkit-refresh.sh --help
 #
 # Environment overrides:
 #   DEV_KIT_MARKETPLACE_DIR  default: $HOME/.claude/plugins/marketplaces/dev-kit
@@ -30,34 +32,31 @@ MARKETPLACE_DIR="${DEV_KIT_MARKETPLACE_DIR:-$HOME/.claude/plugins/marketplaces/d
 CACHE_ROOT="${DEV_KIT_CACHE_ROOT:-$HOME/.claude/plugins/cache/dev-kit/dev-kit}"
 DRY_RUN=0
 
+die() { echo "error: $*" >&2; exit 1; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    --marketplace) MARKETPLACE_DIR="$2"; shift 2 ;;
-    --cache) CACHE_ROOT="$2"; shift 2 ;;
+    --marketplace)
+      [ $# -ge 2 ] || die "--marketplace requires a path argument"
+      MARKETPLACE_DIR="$2"; shift 2 ;;
+    --cache)
+      [ $# -ge 2 ] || die "--cache requires a path argument"
+      CACHE_ROOT="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
-    *) echo "unknown arg: $1" >&2; exit 1 ;;
+    *) die "unknown arg: $1" ;;
   esac
 done
 
-if [ ! -d "$MARKETPLACE_DIR/.git" ]; then
-  echo "error: marketplace clone not found at $MARKETPLACE_DIR" >&2
-  exit 1
-fi
-if [ ! -d "$CACHE_ROOT" ]; then
-  echo "error: cache root not found at $CACHE_ROOT" >&2
-  exit 1
-fi
+[ -d "$MARKETPLACE_DIR/.git" ] || die "marketplace clone not found at $MARKETPLACE_DIR"
+[ -d "$CACHE_ROOT" ] || die "cache root not found at $CACHE_ROOT"
 
 VERSION="$(grep -m1 '"version"' "$MARKETPLACE_DIR/.claude-plugin/plugin.json" 2>/dev/null \
            | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-if [ -z "$VERSION" ]; then
-  echo "error: could not parse version from $MARKETPLACE_DIR/.claude-plugin/plugin.json" >&2
-  exit 1
-fi
+[ -n "$VERSION" ] || die "could not parse version from $MARKETPLACE_DIR/.claude-plugin/plugin.json"
 CACHE_DIR="$CACHE_ROOT/$VERSION"
 
 echo "marketplace: $MARKETPLACE_DIR (version $VERSION)"
@@ -78,8 +77,6 @@ else
   cd "$MARKETPLACE_DIR" && git pull origin main --ff-only
 fi
 
-mkdir -p "$CACHE_DIR"
-
 EXCLUDES=(
   --exclude='.git'
   --exclude='.claude/worktrees'
@@ -93,11 +90,24 @@ RSYNC_FLAGS=(-a --delete "${EXCLUDES[@]}")
 echo
 if [ "$DRY_RUN" = "1" ]; then
   echo "→ rsync $MARKETPLACE_DIR/ → $CACHE_DIR/  (DRY RUN)"
-  rsync --dry-run --itemize-changes "${RSYNC_FLAGS[@]}" \
-    "$MARKETPLACE_DIR/" "$CACHE_DIR/" 2>/dev/null \
-    | head -30
-  echo "  (truncated; first 30 lines)"
+  # Capture rsync output FIRST, then truncate. Avoids the pipefail/SIGPIPE
+  # issue where `head` closing the pipe makes rsync exit 141 and abort the
+  # script under `set -euo pipefail`.
+  RSYNC_OUT="$(rsync --dry-run --itemize-changes "${RSYNC_FLAGS[@]}" \
+                "$MARKETPLACE_DIR/" "$CACHE_DIR/" 2>/dev/null || true)"
+  if [ -z "$RSYNC_OUT" ]; then
+    echo "  (no changes)"
+  else
+    LINE_COUNT="$(printf '%s\n' "$RSYNC_OUT" | wc -l | tr -d ' ')"
+    if [ "$LINE_COUNT" -le 30 ]; then
+      printf '%s\n' "$RSYNC_OUT"
+    else
+      printf '%s\n' "$RSYNC_OUT" | head -30
+      echo "  (truncated; $LINE_COUNT total diff lines — rerun without --dry-run to apply)"
+    fi
+  fi
 else
+  mkdir -p "$CACHE_DIR"
   echo "→ rsync $MARKETPLACE_DIR/ → $CACHE_DIR/"
   rsync "${RSYNC_FLAGS[@]}" "$MARKETPLACE_DIR/" "$CACHE_DIR/"
   # Keep +x on hook + script files (rsync -a preserves source bits, but
