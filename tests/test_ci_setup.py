@@ -124,7 +124,7 @@ class TestCiSetup(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
-            self.ci_setup.install_ci_config(target, version="0.1.0")
+            self.ci_setup.install_ci_config(target)  # default version
             marker = target / ".dev-kit" / "ci-config.json"
             data = json.loads(marker.read_text())
             for key in (
@@ -132,8 +132,8 @@ class TestCiSetup(unittest.TestCase):
                 "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
-            self.assertEqual(data["schema_version"], "1.0.0")
-            self.assertEqual(data["ci_setup_version"], "0.1.0")
+            self.assertEqual(data["schema_version"], "1.1.0")
+            self.assertEqual(data["ci_setup_version"], self.ci_setup.DEFAULT_CI_SETUP_VERSION)
             self.assertEqual(data["installed_by"], "dev-kit:ci-setup")
             self.assertEqual(set(data["runners"]), {"ci.yml", "auto-fix-pr.yml", "review.yml"})
             self.assertEqual(set(data["scripts"]), {
@@ -150,8 +150,8 @@ class TestCiSetup(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
-            r1 = self.ci_setup.install_ci_config(target, version="0.1.0")
-            self.assertEqual(len(r1.created), 8)
+            r1 = self.ci_setup.install_ci_config(target)  # uses DEFAULT_CI_SETUP_VERSION
+            self.assertEqual(len(r1.created), len(self.ci_setup.EXPECTED_PATHS))
             # Sentinel each EXPECTED_PATH so we can detect any re-touch
             sentinels = {}
             for rel in self.ci_setup.EXPECTED_PATHS:
@@ -218,6 +218,62 @@ class TestCiSetup(unittest.TestCase):
                 f"validate.py exited {r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}",
             )
             self.assertIn("OK: CI installation valid", r.stdout)
+
+    # === Worktree-rule rollout (PR #22 + this PR) ===
+
+    def test_worktree_rule_files_are_in_expected_paths(self):
+        """EXPECTED_PATHS includes the 7 worktree-rule files added in PR #22."""
+        expected_new = {
+            "hooks/worktree-guard.sh",
+            "hooks/task-detector.sh",
+            "hooks/session-start-check.sh",
+            "hooks/lib/worktree-detect.sh",
+            "hooks/hooks.json",
+            ".claude/rules/git-workflow.md",
+            "tests/test_worktree_guard.py",
+        }
+        actual = set(self.ci_setup.EXPECTED_PATHS)
+        self.assertTrue(
+            expected_new.issubset(actual),
+            f"missing from EXPECTED_PATHS: {expected_new - actual}",
+        )
+
+    def test_worktree_hooks_have_executable_bit_in_target(self):
+        """All 4 new .sh files end up executable in the installed target."""
+        import tempfile
+        import stat
+        new_sh = (
+            "hooks/worktree-guard.sh",
+            "hooks/task-detector.sh",
+            "hooks/session-start-check.sh",
+            "hooks/lib/worktree-detect.sh",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            for rel in new_sh:
+                p = target / rel
+                self.assertTrue(p.exists(), f"missing: {rel}")
+                self.assertTrue(p.stat().st_mode & stat.S_IXUSR, f"not +x: {rel}")
+
+    def test_marker_schema_version_bumped_to_1_1(self):
+        """Marker schema_version reflects the worktree-rule rollout (1.0 → 1.1)."""
+        self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.1.0")
+        self.assertEqual(self.ci_setup.DEFAULT_CI_SETUP_VERSION, "0.1.1")
+
+    def test_marker_records_hooks_rules_tests(self):
+        """Marker JSON lists the new categories (hooks / rules / tests)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            for key in ("hooks", "rules", "tests"):
+                self.assertIn(key, marker, f"marker missing key: {key}")
+                self.assertTrue(len(marker[key]) > 0, f"marker.{key} should be non-empty")
+            self.assertIn("hooks/worktree-guard.sh", marker["hooks"])
+            self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
+            self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
 
 def tempfile_path(name: str):
