@@ -5,6 +5,7 @@ description: 0-arg. Per-step sub-agent delegation + self-fix loop (MUST-36~38). 
 when_to_use: |
   - User types /dev-kit:build
   - After plan+design (PRD.md + phases/<name>/ exist)
+  - After /dev-kit:ci-setup has written .dev-kit/ci-config.json (REQUIRED — refuse if marker missing or ci_setup_version < "0.1.0")
 allowed-tools: Read Write Bash Glob Grep Agent
 disallowed-tools: WebFetch
 model: opus
@@ -15,6 +16,7 @@ disable-model-invocation: false
 
 ## Iron Law
 **Sub-agent self-fix, single user interrupt, only proceed to next step on AC pass.**
+**Pre-flight gate: refuse to start if `.dev-kit/ci-config.json` is absent OR `ci_setup_version` < `0.1.0`. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first.**
 
 ## Behavior
 

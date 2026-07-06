@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "ci_setup_version": "0.1.0",
+  "installed_at": "TEMPLATE",
+  "installed_by": "dev-kit:ci-setup",
+  "runners": [
+    "ci.yml",
+    "auto-fix-pr.yml",
+    "review.yml"
+  ],
+  "scripts": [
+    "scripts/validate.py",
+    "scripts/test.sh",
+    "scripts/branch-policy.sh",
+    "scripts/ci-local.sh"
+  ],
+  "githooks": [
+    ".githooks/pre-push"
+  ]
+}

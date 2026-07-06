@@ -13,7 +13,7 @@
 
 | Category | Pattern | Examples |
 |---|---|---|
-| `bootstrap` | `<category>-<instrument>` | `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks` |
+| `bootstrap` | `<category>-<instrument>` | `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `ci-setup` (slash brevity; see note) |
 | `plan` | `plan-<actor>` | `plan-ralph` |
 | `design` | `design-<instrument>` | (deprecated — merged into plan) |
 | `build` | `build-<discipline>` | `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-simplify`, `build-methodology` |
