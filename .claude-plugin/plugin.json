@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "dev-kit",
   "displayName": "Dev Harness Kit",
-  "version": "0.1.0",
-  "description": "AI-native dev harness: 13 categories, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop",
+  "version": "0.2.0",
+  "description": "AI-native dev harness: 14 categories, 29 skills, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop. v0.2.0 adds /dev-kit:ci-setup for one-command CI parity across repos.",
   "author": {
     "name": "sanghee",
     "url": "https://github.com/sanghee"
@@ -16,6 +16,7 @@
     "sdd",
     "planning",
     "review",
+    "ci-setup",
     "ax",
     "harness"
   ]
