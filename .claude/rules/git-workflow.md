@@ -4,6 +4,7 @@ paths:
   - "hooks/**"
   - "docs/adr/ADR-00**-*.md"
   - "tests/test_git_workflow.py"
+  - "tests/test_worktree_guard.py"
 ---
 
 # Git workflow rules (dev-harness-kit)
@@ -89,11 +90,18 @@ git branch -d fix/<slug>        # local branch gone
    - `git push` to `main` or `origin main` (deny with reason)
    - `git checkout main` followed by `git commit` in the same command
    - `git push --force` and `git push -f` (already blocked by `bash-guard.sh` — kept for redundancy)
-2. **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
+2. **`hooks/worktree-guard.sh`** (PreToolUse, Write|Edit|MultiEdit matcher) — HARD BLOCK on edits in the main checkout. Discriminator: `git rev-parse --git-dir == --git-common-dir` evaluated from the repo toplevel (canonicalized via `realpath`). Any Edit/Write/MultiEdit attempted while the session cwd is the main checkout is denied with an actionable message naming the worktree command. Fails closed (deny) when `jq` is missing.
+3. **`hooks/task-detector.sh`** (UserPromptSubmit) — EARLY WARNING. Detects new-task intent in user prompts (start-verbs: implement / add / build / create / fix / refactor / develop / introduce / make / write / design; slash-invocations; polite-prefix forms like "let's add"; "new feature / new task" noun phrases). When intent matches AND the session is in the main checkout, emits an `additionalContext` nudge so Claude remembers the rule before doing any work. Silent in worktrees and on clarifying questions.
+4. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks.
+5. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
    - All non-main branches match `<type>/<slug>` format
    - No `TODO` / `wip` / `tmp` slugs in the last 30 commits' branch names
    - Recent merged PR titles follow Conventional Commits
-3. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
+   - `worktree-guard.sh` denies Edit/Write in the main checkout, allows in worktrees, fails closed when `jq` is missing, and exits 0 outside any git repo
+   - `task-detector.sh` nudges on task-intent prompts in the main checkout, stays silent in worktrees and on non-task prompts
+   - `session-start-check.sh` nudges when started in the main checkout, stays silent in worktrees
+   - `hooks.json` wires all three hooks into the correct event matchers
+6. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
 
 ## Out of scope (intentionally not enforced)
 
@@ -109,6 +117,10 @@ git branch -d fix/<slug>        # local branch gone
 ## Related
 
 - `docs/adr/ADR-0022-branch-strategy.md` (rationale, alternatives considered)
-- `tests/test_git_workflow.py` (regression enforcement)
-- `hooks/git-guard.sh` (PreToolUse block)
-- `hooks/hooks.json` (wires `git-guard` into PreToolUse)
+- `tests/test_git_workflow.py` (branch-naming + `git-guard` regression)
+- `tests/test_worktree_guard.py` (`worktree-guard` + `task-detector` + `session-start-check` regression)
+- `hooks/git-guard.sh` (PreToolUse Bash block)
+- `hooks/worktree-guard.sh` (PreToolUse Edit/Write block)
+- `hooks/task-detector.sh` (UserPromptSubmit nudge)
+- `hooks/session-start-check.sh` (SessionStart nudge)
+- `hooks/hooks.json` (wires all hooks into Claude Code)
