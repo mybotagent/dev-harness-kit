@@ -19,9 +19,9 @@ INPUT="$(cat)"
 # exits 0 on every command). Without this guard, git-guard is no-op on
 # Alpine / stripped Docker / fresh macOS.
 if ! command -v jq >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"GIT GUARD: jq is required by git-guard.sh but not installed. Install jq (apt/brew/apk) — without it, branch protection cannot be enforced."}}
-EOF
+  # Use printf (POSIX builtin) so this works even when PATH is broken —
+  # test_blocks_when_jq_missing deliberately strips jq from PATH.
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"GIT GUARD: jq is required by git-guard.sh but not installed. Install jq (apt/brew/apk) — without it, branch protection cannot be enforced."}}\n' >&2
   exit 2
 fi
 
