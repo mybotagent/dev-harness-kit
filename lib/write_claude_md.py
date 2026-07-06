@@ -14,9 +14,28 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import List, Optional
+
+sys.path.insert(0, str(Path(__file__).parent))
+from active_hooks_codec import DEFAULT_MATRIX  # noqa: E402
+from atomic import atomic_write_text  # noqa: E402
+
+# §3 tree-walk limits
+TREE_DEPTH_MAX = 4
+TREE_LINES_MAX = 80
+FILES_PER_DIR_MAX = 20
+SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", ".pytest_cache"}
+
+# Candidate files for existence-based sections
+MANIFEST_CANDIDATES = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"]
+CONVENTION_CANDIDATES = [".editorconfig", ".eslintrc.json", ".prettierrc", "pyproject.toml"]
+LOCKFILES = [
+    ("pnpm-lock.yaml", 30),
+    ("package-lock.json", 30),
+    ("requirements.txt", 20),
+    ("Pipfile.lock", 20),
+]
 
 # Iron Law definitions (MUST-8 SSOT)
 L1_NO_TEST_NO_CODE = "No prod code without verification artifact (test/contract/domain/scenario/feature per methodology)"
@@ -36,14 +55,18 @@ IRON_LAWS: List[str] = [
 
 def render_stub_section_3(project_root: Path) -> str:
     """5-line STUB (default `--slim-claude-md`). Compact 1-line tree + opt-in marker."""
+    lib_files = sorted(p.name for p in (project_root / "lib").glob("*.py")) if (project_root / "lib").exists() else []
+    eval_dirs = sorted(p.name for p in (project_root / "eval").iterdir() if p.is_dir()) if (project_root / "eval").exists() else []
+    skill_count = len(list((project_root / "skills").rglob("SKILL.md"))) if (project_root / "skills").exists() else 0
+    has_commands = (project_root / "commands").exists()
     return (
         "```\n"
         f"{project_root}\n"
         "  ├─ .claude-plugin/{marketplace,plugin/{plugin,hooks}}.json\n"
-        "  ├─ skills/<skill-name>/SKILL.md  (flat, 1 level; category in frontmatter)\n"
-        "  ├─ commands/<cmd>.md  (15 commands, 0-arg)\n"
-        "  ├─ lib/{state_codec,active_hooks_codec,write_claude_md,...}.py\n"
-        "  └─ eval/{golden,prompts,fixtures}/\n"
+        f"  ├─ skills/<skill-name>/SKILL.md  ({skill_count} skills, flat; category in frontmatter)\n"
+        + (f"  ├─ commands/<cmd>.md  (zero-arg)\n" if has_commands else "")
+        + f"  ├─ lib/{{{(', '.join(lib_files))}}}\n"
+        + f"  └─ eval/{{{(', '.join(eval_dirs))}}}\n"
         "```\n"
         "<!-- Run `/dev-kit:bootstrap --full-claude-md` to embed complete tree (depth 4), manifest, deps -->\n"
     )
@@ -52,9 +75,9 @@ def render_stub_section_3(project_root: Path) -> str:
 def render_full_section_3(project_root: Path) -> str:
     """Full 4-section codebase map."""
     tree = _safe_tree(project_root)
-    manifest = _safe_manifest(project_root)
+    manifest = _safe_existence_list(project_root, MANIFEST_CANDIDATES, "no manifest detected")
     deps = _safe_deps(project_root)
-    conventions = _safe_conventions(project_root)
+    conventions = _safe_existence_list(project_root, CONVENTION_CANDIDATES, "no conventions file detected")
     return (
         f"### Tree (depth 4)\n```\n{tree}\n```\n\n"
         f"### Manifest\n{manifest}\n\n"
@@ -68,54 +91,49 @@ def _safe_tree(root: Path) -> str:
         out: List[str] = []
         for dirpath, dirnames, filenames in os.walk(root):
             depth = dirpath[len(str(root)):].count(os.sep)
-            if depth > 4:
+            if depth > TREE_DEPTH_MAX:
                 dirnames.clear()
                 continue
-            dirnames[:] = [d for d in dirnames if d not in {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", ".pytest_cache"}]
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             indent = "  " * depth
             out.append(f"{indent}{os.path.basename(dirpath) or '.'}/")
-            for f in sorted(filenames)[:20]:
+            for f in sorted(filenames)[:FILES_PER_DIR_MAX]:
                 out.append(f"{indent}  {f}")
-        return "\n".join(out[:80]) or "(empty)"
+        return "\n".join(out[:TREE_LINES_MAX]) or "(empty)"
     except Exception:
         return "(tree extraction failed — STALE)"
 
 
-def _safe_manifest(root: Path) -> str:
-    candidates = ["package.json", "pyproject.toml", "go.mod", "Cargo.toml"]
-    found = []
-    for c in candidates:
-        if (root / c).exists():
-            found.append(f"- `{c}` ✓")
-    return "\n".join(found) if found else "- (no manifest detected)"
+def _safe_existence_list(root: Path, candidates: List[str], fallback: str) -> str:
+    found = [f"- `{c}` ✓" for c in candidates if (root / c).exists()]
+    return "\n".join(found) if found else f"- {fallback}"
 
 
 def _safe_deps(root: Path) -> str:
-    candidates = [
-        ("pnpm-lock.yaml", 30),
-        ("package-lock.json", 30),
-        ("requirements.txt", 20),
-        ("Pipfile.lock", 20),
-    ]
-    for filename, n in candidates:
-        f = root / filename
-        if f.exists():
+    for filename, n in LOCKFILES:
+        path = root / filename
+        if path.exists():
             try:
-                lines = f.read_text(encoding="utf-8").splitlines()[:n]
+                lines = path.read_text(encoding="utf-8").splitlines()[:n]
                 return "\n".join(lines) or f"({filename} empty)"
             except Exception:
                 return f"(read failed for {filename})"
     return "- (no lockfile detected)"
 
 
-def _safe_conventions(root: Path) -> str:
-    items = []
-    for c in [".editorconfig", ".eslintrc.json", ".prettierrc", "pyproject.toml"]:
-        if (root / c).exists():
-            items.append(f"- `{c}` ✓")
-    if not items:
-        items.append("- (no conventions file detected)")
-    return "\n".join(items)
+def render_hook_matrix_table() -> str:
+    """Render the hook matrix markdown table from DEFAULT_MATRIX (single source of truth)."""
+    stages = list(DEFAULT_MATRIX.keys())
+    hooks = list(DEFAULT_MATRIX[stages[0]].keys())
+    header = "| Hook           | " + " | ".join(s.capitalize() for s in stages) + " |"
+    sep =    "|----------------|" + "|".join(":----:" for _ in stages) + "|"
+    def cell(v):
+        return "R" if v == "read-only" else "✅" if v else "-"
+    rows = []
+    for h in hooks:
+        row = f"| {h:<14}  | " + " | ".join(f" {cell(DEFAULT_MATRIX[s][h])}   " for s in stages) + " |"
+        rows.append(row)
+    return "```\n" + "\n".join([header, sep] + rows) + "\n```\n(R = read-only)"
 
 
 def render_claude_md(
@@ -129,18 +147,7 @@ def render_claude_md(
     """Compose full CLAUDE.md content."""
     laws = iron_laws if iron_laws is not None else IRON_LAWS
     section_3 = render_full_section_3(project_root) if full_map else render_stub_section_3(project_root)
-    section_4 = hook_matrix if hook_matrix is not None else (
-        "```\n"
-        "| Hook           | Boot | Plan | Design | Build | Review | Security | Ship |\n"
-        "|----------------|:----:|:----:|:------:|:-----:|:------:|:--------:|:----:|\n"
-        "| tdd-guard      |  -   |  -   |   -    |  ✅   |   -    |    -     |  -   |\n"
-        "| bash-guard     |  -   |  -   |   -    |  ✅   |   -    |    -     |  -   |\n"
-        "| secret-scan    |  R   |  -   |   -    |  ✅   |   ✅   |    ✅    |  -   |\n"
-        "| slop-detector  |  -   |  -   |   -    |  ✅   |   ✅   |    ✅    |  -   |\n"
-        "| stop-verify    |  -   |  ✅  |   ✅   |  ✅   |   ✅   |    ✅    |  ✅  |\n"
-        "```\n"
-        "(R = read-only)"
-    )
+    section_4 = hook_matrix if hook_matrix is not None else render_hook_matrix_table()
     section_5 = hand_off_chain if hand_off_chain is not None else (
         "next_stage_trigger: /dev-kit:plan\n"
         "shortcut_trigger: /dev-kit:tdd-fast"
@@ -194,15 +201,7 @@ def write_claude_md(project_root: Path, *, full_map: bool = False, stage: str = 
     """Atomic write CLAUDE.md. Returns path."""
     path = project_root / "CLAUDE.md"
     content = render_claude_md(project_root, stage=stage, full_map=full_map)
-    fd, tmp = tempfile.mkstemp(dir=project_root, prefix=".CLAUDE.md.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    atomic_write_text(path, content)
     return path
 
 

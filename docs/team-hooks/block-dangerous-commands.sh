@@ -35,16 +35,14 @@ read -ra TOKENS <<< "$CMD"
 # subsequent tokens. Returns via globals FIRST_CMD, FIRST_FLAGS, FIRST_ARG.
 # If not found, returns 1.
 find_cmd() {
-  # Iterate ALL occurrences of $1 in TOKENS (not just the first). Sets
-  # FIRST_CMD / FIRST_FLAGS / FIRST_ARG for the *last* match and returns 0
-  # on the first hit found; the caller is expected to re-invoke via a
-  # `while find_cmd ...; do ... done` loop to scan every occurrence.
+  # Returns 0 if $1 is present anywhere in TOKENS, sets FIRST_CMD / FIRST_FLAGS /
+  # FIRST_ARG for the *last* match. Use find_cmd_at() in a loop to iterate
+  # every occurrence (defeats "rm -rf safe.txt && rm -rf /" bypass).
   local cmd_name="$1"
   local i=0
   local last_i=-1
   while [ $i -lt ${#TOKENS[@]} ]; do
     if [ "${TOKENS[$i]}" = "$cmd_name" ]; then
-      # Skip env-var prefix tokens (FOO=BAR rm ...)
       local j=$i
       while [ $j -gt 0 ] && [[ "${TOKENS[$((j-1))]}" == *=* ]]; do
         j=$((j-1))
@@ -62,10 +60,9 @@ find_cmd() {
   return 1
 }
 
-# Helper: find the NEXT occurrence of $1 starting at index $2. Sets FIRST_*
-# globals like find_cmd and returns 0 on hit. Use in a while-loop to scan
-# every occurrence (defeats "rm -rf safe.txt && rm -rf /" bypass).
 find_cmd_at() {
+  # Like find_cmd, but starts searching at index $2. Sets FIRST_NEXT to the
+  # index AFTER the match (for chained re-invocation).
   local cmd_name="$1"
   local start="$2"
   local i=$start

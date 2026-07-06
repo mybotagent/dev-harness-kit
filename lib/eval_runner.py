@@ -8,21 +8,15 @@ from __future__ import annotations
 
 import json
 import sys
-import time
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
+from atomic import atomic_write_json, now_iso  # noqa: E402
 
-KST = timezone(timedelta(hours=9))
 GOLDEN_SCHEMA_VERSION = "1.0.0"
 ASSET_KINDS = ("claude_md", "skill", "hook", "iron_law", "methodology")
-
-
-def now_iso() -> str:
-    return datetime.now(KST).strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def discover_assets(project_root: Path) -> List[Dict]:
@@ -63,15 +57,14 @@ def discover_assets(project_root: Path) -> List[Dict]:
             })
     iron_law_src = project_root / "lib" / "write_claude_md.py"
     if iron_law_src.exists():
-        body = iron_law_src.read_text(encoding="utf-8")
-        for line in body.splitlines():
-            if line.startswith("L1_") or line.startswith("L2_") or line.startswith("L3_") or line.startswith("L4_") or line.startswith("L5_"):
+        for line in iron_law_src.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if any(stripped.startswith(f"L{n}_") for n in range(1, 6)):
                 assets.append({
-                    "path": f"lib/write_claude_md.py: {line.strip()[:40]}",
+                    "path": f"lib/write_claude_md.py: {stripped[:40]}",
                     "kind": "iron_law",
-                    "content": line.strip(),
+                    "content": stripped,
                 })
-                break  # one representative entry
     method_dir = project_root / "lib" / "methodology"
     if method_dir.exists():
         for m in sorted(method_dir.glob("*.py")):
@@ -103,17 +96,7 @@ def load_golden(path: Path) -> Dict:
 
 def save_golden(path: Path, data: Dict) -> None:
     """Save golden baseline. Atomic write."""
-    import os, tempfile
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    atomic_write_json(path, data)
 
 
 def _judge_asset(project_root: Path, asset: Dict, config: Dict) -> Dict:
@@ -164,14 +147,6 @@ def score_asset(project_root: Path, asset: Dict, config: Optional[Dict] = None) 
     if config is None:
         config = llm_judge.load_config(project_root)
     return _judge_asset(project_root, asset, config)
-
-
-def cross_check_agree(results: List[Dict], tolerance: float = 0.5) -> bool:
-    """MUST-NOT-23: 2-judge cross-check. Agree if all scores within tolerance."""
-    if not results:
-        return True
-    base = results[0].get("score", 0)
-    return all(abs(r.get("score", 0) - base) <= tolerance for r in results)
 
 
 def write_report(project_root: Path, results: List[Dict], config: Optional[Dict] = None) -> Path:
@@ -246,10 +221,11 @@ def run_eval(project_root: Path, config: Optional[Dict] = None, *, dry_run: bool
                     "error": str(e),
                 })
     write_report(project_root, results, config)
+    summary = {v: results.count(v) for v in ("OK", "DRIFT_WARNING", "ROT")}
     return {
         "results": results,
         "config": {k: v for k, v in config.items() if k != "api_key"},
-        "summary": {k: results.count(v) for k in ["OK", "DRIFT_WARNING", "ROT"] for v in []},
+        "summary": summary,
     }
 
 

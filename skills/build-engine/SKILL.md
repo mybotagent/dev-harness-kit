@@ -1,7 +1,7 @@
 ---
 name: build-engine
 category: build
-description: harness-runner engine per step. atomic write + 2-commit protocol + parallel worktree. 자체 사이클 없음 (각 step은 별개 사이클, MUST-NO-LOOP).
+description: harness-runner engine per step. atomic write + 2-commit protocol + parallel worktree. No own cycle (each step is a separate cycle, MUST-NO-LOOP).
 when_to_use: |
   - Auto-invoked by /dev-kit:build per step
 allowed-tools: Read Write Bash
@@ -13,40 +13,40 @@ user-invocable: false
 # build-engine — Phase Step Executor
 
 ## Iron Law
-**step 외 작업 추가 ❌.** step file에 명시되지 않은 파일·기능은 만들지 않는다. 추가 필요 시 새 step을 index.json에 등록.
+**No work outside the step ❌.** Don't create files or features not specified in the step file. If you need extras, register a new step in index.json.
 
 ## 2-Commit Protocol
 
 ```
 [1] feat(scope): step<N> — <name>
-    (코드 변경)
+    (code changes)
 [2] chore(scope): step<N> output
-    (step<N>-output.json 기록)
+    (step<N>-output.json recorded)
 ```
 
-`git reset HEAD -- <path>` 두 커밋 사이 사용.
+Use `git reset HEAD -- <path>` between the two commits.
 
-## Hook 정렬
+## Hook integration
 
-Build stage에서 모두 ON:
+All ON during Build stage:
 - `tdd-guard` (active per methodology)
-- `bash-guard` (destructive 명령 차단)
+- `bash-guard` (blocks destructive commands)
 - `secret-scan` (PostToolUse: credential pattern)
 - `slop-detector` (KO+EN banned phrases)
 - `stop-verify` (Stop event: AC claim)
 
-## 규칙
+## Rules
 
-- **MAX_RETRIES=3**: step별 3회 재시도. 그 후 → `status=error` + 메인에 report.
-- **`--parallel N`**: N개 독립 step을 worktree 격리 동시 실행. phase dependencies 자동 감지.
-- **resume**: pending step 자동 이어서. `index.json` status 머신.
-- **blocked**: 사용자 개입 필요 (API key / 수동 설정). `blocked_reason` 필수 (status state machine validate).
-- **idempotent**: `step<N>-output.json` 재실행 시 atomic overwrite.
+- **MAX_RETRIES=3**: 3 retries per step. After that → `status=error` + report to main.
+- **`--parallel N`**: N independent steps run in worktree isolation concurrently. Auto-detect phase dependencies.
+- **resume**: pending steps auto-continue. `index.json` status state machine.
+- **blocked**: user intervention required (API key / manual setup). `blocked_reason` required (status state machine validate).
+- **idempotent**: `step<N>-output.json` atomic-overwritten on re-run.
 
-## 출력
+## Output
 
 - `step<N>-output.json`: `{step, phase, exit_code, stdout, stderr, duration_seconds, timestamp}`
 
-## Sub-agent 위임
+## Sub-agent delegation
 
-MUST-36: 메인 오케스트레이터 = AC 위임. sub-agent는 `lib/sub_agent_runner.py` 통해 spawn (Phase 3 흡수 예정). worktree 격리 + 권한 (Bash/Read/Edit/Write/Glob/Grep/WebFetch/lint/browser).
+Phase 3 (planned): main orchestrator delegates AC execution to sub-agents in isolated worktrees with scoped permissions. Currently sequential-only.

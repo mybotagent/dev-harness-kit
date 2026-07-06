@@ -30,7 +30,7 @@
 - **AC**: All steps `status=completed`. `pytest` exit code 0 + count quoted. 2-commit protocol followed.
 - **Active Skills**: `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-simplify`, `build-methodology`
 - **Active Hooks**: `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` — all ON
-- **Sub-agent**: `sub_agent_runner` (MUST-36~38). AC delegation + self-fix loop.
+- **Sub-agent**: Phase 3 (planned). Currently sequential-only.
 - **Hand-off out**: `build→review.md`
 
 ## Stage 5a — Review (`/dev-kit:review`)

@@ -14,9 +14,9 @@ user-invocable: false
 # bootstrap-active-hooks — Stage-Aware Hook Matrix (SSOT)
 
 ## Iron Law
-**모든 hook 활성 상태는 단 한 곳 `.dev-kit/.active-hooks.json`에서 결정.** `hooks/hooks.json`은 매트릭스 reader만 등록.
+**All hook active states are decided in one place: `.dev-kit/.active-hooks.json`.** `hooks/hooks.json` only registers the matrix reader.
 
-## 출력 형식
+## Output format
 
 ```json
 {
@@ -44,22 +44,22 @@ user-invocable: false
 }
 ```
 
-## Hook 셸 (참조)
+## Hook shell (reference)
 
-| Hook | Stage ON | 비고 |
+| Hook | Stage ON | Note |
 |---|---|---|
-| `tdd-guard` | build | lib/methodology/tdd.py 활성 시에만 (MUST-48) |
-| `bash-guard` | build | `rm -rf`, `git push --force main` 등 패턴 |
+| `tdd-guard` | build | active only when lib/methodology/tdd.py is loaded (MUST-48) |
+| `bash-guard` | build | patterns like `rm -rf`, `git push --force main` |
 | `secret-scan` | build / review / security | PostToolUse: credential pattern grep |
 | `slop-detector` | build / review / security | KO+EN banned phrases |
-| `stop-verify` | plan / design / build / review / security / ship | Stop event: AC claim 검증 |
+| `stop-verify` | plan / design / build / review / security / ship | Stop event: AC claim verification |
 
-## 규칙
+## Rules
 
-- **모든 hook default `exit 0`** (MUST-12). hard-block(`exit 2`)은 `--strict` 모드만.
-- **`--strict` flag**: 모든 hook `exit 2` 활성화. 사용자 명시 opt-in.
-- **`DEV_KIT_HOOK_OFF=<hook1>,<hook2>` env**: 일시 OFF (override).
+- **All hooks default `exit 0`** (MUST-12). Hard-block (`exit 2`) is `--strict` mode only.
+- **`--strict` flag**: activates `exit 2` for all hooks. User opt-in.
+- **`DEV_KIT_HOOK_OFF=<hook1>,<hook2>` env**: temporarily OFF (override).
 
-## Stage transition 자동 갱신
+## Stage transition auto-update
 
-`/dev-kit:<stage>` 호출 시 `lib/state_codec.py`가 `.active-hooks.json`의 `current_stage` field 자동 갱신 + hook 셸 `read` 호출 시 매트릭스 확인.
+On `/dev-kit:<stage>` call, `lib/state_codec.py` auto-updates `current_stage` field in `.active-hooks.json` + hook shell calls `read` to consult the matrix.

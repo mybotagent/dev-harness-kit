@@ -13,11 +13,11 @@ user-invocable: false
 # audit-secret — Read-Only Credential Audit
 
 ## Iron Law
-**secret text 절대 print ❌.** Match만 보고 (path + masked value `***`).
+**Never print secret text ❌.** Report matches only (path + masked value `***`).
 
 ## SSOT
 
-`hooks/secret-scan.sh`의 patterns:
+`hooks/secret-scan.sh` patterns:
 - `AKIA...` (AWS)
 - `sk-...` / `sk-ant-...` (Anthropic)
 - `ghp_...` / `gho_...` (GitHub)
@@ -26,7 +26,7 @@ user-invocable: false
 - `postgres://user:pass@`
 - `mongodb+srv://user:pass@`
 
-## 출력
+## Output
 
 ```markdown
 ## /dev-kit:audit secret — {path} — {N} files / {M} matches
@@ -35,20 +35,20 @@ user-invocable: false
 - src/auth.ts:42 `AKIA***` (AWS key — REMOVE)
 
 ### WARN
-- scripts/setup.sh:8 — env file 참조 (확인 필요)
+- scripts/setup.sh:8 — env file reference (verify)
 ```
 
-## 규칙
+## Rules
 
-- 발견 시 즉시 CRITICAL. fail-open 모드도 warn.
-- Line number 명시. masked value 1개만 (예시).
-- Read-only — 절대 write ❌.
+- Discovery → immediate CRITICAL. Fail-open mode also warns.
+- Line number required. One masked value example only.
+- Read-only — never write ❌.
 
 ## Hook
 
-`secret-scan.sh` PostToolUse 자동 활성 (Build/Review/Security).
+`secret-scan.sh` auto-active on PostToolUse (Build/Review/Security).
 
-## 회귀
+## Regression
 
-- 빈 fixture → 0 finding
-- 기제 fixture (rotate) → masked-only report
+- empty fixture → 0 finding
+- leaked fixture (rotated) → masked-only report

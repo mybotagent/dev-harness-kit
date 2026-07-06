@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Dict
+
+from atomic import atomic_write_json  # noqa: E402
 
 DEFAULT_MATRIX: Dict[str, Dict[str, object]] = {
     "bootstrap": {
@@ -124,19 +125,7 @@ def disable_override(project_root: Path, hook_name: str) -> None:
 
 
 def _atomic_write(path: Path, data: Dict) -> None:
-    fd, tmp_path = tempfile.mkstemp(
-        dir=path.parent,
-        prefix="." + path.name + ".",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    atomic_write_json(path, data)
 
 
 if __name__ == "__main__":
