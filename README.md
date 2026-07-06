@@ -51,14 +51,14 @@ claude plugin install dev-kit
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 27 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 28 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json + plugin.json
-├── skills/                # 27 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 28 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 5 hook scripts + hooks.json (top-level)
 ├── lib/                   # state_codec / active_hooks_codec / write_claude_md / execute / methodology/
 ├── tests/                 # 79 tests (pytest) — naming, smoke, state, hooks
@@ -81,7 +81,7 @@ dev-harness-kit/
 | `eval` | `eval` |
 | `onboard` | `onboard` |
 | `repair` | `repair` |
-| `ship` | `ship` |
+| `ship` | `ship`, `babysit-pr` |
 | `config` | `config` |
 | `status` | `status` |
 | `shortcuts` | `shortcut-quick-fix`, `shortcut-tdd-fast` |
