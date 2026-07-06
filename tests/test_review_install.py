@@ -237,19 +237,46 @@ class TestReviewYmlStructure(unittest.TestCase):
 
 
 class TestMarketplaceJsonSource(unittest.TestCase):
-    """.claude-plugin/marketplace.json source must be the public URL,
-    not the local-only './'. A consumer who installs dev-kit from a
-    third-party marketplace needs the URL to clone from."""
+    """.claude-plugin/marketplace.json source must be a valid schema
+    form pointing at the public dev-harness-kit source. The schema
+    allows 3 forms:
+      1. "./path"           (relative — works for local install)
+      2. {"source":"npm",...} (NPM)
+      3. {"source":"url","url":...,"ref":...} (git URL — for distribution)
+    A bare string like "https://github.com/..." is INVALID and causes
+    'source type your Claude Code version does not support' on install.
+    """
 
-    def test_marketplace_source_is_public_url(self):
+    def test_marketplace_source_is_valid_schema_form(self):
         import json
         m = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
         src = m["plugins"][0]["source"]
-        self.assertTrue(
-            src.startswith("http://") or src.startswith("https://"),
-            f"marketplace.json source must be a public URL, got: {src!r}",
+        if isinstance(src, str):
+            # Relative path form ("^\\./.*")
+            self.assertRegex(
+                src, r"^\./.*",
+                f"bare string source must start with './' (got: {src!r})",
+            )
+        elif isinstance(src, dict):
+            self.assertIn(
+                src.get("source"), ("npm", "url"),
+                f"object source must have 'source': 'npm' or 'url' (got: {src!r})",
+            )
+        else:
+            self.fail(f"marketplace.json source has unrecognized form: {src!r}")
+
+    def test_marketplace_source_points_at_dev_harness_kit(self):
+        import json
+        m = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
+        src = m["plugins"][0]["source"]
+        if isinstance(src, str):
+            url = src
+        else:
+            url = src.get("url", "")
+        self.assertIn(
+            "dev-harness-kit", url,
+            f"marketplace.json source must point at the dev-harness-kit repo, got: {url!r}",
         )
-        self.assertIn("dev-harness-kit", src)
 
     def test_marketplace_version_matches_plugin_json(self):
         import json

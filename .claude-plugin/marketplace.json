@@ -10,7 +10,11 @@
     {
       "name": "dev-kit",
       "description": "AI-native single plugin absorbing 5 dev-harness repos (pm-prd-fast + interview-harness + dev-harness + claude-review-plugins + slop-shield). 13 categories, 8 dimensions cost/risk, A2A typed, Eval-Repair loop, Human-on-the-Loop.",
-      "source": "https://github.com/sh-ai-x/dev-harness-kit",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/sh-ai-x/dev-harness-kit",
+        "ref": "main"
+      },
       "version": "0.1.1"
     }
   ]
