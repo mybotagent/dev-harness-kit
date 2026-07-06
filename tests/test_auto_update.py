@@ -36,41 +36,49 @@ def _run_hook(marketplace_dir: str) -> subprocess.CompletedProcess:
     )
 
 
+def _run(cmd, **kw):
+    """subprocess.run wrapper that surfaces stderr on failure (for CI debugging)."""
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if r.returncode != 0:
+        raise AssertionError(
+            f"command failed (rc={r.returncode}): {' '.join(map(str, cmd))}\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+    return r
+
+
 def _init_remote_with_commits(tmp: Path, n: int) -> Path:
     """Create a bare-ish 'remote' repo at tmp/remote with `n` commits on main.
     Returns the remote path."""
     remote = tmp / "remote"
     remote.mkdir()
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)],
-                   check=True, capture_output=True)
+    _run(["git", "init", "-q", "--bare", "-b", "main", str(remote)])
     # Use a separate workdir to push commits
     seed = tmp / "seed"
     seed.mkdir()
-    for cmd in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "config", "user.email", "test@example.com"],
-        ["git", "config", "user.name", "Test"],
+    _run(["git", "init", "-q", "-b", "main", str(seed)])
+    # Defensive: disable GPG signing + init template dir. CI runners often
+    # have commit.gpgsign=true globally (e.g. via /etc/gitconfig) which
+    # causes `git commit` to fail with exit 128 when no key is configured.
+    # Same for templateDir pointing at a missing path.
+    for cfg in (
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+        ["config", "commit.gpgsign", "false"],
+        ["config", "tag.gpgsign", "false"],
+        ["config", "init.templateDir", ""],
     ):
-        subprocess.run(cmd + [str(seed)], check=True, capture_output=True)
+        _run(["git", "-C", str(seed)] + cfg)
     (seed / "README.md").write_text("init\n")
-    subprocess.run(["git", "-C", str(seed), "add", "README.md"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(seed), "commit", "-q", "-m", "init"],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(remote)],
-                   check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"],
-                   check=True, capture_output=True)
+    _run(["git", "-C", str(seed), "add", "README.md"])
+    _run(["git", "-C", str(seed), "commit", "-q", "-m", "init"])
+    _run(["git", "-C", str(seed), "remote", "add", "origin", str(remote)])
+    _run(["git", "-C", str(seed), "push", "-q", "origin", "main"])
     for i in range(1, n):
         (seed / f"f{i}.txt").write_text(f"v{i}\n")
-        subprocess.run(["git", "-C", str(seed), "add", f"f{i}.txt"],
-                       check=True, capture_output=True)
-        subprocess.run(
-            ["git", "-C", str(seed), "commit", "-q", "-m", f"c{i}"],
-            check=True, capture_output=True,
-        )
-        subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"],
-                       check=True, capture_output=True)
+        _run(["git", "-C", str(seed), "add", f"f{i}.txt"])
+        _run(["git", "-C", str(seed), "commit", "-q", "-m", f"c{i}"])
+        _run(["git", "-C", str(seed), "push", "-q", "origin", "main"])
     return remote
 
 
@@ -130,26 +138,20 @@ class TestAutoUpdateHook(unittest.TestCase):
             _clone_to(mp, remote)
             # Add a new commit on the remote (not in the local clone yet).
             seed = Path(td) / "seed2"
-            subprocess.run(["git", "clone", "-q", str(remote), str(seed)],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "config", "user.email", "t@t"],
-                           check=True, capture_output=True)
+            _run(["git", "clone", "-q", str(remote), str(seed)])
+            for cfg in (
+                ["config", "user.email", "t@t"],
+                ["config", "user.name", "T"],
+                ["config", "commit.gpgsign", "false"],
+            ):
+                _run(["git", "-C", str(seed)] + cfg)
             (seed / "extra.txt").write_text("x\n")
-            subprocess.run(["git", "-C", str(seed), "add", "extra.txt"],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "commit", "-q", "-m", "extra"],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"],
-                           check=True, capture_output=True)
+            _run(["git", "-C", str(seed), "add", "extra.txt"])
+            _run(["git", "-C", str(seed), "commit", "-q", "-m", "extra"])
+            _run(["git", "-C", str(seed), "push", "-q", "origin", "main"])
             # Local clone is now behind origin/main.
-            before = subprocess.run(
-                ["git", "-C", str(mp), "rev-parse", "HEAD"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
-            remote_head = subprocess.run(
-                ["git", "-C", str(remote), "rev-parse", "main"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
+            before = _run(["git", "-C", str(mp), "rev-parse", "HEAD"]).stdout.strip()
+            remote_head = _run(["git", "-C", str(remote), "rev-parse", "main"]).stdout.strip()
             self.assertNotEqual(before, remote_head, "test setup: local must be behind")
             # Stub `claude` on PATH so the install step becomes a no-op
             # (we only want to verify the pull here).
@@ -159,17 +161,14 @@ class TestAutoUpdateHook(unittest.TestCase):
             (stub_dir / "claude").chmod(0o755)
             env = {**os.environ, "DEV_KIT_MARKETPLACE_DIR": str(mp),
                    "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
-            r = subprocess.run(
+            r = _run(
                 ["bash", str(HOOK)],
                 input=json.dumps({"hook_event_name": "SessionStart"}),
-                capture_output=True, text=True, timeout=60, env=env,
+                timeout=60, env=env,
             )
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
             # Local HEAD should now equal remote HEAD.
-            after = subprocess.run(
-                ["git", "-C", str(mp), "rev-parse", "HEAD"],
-                capture_output=True, text=True, check=True,
-            ).stdout.strip()
+            after = _run(["git", "-C", str(mp), "rev-parse", "HEAD"]).stdout.strip()
             self.assertEqual(after, remote_head, "hook should have fast-forwarded")
 
     def test_noop_when_claude_binary_missing(self):
@@ -180,17 +179,17 @@ class TestAutoUpdateHook(unittest.TestCase):
             _clone_to(mp, remote)
             # Advance the remote.
             seed = Path(td) / "seed2"
-            subprocess.run(["git", "clone", "-q", str(remote), str(seed)],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "config", "user.email", "t@t"],
-                           check=True, capture_output=True)
+            _run(["git", "clone", "-q", str(remote), str(seed)])
+            for cfg in (
+                ["config", "user.email", "t@t"],
+                ["config", "user.name", "T"],
+                ["config", "commit.gpgsign", "false"],
+            ):
+                _run(["git", "-C", str(seed)] + cfg)
             (seed / "f3.txt").write_text("z\n")
-            subprocess.run(["git", "-C", str(seed), "add", "f3.txt"],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "commit", "-q", "-m", "z"],
-                           check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "push", "-q", "origin", "main"],
-                           check=True, capture_output=True)
+            _run(["git", "-C", str(seed), "add", "f3.txt"])
+            _run(["git", "-C", str(seed), "commit", "-q", "-m", "z"])
+            _run(["git", "-C", str(seed), "push", "-q", "origin", "main"])
             # Strip `claude` from PATH but keep the standard utility dirs
             # (bash, git, etc.) so the hook itself can run.
             import shutil
@@ -206,10 +205,10 @@ class TestAutoUpdateHook(unittest.TestCase):
             env = {**os.environ,
                    "DEV_KIT_MARKETPLACE_DIR": str(mp),
                    "PATH": minimal_path}
-            r = subprocess.run(
+            r = _run(
                 ["bash", str(HOOK)],
                 input=json.dumps({"hook_event_name": "SessionStart"}),
-                capture_output=True, text=True, timeout=60, env=env,
+                timeout=60, env=env,
             )
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
 
