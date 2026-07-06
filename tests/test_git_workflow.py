@@ -165,28 +165,29 @@ class TestGitGuardBlocks(unittest.TestCase):
 
     def test_blocks_when_jq_missing(self):
         """M2: if jq is not installed, the hook must DENY (not silently allow).
-        Simulate by passing an env with empty PATH that contains no jq."""
+        Simulates by invoking the script with bash directly + a PATH that
+        contains no jq."""
         if not HOOK.exists():
             self.skipTest("git-guard not found")
-        # shutil.which() is the portable way to resolve a binary — works the
-        # same locally and on CI (unlike `subprocess.run(["command","-v",…])`
-        # which fails on CI because `command` is a shell builtin, not a
-        # binary, so the execvp lookup misses it).
         import shutil
+        bash_real = shutil.which("bash")
         jq_real = shutil.which("jq")
+        if not bash_real:
+            self.skipTest("bash not on PATH — cannot run hook")
         if not jq_real:
             self.skipTest("jq is not installed on this host — cannot simulate missing-jq")
-        # Build a minimal PATH that has everything except the dir containing jq.
-        path = os.environ["PATH"].split(os.pathsep)
+        # PATH contains bash's dir (so bash can be re-execed if needed) but
+        # NOT jq's dir. Building a minimal PATH this way avoids the
+        # `jq_dir == bash_dir` collision on systems where both live in
+        # /usr/bin (e.g. CI Ubuntu).
+        bash_dir = os.path.dirname(bash_real)
         jq_dir = os.path.dirname(jq_real)
-        path_no_jq = [p for p in path if os.path.realpath(p) != os.path.realpath(jq_dir)]
-        if not path_no_jq:
-            self.skipTest("PATH would be empty after removing jq — cannot simulate")
+        minimal_path = bash_dir if bash_dir != jq_dir else "/nonexistent"
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
         r = subprocess.run(
-            ["bash", str(HOOK)],
+            [bash_real, str(HOOK)],
             input=payload, capture_output=True, text=True, timeout=5,
-            env={**os.environ, "PATH": os.pathsep.join(path_no_jq)},
+            env={**os.environ, "PATH": minimal_path},
         )
         self.assertEqual(r.returncode, 2, f"expected deny, got rc={r.returncode}, stderr={r.stderr}")
         self.assertIn("jq is required", r.stderr)
