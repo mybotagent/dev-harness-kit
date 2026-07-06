@@ -9,12 +9,13 @@ Two layers under test:
      with a fixed allowlist of types. Enforced here by sampling the recent
      commit / branch history.
 
-Both layers are part of the same rule (ADR-0021): a feature branch is
+Both layers are part of the same rule (ADR-0022): a feature branch is
 isolated in a worktree, cut from latest origin/main, and merged only via PR.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -28,6 +29,13 @@ RULE_FILE = REPO_ROOT / ".claude" / "rules" / "git-workflow.md"
 ALLOWED_BRANCH_TYPES = ("fix", "feat", "refactor", "docs", "test", "chore", "perf", "hotfix")
 BRANCH_RE = re.compile(r"^(?P<type>" + "|".join(ALLOWED_BRANCH_TYPES) + r")/(?P<slug>[a-z0-9][a-z0-9-]{0,38}[a-z0-9])$")
 FORBIDDEN_SLUG_WORDS = {"wip", "tmp", "foo", "bar", "asdf", "test", "scratch", "untitled"}
+# m2: real forbidden-slug enforcement. FORBIDDEN_RE explicitly matches
+# the forbidden combinations — BRANCH_RE itself is naive (by design; the
+# upstream tool that creates branches doesn't need to know about cosmetic
+# disallow lists). The workflow's check is FORBIDDEN_RE on top.
+FORBIDDEN_RE = re.compile(
+    r"^(?:" + "|".join(ALLOWED_BRANCH_TYPES) + r")/(?:" + "|".join(sorted(FORBIDDEN_SLUG_WORDS)) + r")$"
+)
 
 
 def _run_hook(command: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -113,6 +121,75 @@ class TestGitGuardBlocks(unittest.TestCase):
             self.assertEqual(r.returncode, 2)
             self.assertIn("switching to main", r.stderr)
 
+    # === M1: global git flag bypass ===
+    # These all slipped through the previous (literal-pattern) matcher because
+    # the regex required literal `git <space> <verb>`. The hook now strips
+    # -C, -c, --git-dir, --work-tree, --no-pager before pattern matching.
+
+    def test_blocks_commit_with_global_C(self):
+        with _init_tmp_git_repo() as tmp:
+            r = _run_hook(f"git -C {tmp} commit -m x", cwd=Path(tmp))
+            self.assertEqual(r.returncode, 2, f"got rc={r.returncode}, stderr={r.stderr}")
+            self.assertIn("direct commit to 'main'", r.stderr)
+
+    def test_blocks_commit_with_global_c(self):
+        with _init_tmp_git_repo() as tmp:
+            r = _run_hook(f"git -c user.email=x@y.z -C {tmp} commit -m x", cwd=Path(tmp))
+            self.assertEqual(r.returncode, 2, f"got rc={r.returncode}, stderr={r.stderr}")
+            self.assertIn("direct commit to 'main'", r.stderr)
+
+    def test_blocks_push_origin_main_with_global_C(self):
+        with _init_tmp_git_repo() as tmp:
+            r = _run_hook(f"git -C {tmp} push origin main", cwd=Path(tmp))
+            self.assertEqual(r.returncode, 2, f"got rc={r.returncode}, stderr={r.stderr}")
+            self.assertIn("pushing to main", r.stderr)
+
+    def test_blocks_push_with_global_no_pager(self):
+        r = _run_hook("git --no-pager push origin main")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("pushing to main", r.stderr)
+
+    def test_blocks_push_with_global_git_dir(self):
+        r = _run_hook("git --git-dir=/some/path push origin main")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("pushing to main", r.stderr)
+
+    def test_blocks_push_origin_plus_main(self):
+        """`git push origin +main` (the `+` refspec prefix) was a gap in the
+        previous matcher — covered now by the `(\\+)?` alternation."""
+        r = _run_hook("git push origin +main")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("pushing to main", r.stderr)
+
+    # === M2: fail-closed when jq is missing ===
+
+    def test_blocks_when_jq_missing(self):
+        """M2: if jq is not installed, the hook must DENY (not silently allow).
+        Simulate by passing an env with empty PATH that contains no jq."""
+        if not HOOK.exists():
+            self.skipTest("git-guard not found")
+        # Find jq's path so we can remove it from PATH.
+        jq_real = subprocess.run(
+            ["command", "-v", "jq"], capture_output=True, text=True
+        ).stdout.strip()
+        if not jq_real:
+            self.skipTest("jq is not installed on this host — cannot simulate missing-jq")
+        # Build a minimal PATH that has everything except the dir containing jq.
+        path = os.environ["PATH"].split(os.pathsep)
+        jq_dir = os.path.dirname(jq_real)
+        path_no_jq = [p for p in path if os.path.realpath(p) != os.path.realpath(jq_dir)]
+        if not path_no_jq:
+            self.skipTest("PATH would be empty after removing jq — cannot simulate")
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
+        r = subprocess.run(
+            ["bash", str(HOOK)],
+            input=payload, capture_output=True, text=True, timeout=5,
+            env={**os.environ, "PATH": os.pathsep.join(path_no_jq)},
+        )
+        self.assertEqual(r.returncode, 2, f"expected deny, got rc={r.returncode}, stderr={r.stderr}")
+        self.assertIn("jq is required", r.stderr)
+        self.assertIn("permissionDecision", r.stderr)
+
 
 class TestGitGuardAllows(unittest.TestCase):
     """git-guard.sh must ALLOW (exit 0) normal feature-branch operations."""
@@ -192,9 +269,23 @@ class TestBranchNamingConvention(unittest.TestCase):
             self.assertNotRegex(bad, BRANCH_RE, f"should reject {bad!r}")
 
     def test_branch_naming_rejects_forbidden_slug_words(self):
-        for bad in ("fix/wip", "chore/tmp", "feat/foo", "fix/scratch"):
-            self.assertIn(bad.split("/")[1], FORBIDDEN_SLUG_WORDS,
-                          f"{bad!r} should be in forbidden slug set")
+        """m2: real enforcement. FORBIDDEN_RE explicitly matches forbidden
+        combinations — the previous tautology test only asserted bad words
+        are in the Python set, never exercised the regex or git history."""
+        for bad in ("fix/wip", "chore/tmp", "feat/foo", "fix/scratch",
+                    "chore/asdf", "docs/untitled", "perf/bar", "hotfix/test"):
+            with self.subTest(branch=bad):
+                self.assertIsNotNone(
+                    FORBIDDEN_RE.match(bad),
+                    f"{bad!r} should match FORBIDDEN_RE",
+                )
+        # Sanity: legitimate slugs are NOT caught by FORBIDDEN_RE.
+        for good in ("fix/review-findings", "feat/eval-repair-v2", "chore/bump-deps"):
+            with self.subTest(branch=good):
+                self.assertIsNone(
+                    FORBIDDEN_RE.match(good),
+                    f"{good!r} should NOT match FORBIDDEN_RE",
+                )
 
     def test_recent_local_branches_match_convention(self):
         """All local branches (except main/master/HEAD/grandfathered) must follow <type>/<slug>.

@@ -2,16 +2,29 @@
 # git-guard.sh — PreToolUse hook for Bash. Enforces branch strategy.
 #
 # Blocks (exit 2 with deny JSON):
-#   1. `git commit` when current branch is main
-#   2. `git push` to main / origin main
-#   3. `git checkout main` followed by other write operations in the same
-#      command (e.g. `git checkout main && git commit -m "..."`)
-#   4. Force-push to shared branches
+#   1. `git commit` on main / master (incl. global flags: -C, -c, --git-dir,
+#      --work-tree, --no-pager, --bare)
+#   2. `git push` to main / origin main / HEAD:main / +main
+#   3. `git push --force` (-f / --force). `--force-with-lease` allowed.
+#   4. `git checkout main` / `git switch main` (primes a direct commit)
+#   5. `git branch -D main|master` (deleting the protection itself)
 #
 # Allows everything else. See .claude/rules/git-workflow.md for rationale.
 
 set -uo pipefail
 INPUT="$(cat)"
+
+# M2: Fail CLOSED if jq is missing. A silent fail-open here disables all
+# enforcement (the next `jq -r ... 2>/dev/null` returns "" and the script
+# exits 0 on every command). Without this guard, git-guard is no-op on
+# Alpine / stripped Docker / fresh macOS.
+if ! command -v jq >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"GIT GUARD: jq is required by git-guard.sh but not installed. Install jq (apt/brew/apk) — without it, branch protection cannot be enforced."}}
+EOF
+  exit 2
+fi
+
 CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 [ -z "$CMD" ] && exit 0
 
@@ -20,13 +33,6 @@ case "$CMD" in
   *"git "*) ;;
   *) exit 0 ;;
 esac
-
-# We only care about: commit, push, checkout (combined with writes), branch -D
-# Skip read-only git commands (status, log, diff, show, rev-parse, etc.)
-write_pattern='(git[[:space:]]+commit|git[[:space:]]+push|git[[:space:]]+checkout|git[[:space:]]+switch|git[[:space:]]+branch[[:space:]]+-D|git[[:space:]]+branch[[:space:]]+-d)'
-if ! printf '%s' "$CMD" | grep -qE "$write_pattern"; then
-  exit 0
-fi
 
 # Helper: emit PreToolUse deny JSON and exit 2.
 deny() {
@@ -42,6 +48,72 @@ current_branch() {
   git symbolic-ref --short HEAD 2>/dev/null || true
 }
 
+# M1: Strip GLOBAL git options so the verb-extraction patterns below match
+# the actual git subcommand. Handles:
+#   -C <path>         short flag with separate value
+#   -c <key>=<val>    short flag with separate value (or -c<key>=<val> attached)
+#   --git-dir <path>  long flag with separate value (or --git-dir=<path> attached)
+#   --work-tree <path>
+#   --exec-path <path>
+#   --no-pager, --bare, --help, --version  (self-contained, no value)
+# Unknown -X short flags are skipped (next token is consumed as value
+# UNLESS the next token starts with `-` or is a known verb — heuristic to
+# avoid eating a real verb as a flag value).
+strip_git_globals() {
+  local cmd="$1"
+  read -ra toks <<< "$cmd"
+  [ "${toks[0]:-}" = "git" ] || { echo "$cmd"; return 0; }
+  local out="git" in_verb=0 i=1
+  while [ $i -lt ${#toks[@]} ]; do
+    local t="${toks[$i]}"
+    if [ "$in_verb" = "1" ]; then
+      out="$out $t"
+      i=$((i+1))
+      continue
+    fi
+    case "$t" in
+      --no-pager|--bare|--help|--version)
+        # Self-contained flag with no value.
+        i=$((i+1)) ;;
+      -C|-c|--git-dir|--work-tree|--exec-path)
+        # Flag with separate value (consume this token + next as the value).
+        i=$((i+2)) ;;
+      --git-dir=*|--work-tree=*|--exec-path=*|-c*|-C*)
+        # Attached value (e.g. -cmain, -C., --git-dir=foo).
+        i=$((i+1)) ;;
+      -*)
+        # Unknown short flag. Heuristic: peek at the next token.
+        # If it starts with `-` or is a known verb, this flag has no value.
+        local nxt="${toks[$((i+1))]:-}"
+        case "$nxt" in
+          -*)
+            i=$((i+1)) ;;
+          commit|push|checkout|switch|branch|log|status|diff|show|fetch|pull|rebase|reset|tag|remote|merge|cherry-pick|revert|clean|stash|init|clone|add|mv|rm|config|shortlog|rerere|repack|gc|prune|fsck|reflog|restore|rm|notes|range-diff|mailinfo|mailsplit|request-pull)
+            i=$((i+1)) ;;
+          *)
+            i=$((i+2)) ;;
+        esac
+        ;;
+      *)
+        # First non-flag token → switch to verb mode.
+        in_verb=1
+        out="$out $t"
+        i=$((i+1)) ;;
+    esac
+  done
+  echo "$out"
+}
+
+# Normalize the command so the existing verb-extraction patterns below
+# work for `git -C . commit`, `git --no-pager push origin main`, etc.
+CMD="$(strip_git_globals "$CMD")"
+
+# m1: dropped the dead `branch -d` arm — only `-D` has a denial check below.
+write_pattern='(git[[:space:]]+commit|git[[:space:]]+push|git[[:space:]]+checkout|git[[:space:]]+switch|git[[:space:]]+branch[[:space:]]+-D)'
+if ! printf '%s' "$CMD" | grep -qE "$write_pattern"; then
+  exit 0
+fi
+
 # 1. Block git commit on main.
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+commit'; then
   CUR=$(current_branch)
@@ -53,11 +125,15 @@ fi
 # 2. Block git push to main.
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   # Heuristic: any push that names main / master on the remote side.
-  # Catches: `git push origin main`, `git push origin HEAD:main`, `git push --force origin main`.
-  if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(origin[[:space:]]+)?(HEAD:)?(main|master)([[:space:]]|$)|:main\b|:master\b'; then
+  # Catches: `git push origin main`, `git push origin HEAD:main`,
+  # `git push origin +main`, `git push --force origin main`,
+  # `git push origin main:master`, `git -C /repo push origin main`.
+  if printf '%s' "$CMD" | grep -qE '(^|[[:space:]:/])(origin[[:space:]]+)?(\+)?(HEAD:)?(main|master)([[:space:]:/.]|$)|:main\b|:master\b'; then
     deny "pushing to main is forbidden. Push to your feature branch: \`git push -u origin <type>/<slug>\`."
   fi
-  # Block force-push (defense in depth — bash-guard already catches this).
+  # Block force-push. m5: bash-guard.sh only blocks force-push in strict mode
+  # (DEV_KIT_STRICT=1) and only the `force+main` pattern — git-guard is the
+  # only always-on block, so this check is the primary one.
   if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push[[:space:]]+(-f|--force|--force-with-lease)([[:space:]]|$)'; then
     if printf '%s' "$CMD" | grep -qE -- '--force-with-lease'; then
       # --force-with-lease is allowed on your own unmerged branch; only block

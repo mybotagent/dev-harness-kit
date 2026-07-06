@@ -38,9 +38,9 @@ Format: **`<type>/<slug>`**
 - **Action-first**: describe what the branch does, not what file it touches.
   - ✅ `fix/cli-nameerror`, `feat/eval-repair-v2`
   - ❌ `fix/state_codec`, `feature_eval` (wrong type), `MyFeature` (not kebab)
-- ≤ 40 chars. If longer, the scope is too big — split the task.
+- **Length**: 2–40 chars. Single-char slugs (e.g. `fix/a`) are too vague.
 - No author names, no issue numbers (issue #N goes in the PR body, not the branch name).
-- No personal/scratch names: `test`, `wip`, `tmp`, `foo`, `asdf` → rejected.
+- No personal/scratch names: `wip`, `tmp`, `foo`, `bar`, `asdf`, `test`, `scratch`, `untitled` → rejected by `tests/test_git_workflow.py::FORBIDDEN_RE`.
 
 ## Worktree + session protocol (mandatory for every new task)
 
@@ -108,7 +108,7 @@ git branch -d fix/<slug>        # local branch gone
 
 ## Related
 
-- `docs/adr/ADR-0021-branch-strategy.md` (rationale, alternatives considered)
+- `docs/adr/ADR-0022-branch-strategy.md` (rationale, alternatives considered)
 - `tests/test_git_workflow.py` (regression enforcement)
 - `hooks/git-guard.sh` (PreToolUse block)
 - `hooks/hooks.json` (wires `git-guard` into PreToolUse)
