@@ -8,18 +8,25 @@ Run `/dev-kit:ci-setup` once per project, after `/dev-kit:bootstrap` and before 
 
 ## What gets installed
 
-The skill copies 8 files from the `templates/ci/` source tree into the target project:
+The skill copies 15 files from the `templates/ci/` source tree into the target project (was 8 in 0.1.0; added the 4 worktree-rule files in 0.1.1):
 
 | Path | Purpose |
 |---|---|
 | `.github/workflows/ci.yml` | Branch-policy warn + `pytest` test + `validate.py` validator jobs |
 | `.github/workflows/auto-fix-pr.yml` | Auto-fix loop on `changes_requested` review (5-iteration cap, label counter, forbidden-path guard) |
-| `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate |
+| `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate. **Self-aware install step** (0.1.1+): detects self-install vs consumer-install at runtime |
 | `.githooks/pre-push` | Client-side block of `git push` to `main`; activate with `git config core.hooksPath .githooks` |
 | `scripts/validate.py` | Extracted from dev-kit's own `ci.yml` 5-step validate job; checks install + marker + bash syntax |
 | `scripts/test.sh` | `pytest` wrapper (gracefully skips if no `tests/` directory) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
+| **`hooks/worktree-guard.sh`** (0.1.1+) | PreToolUse (Write\|Edit\|MultiEdit) — hard-block edits in the main checkout |
+| **`hooks/task-detector.sh`** (0.1.1+) | UserPromptSubmit — nudge new tasks to a worktree |
+| **`hooks/session-start-check.sh`** (0.1.1+) | SessionStart — gentle reminder about the worktree rule |
+| **`hooks/lib/worktree-detect.sh`** (0.1.1+) | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
+| **`hooks/hooks.json`** (0.1.1+) | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
+| **`.claude/rules/git-workflow.md`** (0.1.1+) | The worktree rule (every task = new worktree + new session + new branch) |
+| **`tests/test_worktree_guard.py`** (0.1.1+) | 14 regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
 
 After install, the marker file `.dev-kit/ci-config.json` is written at the project root. The marker is the **contract** with `/dev-kit:build` — without it, build refuses to start.
 
@@ -34,8 +41,8 @@ This is the same set of checks GitHub Actions runs in `ci.yml`, but without requ
 ```
 === validate ===
 validate.py — repo_root=/path/to/repo
-  - installation complete OK (8 files)
-  - ci-config marker OK (v0.1.0)
+  - installation complete OK (15 files)
+  - ci-config marker OK (v0.1.2, schema 1.2.0)
   - bash syntax OK (5 scripts clean)
   - test runner OK (bash -n clean)
 OK: CI installation valid
