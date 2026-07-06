@@ -7,7 +7,7 @@ when_to_use: |
   - PR is open on current branch and CI is red / review requested changes
   - User wants unattended iteration on a single PR
 allowed-tools: Read Bash Grep
-disallowed-tools: Write Edit WebFetch
+disallowed-tools: WebFetch
 model: sonnet
 disable-model-invocation: false
 user-invocable: true
@@ -47,7 +47,7 @@ exit 0. Never create a PR implicitly (MUST: explicit user action).
 ## Algorithm
 
 ```
-LOOP (iter = 1 .. MAX_ITERS):
+LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback)
   1. SNAPSHOT   — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS (single gh call)
   2. TERMINATE  — if REVIEW_VERDICT == "APPROVED"
                     AND every check.conclusion ∈ {success, skipped, neutral}
@@ -71,11 +71,13 @@ LOOP (iter = 1 .. MAX_ITERS):
                     - review feedback    → read review comments, apply reviewer-requested change
   7. APPLY FIX  — modify code (Edit/Write). One logical change per iteration.
   8. VERIFY LOCAL — re-run the same failing command locally; quote exit code + test count
-  9. COMMIT     — `git add -p` (interactive hunks only if ambiguous) + conventional commit
+  9. COMMIT     — `git add <specific paths>` of the file(s) just modified (NEVER `git add -p` — interactive, hangs without TTY; the skill runs unattended) + conventional commit
   10. PUSH     — `git push origin HEAD`
   11. LOG     — append one line to `.dev-kit/babysit.log`:
                   `<ISO-8601> iter=<n> check=<name> fix=<one-line> exit=<code>`
   12. SLEEP    — `gh pr checks --watch` or sleep 20s for CI to pick up
+  13. INCREMENT — `iter = iter + 1`; if `iter > MAX_ITERS`, fall through to
+                  the cap-fallback below; otherwise `goto 1`.
 ```
 
 If `iter == MAX_ITERS` and PR is still blocked → print the unresolved blocker

@@ -75,6 +75,37 @@ class TestBlockDangerousCommands(unittest.TestCase):
     def test_blocks_rm_rf_env_home(self):
         self._expect_blocked("rm -rf $HOME/.cache", "rm recursive")
 
+    # -- chained-rm bypass: prior version only checked first rm token --
+    def test_blocks_rm_rf_absolute_after_safe_rm(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("rm -rf safe.txt && rm -rf /"))
+        self.assertEqual(r.returncode, 2, f"expected block (exit 2), got {r.returncode}: {r.stdout}")
+        self.assertIn("BLOCKED", r.stdout)
+
+    def test_blocks_rm_rf_home_after_safe_rm(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("rm -rf ~/tmp && rm -rf /etc"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
+    # -- metachar bypass: --force/-f/--hard/-fd followed by ; & | > --
+    def test_blocks_git_push_force_semicolon(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("git push --force; rm -rf /"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
+    def test_blocks_git_push_force_doubleamp(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("git push --force&&rm -rf /"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
+    def test_blocks_git_push_short_f_semicolon(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("git push -f;echo ok"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
+    def test_blocks_git_reset_hard_semicolon(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("git reset --hard; ls"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
+    def test_blocks_git_clean_fd_semicolon(self):
+        r = run_hook("block-dangerous-commands.sh", bash_payload("git clean -fd;echo x"))
+        self.assertEqual(r.returncode, 2, f"expected block, got {r.returncode}: {r.stdout}")
+
     def test_allows_rm_rf_relative(self):
         # rm -rf on a relative path is the user's own working dir — not blocked
         self._expect_allowed("rm -rf somedir")

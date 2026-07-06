@@ -35,18 +35,50 @@ read -ra TOKENS <<< "$CMD"
 # subsequent tokens. Returns via globals FIRST_CMD, FIRST_FLAGS, FIRST_ARG.
 # If not found, returns 1.
 find_cmd() {
+  # Iterate ALL occurrences of $1 in TOKENS (not just the first). Sets
+  # FIRST_CMD / FIRST_FLAGS / FIRST_ARG for the *last* match and returns 0
+  # on the first hit found; the caller is expected to re-invoke via a
+  # `while find_cmd ...; do ... done` loop to scan every occurrence.
   local cmd_name="$1"
   local i=0
+  local last_i=-1
   while [ $i -lt ${#TOKENS[@]} ]; do
     if [ "${TOKENS[$i]}" = "$cmd_name" ]; then
-      # Check for env-var prefix (FOO=bar rm ...)
-      # Simple heuristic: skip FOO=BAR tokens
-      while [ $i -gt 0 ] && [[ "${TOKENS[$((i-1))]}" == *=* ]]; do
-        i=$((i-1))
+      # Skip env-var prefix tokens (FOO=BAR rm ...)
+      local j=$i
+      while [ $j -gt 0 ] && [[ "${TOKENS[$((j-1))]}" == *=* ]]; do
+        j=$((j-1))
+      done
+      last_i=$j
+    fi
+    i=$((i+1))
+  done
+  if [ $last_i -ge 0 ]; then
+    FIRST_CMD="$cmd_name"
+    FIRST_FLAGS="${TOKENS[$((last_i+1))]:-}"
+    FIRST_ARG="${TOKENS[$((last_i+2))]:-}"
+    return 0
+  fi
+  return 1
+}
+
+# Helper: find the NEXT occurrence of $1 starting at index $2. Sets FIRST_*
+# globals like find_cmd and returns 0 on hit. Use in a while-loop to scan
+# every occurrence (defeats "rm -rf safe.txt && rm -rf /" bypass).
+find_cmd_at() {
+  local cmd_name="$1"
+  local start="$2"
+  local i=$start
+  while [ $i -lt ${#TOKENS[@]} ]; do
+    if [ "${TOKENS[$i]}" = "$cmd_name" ]; then
+      local j=$i
+      while [ $j -gt 0 ] && [[ "${TOKENS[$((j-1))]}" == *=* ]]; do
+        j=$((j-1))
       done
       FIRST_CMD="$cmd_name"
-      FIRST_FLAGS="${TOKENS[$((i+1))]:-}"
-      FIRST_ARG="${TOKENS[$((i+2))]:-}"
+      FIRST_FLAGS="${TOKENS[$((j+1))]:-}"
+      FIRST_ARG="${TOKENS[$((j+2))]:-}"
+      FIRST_NEXT=$((j+1))
       return 0
     fi
     i=$((i+1))
@@ -62,9 +94,12 @@ EOF
 }
 
 # === Destructive rm ===
-if find_cmd "rm"; then
-  # FIRST_FLAGS like "-rf", "-fr", "-f", etc.
-  # FIRST_ARG is the target
+# Iterate EVERY occurrence of `rm` in the tokenized command. The earlier
+# version only checked the first `rm`, which let "rm -rf safe.txt && rm -rf /"
+# slip through (the safe rm matched and the dangerous one was never seen).
+START=0
+while find_cmd_at "rm" "$START"; do
+  START=$FIRST_NEXT
   TARGET="$FIRST_ARG"
   FLAGS="$FIRST_FLAGS"
   # Helper: does TARGET look "dangerous"? (absolute path, $HOME, ~, or wildcard)
@@ -86,14 +121,14 @@ if find_cmd "rm"; then
       deny "rm -f on '$TARGET' — refuses absolute / home paths without -r"
     fi
   fi
-fi
+done
 
 # === git push force ===
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])git([[:space:]]|$)' \
    && printf '%s' "$CMD" | grep -qE '(^|[[:space:]])push([[:space:]]|$)'; then
-  if printf '%s' "$CMD" | grep -qE '[[:space:]]--force([[:space:]]|$)|[[:space:]]-f([[:space:]]|$)'; then
+  if printf '%s' "$CMD" | grep -qE '[[:space:]]--force([[:space:];&|>]*|$)|[[:space:]]-f([[:space:];&|>]*|$)'; then
     # Exclude --force-with-lease (safer)
-    if ! printf '%s' "$CMD" | grep -qE '[[:space:]]--force-with-lease([[:space:]]|$)'; then
+    if ! printf '%s' "$CMD" | grep -qE '[[:space:]]--force-with-lease([[:space:];&|>]*|$)'; then
       deny "git push --force / -f — use --force-with-lease"
     fi
   fi
@@ -102,14 +137,14 @@ fi
 # === git reset --hard ===
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])git([[:space:]]|$)' \
    && printf '%s' "$CMD" | grep -qE '(^|[[:space:]])reset([[:space:]]|$)' \
-   && printf '%s' "$CMD" | grep -qE '[[:space:]]--hard([[:space:]]|$)'; then
+   && printf '%s' "$CMD" | grep -qE '[[:space:]]--hard([[:space:];&|>]*|$)'; then
   deny "git reset --hard — discards uncommitted changes; use git stash first"
 fi
 
 # === git clean -fd / -fdx ===
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])git([[:space:]]|$)' \
    && printf '%s' "$CMD" | grep -qE '(^|[[:space:]])clean([[:space:]]|$)'; then
-  if printf '%s' "$CMD" | grep -qE '[[:space:]]-[a-zA-Z]*[fF][a-zA-Z]*[dDxX]'; then
+  if printf '%s' "$CMD" | grep -qE '[[:space:];&|>][-]?[a-zA-Z]*[fF][a-zA-Z]*[dDxX][[:space:];&|>]*'; then
     deny "git clean -fd/-fdx — wipes untracked + ignored; dry-run with -n first"
   fi
 fi
