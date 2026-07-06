@@ -13,12 +13,20 @@
 # This hook never blocks. The hard block is worktree-guard.sh.
 #
 # Discriminator: --git-dir == --git-common-dir ⇒ main checkout.
+#
+# Fails open (with stderr warning) when `jq` is missing — the rule is
+# advisory in this hook. worktree-guard.sh is the hard-block layer.
 
 set -uo pipefail
 INPUT="$(cat)"
 
-# Need jq to read the (optional) cwd field.
+# Source the shared worktree-detection helper.
+# shellcheck source=lib/worktree-detect.sh
+source "$(dirname "$0")/lib/worktree-detect.sh"
+
+# Warn (not fail) if jq is missing.
 if ! command -v jq >/dev/null 2>&1; then
+  worktree_detect_jq_missing_warn "session-start-check.sh"
   exit 0
 fi
 
@@ -29,34 +37,13 @@ if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
 
-# Inside a git working tree? Always run rev-parse from the repo toplevel
-# so --git-dir and --git-common-dir are relative to a consistent base
-# (avoids absolute/relative mismatch in subdirectories or with symlinked
-# /tmp on macOS).
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-GIT_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-dir 2>/dev/null)" || exit 0
-GIT_COMMON_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-common-dir 2>/dev/null)" || exit 0
-
-abspath() {
-  local p="$1"
-  if command -v realpath >/dev/null 2>&1; then
-    realpath "$p" 2>/dev/null || printf '%s' "$p"
-  else
-    case "$p" in
-      /*) printf '%s' "$p" ;;
-      *) printf '%s/%s' "$PWD" "$p" ;;
-    esac
-  fi
-}
-GIT_DIR="$(abspath "$GIT_DIR")"
-GIT_COMMON_DIR="$(abspath "$GIT_COMMON_DIR")"
-GIT_DIR="${GIT_DIR%/}"
-GIT_COMMON_DIR="${GIT_COMMON_DIR%/}"
-
-# In a worktree → no reminder.
-if [ "$GIT_DIR" != "$GIT_COMMON_DIR" ]; then
-  exit 0
-fi
+# Detect whether we are in the main checkout or a worktree.
+worktree_detect
+case "$WORKTREE_DETECT" in
+  worktree|outside|"") exit 0 ;;
+  main) ;;
+  *) exit 0 ;;
+esac
 
 # In main checkout → emit nudge.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"

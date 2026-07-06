@@ -19,70 +19,74 @@
 #   Polite-prefix forms: "let's X", "I want to X", "please X",
 #                        "can you X", "could you X", "help me X"
 #   Noun phrases:       "new feature", "new task", "feature request"
+#
+# Word-boundary regex is used on the leading verb to avoid false
+# positives on sentences that happen to start with a verb-as-noun
+# ("make sure...", "write a brief summary", "addendum:", "fixing
+# typos"). Major 1 of PR #22 review.
+#
+# Fails open (with stderr warning) when `jq` is missing — the rule is
+# advisory in this hook. worktree-guard.sh is the hard-block layer.
 
 set -uo pipefail
 INPUT="$(cat)"
 
-# Need jq to read the prompt field safely.
+# Source the shared worktree-detection helper.
+# shellcheck source=lib/worktree-detect.sh
+source "$(dirname "$0")/lib/worktree-detect.sh"
+
+# Warn (not fail) if jq is missing. See worktree-detect.sh for the
+# helper that emits the warning and the rationale.
 if ! command -v jq >/dev/null 2>&1; then
+  worktree_detect_jq_missing_warn "task-detector.sh"
   exit 0
 fi
 
 PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)"
 [ -z "$PROMPT" ] && exit 0
 
-# Detect task intent (case-insensitive).
+# Prefer cwd from the hook payload (consistent with
+# session-start-check.sh). Fall back to PWD for older hook callers.
+HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
+if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
+  cd "$HOOK_CWD" || exit 0
+fi
+
+# Detect task intent (case-insensitive). Word-boundary regex on the
+# leading verb avoids matching "make sure", "write a brief", etc.
 LOWER="$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]')"
 
 task_intent=0
+# 1. Slash-invocation: starts with `/`. Strongest signal of a task.
 case "$LOWER" in
-  implement*|add*|build*|create*|fix*|refactor*|develop*|introduce*|make*|write*|design*)
-    task_intent=1 ;;
-  /*)
-    task_intent=1 ;;
+  /*) task_intent=1 ;;
 esac
-if [ "$task_intent" = "0" ]; then
-  if printf '%s' "$LOWER" | grep -qE "(let'?s|i want to|please|can you|could you|help me)[[:space:]]+(implement|add|build|create|fix|refactor|develop|introduce|make|write|design)"; then
-    task_intent=1
-  fi
+# 2. Verb-leading start, with a word boundary immediately after the
+#    verb so we don't match "addendum:", "fixing...", etc. "make" is
+#    intentionally NOT in the list — "make sure", "make a note",
+#    "make a decision" are common non-task uses that produce too many
+#    false positives. Use "add"/"create"/"build" instead.
+if [ "$task_intent" = "0" ] && printf '%s' "$LOWER" | grep -qE '^(implement|add|build|create|fix|refactor|develop|introduce|write|design)([[:space:]]|$|:)'; then
+  task_intent=1
 fi
-if [ "$task_intent" = "0" ]; then
-  if printf '%s' "$LOWER" | grep -qE "(new (feature|task|endpoint|function|module|hook|skill)|feature request|bug report)"; then
-    task_intent=1
-  fi
+# 3. Polite-prefix form: "let's X", "I want to X", etc.
+if [ "$task_intent" = "0" ] && printf '%s' "$LOWER" | grep -qE "(let'?s|i want to|please|can you|could you|help me)[[:space:]]+(implement|add|build|create|fix|refactor|develop|introduce|write|design)"; then
+  task_intent=1
+fi
+# 4. Intent-implying noun phrase.
+if [ "$task_intent" = "0" ] && printf '%s' "$LOWER" | grep -qE "(new (feature|task|endpoint|function|module|hook|skill)|feature request|bug report)"; then
+  task_intent=1
 fi
 
 [ "$task_intent" = "1" ] || exit 0
 
-# Task intent detected — now check whether we are inside a worktree.
-# Same discriminator as worktree-guard.sh. Always run rev-parse from the
-# toplevel so --git-dir / --git-common-dir are relative to a consistent
-# base (avoids absolute/relative mismatch when cwd is a subdirectory or
-# when /tmp is a symlink to /private/tmp on macOS).
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-GIT_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-dir 2>/dev/null)" || exit 0
-GIT_COMMON_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-common-dir 2>/dev/null)" || exit 0
-
-abspath() {
-  local p="$1"
-  if command -v realpath >/dev/null 2>&1; then
-    realpath "$p" 2>/dev/null || printf '%s' "$p"
-  else
-    case "$p" in
-      /*) printf '%s' "$p" ;;
-      *) printf '%s/%s' "$PWD" "$p" ;;
-    esac
-  fi
-}
-GIT_DIR="$(abspath "$GIT_DIR")"
-GIT_COMMON_DIR="$(abspath "$GIT_COMMON_DIR")"
-GIT_DIR="${GIT_DIR%/}"
-GIT_COMMON_DIR="${GIT_COMMON_DIR%/}"
-
-# In a worktree → no nudge needed.
-if [ "$GIT_DIR" != "$GIT_COMMON_DIR" ]; then
-  exit 0
-fi
+# Task intent detected — check whether we are inside a worktree.
+worktree_detect
+case "$WORKTREE_DETECT" in
+  worktree|outside|"") exit 0 ;;  # already in worktree, or rule doesn't apply
+  main) ;;                        # nudge
+  *) exit 0 ;;
+esac
 
 # In main checkout + new-task intent → emit additionalContext nudge.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"

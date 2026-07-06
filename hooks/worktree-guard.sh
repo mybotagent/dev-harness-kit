@@ -9,63 +9,46 @@
 #   user to cut a worktree off origin/main before making any edits.
 #
 # Allows (exit 0):
-#   Edits from inside ANY git worktree (main checkout or nested). The
-#   discriminator is "git_dir == git_common_dir" which is robust to the
-#   worktree living anywhere on disk (not just `.claude/worktrees/`).
+#   Edits from inside ANY git worktree. The discriminator is
+#   `git_dir == git_common_dir` which is robust to the worktree living
+#   anywhere on disk (not just `.claude/worktrees/`).
 #   Edits in non-git directories — this hook is project-scoped.
+#   Empty / probe payloads — nothing to gate.
 #
-# Why --git-dir vs --git-common-dir:
-#   From the main checkout both return the same path (`.git` or its
-#   absolute form). From any worktree, --git-dir returns
-#   `<common>/worktrees/<name>` while --git-common-dir returns `<common>`.
-#   The inequality is a clean, side-effect-free test for "am I in a
-#   worktree right now?".
+# Fails closed (exit 2 with deny JSON) when `jq` is missing.
 #
-# See .claude/rules/git-workflow.md for the full protocol and rationale.
+# The discriminator lives in hooks/lib/worktree-detect.sh so the
+# three rule-hooks don't drift. See .claude/rules/git-workflow.md.
 
 set -uo pipefail
 INPUT="$(cat)"
 
-# Fail CLOSED if jq is missing. Without jq we cannot parse the PreToolUse
-# payload — silent fail-open would disable this rule entirely.
+# Source the shared worktree-detection helper.
+# shellcheck source=lib/worktree-detect.sh
+source "$(dirname "$0")/lib/worktree-detect.sh"
+
+# Fail CLOSED if jq is missing. Without jq we cannot parse the
+# PreToolUse payload — silent fail-open would disable this rule.
 if ! command -v jq >/dev/null 2>&1; then
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"WORKTREE GUARD: jq is required by worktree-guard.sh but not installed. Install jq (apt/brew/apk) — without it, the worktree rule cannot be enforced."}}\n' >&2
   exit 2
 fi
 
-# Confirm we are inside a git working tree. If not, this hook does not
-# apply (the rule is scoped to projects with a git-workflow.md contract).
-# Always run the rev-parse from the repo toplevel so --git-dir and
-# --git-common-dir are relative to a consistent base — otherwise git
-# returns absolute for one and relative for the other when the session
-# cwd is a subdirectory of the repo (or when /tmp is a symlink like
-# /private/tmp on macOS), making equality checks unreliable.
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-GIT_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-dir 2>/dev/null)" || exit 0
-GIT_COMMON_DIR="$(cd "$TOPLEVEL" && git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+# Extract the target file path. If the payload is empty or has no
+# file_path (e.g. a probe call with empty stdin), exit 0 — there is
+# nothing to gate. This must run BEFORE the worktree-detect check so
+# a probe call from any cwd (main checkout included) is a no-op.
+FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+[ -z "$FILE_PATH" ] && exit 0
 
-# Canonicalize both to absolute via realpath (falls back to identity if
-# realpath is unavailable — macOS ships it by default since 10.12).
-abspath() {
-  local p="$1"
-  if command -v realpath >/dev/null 2>&1; then
-    realpath "$p" 2>/dev/null || printf '%s' "$p"
-  else
-    case "$p" in
-      /*) printf '%s' "$p" ;;
-      *) printf '%s/%s' "$PWD" "$p" ;;
-    esac
-  fi
-}
-GIT_DIR="$(abspath "$GIT_DIR")"
-GIT_COMMON_DIR="$(abspath "$GIT_COMMON_DIR")"
-GIT_DIR="${GIT_DIR%/}"
-GIT_COMMON_DIR="${GIT_COMMON_DIR%/}"
-
-# In a worktree → allow.
-if [ "$GIT_DIR" != "$GIT_COMMON_DIR" ]; then
-  exit 0
-fi
+# Detect whether we are in the main checkout or a worktree. The lib
+# function never returns 1 here because we just verified jq exists.
+worktree_detect
+case "$WORKTREE_DETECT" in
+  worktree|outside|"") exit 0 ;;
+  main) ;;
+  *) exit 0 ;;
+esac
 
 # In main checkout → deny with actionable reason.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
