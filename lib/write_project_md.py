@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -140,6 +141,21 @@ def render_full_section_3(project_root: Path) -> str:
     return render_codebase_map_doc(project_root)
 
 
+# Credential redaction patterns for tree output (mask secrets in file/dir names)
+CREDENTIAL_PATTERNS = (
+    re.compile(r"x-access-token:[^@/]+@"),
+    re.compile(r"(?i)(token|pat|password|secret|api[_-]?key)[:=][^/\s]+"),
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub PAT
+)
+
+
+def _redact(s: str) -> str:
+    """Mask credential-like substrings with `***`."""
+    for pat in CREDENTIAL_PATTERNS:
+        s = pat.sub("***", s)
+    return s
+
+
 def _safe_tree(root: Path) -> str:
     try:
         out: List[str] = []
@@ -148,11 +164,20 @@ def _safe_tree(root: Path) -> str:
             if depth > TREE_DEPTH_MAX:
                 dirnames.clear()
                 continue
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            # Filter SKIP_DIRS at every depth + any credential-like dir/file
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in SKIP_DIRS and not any(p.search(d) for p in CREDENTIAL_PATTERNS)
+            ]
+            # Also filter filenames (.git can be a worktree pointer FILE, not a dir)
+            safe_filenames = [
+                f for f in filenames
+                if f not in SKIP_DIRS and not any(p.search(f) for p in CREDENTIAL_PATTERNS)
+            ]
             indent = "  " * depth
             out.append(f"{indent}{os.path.basename(dirpath) or '.'}/")
-            for f in sorted(filenames)[:FILES_PER_DIR_MAX]:
-                out.append(f"{indent}  {f}")
+            for f in sorted(safe_filenames)[:FILES_PER_DIR_MAX]:
+                out.append(f"{indent}  {_redact(f)}")
         return "\n".join(out[:TREE_LINES_MAX]) or "(empty)"
     except Exception:
         return "(tree extraction failed — STALE)"
@@ -274,14 +299,14 @@ def write_project_md(project_root: Path, *, full_map: bool = False, stage: str =
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Write CLAUDE.md + AGENTS.md SSOT")
     parser.add_argument("--project-root", default=".", help="project root directory")
-    parser.add_argument("--full-map", action="store_true",
+    parser.add_argument("--full-claude-md", action="store_true",
                         help="also write docs/CODEBASE-MAP.md (CLAUDE.md §3 stays lazy)")
     parser.add_argument("--stage", default="bootstrap", help="active stage to record in §2")
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
-    p = write_project_md(root, full_map=args.full_map, stage=args.stage)
+    p = write_project_md(root, full_map=args.full_claude_md, stage=args.stage)
     print(f"wrote {p}")
-    if args.full_map:
+    if args.full_claude_md:
         print(f"wrote {root / CODEBASE_MAP_DOC_REL}")
     agents_p = write_agents_md(root)
     print(f"wrote {agents_p}")

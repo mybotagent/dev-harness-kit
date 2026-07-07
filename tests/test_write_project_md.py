@@ -134,6 +134,22 @@ class TestWriteProjectMd(unittest.TestCase):
         self.assertIn("current_stage: design", content)
         self.assertNotIn("current_stage: plan", content.replace("current_stage: design", ""))
 
+    def test_codebase_map_doc_filters_credentials_and_dotfiles(self):
+        """CODEBASE-MAP.md must not leak `.git/` or `x-access-token:...@` credentials."""
+        # Create fake "credential" directory + .git file at root of tmp
+        cred_dir = self.root / "https:"
+        cred_dir.mkdir()
+        (cred_dir / "x-access-token:fake-pat@github.com").mkdir()
+        # Create a fake .git worktree-pointer file
+        (self.root / ".git").write_text("gitdir: /tmp/fake/.git/worktrees/x")
+        write_project_md.write_project_md(self.root, full_map=True, stage="plan")
+        content = (self.root / "docs" / "CODEBASE-MAP.md").read_text()
+        self.assertNotIn("x-access-token", content)
+        self.assertNotIn("fake-pat", content)
+        # .git as a top-level file should be filtered (worktree pointer)
+        self.assertNotIn("\n  .git\n", content)
+        self.assertNotIn("\n  .git/", content)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

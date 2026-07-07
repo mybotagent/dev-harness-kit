@@ -110,6 +110,6 @@ jobs:
       - name: Python module imports
         run: |
           PYTHONPATH=lib python3 -c "
-          import state_codec, active_hooks_codec, write_claude_md, execute
+          import state_codec, active_hooks_codec, write_project_md, execute
           print('all 4 lib modules importable')
           "

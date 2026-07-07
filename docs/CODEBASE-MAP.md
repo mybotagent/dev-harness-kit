@@ -5,16 +5,12 @@
 ```
 bootstrap-simplify/
   .env.example
-  .git
   .gitignore
   AGENTS.md
   CHANGELOG.md
   CLAUDE.md
   README.md
   https:/
-    x-access-token:fake-pat@github.com/
-      sh-ai-x/
-        dev-harness-kit.git/
   .githooks/
     pre-push
   bin/
@@ -83,6 +79,10 @@ bootstrap-simplify/
     workflows/
       auto-fix-pr.yml
       ci.yml
+      review.yml
+  lib/
+    active_hooks_codec.py
+    atomic.py
 ```
 
 ## Manifest

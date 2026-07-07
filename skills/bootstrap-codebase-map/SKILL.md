@@ -17,23 +17,29 @@ user-invocable: false
 ## Iron Law (no exceptions)
 **No guessing / padding ❌.** Only output from pre-validated tools (glob/cat/jq). On guess, append `STALE: guess` marker + wait for user input.
 
-## 4-Section composition
+## Lazy-loading index (default)
 
-`lib/write_project_md.py` inserts into CLAUDE.md §3:
+CLAUDE.md §3 is a pure reference (no inline tree/manifest/deps). The agent reads
+canonical source files on demand. `--full-claude-md` writes the full map to
+`docs/CODEBASE-MAP.md` instead of inlining.
 
-| §3 Section | Source | Tool |
+## 4-Section composition (only when `--full-claude-md`)
+
+`lib/write_project_md.py:render_codebase_map_doc` writes `docs/CODEBASE-MAP.md`:
+
+| Section | Source | Tool |
 |---|---|---|
-| **Tree** | recursive glob (depth 4, exclude `node_modules` `.git` `dist` `__pycache__`) | `Glob` + path sort |
-| **Manifest** | `package.json` / `pyproject.toml` / `go.mod` auto-detect | `Bash: jq` / `Read` |
-| **Deps** | lockfile (`pnpm-lock.yaml` / `package-lock.json` / `requirements.txt`) top 10 | `Bash: head -10` |
-| **Conventions** | `.editorconfig` / `.eslintrc` / `pyproject.toml [tool.*]` / commit trailer rules | `Read` |
+| **Tree** | recursive os.walk (depth 4, exclude `node_modules` `.git` `dist` `__pycache__`) | `os.walk` + path sort |
+| **Manifest** | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` (whichever exists) | `Bash: jq` / `Read` |
+| **Deps** | lockfile (`pnpm-lock.yaml` / `package-lock.json` / `requirements.txt` / `Pipfile.lock`) top 10 | `Bash: head -10` |
+| **Conventions** | `.editorconfig` / `.eslintrc` / `.prettierrc` / `pyproject.toml [tool.*]` | `Read` |
 
-## Lazy mode (MUST-11)
+## Modes
 
 | Mode | Output | Tokens |
 |---|---|---|
-| `--slim-claude-md` (default) | §3 = 5-line STUB + `+codebase-map:full` marker | ~200 tokens |
-| `--full-claude-md` (opt-in) | §3 = full 4 sections inline | 500~5000 tokens |
+| default | §3 = lazy-loading index in CLAUDE.md | ~100 tokens |
+| `--full-claude-md` (opt-in) | `docs/CODEBASE-MAP.md` written (4 sections) | 500~5000 tokens |
 
 ## Rules (no exceptions)
 

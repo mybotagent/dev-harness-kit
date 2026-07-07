@@ -20,7 +20,7 @@ Runs three deterministic sub-skills (`bootstrap-sanity`, `bootstrap-codebase-map
 ## Iron Law (no exceptions)
 **0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`).
 
-## 4-Step Orchestration (3 autonomous + 1 user confirm)
+## 6-Step Orchestration (4 auto + 1 user confirm + 1 exit)
 
 ```
 [1] sanity bootstrap-sanity              → stdout only (file only with --persist-audit)
