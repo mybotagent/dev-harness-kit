@@ -85,11 +85,11 @@ Run `/dev-kit:ci-setup` first.
 
 ## FAQ
 
-### Why is my first PR's severity gate failing with `Missing verdict`?
+### Why is my first PR's severity gate showing `::warning::review verdict missing`?
 
-The `anthropics/claude-code-action` step is intentionally skipped on PRs that MODIFY `.github/workflows/review.yml` itself (GitHub blocks third-party actions on workflow-changing PRs as a security feature). When you ADd `.github/workflows/review.yml` via this skill, that first PR cannot be validated. **Merge that PR first** — the gate works on every PR after.
+Since 0.1.3 the gate tolerates missing verdicts in BOTH `pull_request` and `workflow_dispatch` modes — empty R or S now produces `::warning::` + default `Approve`, not a hard failure. This is intentional: the human gate (`REVIEW_REQUIRED` / `CHANGES_REQUESTED` on the PR) is what blocks merge, not a single missing agent verdict. Real review feedback (`Changes Requested` / `Blocked`) still exits 1 and blocks the PR. The `::warning::` is informational so you know the AI verdict was empty (action skipped, rate-limited, or transient error) and you can investigate.
 
-If you merged the bootstrap PR and STILL see `Missing verdict` on a later PR, run `gh run rerun <run-id> --failed` to retry the verdict-extraction step.
+For the very first PR that ADDS `.github/workflows/review.yml`, the action still cannot validate the new workflow file against `main` (workflow-validation gate). Merge that bootstrap PR first; subsequent PRs flow through normally.
 
 ### Why does the skill complain `DEV_KIT_GITHUB_TOKEN is required for consumer-install`?
 
