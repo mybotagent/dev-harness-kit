@@ -2,7 +2,49 @@
 
 All notable changes to dev-harness-kit are documented here.
 
+## [0.1.5] - 2026-07-07
+
+### Fixed
+- **Wrapper pattern for the claude-code-action validation gate**:
+  `templates/ci/.github/workflows/claude-review.yml` and
+  `claude-security.yml` are new workflow_call-only wrapper files that
+  contain the `anthropics/claude-code-action@v1` invocation. `review.yml`
+  is now a thin orchestrator that calls them via
+  `uses: ./.github/workflows/claude-{review,security}.yml`.
+
+  Why this matters: the action validates "the workflow file must be
+  identical to the version on the repository's default branch" against
+  the file the action is invoked FROM. With the wrapper pattern, the
+  action is invoked from `claude-{review,security}.yml`, which is
+  never modified by PRs that change `review.yml` — so the validation
+  gate passes on EVERY PR, including the very first PR that adds or
+  modifies `review.yml` itself. This eliminates the chicken-and-egg
+  bootstrap trade-off from 0.1.4's `pull_request_target` fix.
+
+- **`review.yml` shrunk 420 → 146 lines**: orchestrator only. Triggers
+  (`pull_request_target` + `workflow_dispatch`), fork-safety guards,
+  concurrency group, and the verdict gate remain. The two `uses:` calls
+  to the wrapper files replace the inline claude action steps.
+
+- **`lib/ci_setup.py` EXPECTED_PATHS** now 17 paths (was 15). The two
+  new wrapper files are in BOOTSTRAP_PATHS so they ship in the same
+  PR as `review.yml` (the orchestrator's `uses:` references must
+  resolve on first run).
+
+- **POST_INSTALL_CHECKLIST step 4** rewritten: the two-phase install
+  protocol (formerly required to dodge the validation gate) is no
+  longer needed. Single-shot `--force` install produces a working
+  review pipeline from the very first PR.
+
+### Notes
+- No schema or marker version bump (`MARKER_SCHEMA_VERSION` is content-
+  only per the 0.1.3 note). `ci-setup --force` on a consumer repo picks
+  up the new files automatically.
+- Bootstrap order is now: one PR (with all 5 workflow files + scripts)
+  → merge → every subsequent PR gets a real review. No two-phase dance.
+
 ## [0.1.4] - 2026-07-07
+
 
 ### Fixed
 - **`templates/ci/.github/workflows/review.yml`**: trigger switched from

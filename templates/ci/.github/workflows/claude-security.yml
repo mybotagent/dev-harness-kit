@@ -1,0 +1,126 @@
+name: Claude Security Wrapper
+
+# Wrapper workflow: contains the anthropics/claude-code-action@v1 invocation
+# for /dev-kit:security. Lives in a separate file from review.yml so the
+# action's "workflow file must be identical to main" validation gate
+# passes even on PRs that modify review.yml.
+#
+# Invoked only via workflow_call from .github/workflows/review.yml.
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: "PR number to audit"
+        required: true
+        type: string
+      provider:
+        description: "Provider (minimax | anthropic)"
+        required: false
+        type: string
+        default: "minimax"
+    outputs:
+      verdict:
+        description: "Parsed verdict (Approve | Changes Requested | Blocked | empty)"
+        value: ${{ jobs.security.outputs.verdict }}
+
+jobs:
+  security:
+    name: /dev-kit:security (10-dim OWASP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      verdict: ${{ steps.extract_verdict.outputs.verdict }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      MINIMAX_BASE_URL: https://api.minimax.io/anthropic
+      DEV_KIT_GITHUB_TOKEN: ${{ secrets.DEV_KIT_GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pr_number && format('pull/{0}/head', inputs.pr_number) || github.ref }}
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dev-kit plugin
+        run: |
+          mkdir -p ~/.claude/plugins/marketplaces
+          if [ -f "$GITHUB_WORKSPACE/.claude-plugin/plugin.json" ] \
+             && [ -d "$GITHUB_WORKSPACE/skills/review" ] \
+             && [ -d "$GITHUB_WORKSPACE/skills/security" ]; then
+            ln -sfn "$GITHUB_WORKSPACE" ~/.claude/plugins/marketplaces/dev-kit
+            echo "::notice::dev-kit self-install: symlinked $GITHUB_WORKSPACE"
+          else
+            if [ -z "$DEV_KIT_GITHUB_TOKEN" ]; then
+              echo "::error::DEV_KIT_GITHUB_TOKEN secret is required for consumer-install."
+              exit 1
+            fi
+            git clone --depth 1 \
+              "https://x-access-token:${DEV_KIT_GITHUB_TOKEN}@github.com/sh-ai-x/dev-harness-kit.git" \
+              ~/.claude/plugins/marketplaces/dev-kit
+          fi
+          test -f ~/.claude/plugins/marketplaces/dev-kit/.claude-plugin/plugin.json
+          test -d ~/.claude/plugins/marketplaces/dev-kit/skills/security
+          echo "dev-kit plugin installed: $(readlink ~/.claude/plugins/marketplaces/dev-kit || echo 'real')"
+
+      - name: Run /dev-kit:security via MiniMax
+        if: inputs.provider == 'minimax' || inputs.provider == ''
+        env:
+          ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
+        uses: anthropics/claude-code-action@v1
+        with:
+          track_progress: true
+          prompt: |
+            /dev-kit:security --diff ${{ github.repository }}/pull/${{ inputs.pr_number }}
+
+            Render the security summary (per-category breakdown table + Verdict).
+            The summary MUST begin with a single line exactly of the form:
+
+              **Verdict:** Approve
+              **Verdict:** Changes Requested
+              **Verdict:** Blocked
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      - name: Run /dev-kit:security via Claude Code opt-in
+        if: inputs.provider == 'anthropic'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: true
+          prompt: |
+            /dev-kit:security --diff ${{ github.repository }}/pull/${{ inputs.pr_number }}
+
+            Render the security summary. The summary MUST begin with:
+
+              **Verdict:** Approve
+              **Verdict:** Changes Requested
+              **Verdict:** Blocked
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      - name: Extract security verdict
+        id: extract_verdict
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -uo pipefail
+          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '^\*\*Verdict:\*\*' | tail -1 \
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]*//' || true)"
+          echo "security_verdict=${verdict:-<none>}"
+          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
