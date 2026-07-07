@@ -33,7 +33,7 @@ Runs three deterministic sub-skills (`bootstrap-sanity`, `bootstrap-codebase-map
        ↓ (auto)
 [5] user review 1x (HOTL, MUST-29)
        ↓
-[6] exit → wait for /dev-kit:plan call (no bootstrap→plan hand-off file; §5 pointer is enough)
+[6] exit → wait for /dev-kit:ci-setup --force call (no bootstrap→ci-setup hand-off file; §5 pointer is enough). Pass `--force` to refresh existing CI templates in target repo.
 ```
 
 ## Hook integration (stage=bootstrap)
@@ -58,4 +58,4 @@ Runs three deterministic sub-skills (`bootstrap-sanity`, `bootstrap-codebase-map
 
 ## Next step
 
-After bootstrap, call `/dev-kit:plan` to write the planning artifacts (`PRD.md` + `phases/<name>/`). `/dev-kit:ci-setup` is opt-in and only for installing dev-kit's reusable GitHub Action review workflows into a target repo — it is NOT a generic next stage.
+After bootstrap, call `/dev-kit:ci-setup --force` to install (or refresh) dev-kit's reusable GitHub Action review workflows + pre-push hook + local runner into the target repo. The `--force` flag overwrites existing installed files; omit it for idempotent re-runs. Pass `--target DIR` to install into a sibling project instead of the current directory. `/dev-kit:plan` is opt-in and only for idea → PRD.md synthesis — it is NOT the default next stage.
