@@ -279,12 +279,23 @@ class TestMarketplaceJsonSource(unittest.TestCase):
         )
 
     def test_marketplace_version_matches_plugin_json(self):
+        """Both manifests must omit `version` (marketplace pins by commit SHA,
+        docs: "If omitted and your plugin is distributed via git, the commit
+        SHA is used and every commit counts as a new version.")."""
         import json
         m = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
         p = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
-        self.assertEqual(
-            m["plugins"][0]["version"], p["version"],
-            "marketplace.json and plugin.json versions must agree",
+        self.assertNotIn(
+            "version", p,
+            f"plugin.json should omit `version` field (got: {p.get('version')!r})",
+        )
+        self.assertNotIn(
+            "version", m,
+            f"marketplace.json root should omit `version` field (got: {m.get('version')!r})",
+        )
+        self.assertNotIn(
+            "version", m["plugins"][0],
+            f"marketplace.json plugin entry should omit `version` field (got: {m['plugins'][0].get('version')!r})",
         )
 
 

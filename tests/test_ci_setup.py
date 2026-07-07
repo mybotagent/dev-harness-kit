@@ -128,12 +128,11 @@ class TestCiSetup(unittest.TestCase):
             marker = target / ".dev-kit" / "ci-config.json"
             data = json.loads(marker.read_text())
             for key in (
-                "schema_version", "ci_setup_version", "installed_at",
+                "schema_version", "installed_at",
                 "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
-            self.assertEqual(data["schema_version"], "1.2.0")
-            self.assertEqual(data["ci_setup_version"], self.ci_setup.DEFAULT_CI_SETUP_VERSION)
+            self.assertEqual(data["schema_version"], "1.0.0")
             self.assertEqual(data["installed_by"], "dev-kit:ci-setup")
             self.assertEqual(set(data["runners"]), {"ci.yml", "auto-fix-pr.yml", "review.yml"})
             self.assertEqual(set(data["scripts"]), {
@@ -145,26 +144,26 @@ class TestCiSetup(unittest.TestCase):
             self.assertTrue(data["installed_at"].endswith("Z"), data["installed_at"])
             # verification block intentionally removed — schema stays minimal.
 
-    def test_version_short_circuit(self):
-        """When marker reports matching version, install is a no-op (no files touched)."""
+    def test_presence_short_circuit(self):
+        """When marker + all EXPECTED_PATHS exist, install is a no-op (no files touched)."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
-            r1 = self.ci_setup.install_ci_config(target)  # uses DEFAULT_CI_SETUP_VERSION
+            r1 = self.ci_setup.install_ci_config(target)
             self.assertEqual(len(r1.created), len(self.ci_setup.EXPECTED_PATHS))
             # Sentinel each EXPECTED_PATH so we can detect any re-touch
             sentinels = {}
             for rel in self.ci_setup.EXPECTED_PATHS:
                 p = target / rel
                 sentinels[rel] = p.read_text()
-            r2 = self.ci_setup.install_ci_config(target, version="0.1.0")
+            r2 = self.ci_setup.install_ci_config(target)
             self.assertEqual(r2.created, [], "short-circuit must skip create")
             self.assertEqual(r2.overwritten, [], "short-circuit must skip overwrite")
             self.assertEqual(
                 len(r2.skipped), len(self.ci_setup.EXPECTED_PATHS),
                 "short-circuit must list every EXPECTED_PATH in skipped",
             )
-            # Confirm files on disk were not re-written (mtime preserved)
+            # Confirm files on disk were not re-written (content preserved)
             for rel in self.ci_setup.EXPECTED_PATHS:
                 self.assertEqual(
                     (target / rel).read_text(), sentinels[rel],
@@ -174,21 +173,20 @@ class TestCiSetup(unittest.TestCase):
             self.assertTrue((target / ".dev-kit" / "ci-config.json").exists())
             self.assertTrue(r2.marker_path.endswith("ci-config.json"))
 
-    def test_version_upgrade_runs_install(self):
-        """When marker reports OLDER version, install proceeds (upgrade path)."""
+    def test_partial_install_completes_remaining(self):
+        """If marker exists but some templates are missing, install copies only the missing ones."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
-            self.ci_setup.install_ci_config(target, version="0.1.0")
-            # Now simulate an older-version marker (downgrade scenario)
-            marker = target / ".dev-kit" / "ci-config.json"
-            data = json.loads(marker.read_text())
-            data["ci_setup_version"] = "0.0.9"
-            marker.write_text(json.dumps(data))
-            r = self.ci_setup.install_ci_config(target, version="0.1.0")
-            # Either created (empty target) or skipped (existing files) — but never short-circuited
-            self.assertEqual(len(r.created) + len(r.overwritten) + len(r.skipped),
-                             len(self.ci_setup.EXPECTED_PATHS))
+            self.ci_setup.install_ci_config(target)
+            # Delete one file + the marker so install must re-copy
+            (target / self.ci_setup.EXPECTED_PATHS[0]).unlink()
+            (target / ".dev-kit" / "ci-config.json").unlink()
+            r = self.ci_setup.install_ci_config(target)
+            self.assertTrue(
+                len(r.created) + len(r.overwritten) >= 1,
+                f"at least the deleted path should be re-copied; created={r.created} overwritten={r.overwritten}",
+            )
 
     def test_executable_bit_set_on_sh_files(self):
         """All .sh + pre-push + validate.py have +x bit after install."""
@@ -256,10 +254,13 @@ class TestCiSetup(unittest.TestCase):
                 self.assertTrue(p.exists(), f"missing: {rel}")
                 self.assertTrue(p.stat().st_mode & stat.S_IXUSR, f"not +x: {rel}")
 
-    def test_marker_schema_version_bumped_to_1_2(self):
-        """Marker schema_version reflects the consumer-install rollout (1.1 → 1.2)."""
-        self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.2.0")
-        self.assertEqual(self.ci_setup.DEFAULT_CI_SETUP_VERSION, "0.1.2")
+    def test_marker_schema_version_current(self):
+        """Schema is content-only (1.0.0). No version-gate constant exists."""
+        self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.0.0")
+        self.assertFalse(
+            hasattr(self.ci_setup, "DEFAULT_CI_SETUP_VERSION"),
+            "DEFAULT_CI_SETUP_VERSION should be removed (content-only install)",
+        )
 
     def test_marker_records_hooks_rules_tests(self):
         """Marker JSON lists the new categories (hooks / rules / tests)."""
