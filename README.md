@@ -88,7 +88,7 @@ dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
 ├── skills/                # 29 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (5 original + 4 worktree-rule) + lib/ + hooks.json
-├── lib/                   # state_codec / active_hooks_codec / write_claude_md / execute / methodology/ / ci_setup
+├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
 ├── templates/ci/          # CI workflow templates shipped to consumer repos via /dev-kit:ci-setup
 ├── tests/                 # 222 tests (pytest) — 16 files

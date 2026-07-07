@@ -8,7 +8,7 @@
 - **Must**: (a) sanity read-only PASS (b) codebase-map auto-synthesis (c) active-hooks.json SSOT init (d) CLAUDE.md §1~§5 unified record
 - **Must-Not**: modify files (sanity + map both read-only). Modify lockfiles. Speculation.
 - **AC**: sanity-report.md PASS / WARN ≤ 3. CLAUDE.md 5 sections STUB (`--slim`) or FULL. `.dev-kit/` directory auto-created.
-- **Active Skills**: `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `write_claude_md`
+- **Active Skills**: `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `write_project_md`
 - **Active Hooks**: `secret-scan`=read-only. Others OFF.
 - **Hand-off out**: `bootstrap→plan.md` (after user OK)
 

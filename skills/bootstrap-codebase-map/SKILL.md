@@ -19,7 +19,7 @@ user-invocable: false
 
 ## 4-Section composition
 
-`lib/write_claude_md.py` inserts into CLAUDE.md §3:
+`lib/write_project_md.py` inserts into CLAUDE.md §3:
 
 | §3 Section | Source | Tool |
 |---|---|---|

@@ -1,6 +1,6 @@
 """atomic.py — shared atomic-write + KST time helpers (5x dedup, 3x dedup).
 
-Used by state_codec, active_hooks_codec, write_claude_md, eval_runner,
+Used by state_codec, active_hooks_codec, write_project_md, eval_runner,
 execute. POSIX-atomic via tempfile + os.replace.
 """
 from __future__ import annotations

@@ -1,7 +1,7 @@
 ---
 name: bootstrap
 category: bootstrap
-description: 0-arg orchestrator. Runs sanity + codebase-map + active-hooks initialization. Writes CLAUDE.md SSOT.
+description: 0-arg orchestrator. Writes minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default.
 when_to_use: |
   - User types `/dev-kit:bootstrap` 1st time on a new project
   - User wants to refresh CLAUDE.md / active-hooks.json
@@ -11,25 +11,29 @@ model: opus
 disable-model-invocation: false
 ---
 
-# /dev-kit:bootstrap — First-Run Orchestrator
+# /dev-kit:bootstrap — Minimal First-Run Setup
+
+## What it does
+
+Runs three deterministic sub-skills (`bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`) and then writes the project SSOT. On a fresh repo, exactly three files land on disk: `CLAUDE.md`, `AGENTS.md`, and `.dev-kit/.active-hooks.json`. No sanity report file. No hand-off file. AGENTS.md is a 1-line pointer (`CLAUDE.md`) for CLIs that read AGENTS.md instead of CLAUDE.md.
 
 ## Iron Law (no exceptions)
-**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`).
+**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`).
 
 ## 4-Step Orchestration (3 autonomous + 1 user confirm)
 
 ```
-[1] sanity bootstrap-sanity              → .dev-kit/sanity-report.md
+[1] sanity bootstrap-sanity              → stdout only (file only with --persist-audit)
        ↓ (auto, deterministic regex + glob)
-[2] codebase-map bootstrap-codebase-map  → §3 (5-line STUB default)
-       ↓ (auto, Read + Glob + Bash)
+[2] codebase-map bootstrap-codebase-map  → §3 (lazy-loading index; consumed only by --full-claude-md)
+       ↓ (auto, Read + Glob + Bash; only consumed by --full-claude-md)
 [3] active-hooks bootstrap-active-hooks  → .dev-kit/.active-hooks.json (SSOT)
        ↓ (auto)
-[4] write-claude-md lib/write_claude_md.py → CLAUDE.md (§1~§5 atomic)
+[4] write-claude-md lib/write_project_md.py → CLAUDE.md + AGENTS.md (§1~§5 atomic)
        ↓ (auto)
 [5] user review 1x (HOTL, MUST-29)
        ↓
-[6] exit / hand-off → wait for /dev-kit:plan call
+[6] exit → wait for /dev-kit:plan call (no bootstrap→plan hand-off file; §5 pointer is enough)
 ```
 
 ## Hook integration (stage=bootstrap)
@@ -48,15 +52,10 @@ disable-model-invocation: false
 
 - **0-arg UX (MUST-21)**: zero args. Branching via `when_to_use` auto-match.
 - **HOTL (MUST-29)**: steps 1~4 auto. §5 hand-off pointer auto-updated.
-- **YAGNI**: no extra option prompts ❌ (MUST-NOT-13). Only hidden flags like `--slim|--full`.
+- **YAGNI**: no extra option prompts ❌ (MUST-NOT-13). Only hidden flags like `--slim|--full`, `--persist-audit`.
 - **No-over-engineering (MUST-25)**: defaults handle 80%. Extra features require ADR.
+- **Minimal file footprint**: default run touches only `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`. Use `--persist-audit` to also write `.dev-kit/sanity-report.md`.
 
-## Hand-off result
+## Next step
 
-On success, `.dev-kit/hand-off/bootstrap→plan.md` auto-written (state_codec.py). Next `/dev-kit:plan` call auto-injects preamble.
-
-## Hot failure (on FAIL)
-
-- sanity FAIL → Plan entry blocked. `/dev-kit:plan` call warns on stderr.
-- Hook override (`DEV_KIT_HOOK_OFF=*`) auto-detected → sanity report WARN.
-- Missing `eval/golden/*.json` → bootstrap unaffected (Phase 3+ introduces).
+After bootstrap, call `/dev-kit:plan` to write the planning artifacts (`PRD.md` + `phases/<name>/`). `/dev-kit:ci-setup` is opt-in and only for installing dev-kit's reusable GitHub Action review workflows into a target repo — it is NOT a generic next stage.
