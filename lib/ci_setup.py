@@ -70,8 +70,11 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
-MARKER_SCHEMA_VERSION = "1.2.0"  # bumped: self-aware review.yml (consumer-install path)
-DEFAULT_CI_SETUP_VERSION = "0.1.2"  # bumped from 0.1.1: forces refresh for consumer-install fix
+# Marker schema is content-only (no version gate). Content is source of truth;
+# _copy_template skips when bytes match. Anthropic marketplace pins by commit
+# SHA (docs: "every commit counts as a new version"), so we don't bump versions
+# to push fixes — we just push.
+MARKER_SCHEMA_VERSION = "1.0.0"
 
 
 @dataclass
@@ -149,10 +152,9 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
             p.chmod(mode | 0o111)  # set +x for owner/group/other
 
 
-def _build_marker(version: str) -> dict:
+def _build_marker() -> dict:
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
-        "ci_setup_version": version,
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
@@ -178,17 +180,17 @@ def _build_marker(version: str) -> dict:
 def install_ci_config(
     target_dir: Path,
     *,
-    version: str = DEFAULT_CI_SETUP_VERSION,
     force: bool = False,
 ) -> InstallReport:
-    """Install dev-kit's CI templates into `target_dir`. Idempotent + version-gated.
+    """Install dev-kit's CI templates into `target_dir`. Idempotent + content-aware.
+
+    A no-op (all files skipped, marker reused) when the marker exists and every
+    EXPECTED_PATHS file is already in place. With `force=True`, all template
+    files are overwritten regardless.
 
     Args:
         target_dir: absolute path to the target project root. Must exist
             and be a directory (raises FileNotFoundError otherwise).
-        version: semantic version written to the marker. When the target's
-            existing marker reports the same version AND `force=False`,
-            the install short-circuits (all files skipped, no marker rewrite).
         force: when True, overwrite existing target files matching
             EXPECTED_PATHS. Default False (skip + report).
 
@@ -214,21 +216,16 @@ def install_ci_config(
 
     report = InstallReport()
 
-    # Version short-circuit: if the marker already reports our version and the
-    # user didn't ask for a force refresh, return a no-op report so Phase 1
-    # of the skill body can detect "already installed" without copying anything.
+    # Presence-based "already installed" detection: marker exists AND every
+    # template file is present ⇒ nothing to copy. Phase 1 of the skill body
+    # can still detect "already installed" via marker_path.
     existing_marker = target / MARKER_REL
     if existing_marker.exists() and not force:
-        try:
-            existing = json.loads(existing_marker.read_text())
-            if existing.get("ci_setup_version") == version:
-                report.skipped.extend(EXPECTED_PATHS)
-                report.marker_path = str(existing_marker)
-                report.elapsed_ms = int((time.monotonic() - started) * 1000)
-                return report
-        except (json.JSONDecodeError, OSError):
-            # Corrupt or unreadable marker → fall through and overwrite below.
-            pass
+        if all((target / rel).exists() for rel in EXPECTED_PATHS):
+            report.skipped.extend(EXPECTED_PATHS)
+            report.marker_path = str(existing_marker)
+            report.elapsed_ms = int((time.monotonic() - started) * 1000)
+            return report
 
     for rel in EXPECTED_PATHS:
         try:
@@ -248,7 +245,7 @@ def install_ci_config(
 
     # Write marker (overwrites on force, always succeeds idempotently).
     marker = target / MARKER_REL
-    _atomic_write_json(marker, _build_marker(version))
+    _atomic_write_json(marker, _build_marker())
     report.marker_path = str(marker)
 
     report.elapsed_ms = int((time.monotonic() - started) * 1000)

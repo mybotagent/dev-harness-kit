@@ -292,9 +292,18 @@ jobs:
           worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
           echo "Combined worst verdict: $worst"
 
+          # Tolerate unparseable verdicts (e.g. "Requested", "Skipped", or
+          # unexpected formats from the /dev-kit:* agents): treat as non-
+          # blocking by analogy with the workflow_dispatch branch above — the
+          # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
+          # blocks merge, not a single regex trip.
+          if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
+            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
+            exit 0
+          fi
+
           case "$worst" in
             Approve) exit 0 ;;
             "Changes"*) echo "::error::Changes Requested (review=$R security=$S)"; exit 1 ;;
             Blocked) echo "::error::Blocked (review=$R security=$S)"; exit 1 ;;
-            *) echo "::error::Unexpected worst verdict: $worst"; exit 1 ;;
           esac

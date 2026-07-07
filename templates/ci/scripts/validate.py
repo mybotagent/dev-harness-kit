@@ -62,13 +62,12 @@ def validate_marker(repo_root: pathlib.Path) -> bool:
     try:
         data = json.loads(marker.read_text())
         assert data.get("schema_version"), "missing schema_version"
-        assert data.get("ci_setup_version"), "missing ci_setup_version"
         assert data.get("installed_by") == "dev-kit:ci-setup", \
             f"installed_by={data.get('installed_by')!r} (expected 'dev-kit:ci-setup')"
     except (AssertionError, json.JSONDecodeError) as e:
         _fail(f"ci-config marker: {e}")
         return False
-    _ok(f"ci-config marker (v{data['ci_setup_version']})")
+    _ok(f"ci-config marker (schema={data['schema_version']})")
     return True
 
 
