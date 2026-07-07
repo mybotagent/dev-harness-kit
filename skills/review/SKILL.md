@@ -168,6 +168,14 @@ Verdict: Blocked (≥1 critical) → Changes Requested (≥1 major) → Approve.
 
 ### Layer 1 — inline comments (one per finding)
 
+For **each** surviving finding (after Step 3 verification), call
+`mcp__github_inline_comment__create_inline_comment` with `path`,
+`line` (or commit_id for non-line findings), and `body` shaped exactly
+like below. Do this in the same response that posts the Layer 2
+summary — the inline comments are the per-finding review, the summary
+is the roll-up. **Skip this layer only when there are zero
+findings** (clean Approve).
+
 ```
 [🔴 critical · CONFIRMED] <title>        @ path/to/file.py:42  (dim: security)
 TL;DR: <one line>
@@ -177,6 +185,11 @@ Fix:
 <code>
 ```
 ```
+
+After each `mcp__github_inline_comment__create_inline_comment` call,
+verify the response includes a non-empty `id`; if it returned a
+permission error or empty body, log the issue and continue — never
+silently drop the finding.
 
 ---
 
