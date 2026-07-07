@@ -9,15 +9,36 @@ name: PR Review
 #   Changes Requested  (any major in either)                              → failure
 #   Blocked            (any critical in either)                           → failure
 #
-# Empty-verdict gate: for pull_request events, missing verdict = exit 1
-# (strict). For workflow_dispatch, missing verdict = warn + exit 0
-# (manual override allowed).
+# Empty-verdict gate (0.1.3+): missing verdict defaults to Approve with
+# ::warning:: in BOTH pull_request_target and workflow_dispatch modes.
+# The human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what blocks merge.
+#
+# Why `pull_request_target` (not `pull_request`):
+#   `anthropics/claude-code-action@v1` refuses to run when the workflow
+#   file calling it is being modified on the PR head (validation gate:
+#   "must be identical to the version on the default branch"). On
+#   `pull_request`, the action silently skips with that warning -> no
+#   agent, no inline comments, verdict `<none>`. Switching to
+#   `pull_request_target` runs the workflow file from the BASE branch
+#   (main), so the validation gate is moot, while the agent still sees
+#   the PR diff via the explicit `actions/checkout @ head.sha` step
+#   below + the `gh pr diff` calls in the prompt.
+#
+#   Bootstrap trade-off: a PR that ADDS review.yml for the first time
+#   cannot be triggered under pull_request_target because the file isn't
+#   yet on main. Merge the bootstrap PR first; subsequent PRs flow normally.
+#
+# Fork safety: pull_request_target exposes base-branch secrets to the
+# workflow. Each agent job + gate is guarded with
+#   github.event.pull_request.head.repo.full_name == github.repository
+# so fork PRs are skipped BEFORE any step executes (including checkout).
+# workflow_dispatch is exempt (manual operator action).
 #
 # Secret name `MINIMAX_API_KEY` is preserved from prior workflow — do not
 # rename (would break existing repo secret config).
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -34,8 +55,20 @@ on:
         required: false
         type: string
 
+# Cancel superseded re-runs on the same PR (e.g. force-push mid-review).
+# workflow_dispatch runs are independent and use a separate group.
+concurrency:
+  group: review-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
 jobs:
   review:
+    # Fork-safety guard: skip silently for fork PRs (pull_request_target
+    # exposes base-branch secrets to the workflow). workflow_dispatch is
+    # exempt -- the operator is trusted.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -51,7 +84,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Checkout PR head sha -- pull_request_target defaults to base
+          # (main), but the agent needs to read files from the PR diff.
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dev-kit plugin from local checkout
         run: |
@@ -89,7 +126,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -113,7 +150,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -145,6 +182,10 @@ jobs:
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
   security:
+    # See review-job comment above; same fork-safety contract.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -160,7 +201,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Checkout PR head sha -- pull_request_target defaults to base
+          # (main), but the agent needs to read files from the PR diff.
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dev-kit plugin from local checkout
         run: |
@@ -196,7 +241,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -219,7 +264,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -253,10 +298,17 @@ jobs:
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
   gate:
+    # Severity gate: same fork-safety guard. Pull from job outputs --
+    # the if: always() needs to stay so the gate runs even when agents
+    # were skipped, so we AND it with the fork check.
+    if: |
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     name: severity gate (review + security)
     runs-on: ubuntu-latest
     needs: [review, security]
-    if: always()
     # No permissions: gate only needs `gh api` (read) for verdict extraction
     # and does NOT auto-approve. Actual PR approval is the human's job.
     env:
@@ -273,6 +325,16 @@ jobs:
           S="${{ needs.security.outputs.verdict }}"
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
+
+          # Visible signal when the action skipped (workflow-validation
+          # skip on PRs that modified the workflow file, rate-limit,
+          # transient error). PR #39 made this state silent; this
+          # post-it back as a PR comment so the author isn't fooled by
+          # a green Approve into thinking the AI reviewed it.
+          if [ -z "$R" ] || [ -z "$S" ]; then
+            echo "::warning::verdict missing -- posting visible PR comment"
+            gh pr comment "$PR_NUMBER" --body "🤖 **LLM review did not run on this PR.** Review/Security verdict missing (action skipped, rate-limited, or workflow-validation rejection because this PR modified the workflow file). The Approve below is from the default-tolerant gate — please perform a human review before merging. See \`Actions → PR Review → gate → logs\` for the underlying warning." || echo "::warning::gh pr comment failed"
+          fi
 
           # Tolerate missing verdicts in BOTH event modes. The previous
           # strict pull_request branch hard-failed on empty R or S, which
