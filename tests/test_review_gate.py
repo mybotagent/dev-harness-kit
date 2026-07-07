@@ -29,7 +29,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-GATE_SNIPPET = (REPO_ROOT / ".github" / "workflows" / "review.yml").read_text()
+# Source-of-truth: the consumer template SSOT (templates/ci/.github/workflows/review.yml).
+# The local .github/workflows/review.yml is kept in lockstep with the template, but the
+# template is what ships to consumers via /dev-kit:ci-setup, so it is the canonical source.
+GATE_SNIPPET = (REPO_ROOT / "templates" / "ci" / ".github" / "workflows" / "review.yml").read_text()
 
 
 def _extract_gate_bash() -> str:

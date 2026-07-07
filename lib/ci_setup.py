@@ -37,19 +37,6 @@ _TEMPLATES_ROOT = _PLUGIN_ROOT / "templates" / "ci"
 # Order is preserved in reports (workflows first, then scripts, then
 # worktree-rule files). Adding a path here also requires adding the
 # corresponding template under templates/ci/.
-#
-# EXPECTED_PATHS = the union installed by `dev-kit:ci-setup` with no phase
-# flag (the legacy one-shot install). The two-phase install (`--bootstrap`
-# then no flag) splits EXPECTED_PATHS into:
-#   - BOOTSTRAP_PATHS : the 3 workflow files that anthropics/claude-code-action
-#                        validates against `main`. They MUST land on the
-#                        default branch in a dedicated PR before the action
-#                        will run, otherwise the very PR that introduces
-#                        them is skipped (the action refuses to validate a
-#                        workflow file the PR itself is modifying).
-#   - BODY_PATHS      : everything else — installs cleanly on a PR after the
-#                        bootstrap PR is merged, and the action runs because
-#                        the workflow files are stable on `main`.
 EXPECTED_PATHS: tuple[str, ...] = (
     # CI workflows + scripts
     ".github/workflows/ci.yml",
@@ -69,31 +56,6 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "hooks/hooks.json",
     ".claude/rules/git-workflow.md",
     "tests/test_worktree_guard.py",
-)
-
-# Workflow files that anthropics/claude-code-action validates against `main`.
-# These land in their own PR (`--bootstrap`) so the action's safety check
-# passes on every PR after merge.
-BOOTSTRAP_PATHS: tuple[str, ...] = (
-    ".github/workflows/ci.yml",
-    ".github/workflows/auto-fix-pr.yml",
-    ".github/workflows/review.yml",
-    # scripts/{validate,test,branch-policy,ci-local}.sh land in the bootstrap
-    # PR so ci.yml's test and validate jobs pass (they reference these
-    # scripts unconditionally -- the action safety check that skips the
-    # review/security jobs does not gate test/validate jobs).
-    # BODY_PATHS holds only the consumer-side artifacts (.githooks/, hooks/,
-    # rules/, tests/).
-    "scripts/validate.py",
-    "scripts/test.sh",
-    "scripts/branch-policy.sh",
-    "scripts/ci-local.sh",
-)
-
-# Everything NOT in BOOTSTRAP_PATHS. Installed in the second PR (no flag)
-# after the bootstrap PR is merged.
-BODY_PATHS: tuple[str, ...] = tuple(
-    p for p in EXPECTED_PATHS if p not in BOOTSTRAP_PATHS
 )
 
 # Files that need the executable bit after install.
@@ -128,20 +90,14 @@ POST_INSTALL_CHECKLIST: tuple[tuple[str, str], ...] = (
     ("2", "Add MINIMAX_API_KEY (or ANTHROPIC_API_KEY for opt-in provider):\n"
           "       gh secret set MINIMAX_API_KEY --repo <OWNER>/<REPO>"),
     ("3", "Enable pre-push hook:  git config core.hooksPath .githooks"),
-    ("4", "TWO-PHASE INSTALL — the action validates workflow files against "
-          "main,\n"
-          "       so the PR that first ADDS .github/workflows/review.yml "
-          "skips the\n"
-          "       agent. Split the install:\n"
-          "         a) /dev-kit:ci-setup --bootstrap   # writes only the 3 "
-          "workflows\n"
-          "         b) open PR, merge it\n"
-          "         c) /dev-kit:ci-setup               # writes everything "
-          "else\n"
-          "       Now every PR gets an actual review."),
-    ("5", "Push a feature branch; open a PR that does NOT modify "
+    ("4", "Push a feature branch; open a PR that does NOT modify "
           ".github/workflows/*.\n"
           "       /dev-kit:review + /dev-kit:security should fire."),
+    ("5", "The first PR that ADDS review.yml cannot have the action validated "
+          "by the\n"
+          "       severity gate until review.yml lands on the default branch. "
+          "Merge that\n"
+          "       bootstrap PR first; the gate works on every PR after."),
 )
 
 
@@ -241,19 +197,11 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
             p.chmod(mode | 0o111)  # set +x for owner/group/other
 
 
-def _build_marker(*, phase: str = "all") -> dict:
-    """Build the `.dev-kit/ci-config.json` marker.
-
-    `phase` is one of "bootstrap" | "body" | "all":
-      - "bootstrap" : only BOOTSTRAP_PATHS were installed (workflow files only)
-      - "body"      : only BODY_PATHS were installed (everything else)
-      - "all"       : legacy one-shot install (the entire EXPECTED_PATHS)
-    """
+def _build_marker() -> dict:
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
-        "phase": phase,
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
         "scripts": [
             "scripts/validate.py",
@@ -274,31 +222,12 @@ def _build_marker(*, phase: str = "all") -> dict:
     }
 
 
-def _resolve_paths(phase: str | None) -> tuple[str, ...]:
-    """Map a phase arg to the EXPECTED_PATHS subset it installs.
-
-    phase=None | "all" : full EXPECTED_PATHS (legacy one-shot default)
-    phase="bootstrap"  : BOOTSTRAP_PATHS (workflows only)
-    phase="body"       : BODY_PATHS (everything else)
-    """
-    if phase in (None, "all"):
-        return EXPECTED_PATHS
-    if phase == "bootstrap":
-        return BOOTSTRAP_PATHS
-    if phase == "body":
-        return BODY_PATHS
-    raise ValueError(
-        f"unknown phase={phase!r}; expected None|'all'|'bootstrap'|'body'"
-    )
-
-
 def install_ci_config(
     target_dir: Path,
     *,
     force: bool = False,
     print_checklist: bool = False,
     lint: bool = True,
-    phase: str | None = None,
 ) -> InstallReport:
     """Install dev-kit's CI templates into `target_dir`. Idempotent + content-aware.
 
@@ -309,27 +238,21 @@ def install_ci_config(
     Args:
         target_dir: absolute path to the target project root. Must exist
             and be a directory (raises FileNotFoundError otherwise).
-        force: when True, overwrite existing target files matching the
-            paths for the resolved phase. Default False (skip + report).
-        phase: None|'all' (default) installs the full EXPECTED_PATHS;
-            'bootstrap' installs only BOOTSTRAP_PATHS (the 3 workflow files
-            that anthropics/claude-code-action validates against `main` —
-            they MUST land in their own PR first so the action's safety
-            check passes on every PR after); 'body' installs only
-            BODY_PATHS (everything else, used in the second PR after the
-            bootstrap PR is merged).
+        force: when True, overwrite existing target files matching
+            EXPECTED_PATHS. Default False (skip + report).
+        print_checklist: when True and the install succeeds (no errors),
+            print the post-install checklist after the marker is written.
+            Default False to preserve existing test contracts.
 
     Returns:
-        InstallReport with created/overwritten/skipped/errors lists. marker_path
-        is set only when a marker was written (skipped during phase="bootstrap"
-        -- see M-2 in the SKILL.md two-phase section).
+        InstallReport with created/overwritten/skipped/errors lists and the
+        path to the marker file (always written unless target is read-only).
 
     Raises:
         FileNotFoundError: target_dir is missing or not a directory, OR a
             template source file is missing (the plugin is incomplete).
         NotADirectoryError: target_dir exists but is a regular file/symlink
             to one.
-        ValueError: phase is not one of None|'all'|'bootstrap'|'body'.
     """
     started = time.monotonic()
 
@@ -341,24 +264,22 @@ def install_ci_config(
     if not target.is_dir():
         raise NotADirectoryError(f"target_dir is not a directory: {target}")
 
-    paths = _resolve_paths(phase)
-    marker_phase = "all" if phase in (None, "all") else phase
-
     report = InstallReport()
 
     # Presence-based "already installed" detection: marker exists AND every
-    # template file for this phase is present ⇒ nothing to copy.
+    # template file is present ⇒ nothing to copy. Phase 1 of the skill body
+    # can still detect "already installed" via marker_path.
     existing_marker = target / MARKER_REL
     if existing_marker.exists() and not force:
-        if all((target / rel).exists() for rel in paths):
-            report.skipped.extend(paths)
+        if all((target / rel).exists() for rel in EXPECTED_PATHS):
+            report.skipped.extend(EXPECTED_PATHS)
             report.marker_path = str(existing_marker)
             report.elapsed_ms = int((time.monotonic() - started) * 1000)
             if lint:
                 report.warnings.extend(lint_installed_workflows(target))
             return report
 
-    for rel in paths:
+    for rel in EXPECTED_PATHS:
         try:
             outcome = _copy_template(rel, target, force=force)
         except Exception as e:
@@ -371,25 +292,13 @@ def install_ci_config(
         else:
             report.skipped.append(rel)
 
-    # Set executable bit on shell-style files + validate.py (only for files
-    # this phase actually touched).
-    _chmod_executable(
-        tuple(rel for rel in EXECUTABLE_PATHS if rel in paths),
-        target,
-    )
+    # Set executable bit on shell-style files + validate.py.
+    _chmod_executable(EXECUTABLE_PATHS, target)
 
-    # Marker contract: signals INSTALL COMPLETE. Skip during bootstrap
-    # because scripts/hooks/rules/tests are intentionally absent at that
-    # point — writing the marker here would mislead /dev-kit:build's
-    # pre-flight gate (which only checks marker existence) into starting
-    # against an incomplete install. The body phase writes the marker
-    # as the final step.
-    if marker_phase == "bootstrap":
-        report.marker_path = ""  # intentionally empty
-    else:
-        marker = target / MARKER_REL
-        _atomic_write_json(marker, _build_marker(phase=marker_phase))
-        report.marker_path = str(marker)
+    # Write marker (overwrites on force, always succeeds idempotently).
+    marker = target / MARKER_REL
+    _atomic_write_json(marker, _build_marker())
+    report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and
     # other known-bad shapes that local validate.py + ci-local.sh pass.
@@ -401,7 +310,7 @@ def install_ci_config(
     report.elapsed_ms = int((time.monotonic() - started) * 1000)
 
     if print_checklist and report.ok:
-        _print_post_install_checklist(target, phase=marker_phase)
+        _print_post_install_checklist(target)
 
     return report
 
@@ -532,30 +441,10 @@ def _detect_owner_repo(target_dir: Path) -> str:
     return ""
 
 
-def _print_post_install_checklist(target_dir: Path, *, phase: str = "all") -> None:
-    """Print the post-install checklist to stdout. Best-effort; never raises.
-
-    When `phase="bootstrap"` was the last install, the checklist renders a
-    single next-step pointer ("run `/dev-kit:ci-setup` (no flag) for the
-    body phase") instead of the full 5-step checklist, since the consumer
-    isn't done yet.
-    """
+def _print_post_install_checklist(target_dir: Path) -> None:
+    """Print the post-install checklist to stdout. Best-effort; never raises."""
     repo = _detect_owner_repo(target_dir) or "<OWNER>/<REPO>"
     print()
-    if phase == "bootstrap":
-        print("=== Bootstrap phase done — workflow files installed ===")
-        print("  1. Open a PR with these changes and MERGE it.")
-        print("       This lands the 3 workflow files on the default branch,")
-        print("       which anthropics/claude-code-action needs to validate")
-        print("       on every subsequent PR. Until then, the action skips")
-        print("       on any PR that touches .github/workflows/*.")
-        print("  2. Then run: /dev-kit:ci-setup")
-        print("       (no flag — installs scripts/, hooks/, rules/, tests/)")
-        print("       Open that PR; the action will now run because")
-        print("       review.yml is stable on the default branch.")
-        print()
-        print(f"Marker: {target_dir / MARKER_REL}")
-        return
     print("=== Post-install setup (do these IN ORDER) ===")
     for n, body in POST_INSTALL_CHECKLIST:
         body = body.replace("<OWNER>/<REPO>", repo)

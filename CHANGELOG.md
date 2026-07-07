@@ -4,34 +4,66 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [0.1.4] - 2026-07-07
 
-### Fixed
-- **`templates/ci/.github/workflows/review.yml`**: trigger switched from
-  `pull_request` to `pull_request_target`. The previous trigger caused
-  `anthropics/claude-code-action@v1` to silently skip the agent whenever
-  the PR head modified `.github/workflows/review.yml` (e.g. on every
-  `ci-setup --force` template refresh) — the action's workflow-validation
-  gate refuses to run when the calling workflow file differs from main.
-  Result: zero AI comments posted on exactly the PRs that need them most.
-  Under `pull_request_target`, the running workflow file is from the base
-  branch (main), so the validation passes; the agent reads the PR diff
-  via `gh pr diff` + the explicit `actions/checkout @ head.sha` step.
-- **Fork safety on both review.yml + auto-fix-pr.yml**: each agent job +
-  the severity gate now skip silently when
-  `github.event.pull_request.head.repo.full_name != github.repository`,
-  preventing the base-branch context from being exposed to fork PRs.
-- **`review.yml` concurrency group**: cancel-in-progress on
-  `pull_request_target` so a force-push mid-review doesn't double-charge
-  the agent quota. `workflow_dispatch` runs are unaffected.
+### Changed — split into PR A and PR B (this PR = A)
+
+This release rolls up three pending PRs (#38, #39, #40) but is split
+into two PRs because GitHub's self-trigger block prevents the workflow
+file from firing on PRs that modify it. **PR A (this one)** drops the
+bootstrap/body phase split and fixes the doc/test drift; **PR B**
+applies the `pull_request_target` migration + fork-safety guards to
+the local workflow files (PR B can't get auto-reviewed, but is
+mechanical and well-tested).
+
+### PR A — drops #38 bootstrap/body phase split
+
+The split was intended to work around `anthropics/claude-code-action@v1`'s
+workflow-validation gate by landing the 3 workflow files in their own PR.
+The `pull_request_target` migration (PR B) solves the same problem
+more cleanly without forcing consumers into a 2-PR install. The
+bootstrap-body split also introduced a critical regression: the
+bootstrap-only install state could not pass `scripts/validate.py`
+(the marker was intentionally absent, so the validator saw
+`phase='missing'` and checked ALL_REQUIRED, reporting 8 spurious
+missing files).
+
+- `lib/ci_setup.py:install_ci_config()` is back to its single-shot signature.
+  `BOOTSTRAP_PATHS` / `BODY_PATHS` / `_resolve_paths` / `phase=` kwarg /
+  marker-skip-during-bootstrap are removed.
+- `templates/ci/scripts/validate.py` reverted to flat `REQUIRED_FILES`
+  (8 entries) with no `phase` parameter.
+- `skills/ci-setup/SKILL.md` Two-phase install section removed;
+  Iron-Law flag list restored; Files Installed table back to single
+  15-row list.
+- `tests/test_ci_setup_split_install.py` deleted (194 lines of tests
+  for the dropped phase split).
+- `tests/test_ci_setup.py::test_post_install_checklist_is_complete`
+  needle list restored (removed `'/dev-kit:ci-setup'` added by #38).
+- `tests/test_review_gate.py` now reads the consumer template SSOT
+  (`templates/ci/.github/workflows/review.yml`) instead of the local
+  `.github/workflows/review.yml`. The two were drift-prone: a future
+  edit to one copy would silently pass tests against whichever copy
+  was in lockstep.
+- `docs/ci-setup.md` FAQ rewritten to describe the new gate-tolerance
+  contract (Approve + warning, not hard fail).
+
+### PR B (separate, follow-up) — extends #40 to local workflow
+
+PR #40 only migrated the consumer template; the dev-kit repo's OWN
+`.github/workflows/review.yml` still had `on: pull_request:` and the
+same workflow-validation skip bug. PR B applies the full migration
+to the local workflow (pull_request_target trigger, concurrency
+group, per-job fork-safety guard on review/security/gate), adds the
+fork guard to `.github/workflows/auto-fix-pr.yml`, and adds a visible
+`gh pr comment` signal when the gate defaults to Approve on missing
+verdict (so silent skips aren't invisible to the PR author).
 
 ### Notes
-- Bootstrap trade-off: a PR that ADDS `review.yml` for the first time
-  cannot be triggered under `pull_request_target` (file isn't yet on
-  main). The fix assumes `review.yml` is already on the consumer
-  repo's main. After one manual merge of a bootstrap PR, subsequent
-  PRs flow through normally.
+- Bootstrap trade-off (unchanged from PR #40): a PR that ADDS
+  `review.yml` for the first time cannot be triggered under
+  `pull_request_target` (file isn't yet on main). The fix assumes
+  `review.yml` is already on the consumer repo's main.
 - No schema or marker version bump — `MARKER_SCHEMA_VERSION` is
-  unchanged. Consumers who re-run `ci-setup --force` get the trigger
-  swap without any version gate.
+  unchanged.
 
 ## [0.1.3] - 2026-07-07
 
