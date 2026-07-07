@@ -3,7 +3,10 @@
 set -euo pipefail
 
 # Resolve REPO_ROOT (this script lives at <repo>/scripts/test.sh).
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "$0")/.." && pwd)"
+# Same fix as ci-local.sh: scope the fallback in a subshell so the
+# inner `pwd` cannot leak into REPO_ROOT. See that file for the full
+# explanation of the `A || B && C` operator-precedence trap.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "$0")/.." && pwd))"
 cd "$REPO_ROOT"
 
 if [ ! -d "tests" ]; then
