@@ -99,6 +99,42 @@ list, exit 1. **Never** silently retry past the cap.
   (lock file at `.dev-kit/babysit.lock`).
 - **No worktree juggling** (per worktree hygiene in project memory).
 
+### NO-SKIP / NO-WORKAROUND IRON LAW (MUST-NO-SKIP)
+
+The following are **forbidden** as a means of getting the PR to green:
+
+- **NEVER skip a failing test** to make CI pass. `pytest.skip`, `@unittest.skip`,
+  removing a test from the suite, or commenting out an assertion are forbidden.
+  If a test fails, the code under test must be fixed — the test reflects the
+  contract and changing the test means the contract is now wrong.
+- **NEVER skip a failing required check** by marking it optional, deleting it
+  from the workflow file, or making it `continue-on-error: true`. If a check
+  exists, it must pass.
+- **NEVER skip the LLM review** by:
+  - closing the PR (`gh pr close` is forbidden; only the user closes),
+  - removing the review workflow trigger,
+  - changing `pull_request` / `pull_request_target` to a no-op,
+  - force-merging without the gate passing,
+  - marking the review check as optional in branch protection.
+  The LLM review is the project's review contract; bypassing it is a
+  contract violation.
+- **NEVER work around a failure with a workaround**. The failure must be
+  **fixed at its root cause**, not masked. Examples of forbidden workarounds:
+  - `|| true` / `|| echo skipped` on a step that exists to fail loudly
+  - raising exit thresholds to make a flaky step pass
+  - widening a regex until it accepts bad input
+  - adding `|| exit 0` to silence a gate that should hard-fail
+  - rewriting a hard-fail gate to default-to-Approve to hide skipped reviews
+  - disabling a hook instead of fixing the violation
+- **NEVER mark an iteration "fixed" without quoting the local verification**
+  (`local:  <command> → <result> (exit <code>)`). A "fixed" claim without the
+  evidence line violates MUST-L3 and the no-workaround iron law (MUST-NO-SKIP).
+
+If the same failure recurs after **3 consecutive iterations** with no
+progress, exit 1 and print the unresolved blocker list with quoted log
+snippets — do not silently retry past the cap, do not lower the bar, do
+not skip.
+
 ---
 
 ## Lock file protocol
