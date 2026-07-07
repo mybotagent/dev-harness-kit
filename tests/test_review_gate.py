@@ -97,27 +97,34 @@ def _run_gate(r: str, s: str, event: str = "pull_request") -> subprocess.Complet
 
 
 class TestSeverityGateTolerance(unittest.TestCase):
-    """The new contract: empty R or S defaults to Approve + warning, not error."""
+    """The new contract: empty R or S HARD-FAILS (block merge if LLM didn't run).
 
-    def test_pull_request_empty_R_empty_S_exits_zero(self):
-        """Regression: was exit 1 with 'Missing verdict'. Must now be 0."""
+    Pre-#44 the gate defaulted missing verdicts to Approve + warning silently,
+    which hid workflow-validation skips from PR authors. The new gate exits 1
+    on any missing/unparseable verdict so the PR author sees a red check
+    immediately and re-runs CI. Real review feedback (Changes Requested /
+    Blocked) still exits 1.
+    """
+
+    def test_pull_request_empty_R_empty_S_exits_one(self):
+        """Empty R AND empty S: HARD FAIL — LLM didn't run at all. Gate exits
+        on the first missing verdict (review), so only that error is checked."""
         cp = _run_gate(r="", s="", event="pull_request")
         self.assertEqual(
-            cp.returncode, 0,
-            f"empty R/S in pull_request mode must NOT hard-fail.\nstdout={cp.stdout}\nstderr={cp.stderr}",
+            cp.returncode, 1,
+            f"empty R/S in pull_request mode MUST hard-fail (block silent-Approve).\nstdout={cp.stdout}\nstderr={cp.stderr}",
         )
-        self.assertIn("::warning::review verdict missing", cp.stdout)
-        self.assertIn("::warning::security verdict missing", cp.stdout)
+        self.assertIn("::error::review verdict missing", cp.stdout)
 
-    def test_pull_request_empty_R_nonempty_S_exits_zero(self):
+    def test_pull_request_empty_R_nonempty_S_exits_one(self):
         cp = _run_gate(r="", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
-        self.assertIn("review verdict missing", cp.stdout)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertIn("::error::review verdict missing", cp.stdout)
 
-    def test_pull_request_nonempty_R_empty_S_exits_zero(self):
+    def test_pull_request_nonempty_R_empty_S_exits_one(self):
         cp = _run_gate(r="Approve", s="", event="pull_request")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
-        self.assertIn("security verdict missing", cp.stdout)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertIn("::error::security verdict missing", cp.stdout)
 
     def test_pull_request_both_approve_exits_zero(self):
         cp = _run_gate(r="Approve", s="Approve", event="pull_request")
@@ -135,16 +142,16 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("::error::Blocked", cp.stdout)
 
-    def test_pull_request_unparseable_verdict_tolerated(self):
-        """The 'Requested' truncation case from PR #38: warn + exit 0."""
+    def test_pull_request_unparseable_verdict_blocks(self):
+        """The 'Requested' truncation case: now HARD-FAIL (was previously tolerated)."""
         cp = _run_gate(r="Requested", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("Unparseable verdict", cp.stdout)
 
-    def test_workflow_dispatch_empty_R_defaults_to_approve(self):
-        """The workflow_dispatch branch already had this; regression check."""
+    def test_workflow_dispatch_empty_R_blocks(self):
+        """Even workflow_dispatch: empty R HARD-FAILS (no silent Approve)."""
         cp = _run_gate(r="", s="Approve", event="workflow_dispatch")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
 
     def test_extracted_bash_is_nonempty(self):
         """Sanity: the extractor actually returns bash, not a header."""

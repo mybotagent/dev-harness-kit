@@ -155,7 +155,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          track_progress: ${{ github.event_name == 'pull_request_target' }}
+          track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -179,7 +179,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request_target' }}
+          track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -297,7 +297,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          track_progress: ${{ github.event_name == 'pull_request_target' }}
+          track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -320,7 +320,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request_target' }}
+          track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -365,13 +365,19 @@ jobs:
     name: severity gate (review + security)
     runs-on: ubuntu-latest
     needs: [review, security]
-    # No permissions: gate only needs `gh api` (read) for verdict extraction
-    # and does NOT auto-approve. Actual PR approval is the human's job.
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - name: Checkout (for gh CLI git discovery)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Combined verdict gate
         run: |
           # Read verdicts directly from each job's outputs (set by the
@@ -382,20 +388,18 @@ jobs:
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
 
-          # Default missing verdicts (in either event mode) to Approve,
-          # matching the tolerance contract stated below for unparseable
-          # verdicts: the human gate (REVIEW_REQUIRED / CHANGES_REQUESTED)
-          # is what actually blocks merge, not a single missing agent
-          # verdict. Surface ::warning:: so the missing verdict is still
-          # visible in the run summary. (PR-mode used to hard-fail here,
-          # but reproducibly broke CI when the /dev-kit:* agents skipped
-          # posting a `**Verdict:** ...` comment -- the gate would exit 1
-          # with `Missing verdict (review='' security='')`. The hard-fail
-          # was an internal inconsistency with the workflow_dispatch
-          # branch and with the tolerance intent documented below for
-          # unparseable verdicts.)
-          [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT); defaulting to Approve"; R="Approve"; }
-          [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT); defaulting to Approve"; S="Approve"; }
+          # HARD FAIL on missing verdict. Empty R or S means the LLM did not
+          # actually run (workflow-validation skip, rate-limit, action error).
+          # Block merge so the PR author re-runs CI -- a silent Approve would
+          # hide the failure and ship unreviewed code.
+          if [ -z "$R" ]; then
+            echo "::error::review verdict missing (event=$EVENT) -- LLM review did not run. Block merge; re-run CI."
+            exit 1
+          fi
+          if [ -z "$S" ]; then
+            echo "::error::security verdict missing (event=$EVENT) -- LLM security scan did not run. Block merge; re-run CI."
+            exit 1
+          fi
 
           # worst-of wins
           rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
@@ -403,18 +407,34 @@ jobs:
           worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
           echo "Combined worst verdict: $worst"
 
-          # Tolerate unparseable verdicts (e.g. "Requested", "Skipped", or
-          # unexpected formats from the /dev-kit:* agents): treat as non-
-          # blocking by analogy with the workflow_dispatch branch above — the
-          # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
-          # blocks merge, not a single regex trip.
-          if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
-            exit 0
-          fi
-
           case "$worst" in
             Approve) exit 0 ;;
             "Changes"*) echo "::error::Changes Requested (review=$R security=$S)"; exit 1 ;;
             Blocked) echo "::error::Blocked (review=$R security=$S)"; exit 1 ;;
+            *) echo "::error::Unparseable verdict '$worst' (review=$R security=$S)"; exit 1 ;;
           esac
+
+      - name: Auto-approve on Approve verdict
+        if: success() && github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Only auto-approve on Approve (lowest severity — no 🔴 critical,
+          # no 🟠 major). Fail-open: if the API rejects (GitHub's default
+          # GITHUB_TOKEN cannot approve PRs), log a warning. Set APPROVE_TOKEN
+          # secret to a PAT with 'repo' scope for real auto-approval.
+          R="${{ needs.review.outputs.verdict }}"
+          S="${{ needs.security.outputs.verdict }}"
+          rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
+          r=$(rank "$R"); s=$(rank "$S")
+          worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
+          if [ "$worst" = "Approve" ]; then
+            echo "Verdict is Approve — attempting auto-approve."
+            TOKEN="${APPROVE_TOKEN:-$GH_TOKEN}"
+            gh pr review "$PR_NUMBER" --approve \
+              --body "Auto-approved by /dev-kit:review + /dev-kit:security: lowest severity (no 🔴 critical, no 🟠 major)." \
+              || echo "::warning::gh pr review --approve rejected. Set APPROVE_TOKEN secret to a PAT for real auto-approval; verdict itself was Approve."
+          else
+            echo "Verdict is '$worst' -- not auto-approving."
+          fi
