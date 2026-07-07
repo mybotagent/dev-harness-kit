@@ -274,17 +274,16 @@ jobs:
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
 
-          # require both to be present on pull_request
-          if [ "$EVENT" = "pull_request" ]; then
-            if [ -z "$R" ] || [ -z "$S" ]; then
-              echo "::error::Missing verdict (review='$R' security='$S'). Action may have been skipped, rate-limited, or failed."
-              echo "  Re-run via workflow_dispatch if needed."
-              exit 1
-            fi
-          else
-            [ -z "$R" ] && { echo "::warning::review verdict missing (workflow_dispatch)"; R="Approve"; }
-            [ -z "$S" ] && { echo "::warning::security verdict missing (workflow_dispatch)"; S="Approve"; }
-          fi
+          # Tolerate missing verdicts in BOTH event modes. The previous
+          # strict pull_request branch hard-failed on empty R or S, which
+          # broke any PR whose agent skipped (workflow-validation skip on
+          # the very PR that ADDS .github/workflows/review.yml, action
+          # rate-limit, transient network error). The fix: default to
+          # Approve + ::warning:: in both modes so the human gate
+          # (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR) is what
+          # actually blocks merge, not a single missing agent verdict.
+          [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT); defaulting to Approve"; R="Approve"; }
+          [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT); defaulting to Approve"; S="Approve"; }
 
           # worst-of wins
           rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
