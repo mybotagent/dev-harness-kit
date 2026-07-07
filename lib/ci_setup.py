@@ -17,6 +17,8 @@ Usage (from the skill body or directly):
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import os
 import re
 import shutil
@@ -76,6 +78,28 @@ MARKER_REL = ".dev-kit/ci-config.json"
 # to push fixes — we just push.
 MARKER_SCHEMA_VERSION = "1.0.0"
 
+# Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
+# AFTER the marker is written. Each tuple is (number, command-block with notes).
+# Empty <OWNER>/<REPO> placeholder is filled at print time from
+# `git remote get-url origin` if a remote is configured; otherwise the literal
+# string is shown so the user can edit it.
+POST_INSTALL_CHECKLIST: tuple[tuple[str, str], ...] = (
+    ("1", "Add DEV_KIT_GITHUB_TOKEN (PAT scoped to sh-ai-x/dev-harness-kit):\n"
+          "       gh secret set DEV_KIT_GITHUB_TOKEN --repo <OWNER>/<REPO> --app actions\n"
+          "       (omit if sh-ai-x/dev-harness-kit is public)"),
+    ("2", "Add MINIMAX_API_KEY (or ANTHROPIC_API_KEY for opt-in provider):\n"
+          "       gh secret set MINIMAX_API_KEY --repo <OWNER>/<REPO>"),
+    ("3", "Enable pre-push hook:  git config core.hooksPath .githooks"),
+    ("4", "Push a feature branch; open a PR that does NOT modify "
+          ".github/workflows/*.\n"
+          "       /dev-kit:review + /dev-kit:security should fire."),
+    ("5", "The first PR that ADDS review.yml cannot have the action validated "
+          "by the\n"
+          "       severity gate until review.yml lands on the default branch. "
+          "Merge that\n"
+          "       bootstrap PR first; the gate works on every PR after."),
+)
+
 
 @dataclass
 class InstallReport:
@@ -96,6 +120,23 @@ class InstallReport:
     @property
     def ok(self) -> bool:
         return not self.errors
+
+
+@dataclass
+class ProbeResult:
+    """One row of the pre-flight probe table.
+
+    `state` is one of:
+      - OK   : present and configured
+      - WARN : present but missing/partial (skill still proceeds)
+      - INFO : opt-in / informational (never blocks)
+      - SKIP : gh absent or unauthenticated; the probe is silently bypassed
+      - FAIL : fatal prerequisite (reserved; not currently emitted)
+    """
+
+    label: str
+    state: str
+    detail: str = ""
 
 
 def _now_utc_iso() -> str:
@@ -181,6 +222,7 @@ def install_ci_config(
     target_dir: Path,
     *,
     force: bool = False,
+    print_checklist: bool = False,
 ) -> InstallReport:
     """Install dev-kit's CI templates into `target_dir`. Idempotent + content-aware.
 
@@ -197,6 +239,14 @@ def install_ci_config(
     Returns:
         InstallReport with created/overwritten/skipped/errors lists and the
         path to the marker file (always written unless target is read-only).
+
+    Args:
+        target_dir: absolute path to the target project root.
+        force: when True, overwrite existing target files matching
+            EXPECTED_PATHS. Default False (skip + report).
+        print_checklist: when True and the install succeeds (no errors),
+            print the post-install checklist after the marker is written.
+            Default False to preserve existing test contracts.
 
     Raises:
         FileNotFoundError: target_dir is missing or not a directory, OR a
@@ -249,7 +299,154 @@ def install_ci_config(
     report.marker_path = str(marker)
 
     report.elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    if print_checklist and report.ok:
+        _print_post_install_checklist(target)
+
     return report
+
+
+def preflight_probe(repo: str = "") -> List[ProbeResult]:
+    """Run a 5-line `gh` probe against the consumer's environment.
+
+    All gh calls are read-only and never print secret values. When `gh`
+    is absent or unauthenticated, every probe returns SKIP and the skill
+    prints a one-line note -- the user can still install without gh.
+    """
+    import json as _json
+    import subprocess
+    import re as _re
+    results: List[ProbeResult] = []
+    gh = shutil.which("gh")
+    if not gh:
+        results.append(ProbeResult("gh CLI", "SKIP", "gh not on PATH"))
+        for label in (
+            "Repo reachable",
+            "DEV_KIT_GITHUB_TOKEN set",
+            "MINIMAX_API_KEY set",
+            "ANTHROPIC_API_KEY set (opt-in)",
+        ):
+            results.append(ProbeResult(label, "SKIP", "gh not on PATH"))
+        return results
+
+    def _run(args):
+        cp = subprocess.run(
+            [gh, *args], capture_output=True, text=True, timeout=10,
+        )
+        if cp.returncode == 0:
+            return ProbeResult("placeholder", "OK", "")
+        detail = ""
+        if cp.stderr:
+            detail = cp.stderr.strip().splitlines()[-1]
+        return ProbeResult("placeholder", "WARN", detail)
+
+    auth = _run(["auth", "status"])
+    auth = ProbeResult("gh auth status", auth.state, auth.detail)
+    if auth.state != "OK":
+        for label in (
+            "Repo reachable",
+            "DEV_KIT_GITHUB_TOKEN set",
+            "MINIMAX_API_KEY set",
+            "ANTHROPIC_API_KEY set (opt-in)",
+        ):
+            results.append(ProbeResult(label, "SKIP", "gh not authenticated"))
+        results.insert(0, auth)
+        return results
+    results.append(auth)
+
+    if not repo:
+        for label in (
+            "Repo reachable",
+            "DEV_KIT_GITHUB_TOKEN set",
+            "MINIMAX_API_KEY set",
+            "ANTHROPIC_API_KEY set (opt-in)",
+        ):
+            results.append(ProbeResult(label, "SKIP", "no repo context"))
+        return results
+
+    repo_view = _run(["repo", "view", repo, "--json", "name"])
+    repo_view = ProbeResult("Repo reachable", repo_view.state, repo_view.detail)
+    if repo_view.state != "OK":
+        results.append(repo_view)
+        for label in (
+            "DEV_KIT_GITHUB_TOKEN set",
+            "MINIMAX_API_KEY set",
+            "ANTHROPIC_API_KEY set (opt-in)",
+        ):
+            results.append(ProbeResult(label, "SKIP", "repo not reachable"))
+        return results
+    results.append(repo_view)
+
+    secrets_json = ""
+    try:
+        cp = subprocess.run(
+            [gh, "secret", "list", "--repo", repo, "--json", "name"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if cp.returncode == 0:
+            secrets_json = cp.stdout
+    except Exception:
+        pass
+
+    secret_names = set()
+    if secrets_json:
+        try:
+            secret_names = {
+                row.get("name", "") for row in _json.loads(secrets_json)
+            }
+        except Exception:
+            secret_names = set()
+
+    for secret, state_when_missing in (
+        ("DEV_KIT_GITHUB_TOKEN", "WARN"),
+        ("MINIMAX_API_KEY", "WARN"),
+        ("ANTHROPIC_API_KEY", "INFO"),
+    ):
+        present = secret in secret_names
+        results.append(ProbeResult(
+            label=f"{secret} set",
+            state="OK" if present else state_when_missing,
+            detail="" if present else "absent",
+        ))
+
+    return results
+
+
+def _detect_owner_repo(target_dir: Path) -> str:
+    """Best-effort `<OWNER>/<REPO>` from git remote, else empty string."""
+    try:
+        cp = subprocess.run(
+            ["git", "-C", str(target_dir), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if cp.returncode != 0 or not cp.stdout.strip():
+            return ""
+        url = cp.stdout.strip()
+        # SSH: git@github.com:OWNER/REPO(.git)
+        # HTTPS: https://github.com/OWNER/REPO(.git)
+        m = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?/?$", url)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    except Exception:
+        pass
+    return ""
+
+
+def _print_post_install_checklist(target_dir: Path) -> None:
+    """Print the post-install checklist to stdout. Best-effort; never raises."""
+    repo = _detect_owner_repo(target_dir) or "<OWNER>/<REPO>"
+    print()
+    print("=== Post-install setup (do these IN ORDER) ===")
+    for n, body in POST_INSTALL_CHECKLIST:
+        body = body.replace("<OWNER>/<REPO>", repo)
+        for line in body.split("\n"):
+            if line.startswith("       "):
+                print(f"     {line.lstrip()}")
+            else:
+                print(f"  {n}. {line}")
+    print()
+    print(f"Marker: {target_dir / MARKER_REL}")
+    print("Verify: bash scripts/ci-local.sh")
 
 
 def _self_test() -> int:

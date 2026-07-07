@@ -43,7 +43,7 @@ sys.exit(0 if report.ok and not report.errors else 1)
 ```
 
 2.1. `lib/ci_setup.py:install_ci_config()` resolves the plugin's `templates/ci/` tree (relative to its own `__file__`).
-2.2. For each of the 8 `EXPECTED_PATHS` (3 workflow .yml + 1 .githooks/pre-push + 4 scripts):
+2.2. For each of the 15 `EXPECTED_PATHS` (3 workflow .yml + 1 pre-push hook + 4 scripts + 5 hook files + 1 rules file + 1 test):
   - Skip if exists and `force=False` (idempotent).
   - Overwrite if exists and `force=True`.
   - `shutil.copy2` (preserves mtime for git diff stability).
@@ -62,6 +62,33 @@ Unless `--skip-verify`:
 
 Print summary table (file → outcome: created/overwritten/skipped/error) + pointer to `docs/ci-setup.md`.
 
+## Phase 1.5 -- Pre-flight probe (silent when gh is absent)
+
+Before Phase 2 runs, the skill probes the consumer's environment and prints
+one of OK / WARN / INFO / SKIP / FAIL per dependency. All calls are
+read-only (gh repo view, gh secret list --json name, gh auth status); the
+skill never prints secret values. A failed probe NEVER blocks install.
+
+| Probe target          | gh command                              | Returns                |
+|-----------------------|------------------------------------------|------------------------|
+| gh auth status        | gh auth status                           | OK / SKIP              |
+| Repo reachable        | gh repo view OWNER/REPO --json name      | OK / WARN              |
+| DEV_KIT_GITHUB_TOKEN  | gh secret list --json name               | OK / WARN              |
+| MINIMAX_API_KEY       | gh secret list --json name               | OK / WARN              |
+| ANTHROPIC_API_KEY     | gh secret list --json name               | OK / INFO (opt-in)     |
+
+When gh is absent or unauthenticated, every probe returns SKIP and the
+skill prints a one-line note. The user can still install; the post-install
+checklist alone guides them.
+
+## Phase 4 -- Post-install checklist (printed on success when opted in)
+
+After install_ci_config() returns ok=True AND print_checklist=True, the
+skill prints the canonical 5-step checklist (see lib/ci_setup.py:POST_INSTALL_CHECKLIST).
+OWNER/REPO is auto-filled from `git remote get-url origin` if a remote is
+configured; otherwise the literal placeholder is shown so the user can
+edit it. The checklist NEVER blocks -- it is guidance only.
+
 ## Rules
 
 - **Idempotent by default** — re-running without `--force` writes zero files; the marker is rewritten with a fresh `installed_at`.
@@ -76,7 +103,7 @@ Print summary table (file → outcome: created/overwritten/skipped/error) + poin
 - `/dev-kit:build` refuses to start if this marker is absent or `ci_setup_version < "0.1.0"` — see `skills/build/SKILL.md` pre-flight gate.
 - For full usage docs: see `docs/ci-setup.md`.
 
-## Files Installed (8 expected paths)
+## Files Installed (15 expected paths)
 
 | Path | Purpose |
 |---|---|
@@ -88,6 +115,13 @@ Print summary table (file → outcome: created/overwritten/skipped/error) + poin
 | `scripts/test.sh` | Pytest wrapper (gracefully skips if no `tests/`) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
+| `hooks/worktree-guard.sh` | PreToolUse Write/Edit block on main checkout (fails closed when jq missing) |
+| `hooks/task-detector.sh` | UserPromptSubmit gentle nudge when intent + main checkout |
+| `hooks/session-start-check.sh` | SessionStart reminder when started in main checkout |
+| `hooks/lib/worktree-detect.sh` | Shared `--git-dir`/`--git-common-dir` discriminator for all rule hooks |
+| `hooks/hooks.json` | Wires the 4 hook files into the right event matchers |
+| `.claude/rules/git-workflow.md` | Branch / worktree / PR conventions (Iron Law rule text) |
+| `tests/test_worktree_guard.py` | Regression tests for the 4 rule hooks + hooks.json wiring |
 
 ## Iron Law (repeated, for emphasis)
 

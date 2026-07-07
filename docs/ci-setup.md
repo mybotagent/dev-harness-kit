@@ -2,6 +2,25 @@
 
 The `/dev-kit:ci-setup` skill installs dev-kit's reusable CI workflow templates, Git hooks, and local-runner scripts into any project that has already been bootstrapped via `/dev-kit:bootstrap`. It exists so the same CI shape — branch-policy guards, three-job validate/test/auto-fix, severity-gated review — can be replicated across every repo in your fleet with one command.
 
+## Post-install checklist
+
+After `/dev-kit:ci-setup` writes `.dev-kit/ci-config.json`, do these IN ORDER:
+
+1. **Add GitHub secrets.** The review + security workflows need LLM credentials. Use `gh secret set` from your local terminal:
+   ```bash
+   gh secret set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions    # PAT scoped to sh-ai-x/dev-harness-kit
+   gh secret set MINIMAX_API_KEY --repo <owner>/<repo>                        # (or ANTHROPIC_API_KEY)
+   ```
+   The first secret is required only if `sh-ai-x/dev-harness-kit` is private.
+2. **Enable the pre-push hook** so direct pushes to `main` are blocked client-side:
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+3. **Open a feature PR first** that does NOT modify `.github/workflows/*` — this is your smoke test for review + security.
+4. **The first PR that ADDS `review.yml`** cannot have the action validated by the severity gate until `review.yml` lands on the default branch. Merge that bootstrap PR first; the gate works on every PR after.
+
+The skill prints this checklist automatically (via `lib/ci_setup.py:POST_INSTALL_CHECKLIST`) when invoked with the `print_checklist=True` kwarg; the staged installer in Phase 4 surfaces it after a successful install.
+
 ## When to use it
 
 Run `/dev-kit:ci-setup` once per project, after `/dev-kit:bootstrap` and before `/dev-kit:build`. The skill is idempotent, so re-running it is safe (use `--force` to refresh templates after dev-kit upgrades its CI shape).
@@ -65,6 +84,18 @@ Run `/dev-kit:ci-setup` first.
 …run `/dev-kit:ci-setup` (or re-run with `--force` if the marker is stale).
 
 ## FAQ
+
+### Why is my first PR's severity gate failing with `Missing verdict`?
+
+The `anthropics/claude-code-action` step is intentionally skipped on PRs that MODIFY `.github/workflows/review.yml` itself (GitHub blocks third-party actions on workflow-changing PRs as a security feature). When you ADd `.github/workflows/review.yml` via this skill, that first PR cannot be validated. **Merge that PR first** — the gate works on every PR after.
+
+If you merged the bootstrap PR and STILL see `Missing verdict` on a later PR, run `gh run rerun <run-id> --failed` to retry the verdict-extraction step.
+
+### Why does the skill complain `DEV_KIT_GITHUB_TOKEN is required for consumer-install`?
+
+That secret is only needed when `sh-ai-x/dev-harness-kit` (the upstream source) is private. If your fork / mirror is public, set `DEV_KIT_GITHUB_TOKEN` to any non-empty placeholder token (e.g. `gh token`) — the install step will short-circuit to a public clone via `git clone https://github.com/...`.
+
+
 
 **Q: Will it overwrite my existing `.github/workflows/ci.yml`?**
 A: No — re-running without `--force` is idempotent and will skip existing files. Use `--force` to refresh after dev-kit's templates evolve.

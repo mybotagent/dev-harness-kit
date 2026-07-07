@@ -133,12 +133,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
+          # Most recent claude[bot] comment whose first line is a verdict header.
+          # Anchored with `^` so prose that contains the substring **Verdict:**
+          # mid-sentence is NOT picked. Regression: tests/test_review_gate.py.
           # In track_progress mode the action updates ONE comment per job, so
           # "most recent" = this job's comment.
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | grep -E '^\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
             | awk '{print $NF}' || true)"
           echo "review_verdict=${verdict:-<none>}"
@@ -239,14 +241,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
+          # Most recent claude[bot] comment whose first line is a verdict header.
+          # Anchored with `^` so prose that contains the substring **Verdict:**
+          # mid-sentence is NOT picked. Regression: tests/test_review_gate.py.
           # In track_progress mode the action updates ONE comment per job, so
           # "most recent" = this job's comment (review job's older comments
           # come before security's in chronological order, so we still want
           # the latest = security's).
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | grep -E '^\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
             | awk '{print $NF}' || true)"
           echo "security_verdict=${verdict:-<none>}"
