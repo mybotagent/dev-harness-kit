@@ -2,6 +2,28 @@
 
 All notable changes to dev-harness-kit are documented here.
 
+## [Unreleased]
+
+### Note — LLM review on workflow-file PRs
+
+`anthropics/claude-code-action@v1` does its own workflow-validation and
+silently skips when any workflow file in the PR differs from main. This
+is a GitHub security feature, not a bug in our setup. The action prints
+to the run log:
+
+> Workflow validation failed. The workflow file must exist and have
+> identical content to the version on the repository's default branch.
+
+Practical impact:
+- PRs that touch `.github/workflows/*.yml` cannot get the auto-fired LLM review.
+- Use `gh workflow run review.yml --ref <branch>` (or `workflow_dispatch`
+  with `pr_number` input) to manually invoke the review on those PRs.
+- The LLM review DOES fire on PRs that don't modify any workflow file.
+
+Verified: PR #42 (no workflow changes) got 4 inline review comments from
+the LLM. PRs that modify workflows get zero inline comments — the gate
+still extracts the verdict but the action had already skipped.
+
 ## [0.1.4] - 2026-07-07
 
 ### Changed — split into PR A and PR B (this PR = A)
