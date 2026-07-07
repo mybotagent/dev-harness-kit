@@ -48,6 +48,9 @@ jobs:
       id-token: write
     env:
       MINIMAX_BASE_URL: https://api.minimax.io/anthropic
+      # Used by the consumer-install branch of the install step below when
+      # the dev-harness-kit source is private. Optional for self-install.
+      DEV_KIT_GITHUB_TOKEN: ${{ secrets.DEV_KIT_GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,15 +61,27 @@ jobs:
           mkdir -p ~/.claude/plugins/marketplaces
           # Self-aware install: if the checkout IS the dev-kit plugin
           # (has the manifest + required skills), symlink it.
-          # Otherwise (consumer repo via ci-setup), clone from public.
+          # Otherwise (consumer repo via ci-setup), clone the source.
+          # When the source is private, the consumer must provision a
+          # fine-grained PAT with contents:read on sh-ai-x/dev-harness-kit
+          # as a repo secret named DEV_KIT_GITHUB_TOKEN.
           if [ -f "$GITHUB_WORKSPACE/.claude-plugin/plugin.json" ] \
              && [ -d "$GITHUB_WORKSPACE/skills/review" ] \
              && [ -d "$GITHUB_WORKSPACE/skills/security" ]; then
             ln -sfn "$GITHUB_WORKSPACE" ~/.claude/plugins/marketplaces/dev-kit
             echo "::notice::dev-kit self-install: symlinked $GITHUB_WORKSPACE"
           else
-            echo "::notice::dev-kit consumer-install: cloning sh-ai-x/dev-harness-kit"
-            git clone --depth 1 https://github.com/sh-ai-x/dev-harness-kit.git \
+            if [ -z "$DEV_KIT_GITHUB_TOKEN" ]; then
+              echo "::error::DEV_KIT_GITHUB_TOKEN secret is required for consumer-install."
+              echo "  sh-ai-x/dev-harness-kit is private; provision a fine-grained"
+              echo "  PAT with contents:read on sh-ai-x/dev-harness-kit and set it"
+              echo "  as a repo secret named DEV_KIT_GITHUB_TOKEN in this repo's"
+              echo "  Settings → Secrets and variables → Actions."
+              exit 1
+            fi
+            echo "::notice::dev-kit consumer-install: cloning sh-ai-x/dev-harness-kit via DEV_KIT_GITHUB_TOKEN"
+            git clone --depth 1 \
+              "https://x-access-token:${DEV_KIT_GITHUB_TOKEN}@github.com/sh-ai-x/dev-harness-kit.git" \
               ~/.claude/plugins/marketplaces/dev-kit
           fi
           # Always verify the install succeeded (catches both paths).
@@ -170,6 +185,7 @@ jobs:
       id-token: write
     env:
       MINIMAX_BASE_URL: https://api.minimax.io/anthropic
+      DEV_KIT_GITHUB_TOKEN: ${{ secrets.DEV_KIT_GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -180,15 +196,27 @@ jobs:
           mkdir -p ~/.claude/plugins/marketplaces
           # Self-aware install: if the checkout IS the dev-kit plugin
           # (has the manifest + required skills), symlink it.
-          # Otherwise (consumer repo via ci-setup), clone from public.
+          # Otherwise (consumer repo via ci-setup), clone the source.
+          # When the source is private, the consumer must provision a
+          # fine-grained PAT with contents:read on sh-ai-x/dev-harness-kit
+          # as a repo secret named DEV_KIT_GITHUB_TOKEN.
           if [ -f "$GITHUB_WORKSPACE/.claude-plugin/plugin.json" ] \
              && [ -d "$GITHUB_WORKSPACE/skills/review" ] \
              && [ -d "$GITHUB_WORKSPACE/skills/security" ]; then
             ln -sfn "$GITHUB_WORKSPACE" ~/.claude/plugins/marketplaces/dev-kit
             echo "::notice::dev-kit self-install: symlinked $GITHUB_WORKSPACE"
           else
-            echo "::notice::dev-kit consumer-install: cloning sh-ai-x/dev-harness-kit"
-            git clone --depth 1 https://github.com/sh-ai-x/dev-harness-kit.git \
+            if [ -z "$DEV_KIT_GITHUB_TOKEN" ]; then
+              echo "::error::DEV_KIT_GITHUB_TOKEN secret is required for consumer-install."
+              echo "  sh-ai-x/dev-harness-kit is private; provision a fine-grained"
+              echo "  PAT with contents:read on sh-ai-x/dev-harness-kit and set it"
+              echo "  as a repo secret named DEV_KIT_GITHUB_TOKEN in this repo's"
+              echo "  Settings → Secrets and variables → Actions."
+              exit 1
+            fi
+            echo "::notice::dev-kit consumer-install: cloning sh-ai-x/dev-harness-kit via DEV_KIT_GITHUB_TOKEN"
+            git clone --depth 1 \
+              "https://x-access-token:${DEV_KIT_GITHUB_TOKEN}@github.com/sh-ai-x/dev-harness-kit.git" \
               ~/.claude/plugins/marketplaces/dev-kit
           fi
           # Always verify the install succeeded (catches both paths).
