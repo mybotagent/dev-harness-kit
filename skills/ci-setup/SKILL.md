@@ -17,17 +17,28 @@ disable-model-invocation: false
 
 ## Iron Law
 
-**0-arg default OK; `--force` is the only visible flag. Hidden flags: `--target DIR`, `--skip-verify`. Never modifies the dev-kit repo (only writes into target). `dev-kit:build` will refuse to start without the `.dev-kit/ci-config.json` marker this skill writes.**
+**0-arg default OK; `--force` is the only visible flag. Hidden flags: `--target DIR`, `--skip-verify`, `--bootstrap`, `--body`. Never modifies the dev-kit repo (only writes into target). `dev-kit:build` will refuse to start without the `.dev-kit/ci-config.json` marker this skill writes.**
 
 The skill surfaces **lint warnings** (non-fatal) via `lib/ci_setup.py:lint_installed_workflows()`. Warnings flag known-stale patterns in previously-installed workflows -- e.g. the pre-0.1.3 gate in `templates/ci/.github/workflows/review.yml` that hard-failed in `pull_request` mode on missing verdicts while defaulting to Approve in `workflow_dispatch` mode (an internal inconsistency that produced spurious CI failures whenever the `/dev-kit:*` agents skipped posting a verdict comment). Warnings never block the install; the user acts on them by re-running with `--force` to refresh the template.**
+
+## Two-phase install (default workflow)
+
+`anthropics/claude-code-action@v1` refuses to execute when the workflow file in the PR diff doesn't match `main` exactly. The very PR that installs `.github/workflows/review.yml` therefore gets the agent skipped ("Workflow validation failed"), no `**Verdict:** …` comment is posted, and the severity gate falls back to `Approve` + `::warning::`. The bootstrap+body split sidesteps this:
+
+| Phase | Flag | Files | Outcome |
+|---|---|---|---|
+| 1 — bootstrap | `/dev-kit:ci-setup --bootstrap` | `.github/workflows/{ci,auto-fix-pr,review}.yml` only | Open PR. Agent skips (workflow in diff). **Merge.** |
+| 2 — body | `/dev-kit:ci-setup` | Everything else (scripts, hooks, rules, tests) | Open PR. Agent runs because the workflow files are stable on `main`. |
+
+The legacy one-shot install (`/dev-kit:ci-setup --force` with no `--bootstrap`/`--body`) still works — it installs all 15 EXPECTED_PATHS in one PR. Use that when you don't need an actual review on the install PR (e.g. you trust the templates and will validate via `scripts/ci-local.sh` instead).
 
 ## 3-Phase Orchestration
 
 ### Phase 1 — Detect (deterministic, no LLM call)
 
-1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--skip-verify` skips Phase 3.
+1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--skip-verify` skips Phase 3; `--bootstrap` installs only the 3 workflow files; `--body` installs everything except the 3 workflow files. `--bootstrap` and `--body` are mutually exclusive; the default (no flag) installs the full EXPECTED_PATHS as one shot.
 1.2. Check `python3 ≥ 3.10` (dev-kit requirement).
-1.3. **Delegate version short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when `ci_setup_version` matches the current plugin's version AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0.
+1.3. **Delegate version short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when every EXPECTED_PATHS file for the resolved phase is already in place AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0.
 1.4. Probe target prerequisites: `.git/` (warn if absent — CI is git-themed), `.github/` (create if absent).
 
 ### Phase 2 — Install (via `lib/ci_setup.py`)
@@ -38,19 +49,23 @@ from pathlib import Path
 import sys
 sys.path.insert(0, 'lib')
 from ci_setup import install_ci_config
-report = install_ci_config(Path('${TARGET_DIR}'), force=${FORCE})
+report = install_ci_config(Path('${TARGET_DIR}'), force=${FORCE}, phase=${PHASE})
 print(f'created={len(report.created)} overwritten={len(report.overwritten)} skipped={len(report.skipped)} errors={len(report.errors)}')
 sys.exit(0 if report.ok and not report.errors else 1)
 "
 ```
 
 2.1. `lib/ci_setup.py:install_ci_config()` resolves the plugin's `templates/ci/` tree (relative to its own `__file__`).
-2.2. For each of the 15 `EXPECTED_PATHS` (3 workflow .yml + 1 pre-push hook + 4 scripts + 5 hook files + 1 rules file + 1 test):
+2.2. Resolves the path set from `phase`:
+  - `phase=None` → full `EXPECTED_PATHS` (15 paths: 3 workflow .yml + 1 pre-push hook + 4 scripts + 5 hook files + 1 rules file + 1 test)
+  - `phase="bootstrap"` → `BOOTSTRAP_PATHS` (3 workflow .yml)
+  - `phase="body"` → `BODY_PATHS` (the remaining 12)
+2.3. For each path in the resolved set:
   - Skip if exists and `force=False` (idempotent).
   - Overwrite if exists and `force=True`.
   - `shutil.copy2` (preserves mtime for git diff stability).
-2.3. `chmod 0o755` on shell scripts + pre-push + validate.py.
-2.4. Write `.dev-kit/ci-config.json` marker via `atomic_write_json` (POSIX-atomic; no partial-write on crash).
+2.4. `chmod 0o755` on shell scripts + pre-push + validate.py (only files in the resolved phase).
+2.5. Write `.dev-kit/ci-config.json` marker via `atomic_write_json` (POSIX-atomic; no partial-write on crash). The marker records the resolved phase so a later `--body` run knows the bootstrap is already done.
 
 ### Phase 3 — Verify (deterministic, exit code quoted)
 
@@ -109,9 +124,10 @@ edit it. The checklist NEVER blocks -- it is guidance only.
 ## Rules
 
 - **Idempotent by default** — re-running without `--force` writes zero files; the marker is rewritten with a fresh `installed_at`.
-- **`--force` overwrites** ONLY files inside `EXPECTED_PATHS`. Never delete user-created files outside that set.
+- **`--force` overwrites** ONLY files inside the resolved phase's path set. Never delete user-created files outside that set.
 - **Never modifies dev-kit's own repo** — only writes into the target.
 - **Refuse to install onto a non-directory** — raise clearly.
+- **`--bootstrap` and `--body` are mutually exclusive** — passing both raises ValueError.
 - **Failure exit codes**: 1 = arg error, 2 = marker present + no `--force`, 3 = copy failure, 4 = verify failure.
 
 ## Hand-off
@@ -120,13 +136,20 @@ edit it. The checklist NEVER blocks -- it is guidance only.
 - `/dev-kit:build` refuses to start if this marker is absent or `ci_setup_version < "0.1.0"` — see `skills/build/SKILL.md` pre-flight gate.
 - For full usage docs: see `docs/ci-setup.md`.
 
-## Files Installed (15 expected paths)
+## Files Installed (15 expected paths, split into bootstrap + body)
+
+### Bootstrap phase (`--bootstrap`, 3 paths)
 
 | Path | Purpose |
 |---|---|
 | `.github/workflows/ci.yml` | Branch-policy warn + test + validate jobs |
 | `.github/workflows/auto-fix-pr.yml` | Auto-fix loop on `changes_requested` review (5-iter cap) |
 | `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate |
+
+### Body phase (default — no flag, after bootstrap lands, 12 paths)
+
+| Path | Purpose |
+|---|---|
 | `.githooks/pre-push` | Client-side block of `git push` to main (activation: `git config core.hooksPath .githooks`) |
 | `scripts/validate.py` | Extracted from dev-kit's `ci.yml` 5-step validate job; checks install + marker + bash syntax |
 | `scripts/test.sh` | Pytest wrapper (gracefully skips if no `tests/`) |

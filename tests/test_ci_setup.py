@@ -296,7 +296,7 @@ class TestCiSetup(unittest.TestCase):
             self.assertTrue(
                 any(needle in joined for needle in (
                     "gh secret set", "git config", "push a feature branch",
-                    "merge that", "/dev-kit:review",
+                    "merge that", "/dev-kit:review", "/dev-kit:ci-setup",
                 )),
                 f"checklist item {n} does not mention any actionable command",
             )
