@@ -150,6 +150,19 @@ class TestWriteProjectMd(unittest.TestCase):
         self.assertNotIn("\n  .git\n", content)
         self.assertNotIn("\n  .git/", content)
 
+    def test_safe_deps_redacts_credentialed_registry_urls(self):
+        """_safe_deps must redact x-access-token:...@ URLs in lockfile lines."""
+        # Fake requirements.txt with a credentialed index URL
+        (self.root / "requirements.txt").write_text(
+            "# Sample lockfile\n"
+            "--index-url https://x-access-token:fake-pat@pypi.example.com/simple\n"
+            "requests==2.31.0\n"
+        )
+        out = write_project_md._safe_deps(self.root)
+        self.assertNotIn("fake-pat", out)
+        self.assertNotIn("x-access-token", out)
+        self.assertIn("requests==2.31.0", out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

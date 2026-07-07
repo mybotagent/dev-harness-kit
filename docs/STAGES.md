@@ -4,13 +4,13 @@
 
 ## Stage B — Bootstrap (`/dev-kit:bootstrap`)
 
-- **Goal**: First entry into a new project, 0 → 30 min productive.
-- **Must**: (a) sanity read-only PASS (b) codebase-map auto-synthesis (c) active-hooks.json SSOT init (d) CLAUDE.md §1~§5 unified record
-- **Must-Not**: modify files (sanity + map both read-only). Modify lockfiles. Speculation.
-- **AC**: sanity-report.md PASS / WARN ≤ 3. CLAUDE.md 5 sections STUB (`--slim`) or FULL. `.dev-kit/` directory auto-created.
+- **Goal**: First entry into a new project, 0 → 30 min productive. Minimal setup: exactly 3 files written to a fresh repo.
+- **Must**: (a) sanity read-only audit (printed to stdout; `--persist-audit` writes `.dev-kit/sanity-report.md`) (b) codebase-map lazy-loading index in CLAUDE.md §3 (c) active-hooks.json SSOT init (d) CLAUDE.md §1~§5 unified record (e) AGENTS.md 1-line pointer (f) `--full-claude-md` opt-in writes `docs/CODEBASE-MAP.md`
+- **Must-Not**: modify files (sanity read-only). Modify lockfiles. Speculation. Persist hand-off file (CLAUDE.md §5 pointer is enough).
+- **AC**: On fresh repo: CLAUDE.md + AGENTS.md + `.dev-kit/.active-hooks.json` exist. CLAUDE.md §3 = lazy-loading index referencing canonical source files. `.dev-kit/` directory auto-created.
 - **Active Skills**: `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `write_project_md`
 - **Active Hooks**: `secret-scan`=read-only. Others OFF.
-- **Hand-off out**: `bootstrap→plan.md` (after user OK)
+- **Hand-off out**: §5 hand-off pointer in CLAUDE.md (no separate `.dev-kit/hand-off/` file from bootstrap)
 
 ## Stage B.5 — CI Setup (`/dev-kit:ci-setup`)
 

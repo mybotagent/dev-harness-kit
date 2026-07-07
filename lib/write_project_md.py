@@ -193,7 +193,11 @@ def _safe_deps(root: Path) -> str:
         path = root / filename
         if path.exists():
             try:
-                lines = path.read_text(encoding="utf-8").splitlines()[:n]
+                # Redact each line so credentialed registry URLs (private npm/PyPI
+                # indexes with x-access-token:...@) don't leak into CODEBASE-MAP.md.
+                lines = [
+                    _redact(line) for line in path.read_text(encoding="utf-8").splitlines()[:n]
+                ]
                 return "\n".join(lines) or f"({filename} empty)"
             except Exception:
                 return f"(read failed for {filename})"
