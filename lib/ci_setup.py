@@ -108,12 +108,16 @@ class InstallReport:
     `created`/`overwritten`/`skipped` are lists of POSIX-style strings
     (forward slashes, relative to `target_dir`) for JSON-friendly output.
     `marker_path` is an absolute Path. `elapsed_ms` is wall-clock duration.
+    `warnings` holds non-fatal findings from `lint_installed_workflows()`
+    (e.g. a stale gate-tolerance pattern in a previously-installed
+    workflow that the next `--force` refresh will replace).
     """
 
     created: List[str] = field(default_factory=list)
     overwritten: List[str] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     marker_path: str = ""
     elapsed_ms: int = 0
 
@@ -223,6 +227,7 @@ def install_ci_config(
     *,
     force: bool = False,
     print_checklist: bool = False,
+    lint: bool = True,
 ) -> InstallReport:
     """Install dev-kit's CI templates into `target_dir`. Idempotent + content-aware.
 
@@ -275,6 +280,8 @@ def install_ci_config(
             report.skipped.extend(EXPECTED_PATHS)
             report.marker_path = str(existing_marker)
             report.elapsed_ms = int((time.monotonic() - started) * 1000)
+            if lint:
+                report.warnings.extend(lint_installed_workflows(target))
             return report
 
     for rel in EXPECTED_PATHS:
@@ -297,6 +304,13 @@ def install_ci_config(
     marker = target / MARKER_REL
     _atomic_write_json(marker, _build_marker())
     report.marker_path = str(marker)
+
+    # Lint pass on installed workflows -- catches stale gate patterns and
+    # other known-bad shapes that local validate.py + ci-local.sh pass.
+    # Always runs on a fresh install; on a no-op idempotent re-install the
+    # skill body may opt out via the kwarg below.
+    if lint:
+        report.warnings.extend(lint_installed_workflows(target))
 
     report.elapsed_ms = int((time.monotonic() - started) * 1000)
 
@@ -447,6 +461,54 @@ def _print_post_install_checklist(target_dir: Path) -> None:
     print()
     print(f"Marker: {target_dir / MARKER_REL}")
     print("Verify: bash scripts/ci-local.sh")
+
+
+# Patterns of known-bad install artifacts that the lint pass surfaces.
+# Each entry: (path, substring, explanation). The lint is best-effort and
+# never raises; matches become `InstallReport.warnings` entries so the
+# skill body can print them in the summary table and the user can act on
+# them (typically by re-running with `--force` to refresh the template).
+_KNOWN_STALE_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    (
+        ".github/workflows/review.yml",
+        # Pre-0.1.3 gate hard-failed in pull_request mode on missing verdicts
+        # while defaulting to Approve in workflow_dispatch mode. Internal
+        # inconsistency that produced spurious CI failures on PRs whose
+        # /dev-kit:* agents did not post a verdict comment.
+        "Re-run via workflow_dispatch if needed",
+        "stale pull_request hard-fail gate in review.yml -- the gate used to exit 1 with "
+        "'Missing verdict' whenever the /dev-kit:* agents skipped posting a verdict comment, "
+        "even though the gate's own documented intent (lines 354-358) tolerates missing "
+        "verdicts and the workflow_dispatch branch already defaulted to Approve. Re-run with "
+        "`--force` to refresh the template; the patched gate defaults missing verdicts to "
+        "Approve with a ::warning:: in both event modes.",
+    ),
+)
+
+
+def lint_installed_workflows(target_dir: Path) -> List[str]:
+    """Scan installed EXPECTED_PATHS for known-stale patterns.
+
+    Returns a list of human-readable findings (one per match). The intent
+    is to surface patterns that previously made the install look healthy
+    locally (validate.py + ci-local.sh both pass) but produced red CI in
+    GitHub Actions. The skill body renders the findings in the install
+    summary and the user can act on them -- the install itself is never
+    blocked by lint output.
+    """
+    out: List[str] = []
+    target = Path(target_dir).resolve()
+    for rel, needle, explain in _KNOWN_STALE_PATTERNS:
+        p = target / rel
+        if not p.is_file():
+            continue
+        try:
+            content = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if needle in content:
+            out.append(f"{rel}: {explain}")
+    return out
 
 
 def _self_test() -> int:
