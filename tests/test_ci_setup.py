@@ -319,6 +319,73 @@ class TestCiSetup(unittest.TestCase):
         finally:
             os.environ["PATH"] = old_path
 
+    def test_lint_installed_workflows_flags_stale_gate_pattern(self):
+        """Lint pass detects pre-0.1.3 PR-mode hard-fail gate.
+
+        The pre-0.1.3 templates/ci/.github/workflows/review.yml shipped a
+        gate that hard-failed in pull_request mode on missing verdicts
+        while defaulting to Approve in workflow_dispatch mode. The
+        distinctive substring 'Re-run via workflow_dispatch if needed'
+        is unique to that block; the lint pass is keyed on it.
+        """
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as td:
+            review = _P(td) / ".github" / "workflows" / "review.yml"
+            review.parent.mkdir(parents=True)
+            review.write_text(
+                "dummy\n          Re-run via workflow_dispatch if needed\n"
+            )
+            findings = self.ci_setup.lint_installed_workflows(_P(td))
+            self.assertTrue(
+                any(".github/workflows/review.yml" in f for f in findings),
+                f"expected gate-tolerance finding, got {findings!r}",
+            )
+
+    def test_lint_installed_workflows_clean_on_fresh_install(self):
+        """Fresh install of the current (post-0.1.3) template yields 0 lint warnings."""
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as td:
+            r = self.ci_setup.install_ci_config(_P(td))
+            self.assertEqual(r.warnings, [], r.warnings)
+            self.assertEqual(self.ci_setup.lint_installed_workflows(_P(td)), [])
+
+    def test_lint_runs_on_no_op_idempotent_reinstall(self):
+        """Idempotent re-install (no --force) still lints and surfaces drift."""
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as td:
+            r1 = self.ci_setup.install_ci_config(_P(td))
+            self.assertEqual(r1.warnings, [])
+            review = _P(td) / ".github" / "workflows" / "review.yml"
+            review.write_text(
+                review.read_text()
+                + "\n          Re-run via workflow_dispatch if needed\n"
+            )
+            r2 = self.ci_setup.install_ci_config(_P(td), force=False)
+            self.assertTrue(
+                any("stale pull_request hard-fail gate" in w for w in r2.warnings),
+                f"expected stale-gate warning, got {r2.warnings!r}",
+            )
+
+    def test_lint_kwarg_can_suppress(self):
+        """`lint=False` suppresses the warning-class output."""
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as td:
+            review = _P(td) / ".github" / "workflows" / "review.yml"
+            review.parent.mkdir(parents=True)
+            review.write_text(
+                "          Re-run via workflow_dispatch if needed\n"
+            )
+            r = self.ci_setup.install_ci_config(_P(td), force=False, lint=False)
+            self.assertEqual(
+                r.warnings,
+                [],
+                "lint=False must suppress findings",
+            )
+
     def test_print_checklist_kwarg_does_not_break_existing_callers(self):
         """install_ci_config(..., print_checklist=True) writes the marker and
         returns an InstallReport. Default (no kwarg) behavior unchanged."""

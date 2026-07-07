@@ -19,6 +19,8 @@ disable-model-invocation: false
 
 **0-arg default OK; `--force` is the only visible flag. Hidden flags: `--target DIR`, `--skip-verify`. Never modifies the dev-kit repo (only writes into target). `dev-kit:build` will refuse to start without the `.dev-kit/ci-config.json` marker this skill writes.**
 
+The skill surfaces **lint warnings** (non-fatal) via `lib/ci_setup.py:lint_installed_workflows()`. Warnings flag known-stale patterns in previously-installed workflows -- e.g. the pre-0.1.3 gate in `templates/ci/.github/workflows/review.yml` that hard-failed in `pull_request` mode on missing verdicts while defaulting to Approve in `workflow_dispatch` mode (an internal inconsistency that produced spurious CI failures whenever the `/dev-kit:*` agents skipped posting a verdict comment). Warnings never block the install; the user acts on them by re-running with `--force` to refresh the template.**
+
 ## 3-Phase Orchestration
 
 ### Phase 1 — Detect (deterministic, no LLM call)
@@ -61,6 +63,21 @@ Unless `--skip-verify`:
 3.5. `act -l 2>/dev/null || echo "act not installed; falling back to scripts/ci-local.sh"` — WARN, not FAIL.
 
 Print summary table (file → outcome: created/overwritten/skipped/error) + pointer to `docs/ci-setup.md`.
+
+## Phase 1.7 -- Lint pass (non-fatal; always runs, even on no-op idempotent re-install)
+
+After install (and after the no-op short-circuit when marker + every EXPECTED_PATH already exists), the skill invokes `lib/ci_setup.py:lint_installed_workflows(target_dir)` and prints every finding as a row in the summary table:
+
+```
+| Path                                              | Outcome   |
+|---------------------------------------------------|-----------|
+| .github/workflows/review.yml                      | warning:  |
+|   stale pull_request hard-fail gate ... (0.1.3+)  |           |
+```
+
+The lint is purely advisory (`InstallReport.warnings`, not `errors`). The install still succeeds; the user is expected to act on findings -- in the gate-tolerance case, by re-running with `--force` to copy the patched template over the stale workflow file.
+
+The lint pass catches patterns that local `validate.py` + `ci-local.sh` both pass (they don't exercise the GitHub Actions gate), so a clean local run is no longer the only green-light signal.
 
 ## Phase 1.5 -- Pre-flight probe (silent when gh is absent)
 

@@ -2,6 +2,21 @@
 
 All notable changes to dev-harness-kit are documented here.
 
+## [0.1.3] - 2026-07-07
+
+### Fixed
+- **`templates/ci/.github/workflows/review.yml` Combined verdict gate**: PR mode and `workflow_dispatch` mode now share symmetric tolerance. Previously PR mode `exit 1`'d on missing verdicts (`Missing verdict (review='' security='')`) whenever the `/dev-kit:*` agents skipped posting a `**Verdict:**` comment as the first line of a PR comment, while `workflow_dispatch` mode defaulted to Approve. The hard-fail contradicted the gate's own documented tolerance contract (lines 354-358) for unparseable verdicts. The patched gate surfaces a `::warning::` in both modes when a verdict is missing and defaults the missing dim to `Approve`. The human gate (`REVIEW_REQUIRED` / `CHANGES_REQUESTED`) remains authoritative for merge-block.
+
+### Added
+- **`lib/ci_setup.py:lint_installed_workflows()`** + **`_KNOWN_STALE_PATTERNS` tuple**: a non-fatal scan over installed `EXPECTED_PATHS` for known-stale patterns whose root cause previously slipped past local smoke tests (`scripts/validate.py` + `scripts/ci-local.sh` both pass on stale installs because they don't exercise the GitHub Actions gate). The first known-stale pattern is the pre-0.1.3 gate hard-fail. Findings populate `InstallReport.warnings` and the skill body prints them in the install summary table.
+- **`InstallReport.warnings: List[str]`** field (defaults to `[]`); backward-compatible with existing test contracts.
+- **`install_ci_config(..., lint: bool = True)`** kwarg: lint runs by default on every install, including no-op idempotent re-installs (so a user running ci-setup with no `--force` still gets the warning if their previously-installed `review.yml` is stale). Set `lint=False` to suppress.
+- **`skills/ci-setup/SKILL.md`**: new `## Phase 1.7 -- Lint pass` section and Iron-Law paragraph documenting the warning-class output.
+
+### Notes
+- `MARKER_SCHEMA_VERSION` unchanged (`1.0.0`); consumers who re-run `ci-setup --force` get the gate-tolerance fix without any version gate.
+- The new lint pass is the surface area for adding more known-stale patterns in future: add a tuple to `_KNOWN_STALE_PATTERNS`, ship a release.
+
 ## [0.1.2] - 2026-07-07
 
 ### Fixed
