@@ -24,6 +24,9 @@ concurrency:
 jobs:
   auto-fix:
     if: |
+      # Fork-safety: pull_request_review events run in base-branch context,
+      # exposing secrets to the workflow. Skip silently for fork PRs.
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.review.state == 'changes_requested' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
       !endsWith(github.event.review.user.login, '[bot]') &&
