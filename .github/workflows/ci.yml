@@ -73,9 +73,12 @@ jobs:
           mp_plugin = mp['plugins'][0]
           assert mp_plugin['name'] == 'dev-kit', f\"marketplace plugin name mismatch: {mp_plugin['name']}\"
           assert pl['name'] == 'dev-kit', f\"plugin name mismatch: {pl['name']}\"
-          assert pl['version'] == '0.1.1', f\"plugin version: {pl['version']}\"
-          assert mp_plugin['version'] == pl['version'], f\"marketplace/plugin version mismatch: {mp_plugin['version']} vs {pl['version']}\"
-          print(f\"manifests OK (name=dev-kit, v{pl['version']})\")
+          # `version` is OPTIONAL per Claude Code plugin docs — marketplace pins by
+          # commit SHA when omitted. Both files agree whether present.
+          pl_v, mp_v = pl.get('version'), mp_plugin.get('version')
+          assert pl_v == mp_v, f\"marketplace/plugin version mismatch: {mp_v!r} vs {pl_v!r}\"
+          tag = f' v{pl_v}' if pl_v else ' (version-less, SHA-pinned)'
+          print(f\"manifests OK (name=dev-kit{tag})\")
           "
 
       - name: Validate skill count + flat layout
