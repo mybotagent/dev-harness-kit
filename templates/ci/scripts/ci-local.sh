@@ -10,7 +10,21 @@
 
 set -eo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "$0")/.." && pwd)"
+# REPO_ROOT = the directory containing scripts/ci-local.sh (i.e. the
+# parent of $(dirname "$0")). Two strategies, both safe:
+#   1. Inside a git repo: `git rev-parse --show-toplevel` (authoritative)
+#   2. Outside: fall back to a subshell that cd's to the parent of $0
+#      then pwd's. The subshell scopes the cd so the fallback path
+#      doesn't leak its pwd into REPO_ROOT alongside the toplevel.
+#
+# NOTE: the previous form  `git || cd ... && pwd`  silently broke on
+# many setups: bash parses `A || B && C` as `(A || B) && C`, so `pwd`
+# runs unconditionally and its output (always newline-terminated)
+# concatenates with the toplevel path. `cd "$REPO_ROOT"` then sees
+# two args and errors with "No such file or directory" referencing a
+# path split across two lines. Fix: scope the fallback in a subshell
+# so the inner pwd stays inside it.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "$0")/.." && pwd))"
 cd "$REPO_ROOT"
 
 echo "=== validate ==="
