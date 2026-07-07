@@ -33,11 +33,31 @@ claude plugin install dev-kit
 /reload-plugins
 ```
 
-After install, the plugin auto-refreshes on SessionStart (when the local marketplace clone is behind origin/main). If that ever fails (e.g. CLI install is broken), use the manual one-shot:
+After install, `claude plugin update dev-kit` advances the cache whenever you push. Per the [plugins docs](https://code.claude.com/docs/en/plugins), omitting `version` in the manifest pins by commit SHA — the marketplace catalog auto-bumps the pin on each merge to `main`.
+
+## Live-source dev (alias recommended)
+
+The marketplace install pins a specific commit SHA. When you're developing this repo, point Claude Code at your local checkout so edits are live without re-installing:
 
 ```bash
-~/.claude/plugins/marketplaces/dev-kit/bin/devkit-refresh.sh
+claude --plugin-dir /Users/sanghee/dev/dev-harness-kit
 ```
+
+To save the keystrokes, drop a shell alias in `~/.zshrc` (or `~/.bashrc`):
+
+```bash
+alias claude-dev='claude --plugin-dir /Users/sanghee/dev/dev-harness-kit'
+
+# Then in a project directory:
+claude-dev            # loads your local edits, no rebuild step
+claude                # falls back to marketplace-pinned install
+```
+
+Per the docs, when both paths are available the local copy takes precedence for that session — so `claude-dev` always wins.
+
+> **Don't symlink `~/.claude/skills/dev-kit`** to the repo. The marketplace install and a skills-dir plugin carrying the same `name` collide; the loader rejects the second copy. If you want a no-flag live-source install, use the alias above.
+
+> **CLI Node compatibility.** The bundled Claude Code CLI crashes on Node ≥ 25 (`TypeError: Cannot read properties of undefined (reading 'prototype')` from `cli.js:384`). Run `claude plugin …` and `claude plugin update` on Node 22 (`nvm install 22 && nvm use 22`). The `--plugin-dir` flag isn't affected; it bypasses the failing CLI path entirely.
 
 ## Usage (0-arg, namespaced)
 
