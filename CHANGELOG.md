@@ -147,7 +147,7 @@ verdict (so silent skips aren't invisible to the PR author).
 - 17 skills across 9 categories (bootstrap, plan, design, build, review, security, audit, shortcuts, ship)
 - 15 commands (0-arg): `bootstrap / plan / design (alias) / build / review / security / ship / audit / eval / repair / config / status / onboard` + 2 shortcuts
 - 5 hook scripts: `tdd-guard, bash-guard, secret-scan, slop-detector, stop-verify` (all `exit 0` advisory by default; `--strict` enables hard-block)
-- lib modules: `state_codec, active_hooks_codec, write_claude_md, execute, methodology/{abc,tdd,__init__}, install.sh`
+- lib modules: `state_codec, active_hooks_codec, write_project_md, execute, methodology/{abc,tdd,__init__}, install.sh`
 - Iron Laws SSOT in `CLAUDE.md §1` (5 laws)
 - `.dev-kit/` state files (state.json, .active-hooks.json, hand-off/*.md)
 - Pre-impl gate (`docs/PRE-IMPL-CHECK.md`) + 8-dimension cost analysis (`docs/COST-ANALYSIS.md`)

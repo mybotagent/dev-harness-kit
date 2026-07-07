@@ -26,7 +26,7 @@ def discover_assets(project_root: Path) -> List[Dict]:
     - CLAUDE.md (kind=claude_md)
     - skills/<name>/SKILL.md (kind=skill)
     - .claude-plugin/plugin/hooks/*.sh (kind=hook)
-    - lib/write_claude_md.py IRON_LAWS (kind=iron_law)
+    - lib/write_project_md.py IRON_LAWS (kind=iron_law)
     - lib/methodology/*.py excluding abc.py (kind=methodology)
     """
     assets = []
@@ -55,13 +55,13 @@ def discover_assets(project_root: Path) -> List[Dict]:
                 "kind": "hook",
                 "content": hook.read_text(encoding="utf-8"),
             })
-    iron_law_src = project_root / "lib" / "write_claude_md.py"
+    iron_law_src = project_root / "lib" / "write_project_md.py"
     if iron_law_src.exists():
         for line in iron_law_src.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if any(stripped.startswith(f"L{n}_") for n in range(1, 6)):
                 assets.append({
-                    "path": f"lib/write_claude_md.py: {stripped[:40]}",
+                    "path": f"lib/write_project_md.py: {stripped[:40]}",
                     "kind": "iron_law",
                     "content": stripped,
                 })

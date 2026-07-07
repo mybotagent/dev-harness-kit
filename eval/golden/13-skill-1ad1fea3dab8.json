@@ -9,7 +9,7 @@
   "expected_behavior": "Stable skill asset for dev-harness-kit 0.1.0",
   "iron_law_refs": [
     "CLAUDE.md §1 L1 No-Test-No-Code",
-    "lib/write_claude_md.py:IRON_LAWS"
+    "lib/write_project_md.py:IRON_LAWS"
   ],
   "schema_version": "1.0.0",
   "size_chars": 2533,
