@@ -170,6 +170,19 @@ class TestTemplateShape(unittest.TestCase):
             "ci-local.sh still has the buggy form (no subshell grouping)",
         )
 
+    def test_all_scripts_in_templates_have_fixed_form(self):
+        """PR #30's review caught the SAME bug in templates/ci/scripts/test.sh.
+        Defensive: scan every shell script in templates/ for the buggy
+        pattern. If anyone re-introduces it, the test fires."""
+        import glob
+        for f in glob.glob(str(REPO_ROOT / "templates" / "ci" / "scripts" / "*.sh")) + \
+                 glob.glob(str(REPO_ROOT / "templates" / "ci" / ".githooks" / "pre-push")):
+            text = Path(f).read_text()
+            self.assertNotRegex(
+                text, r"\|\| cd \"[^\"]*\"\) && pwd\)",
+                f"{f} still has the buggy form (no subshell grouping)",
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
