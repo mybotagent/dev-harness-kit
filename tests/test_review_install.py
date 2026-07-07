@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """test_review_install.py — regression tests for the self-aware install
-step in templates/ci/.github/workflows/review.yml (and the dev-harness-kit
-repo's own .github/workflows/review.yml).
+step in the wrapper workflow templates
+(templates/ci/.github/workflows/claude-review.yml + claude-security.yml)
+and the dev-harness-kit repo's own .github/workflows/review.yml.
 
-The install step used to assume the checkout IS the dev-kit plugin
-(symlink + verify). That works for the dev-harness-kit repo's own CI
-(self-install) but BREAKS for consumer repos that installed the same
-review.yml via /dev-kit:ci-setup. The fix: detect at runtime which
-mode applies and act accordingly.
+Wrapper pattern (0.1.5+): review.yml is now an orchestrator that calls
+claude-{review,security}.yml via workflow_call. The install step lives
+in the wrapper files (NOT in review.yml) so the action's
+workflow-identity validation gate passes on every PR.
 
 Coverage:
   1. Self-install path: checkout has the manifest + skills/review +
@@ -37,7 +37,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 TEMPLATE_REVIEW_YML = REPO_ROOT / "templates" / "ci" / ".github" / "workflows" / "review.yml"
+TEMPLATE_CLAUDE_REVIEW_YML = REPO_ROOT / "templates" / "ci" / ".github" / "workflows" / "claude-review.yml"
+TEMPLATE_CLAUDE_SECURITY_YML = REPO_ROOT / "templates" / "ci" / ".github" / "workflows" / "claude-security.yml"
 OWN_REVIEW_YML = REPO_ROOT / ".github" / "workflows" / "review.yml"
+
+# After the 0.1.5 wrapper pattern, the install step lives in the
+# wrapper files (not in the orchestrator). Install-step tests below
+# point at TEMPLATE_INSTALL_YML (= claude-review.yml).
+TEMPLATE_INSTALL_YML = TEMPLATE_CLAUDE_REVIEW_YML
 
 
 def _extract_install_script(yml_path: Path) -> str:
@@ -114,12 +121,14 @@ def _make_workspace(tmp: Path, *, is_devkit_plugin: bool) -> Path:
 
 class TestReviewInstallScript(unittest.TestCase):
     """The 'Install dev-kit plugin' step handles both self-install and
-    consumer-install paths correctly."""
+    consumer-install paths correctly. After the 0.1.5 wrapper pattern
+    the step lives in claude-review.yml (TEMPLATE_INSTALL_YML), not in
+    the orchestrator review.yml."""
 
     def test_self_install_when_checkout_is_devkit(self):
         with tempfile.TemporaryDirectory() as td:
             ws = _make_workspace(Path(td), is_devkit_plugin=True)
-            script = _extract_install_script(TEMPLATE_REVIEW_YML)
+            script = _extract_install_script(TEMPLATE_INSTALL_YML)
             r = _run_install_script(script, ws)
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}\nstdout={r.stdout}")
             # Self-install: the marketplace is a symlink to the workspace.
@@ -133,7 +142,7 @@ class TestReviewInstallScript(unittest.TestCase):
     def test_consumer_install_when_checkout_is_plain(self):
         with tempfile.TemporaryDirectory() as td:
             ws = _make_workspace(Path(td), is_devkit_plugin=False)
-            script = _extract_install_script(TEMPLATE_REVIEW_YML)
+            script = _extract_install_script(TEMPLATE_INSTALL_YML)
             r = _run_install_script(script, ws, env_extra={"DEV_KIT_GITHUB_TOKEN": "fake-pat"})
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}\nstdout={r.stdout}")
             self.assertIn("consumer-install", r.stdout)
@@ -147,7 +156,7 @@ class TestReviewInstallScript(unittest.TestCase):
         a clear ::error:: explaining the secret requirement."""
         with tempfile.TemporaryDirectory() as td:
             ws = _make_workspace(Path(td), is_devkit_plugin=False)
-            script = _extract_install_script(TEMPLATE_REVIEW_YML)
+            script = _extract_install_script(TEMPLATE_INSTALL_YML)
             r = _run_install_script(script, ws)
             self.assertNotEqual(r.returncode, 0, f"expected failure; got stdout={r.stdout}")
             self.assertIn("DEV_KIT_GITHUB_TOKEN", r.stdout)
@@ -159,7 +168,7 @@ class TestReviewInstallScript(unittest.TestCase):
         own workflow only needs the basic manifest+review check (it's
         self-install only), so we only assert the strict version on
         the template."""
-        script = _extract_install_script(TEMPLATE_REVIEW_YML)
+        script = _extract_install_script(TEMPLATE_INSTALL_YML)
         for required in (
             ".claude-plugin/plugin.json",
             "skills/review",
@@ -174,7 +183,7 @@ class TestReviewInstallScript(unittest.TestCase):
         """The TEMPLATE must clone from the dev-harness-kit source. The URL
         is auth-prefixed (x-access-token:${DEV_KIT_GITHUB_TOKEN}@) when the
         source is private, plain https:// when it's public — match either."""
-        script = _extract_install_script(TEMPLATE_REVIEW_YML)
+        script = _extract_install_script(TEMPLATE_INSTALL_YML)
         self.assertIn(
             "github.com/sh-ai-x/dev-harness-kit", script,
             "template install script must clone from the dev-harness-kit source",
@@ -185,7 +194,7 @@ class TestReviewInstallScript(unittest.TestCase):
         (no network needed for the dev-harness-kit repo's own CI)."""
         with tempfile.TemporaryDirectory() as td:
             ws = _make_workspace(Path(td), is_devkit_plugin=True)
-            script = _extract_install_script(TEMPLATE_REVIEW_YML)
+            script = _extract_install_script(TEMPLATE_INSTALL_YML)
             # Mock git counts invocations. If self-install wrongly
             # calls git, the count will be > 0.
             stub_dir = Path(td) / "stub-bin"
@@ -229,7 +238,7 @@ class TestReviewYmlStructure(unittest.TestCase):
     def test_template_has_consumer_install_fallback(self):
         """The TEMPLATE must handle consumer repos (plain checkout).
         This is the file consumer repos get via /dev-kit:ci-setup."""
-        script = _extract_install_script(TEMPLATE_REVIEW_YML)
+        script = _extract_install_script(TEMPLATE_INSTALL_YML)
         self.assertIn("github.com/sh-ai-x/dev-harness-kit", script,
                       "template must clone from the dev-harness-kit source")
         self.assertIn("consumer-install", script)

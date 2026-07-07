@@ -49,12 +49,17 @@ class TestSplitInstall(unittest.TestCase):
         # workflows are needed so anthropics/claude-code-action can validate
         # them against main; scripts/{test,validate,branch-policy,ci-local}
         # are needed so ci.yml's test/validate jobs pass on the bootstrap PR.
+        # claude-{review,security}.yml ship alongside review.yml so the
+        # orchestrator's workflow_call references resolve on the first PR
+        # (wrapper pattern: 0.1.5+).
         self.assertEqual(
             set(self.ci_setup.BOOTSTRAP_PATHS),
             {
                 ".github/workflows/ci.yml",
                 ".github/workflows/auto-fix-pr.yml",
                 ".github/workflows/review.yml",
+                ".github/workflows/claude-review.yml",
+                ".github/workflows/claude-security.yml",
                 "scripts/validate.py",
                 "scripts/test.sh",
                 "scripts/branch-policy.sh",

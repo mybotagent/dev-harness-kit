@@ -143,16 +143,12 @@ POST_INSTALL_CHECKLIST: tuple[tuple[str, str], ...] = (
     ("2", "Add MINIMAX_API_KEY (or ANTHROPIC_API_KEY for opt-in provider):\n"
           "       gh secret set MINIMAX_API_KEY --repo <OWNER>/<REPO>"),
     ("3", "Enable pre-push hook:  git config core.hooksPath .githooks"),
-    ("4", "Verify install — open a PR with a trivial change that does NOT "
-          "modify\n"
-          "       .github/workflows/*. /dev-kit:review + /dev-kit:security "
-          "should fire\n"
-          "       (the wrapper pattern keeps claude-{review,security}.yml "
+    ("4", "Verify install — open any PR (including one that modifies "
+          ".github/workflows/review.yml).\n"
+          "       The wrapper pattern (0.1.5+) keeps claude-{review,security}.yml "
           "stable on\n"
-          "       main so the action validation gate passes on every PR "
-          "from here on)."),
-    ("5", "Push a feature branch; open a PR that does NOT modify "
-          ".github/workflows/*.\n"
+          "       main, so the action's workflow-identity validation gate "
+          "passes on EVERY PR.\n"
           "       /dev-kit:review + /dev-kit:security should fire."),
 )
 
