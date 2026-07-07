@@ -134,12 +134,24 @@ class TestReviewInstallScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             ws = _make_workspace(Path(td), is_devkit_plugin=False)
             script = _extract_install_script(TEMPLATE_REVIEW_YML)
-            r = _run_install_script(script, ws)
+            r = _run_install_script(script, ws, env_extra={"DEV_KIT_GITHUB_TOKEN": "fake-pat"})
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}\nstdout={r.stdout}")
             self.assertIn("consumer-install", r.stdout)
             self.assertIn("cloning", r.stdout)
             self.assertNotIn("self-install", r.stdout)
             self.assertNotIn("symlinked", r.stdout)
+
+    def test_consumer_install_fails_without_token(self):
+        """When DEV_KIT_GITHUB_TOKEN is unset and the checkout isn't the
+        dev-kit plugin, the consumer-install path must fail loudly with
+        a clear ::error:: explaining the secret requirement."""
+        with tempfile.TemporaryDirectory() as td:
+            ws = _make_workspace(Path(td), is_devkit_plugin=False)
+            script = _extract_install_script(TEMPLATE_REVIEW_YML)
+            r = _run_install_script(script, ws)
+            self.assertNotEqual(r.returncode, 0, f"expected failure; got stdout={r.stdout}")
+            self.assertIn("DEV_KIT_GITHUB_TOKEN", r.stdout)
+            self.assertIn("required", r.stdout)
 
     def test_script_verifies_install_in_both_paths(self):
         """The TEMPLATE must end with all three verification lines
@@ -159,11 +171,13 @@ class TestReviewInstallScript(unittest.TestCase):
             )
 
     def test_script_uses_https_public_source_for_consumer_install(self):
-        """The TEMPLATE must clone from the public repo URL."""
+        """The TEMPLATE must clone from the dev-harness-kit source. The URL
+        is auth-prefixed (x-access-token:${DEV_KIT_GITHUB_TOKEN}@) when the
+        source is private, plain https:// when it's public — match either."""
         script = _extract_install_script(TEMPLATE_REVIEW_YML)
         self.assertIn(
-            "https://github.com/sh-ai-x/dev-harness-kit", script,
-            "template install script must clone from the public dev-kit source",
+            "github.com/sh-ai-x/dev-harness-kit", script,
+            "template install script must clone from the dev-harness-kit source",
         )
 
     def test_self_install_does_not_clone(self):
@@ -216,10 +230,12 @@ class TestReviewYmlStructure(unittest.TestCase):
         """The TEMPLATE must handle consumer repos (plain checkout).
         This is the file consumer repos get via /dev-kit:ci-setup."""
         script = _extract_install_script(TEMPLATE_REVIEW_YML)
-        self.assertIn("https://github.com/sh-ai-x/dev-harness-kit", script,
-                      "template must clone from the public dev-kit source")
+        self.assertIn("github.com/sh-ai-x/dev-harness-kit", script,
+                      "template must clone from the dev-harness-kit source")
         self.assertIn("consumer-install", script)
         self.assertIn("self-install", script)
+        self.assertIn("x-access-token:${DEV_KIT_GITHUB_TOKEN}", script,
+                      "template must inject the PAT secret into the clone URL for private sources")
 
     def test_own_workflow_can_stay_self_install_only(self):
         """The dev-harness-kit repo's own workflow is fine as a pure

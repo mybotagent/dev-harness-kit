@@ -75,6 +75,21 @@ A: No. `scripts/ci-local.sh` runs the same validators locally on any POSIX host.
 **Q: How do I uninstall?**
 A: Delete `.dev-kit/ci-config.json`, then `git rm` the 8 installed files (or `rm -rf` them if the target repo is freshly built and not yet under version control). The CI templates are intentionally not deeply integrated — they're plain files you own.
 
+**Q: My CI fails on `Install dev-kit plugin` with `DEV_KIT_GITHUB_TOKEN secret is required`. What now?**
+A: The dev-harness-kit source repo (`sh-ai-x/dev-harness-kit`) is private. The consumer-install branch of `review.yml` clones it via `git clone https://x-access-token:${DEV_KIT_GITHUB_TOKEN}@github.com/sh-ai-x/dev-harness-kit.git`. To make this work in your CI:
+
+  1. Create a **fine-grained personal access token** at <https://github.com/settings/tokens?type=beta> with:
+     - **Resource owner:** `sh-ai-x` (or wherever dev-harness-kit lives)
+     - **Repository access:** `sh-ai-x/dev-harness-kit` only
+     - **Permissions → Repository permissions:** `Contents: Read-only`
+  2. In this consumer repo, go to **Settings → Secrets and variables → Actions → New repository secret**:
+     - **Name:** `DEV_KIT_GITHUB_TOKEN`
+     - **Value:** paste the fine-grained PAT from step 1
+
+  The install step exposes the secret as `${{ secrets.DEV_KIT_GITHUB_TOKEN }}` in both the `review` and `security` jobs. Without it, the consumer-install branch fails fast (exit 1) with a clear `::error::` message instead of a generic git auth failure.
+
+  If dev-harness-kit is later made public, you can remove the secret and `git clone` will work without credentials. Re-run `/dev-kit:ci-setup --force` to refresh the install step if you want.
+
 **Q: Why is the marker file versioned?**
 A: So `/dev-kit:build` can refuse to run on stale templates after a dev-kit upgrade that changes the CI shape. Re-run `/dev-kit:ci-setup --force` after upgrading dev-kit to pick up new validator logic.
 
