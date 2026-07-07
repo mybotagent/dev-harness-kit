@@ -276,6 +276,63 @@ class TestCiSetup(unittest.TestCase):
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
+    def test_post_install_checklist_is_complete(self):
+        """5 numbered items; each is a gh secret set, a gh/git config, or a
+        workflow-setting note. Must be actionable."""
+        items = self.ci_setup.POST_INSTALL_CHECKLIST
+        self.assertGreaterEqual(
+            len(items), 5,
+            f"expected >=5 post-install checklist items, got {len(items)}",
+        )
+        seen_numbers = set()
+        for n, body in items:
+            self.assertTrue(
+                n.isdigit() and 1 <= int(n) <= 9,
+                f"checklist number {n!r} must be a digit 1..9",
+            )
+            self.assertNotIn(int(n), seen_numbers, f"duplicate: {n}")
+            seen_numbers.add(int(n))
+            joined = body.lower()
+            self.assertTrue(
+                any(needle in joined for needle in (
+                    "gh secret set", "git config", "push a feature branch",
+                    "merge that", "/dev-kit:review",
+                )),
+                f"checklist item {n} does not mention any actionable command",
+            )
+
+    def test_preflight_probe_skips_on_missing_gh(self):
+        """When gh is absent, every probe line is SKIP. Safe failure: a user
+        without gh can still install; the checklist alone guides them."""
+        import os
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = ""
+        try:
+            results = self.ci_setup.preflight_probe(repo="o/r")
+            self.assertIsInstance(results, list)
+            self.assertGreater(len(results), 0)
+            for r in results:
+                self.assertEqual(
+                    r.state, "SKIP",
+                    f"expected SKIP with PATH empty, got {r.state} for {r.label}",
+                )
+        finally:
+            os.environ["PATH"] = old_path
+
+    def test_print_checklist_kwarg_does_not_break_existing_callers(self):
+        """install_ci_config(..., print_checklist=True) writes the marker and
+        returns an InstallReport. Default (no kwarg) behavior unchanged."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r_default = self.ci_setup.install_ci_config(target)
+            self.assertEqual(r_default.errors, [])
+            r_printing = self.ci_setup.install_ci_config(
+                target, force=True, print_checklist=True,
+            )
+            self.assertEqual(r_printing.errors, [])
+            self.assertTrue((target / ".dev-kit" / "ci-config.json").exists())
+
 
 def tempfile_path(name: str):
     """Return a Path to a tempfile file (helper for test_invalid_target_dir_raises)."""
