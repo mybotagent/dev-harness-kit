@@ -78,6 +78,16 @@ BOOTSTRAP_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
+    # scripts/{validate,test,branch-policy,ci-local}.sh land in the bootstrap
+    # PR so ci.yml's test and validate jobs pass (they reference these
+    # scripts unconditionally -- the action safety check that skips the
+    # review/security jobs does not gate test/validate jobs).
+    # BODY_PATHS holds only the consumer-side artifacts (.githooks/, hooks/,
+    # rules/, tests/).
+    "scripts/validate.py",
+    "scripts/test.sh",
+    "scripts/branch-policy.sh",
+    "scripts/ci-local.sh",
 )
 
 # Everything NOT in BOOTSTRAP_PATHS. Installed in the second PR (no flag)
@@ -310,16 +320,9 @@ def install_ci_config(
             bootstrap PR is merged).
 
     Returns:
-        InstallReport with created/overwritten/skipped/errors lists and the
-        path to the marker file (always written unless target is read-only).
-
-    Args:
-        target_dir: absolute path to the target project root.
-        force: when True, overwrite existing target files matching
-            EXPECTED_PATHS. Default False (skip + report).
-        print_checklist: when True and the install succeeds (no errors),
-            print the post-install checklist after the marker is written.
-            Default False to preserve existing test contracts.
+        InstallReport with created/overwritten/skipped/errors lists. marker_path
+        is set only when a marker was written (skipped during phase="bootstrap"
+        -- see M-2 in the SKILL.md two-phase section).
 
     Raises:
         FileNotFoundError: target_dir is missing or not a directory, OR a
@@ -375,15 +378,18 @@ def install_ci_config(
         target,
     )
 
-    # Write marker (overwrites on force, always succeeds idempotently).
-    # When phase="bootstrap" lands first, the marker records phase="bootstrap"
-    # so a later "body" run can detect that bootstrap is already done and
-    # NOT re-emit the workflow files. Conversely, when phase="body" runs
-    # after "bootstrap", the marker is rewritten to phase="body" (the
-    # final state).
-    marker = target / MARKER_REL
-    _atomic_write_json(marker, _build_marker(phase=marker_phase))
-    report.marker_path = str(marker)
+    # Marker contract: signals INSTALL COMPLETE. Skip during bootstrap
+    # because scripts/hooks/rules/tests are intentionally absent at that
+    # point — writing the marker here would mislead /dev-kit:build's
+    # pre-flight gate (which only checks marker existence) into starting
+    # against an incomplete install. The body phase writes the marker
+    # as the final step.
+    if marker_phase == "bootstrap":
+        report.marker_path = ""  # intentionally empty
+    else:
+        marker = target / MARKER_REL
+        _atomic_write_json(marker, _build_marker(phase=marker_phase))
+        report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and
     # other known-bad shapes that local validate.py + ci-local.sh pass.

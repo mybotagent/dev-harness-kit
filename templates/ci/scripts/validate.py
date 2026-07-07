@@ -21,16 +21,30 @@ import pathlib
 import subprocess
 import sys
 
-REQUIRED_FILES = [
+# Phase partition mirrors lib/ci_setup.py:BOOTSTRAP_PATHS / BODY_PATHS.
+# The marker phase field (bootstrap | body | all) drives which subset of
+# required files this validator asserts. bootstrap-only installs do not
+# have the body files yet -- checking them would fail spuriously.
+BOOTSTRAP_REQUIRED = (
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
-    ".githooks/pre-push",
     "scripts/validate.py",
     "scripts/test.sh",
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
-]
+)
+BODY_REQUIRED = (
+    ".githooks/pre-push",
+    "hooks/worktree-guard.sh",
+    "hooks/task-detector.sh",
+    "hooks/session-start-check.sh",
+    "hooks/lib/worktree-detect.sh",
+    "hooks/hooks.json",
+    ".claude/rules/git-workflow.md",
+    "tests/test_worktree_guard.py",
+)
+ALL_REQUIRED = BOOTSTRAP_REQUIRED + BODY_REQUIRED
 
 
 def _ok(msg: str) -> None:
@@ -45,12 +59,24 @@ def _skip(msg: str) -> None:
     print(f"  - {msg} SKIP")
 
 
-def validate_installation_complete(repo_root: pathlib.Path) -> bool:
-    missing = [f for f in REQUIRED_FILES if not (repo_root / f).exists()]
+def validate_installation_complete(repo_root: pathlib.Path, phase: str = "all") -> bool:
+    """Assert file presence for the resolved install phase.
+
+    Phase contract (mirrors lib/ci_setup.py):
+      - bootstrap : only BOOTSTRAP_REQUIRED (workflows + scripts)
+      - body      : every file in ALL_REQUIRED (body lands on top of merged bootstrap)
+      - all       : every file in ALL_REQUIRED (legacy one-shot install)
+      - missing   : no marker -> behave like "all" (legacy fallback)
+    """
+    if phase == "bootstrap":
+        required = BOOTSTRAP_REQUIRED
+    else:
+        required = ALL_REQUIRED
+    missing = [f for f in required if not (repo_root / f).exists()]
     if missing:
-        _fail(f"installation: missing {len(missing)} file(s): {missing}")
+        _fail(f"installation (phase={phase}): missing {len(missing)} file(s): {missing}")
         return False
-    _ok(f"installation complete ({len(REQUIRED_FILES)} files)")
+    _ok(f"installation complete (phase={phase}, {len(required)} files)")
     return True
 
 
@@ -92,12 +118,27 @@ def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
     return True
 
 
+def _read_marker_phase(repo_root: pathlib.Path) -> str:
+    """Read the marker's phase field; "missing" when no marker, "all" when unreadable."""
+    marker = repo_root / ".dev-kit" / "ci-config.json"
+    if not marker.exists():
+        return "missing"
+    try:
+        data = json.loads(marker.read_text())
+    except (json.JSONDecodeError, OSError):
+        return "missing"
+    return str(data.get("phase", "all"))
+
+
 def main(repo_root: pathlib.Path | None = None) -> int:
     repo_root = repo_root or pathlib.Path.cwd()
     print(f"validate.py — repo_root={repo_root}")
+    phase = _read_marker_phase(repo_root)
+    # Marker first so the phase signal is visible in logs regardless of which
+    # subsequent check fails.
     checks = [
-        validate_installation_complete,
         validate_marker,
+        lambda r: validate_installation_complete(r, phase=phase),
         validate_bash_syntax,
     ]
     results = [c(repo_root) for c in checks]

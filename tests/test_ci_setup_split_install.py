@@ -45,13 +45,20 @@ class TestSplitInstall(unittest.TestCase):
 
     # ---------- path-set partitioning ----------
 
-    def test_bootstrap_paths_are_the_three_workflows(self):
+    def test_bootstrap_paths_contain_workflows_and_ci_scripts(self):
+        # workflows are needed so anthropics/claude-code-action can validate
+        # them against main; scripts/{test,validate,branch-policy,ci-local}
+        # are needed so ci.yml's test/validate jobs pass on the bootstrap PR.
         self.assertEqual(
             set(self.ci_setup.BOOTSTRAP_PATHS),
             {
                 ".github/workflows/ci.yml",
                 ".github/workflows/auto-fix-pr.yml",
                 ".github/workflows/review.yml",
+                "scripts/validate.py",
+                "scripts/test.sh",
+                "scripts/branch-policy.sh",
+                "scripts/ci-local.sh",
             },
         )
 
@@ -91,13 +98,9 @@ class TestSplitInstall(unittest.TestCase):
 
     # ---------- install_ci_config with phase ----------
 
-    def test_bootstrap_phase_creates_only_workflows(self):
+    def test_bootstrap_phase_creates_workflows_and_ci_scripts(self):
         report = self.ci_setup.install_ci_config(self.tmp, phase="bootstrap")
-        self.assertEqual(report.created, [
-            ".github/workflows/ci.yml",
-            ".github/workflows/auto-fix-pr.yml",
-            ".github/workflows/review.yml",
-        ])
+        self.assertEqual(set(report.created), set(self.ci_setup.BOOTSTRAP_PATHS))
         self.assertEqual(report.errors, [])
         for rel in self.ci_setup.BODY_PATHS:
             self.assertFalse((self.tmp / rel).exists(), f"body file leaked: {rel}")
@@ -112,10 +115,14 @@ class TestSplitInstall(unittest.TestCase):
         for rel in self.ci_setup.BOOTSTRAP_PATHS:
             self.assertTrue((self.tmp / rel).exists(), f"workflow vanished: {rel}")
 
-    def test_marker_records_phase_bootstrap(self):
+    def test_bootstrap_does_not_write_marker(self):
+        # M-2: marker = "install complete" contract. Skip during bootstrap.
+        import shutil as _sh
+        _sh.rmtree(self.tmp, ignore_errors=True)
+        self.tmp.mkdir(parents=True, exist_ok=True)
         report = self.ci_setup.install_ci_config(self.tmp, phase="bootstrap")
-        marker = json.loads(Path(report.marker_path).read_text())
-        self.assertEqual(marker["phase"], "bootstrap")
+        self.assertEqual(report.marker_path, "")
+        self.assertFalse((self.tmp / ".dev-kit/ci-config.json").exists())
 
     def test_marker_records_phase_body(self):
         self.ci_setup.install_ci_config(self.tmp, phase="bootstrap")
