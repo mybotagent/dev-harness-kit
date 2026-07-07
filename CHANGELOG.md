@@ -2,6 +2,37 @@
 
 All notable changes to dev-harness-kit are documented here.
 
+## [0.1.4] - 2026-07-07
+
+### Fixed
+- **`templates/ci/.github/workflows/review.yml`**: trigger switched from
+  `pull_request` to `pull_request_target`. The previous trigger caused
+  `anthropics/claude-code-action@v1` to silently skip the agent whenever
+  the PR head modified `.github/workflows/review.yml` (e.g. on every
+  `ci-setup --force` template refresh) — the action's workflow-validation
+  gate refuses to run when the calling workflow file differs from main.
+  Result: zero AI comments posted on exactly the PRs that need them most.
+  Under `pull_request_target`, the running workflow file is from the base
+  branch (main), so the validation passes; the agent reads the PR diff
+  via `gh pr diff` + the explicit `actions/checkout @ head.sha` step.
+- **Fork safety on both review.yml + auto-fix-pr.yml**: each agent job +
+  the severity gate now skip silently when
+  `github.event.pull_request.head.repo.full_name != github.repository`,
+  preventing the base-branch context from being exposed to fork PRs.
+- **`review.yml` concurrency group**: cancel-in-progress on
+  `pull_request_target` so a force-push mid-review doesn't double-charge
+  the agent quota. `workflow_dispatch` runs are unaffected.
+
+### Notes
+- Bootstrap trade-off: a PR that ADDS `review.yml` for the first time
+  cannot be triggered under `pull_request_target` (file isn't yet on
+  main). The fix assumes `review.yml` is already on the consumer
+  repo's main. After one manual merge of a bootstrap PR, subsequent
+  PRs flow through normally.
+- No schema or marker version bump — `MARKER_SCHEMA_VERSION` is
+  unchanged. Consumers who re-run `ci-setup --force` get the trigger
+  swap without any version gate.
+
 ## [0.1.3] - 2026-07-07
 
 ### Fixed
