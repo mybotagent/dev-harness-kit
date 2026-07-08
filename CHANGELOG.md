@@ -4,6 +4,13 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Changed — simplify `plan` skill gates (5 instead of 8)
+
+- 8-gate flow (`frame → evidence → diff → non-goals → socratic → phase-decompose → seed-convergence → prd-writer`) collapsed to 5 gates (`frame → validate → non-goals → decompose → emit`) by merging the three overlapping "is this idea worth building?" gates (evidence / diff-profit / socratic-deepen) into a single `validate` gate with quantified inputs.
+- 5-question grill-me replaced by a quantified loop: `value_score = LTV × reachable_users_year1 / total_cost` (threshold ≥ 3.0) and `ambiguity_score` 0-10 (target ≤ 3, narrowed each iteration). Evidence floor stays at 3 independent sources.
+- Phase `index.json` schema now documented in `skills/plan/SKILL.md` (gate 4): per-step `status` machine (`unimplemented` / `pending` / `in_progress` / `completed` / `error` / `blocked`) wired to `lib/execute.py:register_step()` + `update_step_status()`. Plan only writes `unimplemented` + `pending`; runner owns the rest.
+- Convergence frontmatter: `composite (ambiguity_score <= 3 AND value_score >= 3.0)`; `dedup_metric: identical-ambiguity-cycle=2`; `safety_valve=8`.
+
 ### Note — LLM review on workflow-file PRs
 
 `anthropics/claude-code-action@v1` does its own workflow-validation and
