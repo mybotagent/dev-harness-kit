@@ -3,6 +3,11 @@
 All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
+### Smoke — A/B vs ci-setup-canary PR #1
+
+Mirrors the canary repo test PR (sh-ai-x/ci-setup-canary PR #1, run 28912448964).
+Goal: compare dev-harness-kit own review.yml run vs the consumer-template run,
+specifically the action SHA, agent duration, num_turns, and verdict comment.
 
 ### Note — LLM review on workflow-file PRs
 
