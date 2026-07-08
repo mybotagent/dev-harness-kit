@@ -9,7 +9,7 @@
 
 ## What
 
-- **Plan+Design automation**: One `/dev-kit:plan` command auto-generates PRD.md + `phases/<name>/step<N>.md` (pm-prd-fast + interview-harness absorbed).
+- **Plan+Design automation**: One `/dev-kit:plan` command auto-generates PRD.md + `phases/<name>/{index.json, step<N>.md}`. 5 gates in 1 Ralph loop: `frame` → `validate` (evidence + value_score + ambiguity loop) → `non-goals` → `decompose` → `emit`. The old 5-question grill-me is replaced by a quantified loop (ambiguity 0-10, target ≤ 3; value_score = LTV × reachable / cost, target ≥ 3.0).
 - **Per-step sub-agent delegation in Build**: harness-runner engine + TDD + auto-fix loop.
 - **Review/Security fan-out**: 3-dim (correctness + security + architecture) + 10-dim OWASP A01–A10, parallel in a single message.
 - **Eval-Repair 8-step loop**: auto-check asset freshness + Specialized Fixer + final = Human Review.

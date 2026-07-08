@@ -1,7 +1,7 @@
 ---
 name: plan
 category: plan
-description: 0-arg plan stage. Integrated PM in a single Ralph loop — idea → PRD.md. 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence. PRD.md is the only output (no code, build, or deploy).
+description: 0-arg plan stage. Take 1-line idea → PRD.md + phases/<name>/{index.json, step<N>.md} in 5 gates. Quantified value (cost/LTV) + ambiguity loop (0-10) replace the old 5-question grill-me.
 when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
@@ -13,103 +13,248 @@ disable-model-invocation: true
 user-invocable: true
 safety:
   safety_valve: 8
-  convergence: composite (rubric ≥ 75 + final_similarity ≥ 0.85 + DoD 5 conditions)
+  convergence: composite (ambiguity_score <= 3 AND value_score >= 3.0)
   narrowed_delta: bool
-  dedup_metric: identical-answer-cycle=2
+  dedup_metric: identical-ambiguity-cycle=2
   user_interrupt: true
 ---
 
-## Self-contained plan stage
+# /dev-kit:plan — Idea → PRD.md + phases (5 gates, 1 Ralph loop)
 
-The plan skill is self-contained. A previous version dispatched to a separate
-`plan-ralph` SKILL via the Skill tool, but `plan-ralph` was marked
-`user-invocable: false`, which hides non-invocable skills from the Skill tool's
-registry. The dispatch then returned `Unknown skill: plan-ralph` when consumers
-ran `/dev-kit:plan` in another repo (issue #58). The operational content from
-the former `plan-ralph` is now inlined here so `/dev-kit:plan` works without
-sub-skill dispatch.
+Self-contained. The earlier `plan-ralph` dispatch was absorbed (issue #58). No
+sub-skill invocation; everything below runs inside this single skill invocation.
 
 ## Core goal
 
-**Only planning artifacts.** No code, build, or deploy. Take user goal + AC +
-non-goals → run 6 gates + Seed convergence in a single Ralph loop → emit
-`PRD.md` + `phases/<name>/step<N>.md`.
+Planning artifacts only. No code, build, or deploy. Take a 1-line idea → run 5
+gates in one Ralph loop → emit `PRD.md` + `phases/<name>/{index.json, step<N>.md}`
++ `.dev-kit/hand-off/plan→build.md`.
 
 ## Inputs / outputs
 
-- **Input**: user 1-line idea + AC (1–5) + non-goals (1–3)
-- **Output**: `PRD.md` + `.prd/*.md` + `phases/<name>/{index.json, step<N>.md}` + `.dev-kit/hand-off/plan→build.md`
-- **Cumulative**: `.prd/decision-log.md` + `.dev-kit/loop-log.json`
+- **Input**: 1-line idea (from user prompt) + 1-5 AC + 1-3 non-goals.
+- **Output**:
+  - `PRD.md` — 6-section plan
+  - `phases/<name>/index.json` — phase state machine (see "Phase JSON schema")
+  - `phases/<name>/step<N>.md` — one per step (N=0..K-1)
+  - `.prd/decision-log.md` — accumulated Q&A + score deltas
+  - `.dev-kit/loop-log.json` — narrowing per cycle (MUST-16)
+  - `.dev-kit/hand-off/plan→build.md`
+- **Cumulative**: every iteration appends to `decision-log.md` + `loop-log.json`.
 
-## 6 integrated gates (1 Ralph loop)
+## 5 gates (1 Ralph loop)
 
 ```
-[1/8] frame-problem       — idea + customer + situation + cause + cost
+[1/5] frame        — goal + target user + 1-line situation
        ↓
-[2/8] evidence-gate      — rubric ≥ 75 OR 3+ independent sources
+[2/5] validate     — evidence (≥3 sources) + value_score + ambiguity loop
        ↓
-[3/8] diff-profit-gate   — 3 alternatives + customer-language differentiation + positive unit margin
+[3/5] non-goals    — 3+ non-goals with rationale + breach-response
        ↓
-[4/8] non-goals          — 3+ non-goals with rationale + breach-response
+[4/5] decompose    — phases/<name>/index.json + step<N>.md (per-step status)
        ↓
-[5/8] socratic-deepen    — GRILL-ME interview (5 questions, ≥3 must pass)
-       ↓
-[6/8] phase-decompose    — phases/<name>/index.json auto (MUST-50 absorption)
-       ↓
-[7/8] seed-convergence   — interview-harness: similarity ≥ 0.85
-       ↓
-[8/8] prd-writer         — PRD.md 6-section DoD 5 conditions
+[5/5] emit         — PRD.md 6-section DoD pass + hand-off
 ```
 
-## Gate 5/8 — Socratic deepen (grill-me interview)
+The 8-gate structure (frame → evidence → diff → non-goals → socratic → phase-decompose → seed-convergence → prd-writer) was collapsed: G2 evidence, G3 diff-profit, and G5 socratic-deepen all probed "is this idea worth building?" with overlapping asks, and G7 seed-convergence was a numeric re-check of what G2 already asked for. The new G2 `validate` runs them once, with quantified inputs, in a single ambiguity loop.
 
-This is the **grill-me** phase. Ask the user **5 questions in order**, one per
-round. The user must answer at least 3. If a round answer is too vague, sharpen
-once, then accept whatever the user says.
+## Gate 1/5 — frame
 
-| # | Question | Pass criterion |
+Ask the user (single message, in order):
+
+| # | Field | Pass criterion |
 |---|---|---|
-| 1 | "What specifically breaks if you ship nothing in the next 2 weeks?" | names a concrete failure mode (not "we'd be sad") |
-| 2 | "Who is the *first* user, and what's the smallest thing they'd pay or click for?" | names a real person/role and a specific action |
-| 3 | "What's the cheapest experiment that would invalidate the bet?" (within 1 calendar week AND ≤1 person-day of effort) | answer names a specific experiment with both a time window (≤1 week) and an effort budget (≤1 person-day) |
-| 4 | "What did you try before that didn't work, and what did you learn?" | names a real prior attempt + a non-tautological lesson |
-| 5 | "If this works, what's the *next* thing you build, and why?" | identifies a downstream dependency or follow-on |
+| 1 | **goal** | one sentence: what we ship and what changes for the user |
+| 2 | **target user** | one named persona (role + context) — not "everyone" |
+| 3 | **situation** | one sentence: where the user is today, before this exists |
 
-For each round, use `AskUserQuestion` to ask. Record the answer in
-`.prd/decision-log.md`. If the user gives the same answer to the same question
-in 2 consecutive rounds, mark that round as "best effort" and move on (don't
-loop).
+Accept whatever the user types. If any field is empty, ask once, then proceed
+with `"<unspecified>"`. Write all 3 fields to `.prd/decision-log.md` under
+`# frame`. No exit code, no test count — this is input capture, not work.
 
-After all 5 rounds (or 3 passes), write the **Socratic section** in `PRD.md`:
+## Gate 2/5 — validate (evidence + value + ambiguity loop)
+
+This gate replaces the old "5-question grill-me" with a quantified loop. Three
+numeric inputs feed one composite convergence test; the loop iterates only on
+the dimension that is failing.
+
+### 2.1 — Evidence (≥3 sources)
+
+Ask once: "Cite 3 independent signals the target user actually wants this.
+Independent = different origin (e.g. user interview, market data, analogue
+product, prior failed attempt, paying-customer ask)."
+
+Write each signal as `{source, claim, date}` to `decision-log.md`. If the user
+gives <3, the gate fails. **No more "if vague, sharpen once"** — count, not
+quality, gates this input.
+
+### 2.2 — Value score (cost / LTV)
+
+Compute, do not ask:
+
+```
+value_score = (LTV_per_user × reachable_users_year1) / total_cost
+```
+
+| Field | Source | Unit |
+|---|---|---|
+| `LTV_per_user` | user-declared (ask if missing) | $ or "value unit" |
+| `reachable_users_year1` | user-declared or top-of-funnel estimate | integer |
+| `total_cost` | sum of eng-hours × rate + infra $ + GTM | $ |
+
+Write the 3 numbers + the formula result to `decision-log.md`. Threshold:
+`value_score >= 3.0`. Below 3 → gate fails; tell the user the gap and the
+single biggest lever to close it (cheaper, more reachable, or higher LTV — pick
+one, do not enumerate).
+
+### 2.3 — Ambiguity loop (0-10)
+
+Compute, do not ask:
+
+```
+ambiguity_score_0 = 10
+```
+
+Each loop iteration asks **exactly one** question targeting the highest-leverage
+unknown. After the answer, re-score:
+
+| Knob | Question topic | Score impact |
+|---|---|---|
+| user | "Who is the first user, and what do they click/pay for first?" | -2 to -3 |
+| pain | "What breaks for them today, and how often?" | -2 |
+| scope | "What is the smallest version that pays for itself in 2 weeks?" | -2 |
+| metric | "What single number moves if this works?" | -1 |
+| kill | "What would make you kill it after launch?" | -1 |
+
+The re-score is the model's call, but **must** be lower than the previous
+iteration (narrowed_delta). If two iterations in a row produce the same score,
+`dedup_metric: identical-ambiguity-cycle=2` fires → break out, mark "best
+effort", and accept the current score.
+
+### 2.4 — Convergence test
+
+```
+PASS  iff  evidence_count >= 3
+        AND value_score >= 3.0
+        AND ambiguity_score <= 3
+```
+
+On FAIL, loop on the failing dimension. Cap at `safety_valve=8` iterations.
+On cap with no pass, write `"status": "held"` to `loop-log.json` and surface
+the remaining gap to the user; do not auto-emit PRD.md.
+
+### 2.5 — Decision-log entry
 
 ```markdown
-## Socratic interview summary
-- Q1 [PASS/FAIL]: <question> — <answer>
-- Q2 [PASS/FAIL]: <question> — <answer>
-- ...
-- Passes: 3/5 (≥3 required)
+# gate-2 cycle N
+- evidence: N sources (need 3)
+- LTV: $X × Y users = $Z / cost $W = value_score V.V
+- ambiguity: 10 → 7 (asked: who is the first user)
+- next: ask about X (next highest-leverage unknown)
 ```
+
+## Gate 3/5 — non-goals
+
+Ask once: "List 3 things this PRD will NOT do. For each, name a one-line
+rationale and the breach-response (what we do if a reviewer asks us to add it)."
+
+If the user gives <3, generate 3 candidates from `decision-log.md` context and
+ask the user to confirm or replace. Write to `PRD.md` §3 (Non-goals).
+
+## Gate 4/5 — decompose (phases JSON + step files)
+
+Emit `phases/<name>/index.json` using the schema below. One step = one
+shippable layer / module. Order: dependency-first (e.g. data model before API
+before UI).
+
+For each step in order:
+1. Call `lib/execute.py:register_step(root, phase, step=N, name=<slug>)` —
+   this creates the index.json entry with `status="unimplemented"`.
+2. Write `phases/<name>/step<N>.md` (must-read / instruction / AC / Don't).
+3. The runner transitions `unimplemented → pending` automatically when
+   `step<N>.md` exists and the step number matches the index. If not,
+   explicitly call `update_step_status(root, phase, step=N, status="pending")`.
+
+### Phase JSON schema
+
+```json
+{
+  "schema_version": "1.0.0",
+  "phase": "0-mvp",
+  "project": "<repo-name>",
+  "created_at": "<iso8601>",
+  "ambiguity_score": 3,
+  "value_score": 4.7,
+  "evidence_count": 3,
+  "steps": [
+    {
+      "step": 0,
+      "name": "<kebab-slug>",
+      "title": "<human title>",
+      "status": "pending",
+      "ambiguity_delta": 0.0
+    }
+  ]
+}
+```
+
+### Per-step `status` (state machine)
+
+Defined in `lib/execute.py:VALID_STATUSES`. The plan skill only writes the
+first three; the runner owns the rest.
+
+| Status | Set by | Meaning |
+|---|---|---|
+| `unimplemented` | `register_step()` stub | index entry exists, `step<N>.md` not yet written; runner skips |
+| `pending` | plan skill, after writing `step<N>.md` | runner will pick up on next cycle |
+| `in_progress` | harness-runner | runner started; `started_at` stamped (idempotent on resume) |
+| `completed` | harness-runner | finished; `completed_at` + `duration_seconds` recorded |
+| `error` | harness-runner | failed; `failed_at` + `error_message` recorded; resume via `pending` |
+| `blocked` | harness-runner | user intervention required; `blocked_at` + `blocked_reason` |
+
+Plan MUST NOT set `in_progress` / `completed` / `error` / `blocked` — those
+are runtime states. Plan only sets `unimplemented` (via `register_step`) and
+`pending` (after writing the step file).
+
+## Gate 5/5 — emit
+
+Write `PRD.md` with the 6 sections below. DoD 5 conditions (all required):
+
+1. §1 Frame includes the 3 fields from Gate 1 verbatim.
+2. §2 Validate shows `value_score >= 3.0` and `ambiguity_score <= 3` (or
+   `status: held` if cap was hit — in which case, stop and ask the user).
+3. §3 Non-goals has ≥3 entries each with rationale + breach-response.
+4. §4 Phase plan points at `phases/<name>/index.json` and lists every step
+   title.
+5. §5 AC list (1-5 items) maps 1:1 to step AC commands in `phases/<name>/step<N>.md`.
+6. §6 Hand-off names `/dev-kit:build` as the next invocation.
+
+Then:
+- Append final cycle to `.dev-kit/loop-log.json` (MUST-16).
+- Write `.dev-kit/hand-off/plan→build.md` summarizing the plan for the build
+  stage.
 
 ## Rules (no exceptions)
 
-- 5-field loop declared (MUST-15): `safety_valve=8`, convergence composite,
-  `narrowed_delta`, `dedup_metric`, `user_interrupt`
-- No artifacts other than `PRD.md` (no code, `package.json`, `Dockerfile`,
-  test code)
-- User requesting "just write the code" before PRD is complete → still no code
-- After HOLD, user re-invokes `/dev-kit:plan` to resume
-- `loop-log.json` appends narrowing per cycle (MUST-16)
+- 5-field loop declared (MUST-15): `safety_valve=8`, composite convergence,
+  `narrowed_delta`, `dedup_metric`, `user_interrupt`.
+- No artifacts other than PRD.md, phases/<name>/, .prd/, .dev-kit/hand-off/.
+- No code, no `package.json`, no `Dockerfile`, no test code.
+- "Just write the code" before PRD.md is complete → still no code.
+- After HOLD, user re-invokes `/dev-kit:plan` to resume from
+  `.prd/decision-log.md`.
+- `loop-log.json` appends narrowing per cycle (MUST-16).
 
 ## Hook alignment
 
-Plan/Design stage:
+Plan stage:
 - `slop-detector=OFF` (planning docs tolerate LLM-typical phrasing)
 - `stop-verify=ON`
 - Others OFF
 
 ## Hand-off
 
-On `PRD.md` complete:
+On PRD.md complete:
 - `state_codec.transition_stage(root, "build")`
 - `state_codec.append_hand_off(root, "plan", "build", "...")` auto
 - Write `.dev-kit/hand-off/plan→build.md`
