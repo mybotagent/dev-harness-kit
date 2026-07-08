@@ -170,7 +170,11 @@ before UI).
 For each step in order:
 1. Call `lib/execute.py:register_step(root, phase, step=N, name=<slug>)` —
    this creates the index.json entry with `status="unimplemented"`.
-2. Write `phases/<name>/step<N>.md` (must-read / instruction / AC / Don't).
+2. Write `phases/<name>/step<N>.md` using the **pinned template** below
+   (`Status` / `Read first` / `Task` / `Acceptance Criteria` /
+   `Verification & Status Update` / `Don't`). Plan only writes the
+   `Status: pending` line; the runner and the executing sub-agent own
+   the rest of the status lifecycle.
 3. The runner transitions `unimplemented → pending` automatically when
    `step<N>.md` exists and the step number matches the index. If not,
    explicitly call `update_step_status(root, phase, step=N, status="pending")`.
@@ -208,13 +212,103 @@ first three; the runner owns the rest.
 | `unimplemented` | `register_step()` stub | index entry exists, `step<N>.md` not yet written; runner skips |
 | `pending` | plan skill, after writing `step<N>.md` | runner will pick up on next cycle |
 | `in_progress` | harness-runner | runner started; `started_at` stamped (idempotent on resume) |
-| `completed` | harness-runner | finished; `completed_at` + `duration_seconds` recorded |
-| `error` | harness-runner | failed; `failed_at` + `error_message` recorded; resume via `pending` |
-| `blocked` | harness-runner | user intervention required; `blocked_at` + `blocked_reason` |
+| `completed` | harness-runner (timestamp) + sub-agent (`summary`) | finished; `completed_at` + `duration_seconds` + one-line `summary` (files + key decisions) recorded |
+| `error` | harness-runner (timestamp) + sub-agent (`error_message`) | failed after 3 retries; `failed_at` + concrete `error_message` recorded; resume via `pending` |
+| `blocked` | harness-runner (timestamp) + sub-agent (`blocked_reason`) | user intervention required; `blocked_at` + `blocked_reason` recorded |
 
 Plan MUST NOT set `in_progress` / `completed` / `error` / `blocked` — those
 are runtime states. Plan only sets `unimplemented` (via `register_step`) and
 `pending` (after writing the step file).
+
+### Step file template (pinned)
+
+`phases/<name>/step<N>.md` MUST follow this template verbatim — section
+order, headings, and the marker block in the `Verification & Status Update`
+section are part of the **plan ↔ build SSOT** (the build runner's parser
+reads the marker block; the agent reads the sections). Plan fills the
+placeholder lines in `{curly braces}`; the runner and the executing
+sub-agent fill the rest at runtime.
+
+````markdown
+# Step {N}: {title}
+
+## Status
+**pending** — last update: {iso8601 timestamp at plan-emit time}
+
+## Read first
+- `/PRD.md`
+- `/docs/ARCHITECTURE.md` (if it exists in this project)
+- `/docs/ADR.md` (if it exists in this project)
+- `phases/{phase}/step{0..N-1}.md` (prior step files in this phase)
+- {file paths created or modified by earlier steps in this phase}
+
+## Task
+{Signature-level instructions: file paths, function/class interfaces, logic
+outline. Implementation is the sub-agent's call. Non-negotiable rules
+(idempotency, security, data integrity, backward compat) MUST be written
+explicitly — "be careful" is not enough.}
+
+## Acceptance Criteria
+```bash
+{Executable verification commands. Each must exit 0 on success. Quote exit
+codes in the AC reply, e.g. "AC1: npm test → exit 0 (47 passed)".}
+```
+
+## Verification & Status Update (REQUIRED before claiming done)
+1. Run the AC commands above. Quote each exit code.
+2. Update `phases/{phase}/index.json` for THIS step (one of three outcomes):
+   - **Success** → `"status": "completed"`, `"summary": "<one-line: files created/modified + key decisions>"`
+   - **Unrecoverable failure** (3 retries exhausted) → `"status": "error"`, `"error_message": "<concrete error: which AC failed, with exit code + last 3 lines>"`
+   - **External dependency** (API key, manual config, human approval) → `"status": "blocked"`, `"blocked_reason": "<what's needed>"`, then STOP — do not continue to the next step.
+3. Emit EXACTLY these two HTML-comment markers as the **last two lines** of
+   the final reply. The build runner parses them with the regex in
+   `lib/execute.py:parse_status_marker()`:
+
+```
+<!-- status: completed | error | blocked -->
+<!-- summary: <one-line outcome> | error_message: <concrete error> | blocked_reason: <what's needed> -->
+```
+
+   The marker value MUST match the `status` field written to `index.json`
+   in step 2. If the marker is missing or malformed, the runner falls back
+   to the index.json status (so the contract is best-effort, not blocking).
+
+## Don't
+- {X를 하지 마라. 이유: Y — one prohibition per bullet, in this format}
+- {Do not break existing tests; do not bypass tdd-guard; do not modify
+  files outside the path scope declared in `## Read first`.}
+````
+
+### Marker contract (plan ↔ build SSOT)
+
+The two-line HTML-comment block in the `Verification & Status Update`
+section is the only place where the sub-agent's outcome reaches the
+runner. It is pinned here so the build runner's parser has a stable
+contract.
+
+| Marker | Allowed values | Companion marker |
+|---|---|---|
+| `<!-- status: ... -->` | `completed` \| `error` \| `blocked` | second line carries the matching field |
+| `<!-- summary: ... -->` | free text (one line) | required when `status: completed` |
+| `<!-- error_message: ... -->` | free text (one line) | required when `status: error` |
+| `<!-- blocked_reason: ... -->` | free text (one line) | required when `status: blocked` |
+
+**Rules:**
+
+- The two markers MUST be the last two lines of the sub-agent's final
+  reply. The runner scans the tail of stdout with a regex.
+- The `status:` marker value MUST match the field written to
+  `phases/{phase>/index.json` for that step. If they disagree, the
+  runner trusts the index.json (the marker is a hint, not a hard
+  contract).
+- If the marker is missing, the runner falls back to the exit code:
+  `exit 0` → `completed`, non-zero → `error` with
+  `error_message = f"claude exited {rc}"`. The `summary` field is left
+  empty in this fallback.
+- Parsing happens in `lib/execute.py` (added in the follow-up
+  `feat(execute): live spinner + summary carry-forward` PR). This
+  template pin defines the contract; the build PR implements the
+  parser.
 
 ## Gate 5/5 — emit
 
