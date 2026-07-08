@@ -68,7 +68,10 @@ safety:
 
 **Current human-use skills** (15): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `eval`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`.
 
-**Current model-use skills** (13): `plan-ralph`, `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-simplify`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`.
+**Current model-use skills** (12): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-simplify`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`.
+
+> Note: `plan-ralph` was merged into `plan` (issue #58) — the plan skill is
+> now self-contained and does not delegate to a non-invocable sub-skill.
 
 ## Body (mandatory style)
 
@@ -90,4 +93,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly 29 skills total.
+- `tests/test_smoke.py` enforces: exactly 28 skills total.

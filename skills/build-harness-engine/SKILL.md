@@ -1,9 +1,9 @@
 ---
 name: build-harness-engine
 category: design
-description: phase step file generation. Synthesizes plan-ralph 6-step output into phases/<name>/{index.json, step<N>.md}. Dispatched by plan-ralph.
+description: phase step file generation. Synthesizes plan-skill 6-step output into phases/<name>/{index.json, step<N>.md}. Dispatched by plan.
 when_to_use: |
-  - Auto-invoked by plan-ralph after gate-pass
+  - Auto-invoked by plan after gate-pass
   - User triggers manual regeneration via `@dev-kit:plan`
 allowed-tools: Read Write
 disallowed-tools: Bash WebFetch Agent

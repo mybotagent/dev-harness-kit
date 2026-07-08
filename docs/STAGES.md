@@ -28,7 +28,7 @@
 - **Must**: 6 gates (frame → evidence → diff → non-goals → socratic → prd-writer) + Seed convergence + Phase decomposition. **Single Ralph loop, safety_valve=8** (MUST-50, MUST-15).
 - **Must-Not**: Write code, build, or deploy. Write artifacts other than PRD.md. Call sub-steps other than `/dev-kit:plan`. Same answer ≥ 2 times.
 - **AC**: PRD.md 5 DoD pass. `phases/<name>/step<N>.md` 5 fields. `final_similarity` ≥ 0.85. `loop-log.json` narrowing appended per cycle.
-- **Active Skills**: `plan-ralph` (pm-prd-fast + interview-harness absorbed), `build-harness-engine`
+- **Active Skills**: `plan` (pm-prd-fast + interview-harness absorbed, formerly `plan-ralph`), `build-harness-engine`
 - **Active Hooks**: `stop-verify`=ON. `slop-detector`=OFF (planning doc allowed). Others OFF.
 - **Hand-off out**: `plan→build.md`
 
