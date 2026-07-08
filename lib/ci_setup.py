@@ -77,6 +77,12 @@ MARKER_REL = ".dev-kit/ci-config.json"
 # SHA (docs: "every commit counts as a new version"), so we don't bump versions
 # to push fixes — we just push.
 MARKER_SCHEMA_VERSION = "1.0.0"
+# Plugin release tag written into the marker as `ci_setup_version`. Read by
+# skills/build/SKILL.md as a lexicographic pre-flight gate (>= "0.1.0"). Bump
+# in the same commit that lands a build-gate-visible change so a fresh
+# `bootstrap → ci-setup → build` flow never trips the default-`"0.0.0"` fallback.
+# Kept in sync with templates/ci/ci-config.example.json contract.
+PLUGIN_CI_SETUP_VERSION = "0.1.0"
 
 # Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
 # AFTER the marker is written. Each tuple is (number, command-block with notes).
@@ -200,6 +206,7 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
 def _build_marker() -> dict:
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
+        "ci_setup_version": PLUGIN_CI_SETUP_VERSION,
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],

@@ -128,7 +128,7 @@ class TestCiSetup(unittest.TestCase):
             marker = target / ".dev-kit" / "ci-config.json"
             data = json.loads(marker.read_text())
             for key in (
-                "schema_version", "installed_at",
+                "schema_version", "ci_setup_version", "installed_at",
                 "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
@@ -255,12 +255,64 @@ class TestCiSetup(unittest.TestCase):
                 self.assertTrue(p.stat().st_mode & stat.S_IXUSR, f"not +x: {rel}")
 
     def test_marker_schema_version_current(self):
-        """Schema is content-only (1.0.0). No version-gate constant exists."""
+        """Schema is content-only (1.0.0). The ci_setup_version gate is separate."""
         self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.0.0")
-        self.assertFalse(
-            hasattr(self.ci_setup, "DEFAULT_CI_SETUP_VERSION"),
-            "DEFAULT_CI_SETUP_VERSION should be removed (content-only install)",
+        self.assertTrue(hasattr(self.ci_setup, "PLUGIN_CI_SETUP_VERSION"))
+        # Lexicographic gate threshold (skills/build/SKILL.md reads >= "0.1.0").
+        self.assertGreaterEqual(
+            tuple(int(x) for x in self.ci_setup.PLUGIN_CI_SETUP_VERSION.split(".")),
+            (0, 1, 0),
         )
+
+    def test_marker_writes_ci_setup_version(self):
+        """Marker JSON carries `ci_setup_version` (regression for issue #61).
+
+        skills/build/SKILL.md reads `ci_setup_version` as a pre-flight gate.
+        Before the fix, the field was absent so `data.get('ci_setup_version',
+        '0.0.0') < '0.1.0'` was True and the build refused to start. The
+        marker must now mirror the contract declared in
+        templates/ci/ci-config.example.json.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertIn("ci_setup_version", marker, "marker missing ci_setup_version")
+            self.assertEqual(
+                marker["ci_setup_version"],
+                self.ci_setup.PLUGIN_CI_SETUP_VERSION,
+                "marker ci_setup_version must match the plugin constant",
+            )
+            # The gate evaluates lexicographically; the value must clear 0.1.0.
+            self.assertGreaterEqual(
+                marker["ci_setup_version"], "0.1.0",
+                f"ci_setup_version {marker['ci_setup_version']!r} fails the build gate",
+            )
+
+    def test_marker_ci_setup_version_matches_template_contract(self):
+        """The template contract (templates/ci/ci-config.example.json) and the
+        runtime marker carry the same ci_setup_version field — gates and
+        templates can't drift."""
+        import tempfile
+        template_marker = json.loads(
+            (PROJECT_ROOT / "templates" / "ci" / "ci-config.example.json").read_text()
+        )
+        self.assertIn(
+            "ci_setup_version", template_marker,
+            "template contract lost the ci_setup_version field",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            installed_marker = json.loads(
+                (target / ".dev-kit" / "ci-config.json").read_text()
+            )
+            self.assertEqual(
+                installed_marker["ci_setup_version"],
+                template_marker["ci_setup_version"],
+                "installed marker drifted from template contract",
+            )
 
     def test_marker_records_hooks_rules_tests(self):
         """Marker JSON lists the new categories (hooks / rules / tests)."""
