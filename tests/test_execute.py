@@ -12,11 +12,12 @@ Tests cover:
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call, ANY
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
@@ -266,6 +267,246 @@ class TestUnimplementedStubRegistration(unittest.TestCase):
         execute.register_step(self.root, "0-mvp", step=2, name="renamed")
         data = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
         self.assertEqual(data["steps"][0]["name"], "future-step")
+
+
+class TestRunSequential(unittest.TestCase):
+    """Issue #63: _run_sequential is a stub. Real impl must:
+    - create a per-step git worktree (MUST-38)
+    - spawn ONE `claude -p` sub-agent per pending step (MUST-36)
+    - write step<N>-output.json with REAL subprocess output (no fake 'stub completed')
+    - 2-commit protocol: feat(scope) + chore(scope)
+    - push the per-step branch when --push is set
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        (self.root / ".dev-kit").mkdir(parents=True, exist_ok=True)
+        # step files for the happy-path fixture (no `blocked` so the runner completes)
+        (self.root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\nTDD red.\n", encoding="utf-8")
+        (self.root / "phases" / "0-mvp" / "step2.md").write_text("# Step 2\nTDD green.\n", encoding="utf-8")
+        idx = {
+            "project": "test-project",
+            "phase": "0-mvp",
+            "worktree": "feat/test-phase",
+            "created_at": "2026-07-04T00:00:00+09:00",
+            "steps": [
+                {"step": 1, "name": "red",  "status": "pending"},
+                {"step": 2, "name": "done", "status": "completed",
+                 "started_at": "2026-07-04T00:00:00+09:00",
+                 "completed_at": "2026-07-04T00:01:00+09:00",
+                 "duration_seconds": 60.0},
+                {"step": 3, "name": "stub", "status": "unimplemented"},
+            ],
+        }
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _fake_proc(self, returncode=0, stdout="green", stderr=""):
+        """Build a MagicMock that looks like a subprocess.CompletedProcess."""
+        m = MagicMock()
+        m.returncode = returncode
+        m.stdout = stdout
+        m.stderr = stderr
+        return m
+
+    def _make_blocked_root(self):
+        """Alternate fixture: pending step + blocked step (bails with 2)."""
+        root = self.root.parent / "blocked-fixture"
+        if root.exists():
+            import shutil as _sh
+            _sh.rmtree(root)
+        (root / "phases" / "0-mvp").mkdir(parents=True)
+        (root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\n", encoding="utf-8")
+        (root / "phases" / "0-mvp" / "index.json").write_text(json.dumps({
+            "phase": "0-mvp",
+            "worktree": "feat/x",
+            "steps": [
+                {"step": 1, "name": "ok", "status": "pending"},
+                {"step": 2, "name": "no", "status": "blocked",
+                 "blocked_at": "2026-07-04T00:00:00+09:00",
+                 "blocked_reason": "user paused"},
+            ],
+        }), encoding="utf-8")
+        return root
+
+    def test_skippable_status_does_not_invoke_runner(self):
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            rc = execute._run_sequential(self.root, "0-mvp", push=False)
+            # 1 pending step → 1 worktree add + 1 claude + 2 commits. completed + unimplemented = skip.
+            self.assertEqual(rc, 0)
+            claude_calls = [c for c in mr.call_args_list if "claude" in c.args[0]]
+            wt_add_calls = [c for c in mr.call_args_list if "worktree" in c.args[0]]
+            self.assertEqual(len(claude_calls), 1, f"expected 1 claude call, got {mr.call_args_list}")
+            self.assertEqual(len(wt_add_calls), 1, f"expected 1 worktree add, got {mr.call_args_list}")
+
+    def test_blocked_status_returns_2(self):
+        root = self._make_blocked_root()
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            rc = execute._run_sequential(root, "0-mvp", push=False)
+            self.assertEqual(rc, 2)
+            # Step 1 ran (pending → resume) then step 2 blocked bails. Only 1 claude spawn total.
+            claude_calls = [c for c in mr.call_args_list if "claude" in c.args[0]]
+            self.assertEqual(len(claude_calls), 1, "only the pending step may run; blocked bails the rest")
+
+    def test_pending_step_creates_worktree_and_invokes_claude(self):
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc(stdout="all green", stderr="")
+            rc = execute._run_sequential(self.root, "0-mvp", push=False)
+            self.assertEqual(rc, 0)
+            # Inspect worktree add args (per-step branch derived from index.worktree)
+            wt_add = next(c for c in mr.call_args_list if "worktree" in c.args[0])
+            args = wt_add.args[0]
+            self.assertIn("worktree", args)
+            self.assertIn("add", args)
+            self.assertIn("-B", args)
+            self.assertIn("feat/test-phase-step1", args)  # branch = f"{worktree}-step{n}"
+            self.assertEqual(args[-1], "origin/main")
+            self.assertEqual(args[-2].endswith("0-mvp-step1"), True, f"worktree path wrong: {args[-2]}")
+            # Inspect claude -p invocation
+            claude = next(c for c in mr.call_args_list if c.args[0][0] == "claude")
+            cmd = claude.args[0]
+            self.assertEqual(cmd[0], "claude")
+            self.assertEqual(cmd[1], "-p")
+            workdir = claude.kwargs.get("cwd") or next((a for a in cmd if ".claude/worktrees" in a), None)
+            self.assertIsNotNone(workdir, f"claude -p missing workdir; cmd={cmd}")
+            # The preamble (from step1.md) is in the trailing prompt arg
+            joined = " ".join(cmd)
+            self.assertIn("TDD red", joined, f"preamble not in prompt: {cmd}")
+            self.assertIn("3-cycle self-fix", joined, f"AC guard not appended: {cmd}")
+            # step output file written with REAL contents (no 'stub completed')
+            out = json.loads((self.root / "phases" / "0-mvp" / "step1-output.json").read_text())
+            self.assertEqual(out["exit_code"], 0)
+            self.assertEqual(out["stdout"], "all green")
+            self.assertNotIn("stub completed", out["stdout"])
+            # Status flipped to completed with real (non-fake) duration.
+            idx = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
+            step1 = next(s for s in idx["steps"] if s["step"] == 1)
+            self.assertEqual(step1["status"], "completed")
+            self.assertIn("duration_seconds", step1)
+            self.assertGreaterEqual(step1["duration_seconds"], 0.0)
+
+    def test_two_commit_protocol_per_step(self):
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            rc = execute._run_sequential(self.root, "0-mvp", push=False)
+            self.assertEqual(rc, 0)
+            commits = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "commit"]]
+            self.assertEqual(len(commits), 2, f"expected 2 commits, got {len(commits)}: {commits}")
+            joined_args = "\n".join(" ".join(c.args[0]) for c in commits)
+            self.assertIn("feat(0-mvp): step 1", joined_args)
+            self.assertIn("chore(0-mvp): step 1 output", joined_args)
+
+    def test_no_commit_on_failure(self):
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc(returncode=1, stdout="", stderr="boom")
+            rc = execute._run_sequential(self.root, "0-mvp", push=False)
+            self.assertEqual(rc, 1)
+            commits = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "commit"]]
+            self.assertEqual(commits, [], f"no commits expected on failure, got {commits}")
+            idx = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
+            step1 = next(s for s in idx["steps"] if s["step"] == 1)
+            self.assertEqual(step1["status"], "error")
+            self.assertIn("error_message", step1)
+
+    def test_push_only_when_flag(self):
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            execute._run_sequential(self.root, "0-mvp", push=False)
+            pushes = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "push"]]
+            self.assertEqual(pushes, [], "no push expected when push=False")
+        # Use a fresh tmp dir for the push=True case so step 1 is still pending.
+        fresh_tmp = tempfile.TemporaryDirectory()
+        fresh_root = Path(fresh_tmp.name)
+        (fresh_root / "phases" / "0-mvp").mkdir(parents=True)
+        (fresh_root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\n", encoding="utf-8")
+        (fresh_root / "phases" / "0-mvp" / "index.json").write_text(json.dumps({
+            "phase": "0-mvp",
+            "worktree": "feat/test-phase",
+            "steps": [{"step": 1, "name": "x", "status": "pending"}],
+        }), encoding="utf-8")
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            rc = execute._run_sequential(fresh_root, "0-mvp", push=True)
+            self.assertEqual(rc, 0)
+            pushes = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "push"]]
+            self.assertGreaterEqual(len(pushes), 1, "expected at least 1 push when push=True")
+        fresh_tmp.cleanup()
+
+
+class TestRunParallel(unittest.TestCase):
+    """Issue #63: _run_parallel is a stub. Real impl spawns N subprocesses with worktree
+    isolation. Slots run concurrently — wall clock bounded by slowest, not sum."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        for n in range(1, 4):
+            (self.root / "phases" / "0-mvp" / f"step{n}.md").write_text(f"# Step {n}\n", encoding="utf-8")
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps({
+            "project": "p",
+            "phase": "0-mvp",
+            "worktree": "feat/par",
+            "steps": [
+                {"step": 1, "name": "a", "status": "pending"},
+                {"step": 2, "name": "b", "status": "pending"},
+                {"step": 3, "name": "c", "status": "pending"},
+            ],
+        }), encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _fake_proc(self, returncode=0, stdout="ok", stderr=""):
+        m = MagicMock()
+        m.returncode = returncode
+        m.stdout = stdout
+        m.stderr = stderr
+        return m
+
+    def test_parallel_runs_n_slots(self):
+        with patch.object(execute.subprocess, "run") as mr_run, \
+             patch.object(execute.subprocess, "Popen") as mr_popen:
+            # worktree add subprocess.run: just succeeds silently.
+            mr_run.return_value = self._fake_proc()
+            # Each Popen returns a fake 'already finished' proc.
+            proc_mock = MagicMock()
+            proc_mock.poll.return_value = 0  # exited immediately
+            proc_mock.returncode = 0
+            proc_mock.communicate.return_value = ("ok", "")
+            mr_popen.return_value = proc_mock
+            rc = execute._run_parallel(self.root, "0-mvp", n=2, push=False)
+            self.assertEqual(rc, 0)
+            # wall-clock bounded by N (slot count) — each Popen call is a slot launch
+            self.assertGreaterEqual(mr_popen.call_count, 1)
+            self.assertLessEqual(mr_popen.call_count, 2)
+            # Each spawn used `claude -p` (MUST-36 — single sub-agent per slot)
+            for c in mr_popen.call_args_list:
+                cmd = c.args[0]
+                self.assertEqual(cmd[0], "claude", f"expected claude CLI spawn, got: {cmd}")
+                self.assertEqual(cmd[1], "-p")
+            # worktree add was called for each step that ran (1 per step)
+            wt_add_calls = [c for c in mr_run.call_args_list
+                            if "worktree" in c.args[0]]
+            self.assertGreaterEqual(len(wt_add_calls), 1)
+
+    def test_parallel_returns_nonzero_on_slot_failure(self):
+        with patch.object(execute.subprocess, "run") as mr_run, \
+             patch.object(execute.subprocess, "Popen") as mr_popen:
+            mr_run.return_value = self._fake_proc()
+            proc_mock = MagicMock()
+            proc_mock.poll.return_value = 1
+            proc_mock.returncode = 1
+            proc_mock.communicate.return_value = ("", "boom")
+            mr_popen.return_value = proc_mock
+            rc = execute._run_parallel(self.root, "0-mvp", n=1, push=False)
+            self.assertEqual(rc, 1, "non-zero exit from any slot must surface as rc=1")
 
 
 if __name__ == "__main__":
