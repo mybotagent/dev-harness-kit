@@ -107,8 +107,8 @@ claude plugin install dev-kit
 # 3. Bootstrap (writes CLAUDE.md + AGENTS.md + active-hooks.json; no source change)
 /dev-kit:bootstrap
 
-# 4. Install CI templates (15 files; idempotent)
-/dev-kit:ci-setup
+# 4. Install CI templates (15 files)
+/dev-kit:ci-setup --force
 
 # 5. First commit + push
 git add -A
@@ -116,7 +116,7 @@ git commit -m "chore: bootstrap dev-kit"
 git push -u origin main
 ```
 
-**Don't use `--force` on first install** — default install already copies all 15 files. `--force` is only for *refreshing* an existing install when dev-kit's templates have changed upstream. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for the refresh workflow.
+**Use `--force` on first install** — for consumers (the dominant case), `--force` is the safe standard. On a truly fresh repo the result is identical to default install (all 15 files copy either way), but `--force` is robust against partial installs from a previous attempt and is robust to a stale plugin cache. Re-run with `--force` later to pull in upstream template changes. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for refresh vs first-install semantics.
 
 Typical next step: `/dev-kit:plan` for PRD + phases auto.
 
