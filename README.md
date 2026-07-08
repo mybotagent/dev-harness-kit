@@ -91,6 +91,35 @@ After any of the three, run `/reload-plugins` in your session so the new SHA is 
 
 **Why `devkit-refresh.sh` exists:** `claude plugin install dev-kit --force` and `claude plugin update dev-kit` both invoke the same CLI path that throws `TypeError: Cannot read properties of undefined (reading 'prototype')` from `cli.js:384` when called from inside a Claude Code session. A SessionStart hook that auto-ran the install was tried (PR #24) and reverted (PR #26) for the same reason. `devkit-refresh.sh` uses raw `git pull` + `rsync`, which works in every environment.
 
+## First-time consumer setup
+
+Most users are consumers. The end-to-end "I have a new repo" flow:
+
+```bash
+# 1. Create + clone
+gh repo create myorg/myrepo --private --clone && cd myrepo
+
+# 2. Install the dev-kit plugin
+claude plugin marketplace add sh-ai-x/dev-harness-kit
+claude plugin install dev-kit
+# (live source: claude --plugin-dir /path/to/dev-harness-kit)
+
+# 3. Bootstrap (writes CLAUDE.md + AGENTS.md + active-hooks.json; no source change)
+/dev-kit:bootstrap
+
+# 4. Install CI templates (15 files; idempotent)
+/dev-kit:ci-setup
+
+# 5. First commit + push
+git add -A
+git commit -m "chore: bootstrap dev-kit"
+git push -u origin main
+```
+
+**Don't use `--force` on first install** — default install already copies all 15 files. `--force` is only for *refreshing* an existing install when dev-kit's templates have changed upstream. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for the refresh workflow.
+
+Typical next step: `/dev-kit:plan` for PRD + phases auto.
+
 ## Usage (0-arg, namespaced)
 
 ```
