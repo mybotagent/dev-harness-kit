@@ -179,7 +179,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | Category | Skills |
 |---|---|
 | `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `ci-setup` |
-| `plan` | `plan`, `plan-ralph` |
+| `plan` | `plan` |
 | `design` | `design` (merged into `plan`), `build-harness-engine` |
 | `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify` |
 | `review` | `review` (3-dim, unified) |

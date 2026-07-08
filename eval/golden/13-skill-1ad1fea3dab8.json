@@ -1,17 +1,17 @@
 {
-  "asset": "skills/plan/plan-ralph/SKILL.md",
+  "asset": "skills/plan/SKILL.md",
   "asset_kind": "skill",
-  "baseline_hash": "sha256:b5ed17bd128a8205775eea02b662cdf4",
-  "captured_at": "2026-07-04T16:35:00+09:00",
+  "baseline_hash": "sha256:2915f7924e0859a284c9ab7127798d79f1e26361d9522e5b86ccb50058419733",
+  "captured_at": "2026-07-08T00:00:00+00:00",
   "code_refs": [
-    "skills/plan/plan-ralph/SKILL.md"
+    "skills/plan/SKILL.md"
   ],
-  "expected_behavior": "Stable skill asset for dev-harness-kit 0.1.0",
+  "expected_behavior": "Stable skill asset for dev-harness-kit 0.1.0 (plan-ralph merged into plan, issue #58)",
   "iron_law_refs": [
     "CLAUDE.md §1 L1 No-Test-No-Code",
     "lib/write_project_md.py:IRON_LAWS"
   ],
   "schema_version": "1.0.0",
-  "size_chars": 2533,
+  "size_chars": 4894,
   "summary": "---"
 }

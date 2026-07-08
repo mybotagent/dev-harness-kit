@@ -215,8 +215,8 @@ class TestPhasesStructure(unittest.TestCase):
 
 
 class TestUnimplementedStubRegistration(unittest.TestCase):
-    """register_step() creates an `unimplemented` stub in index.json so plan-ralph
-    can mark 'this phase will have N steps' BEFORE any step<N>.md is written.
+    """register_step() creates an `unimplemented` stub in index.json so the plan
+    skill can mark 'this phase will have N steps' BEFORE any step<N>.md is written.
     Then the runner SKIPS these entries (see SKIPPABLE_STATUSES)."""
 
     def setUp(self):

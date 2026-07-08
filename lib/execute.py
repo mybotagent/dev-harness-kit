@@ -76,12 +76,12 @@ def register_step(
     """Register a step in phases/<phase>/index.json as `unimplemented`.
 
     Idempotent: if a stub for this step number already exists, this is a no-op.
-    Used by plan-ralph to pre-register step counts BEFORE writing step<N>.md —
+    Used by the plan skill to pre-register step counts BEFORE writing step<N>.md —
     gives external observers visibility into "this phase plans N steps, K of which
     are written so far".
 
     The `unimplemented` status is in SKIPPABLE_STATUSES, so the runner ignores it.
-    Once plan-ralph writes step<N>.md, it transitions the stub to `pending` via
+    Once plan writes step<N>.md, it transitions the stub to `pending` via
     update_step_status() and the runner picks it up on the next run.
     """
     idx_path = project_root / "phases" / phase / "index.json"
