@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SKILL_COUNT = 28
+SKILL_COUNT = 29
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
