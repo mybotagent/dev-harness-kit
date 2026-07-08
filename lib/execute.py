@@ -20,7 +20,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -243,12 +246,22 @@ def main() -> int:
 
 
 def _run_sequential(root: Path, phase: str, push: bool) -> int:
-    """Per-step: read → preamble → invoke claude CLI → write output → commit (feat + chore)."""
+    """Per-step: read → preamble → invoke claude CLI → write output → commit (feat + chore).
+
+    Honors MUST-36 (one sub-agent per step), MUST-37 (3-cycle self-fix, declared in preamble),
+    MUST-38 (per-step worktree). The step branch derives from `index.json["worktree"]`; if
+    absent, falls back to `feat/<phase>`.
+
+    Returns 0 on success, 2 on `blocked` (no implicit resume), or the subprocess returncode
+    on failure.
+    """
     idx_path = root / "phases" / phase / "index.json"
-    steps = parse_step_index(idx_path)
+    data = json.loads(idx_path.read_text(encoding="utf-8"))
+    worktree_branch = data.get("worktree") or f"feat/{phase}"
+    steps = data.get("steps", [])
     for step_meta in steps:
         n = step_meta["step"]
-        cur_status = step_meta["status"]
+        cur_status = step_meta.get("status")
         # Skip already-done or not-yet-written steps.
         if cur_status in SKIPPABLE_STATUSES:
             continue
@@ -256,21 +269,244 @@ def _run_sequential(root: Path, phase: str, push: bool) -> int:
         if cur_status == "blocked":
             print(f"step {n} blocked: {step_meta.get('blocked_reason')}", file=sys.stderr)
             return 2
-        # From any RESUMABLE state, mark in_progress then completed.
+        # From any RESUMABLE state, mark in_progress then run.
         if cur_status not in RESUMABLE_STATUSES:
             print(f"step {n}: unexpected status {cur_status!r}, skipping", file=sys.stderr)
             continue
-        update_step_status(root, phase, n, status="in_progress")
-        # Stub: real implementation would invoke `claude -p` with preamble.
-        write_step_output(root, phase, n, exit_code=0, stdout=f"step {n} stub completed", stderr="", duration_seconds=0.01)
-        update_step_status(root, phase, n, status="completed", duration_seconds=0.01)
+        rc = _run_one_step(root, phase, n, worktree_branch, step_meta.get("name", ""), push)
+        if rc != 0:
+            return rc
+    return 0
+
+
+def _run_one_step(
+    root: Path,
+    phase: str,
+    step_num: int,
+    worktree_branch: str,
+    step_name: str,
+    push: bool,
+) -> int:
+    """Execute ONE step end-to-end. Returns 0 on success, non-zero on failure.
+
+    Order:
+      1. Create per-step worktree from origin/main (MUST-38).
+      2. Read step<N>.md as preamble; append AC + self-fix guard.
+      3. Mark step `in_progress` (sets started_at).
+      4. Spawn ONE `claude -p` sub-agent in worktree (MUST-36).
+      5. Capture stdout/stderr/returncode → write step<N>-output.json (real result).
+      6. On non-zero exit → mark `error`, return.
+      7. 2-commit protocol: feat(scope) + chore(scope) on the per-step branch.
+      8. Push per-step branch when `push=True`.
+      9. Mark `completed` with measured duration.
+    """
+    wt = root / ".claude" / "worktrees" / f"{phase}-step{step_num}"
+    branch = f"{worktree_branch}-step{step_num}"
+
+    # 1. per-step worktree (MUST-38)
+    subprocess.run(
+        ["git", "worktree", "add", "-B", branch, str(wt), "origin/main"],
+        cwd=str(root), check=True, capture_output=True, text=True,
+    )
+
+    # 2. preamble = step.md body + AC guard + 3-cycle self-fix (MUST-37)
+    preamble_path = root / "phases" / phase / f"step{step_num}.md"
+    preamble = preamble_path.read_text(encoding="utf-8") if preamble_path.exists() else ""
+    full_prompt = preamble + "\n\n---\nAC: see step file. 3-cycle self-fix max."
+
+    # 3. in_progress
+    update_step_status(root, phase, step_num, status="in_progress")
+    started_at_iso = now_iso()
+
+    # 4. spawn one sub-agent (MUST-36)
+    proc = subprocess.run(
+        ["claude", "-p", "--workdir", str(wt), full_prompt],
+        cwd=str(root), capture_output=True, text=True,
+    )
+
+    # 5. write step<N>-output.json with REAL contents
+    try:
+        started = datetime.fromisoformat(started_at_iso)
+        duration = max(0.0, (datetime.fromisoformat(now_iso()) - started).total_seconds())
+    except Exception:
+        duration = 0.0
+    write_step_output(
+        root, phase, step_num,
+        exit_code=proc.returncode,
+        stdout=proc.stdout or "",
+        stderr=proc.stderr or "",
+        duration_seconds=duration,
+    )
+
+    # 6. on failure → error status, return
+    if proc.returncode != 0:
+        update_step_status(
+            root, phase, step_num,
+            status="error",
+            error_message=f"claude exited {proc.returncode}",
+        )
+        return proc.returncode
+
+    # 7. 2-commit protocol (feat + chore) on the per-step branch
+    feat_msg = f"feat({phase}): step {step_num}" + (f" — {step_name}" if step_name else "")
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", feat_msg],
+        cwd=str(wt), check=True, capture_output=True, text=True,
+    )
+    chore_msg = f"chore({phase}): step {step_num} output"
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", chore_msg],
+        cwd=str(wt), check=True, capture_output=True, text=True,
+    )
+
+    # 8. push
+    if push:
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            cwd=str(wt), check=False, capture_output=True, text=True,
+        )
+
+    # 9. mark completed (status transition also stamps duration_seconds from started_at)
+    update_step_status(root, phase, step_num, status="completed")
     return 0
 
 
 def _run_parallel(root: Path, phase: str, n: int, push: bool) -> int:
-    """Stub parallel runner. Real impl spawns N subprocesses with worktree isolation."""
-    print(f"--parallel {n}: stub (not yet implemented, plan Phase 3)", file=sys.stderr)
-    return 1
+    """Run N steps concurrently with per-step worktree isolation.
+
+    Wall-clock bounded by slowest slot, not sum. Each slot gets its own worktree.
+    Returns 0 on success, non-zero if any slot failed. Combined pre-flight uses
+    the same SKIPPABLE_STATUSES / blocked rules as sequential.
+    """
+    idx_path = root / "phases" / phase / "index.json"
+    data = json.loads(idx_path.read_text(encoding="utf-8"))
+    worktree_branch = data.get("worktree") or f"feat/{phase}"
+    steps = data.get("steps", [])
+    # Collect only steps that are RESUMABLE. Blocked bails the whole run.
+    eligible = []
+    for step_meta in steps:
+        cur_status = step_meta.get("status")
+        if cur_status in SKIPPABLE_STATUSES:
+            continue
+        if cur_status == "blocked":
+            print(f"step {step_meta['step']} blocked: {step_meta.get('blocked_reason')}",
+                  file=sys.stderr)
+            return 2
+        if cur_status not in RESUMABLE_STATUSES:
+            print(f"step {step_meta['step']}: unexpected status {cur_status!r}, skipping",
+                  file=sys.stderr)
+            continue
+        eligible.append(step_meta)
+        if len(eligible) >= n:
+            break
+
+    slots = [_SlotRunner(root, phase, worktree_branch, push) for _ in range(min(n, len(eligible)))]
+    if not slots:
+        return 0
+
+    # First pass: launch. Each slot pulls the next eligible step when free.
+    for slot in slots:
+        slot.next_step = eligible.pop(0) if eligible else None
+    while any(s.next_step is not None or s.proc is not None for s in slots):
+        for slot in slots:
+            if slot.proc is None and slot.next_step is not None:
+                slot.launch()
+                if eligible:
+                    slot.next_step = eligible.pop(0)
+                else:
+                    slot.next_step = None
+            if slot.proc is not None and slot.proc.poll() is not None:
+                slot.collect()
+    return 0 if all(slot.exit_code == 0 for slot in slots) else 1
+
+
+class _SlotRunner:
+    """One concurrent slot in _run_parallel. Owns worktree, proc, and step status."""
+
+    def __init__(self, root: Path, phase: str, worktree_branch: str, push: bool) -> None:
+        self.root = root
+        self.phase = phase
+        self.worktree_branch = worktree_branch
+        self.push = push
+        self.next_step: Optional[Dict] = None
+        self.current_step: Optional[Dict] = None
+        self.proc: Optional[subprocess.Popen] = None
+        self.exit_code: int = 0
+        self.started_at_iso: Optional[str] = None
+        self.wt: Optional[Path] = None
+        self.branch: Optional[str] = None
+
+    def launch(self) -> None:
+        step = self.next_step
+        if step is None:
+            return
+        n = step["step"]
+        self.current_step = step
+        self.wt = self.root / ".claude" / "worktrees" / f"{self.phase}-step{n}"
+        self.branch = f"{self.worktree_branch}-step{n}"
+        subprocess.run(
+            ["git", "worktree", "add", "-B", self.branch, str(self.wt), "origin/main"],
+            cwd=str(self.root), check=True, capture_output=True, text=True,
+        )
+        preamble_path = self.root / "phases" / self.phase / f"step{n}.md"
+        preamble = preamble_path.read_text(encoding="utf-8") if preamble_path.exists() else ""
+        full_prompt = preamble + "\n\n---\nAC: see step file. 3-cycle self-fix max."
+        update_step_status(self.root, self.phase, n, status="in_progress")
+        self.started_at_iso = now_iso()
+        self.proc = subprocess.Popen(
+            ["claude", "-p", "--workdir", str(self.wt), full_prompt],
+            cwd=str(self.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    def collect(self) -> None:
+        assert self.proc is not None
+        stdout, stderr = self.proc.communicate()
+        self.exit_code = self.proc.returncode or 0
+        step = self.current_step
+        assert step is not None
+        n = step["step"]
+        try:
+            started = datetime.fromisoformat(self.started_at_iso) if self.started_at_iso else None
+            duration = max(
+                0.0,
+                (datetime.fromisoformat(now_iso()) - started).total_seconds(),
+            ) if started else 0.0
+        except Exception:
+            duration = 0.0
+        write_step_output(
+            self.root, self.phase, n,
+            exit_code=self.exit_code,
+            stdout=stdout or "",
+            stderr=stderr or "",
+            duration_seconds=duration,
+        )
+        if self.exit_code != 0:
+            update_step_status(
+                self.root, self.phase, n,
+                status="error",
+                error_message=f"claude exited {self.exit_code}",
+            )
+        else:
+            feat_msg = f"feat({self.phase}): step {n}" + (
+                f" — {step.get('name', '')}" if step.get("name") else ""
+            )
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-m", feat_msg],
+                cwd=str(self.wt), check=True, capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-m",
+                 f"chore({self.phase}): step {n} output"],
+                cwd=str(self.wt), check=True, capture_output=True, text=True,
+            )
+            if self.push and self.branch:
+                subprocess.run(
+                    ["git", "push", "-u", "origin", self.branch],
+                    cwd=str(self.wt), check=False, capture_output=True, text=True,
+                )
+            update_step_status(self.root, self.phase, n, status="completed")
+        self.proc = None
+        self.current_step = None
 
 
 if __name__ == "__main__":
