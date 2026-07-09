@@ -81,7 +81,7 @@ MARKER_SCHEMA_VERSION = "1.0.0"
 # feat/skill-versions). New code should read plugin_version(_PLUGIN_ROOT);
 # this constant is here so legacy test contracts that import the name still
 # resolve to the same value the marker carries.
-PLUGIN_CI_SETUP_VERSION = "0.2.0"
+PLUGIN_CI_SETUP_VERSION = "0.3.0"
 
 # Per-skill semver (semver 2.0.0: X.Y.Z with optional `-prerelease`/`+build`).
 # Used by templates/ci/scripts/validate.py:validate_min_version to compare the
@@ -276,7 +276,7 @@ def plugin_version(plugin_root: Path | None = None) -> str:
             parent-of-parent).
 
     Returns:
-        The `version:` field as a string, e.g. `"0.2.0"`.
+        The `version:` field as a string, e.g. `"0.3.0"`.
     """
     root = plugin_root or _PLUGIN_ROOT
     manifest = root / ".claude-plugin" / "plugin.json"
