@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-255%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-30-blueviolet)](skills/)
+[![Skills](https://img.shields.io/badge/skills-31-blueviolet)](skills/)
 [![Version](https://img.shields.io/badge/version-0.2.0-blue)](.claude-plugin/plugin.json)
 
 ## What
@@ -132,6 +132,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:review                  # 3-dim code review (correctness + security + architecture)
 /dev-kit:security                # 10-dim OWASP A01–A10
 /dev-kit:audit                   # batch slop + secret audit
+/dev-kit:inspect                 # 6-dim code health audit (read-only, project-wide)
 /dev-kit:eval                    # agent-behavior eval (review/security/plan + code-sanity rubric)
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
@@ -142,14 +143,14 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 29 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 31 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 29 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 31 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (5 original + 4 worktree-rule) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
@@ -186,7 +187,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify` |
 | `review` | `review` (3-dim, unified) |
 | `security` | `security` (10-dim OWASP, unified) |
-| `audit` | `audit`, `audit-secret`, `audit-slop` |
+| `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health) |
 | `eval` | `eval` |
 | `onboard` | `onboard` |
 | `repair` | `repair` |

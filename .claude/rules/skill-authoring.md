@@ -66,7 +66,7 @@ safety:
 | **Human-use** (stage commands, utilities, shortcuts) | `true` | `false` (default) or `true` | ✅ Yes |
 | **Model-use** (internal building blocks) | **`false`** | `false` (default) | ❌ No |
 
-**Current human-use skills** (15): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `eval`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`.
+**Current human-use skills** (16): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`.
 
 **Current model-use skills** (13): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-simplify`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`.
 
@@ -93,4 +93,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (30 as of #<feat/skill-versions PR>; bump both test_smoke.py and this rule together when adding a new skill).
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (31 as of #<feat/dev-kit-inspect PR>; bump both test_smoke.py and this rule together when adding a new skill).

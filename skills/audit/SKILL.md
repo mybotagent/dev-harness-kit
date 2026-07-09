@@ -21,3 +21,11 @@ read-only. HIGH/MEDIUM/LOW buckets output. Never write ❌.
 - `/dev-kit:audit --slop-only` → slop only
 - `/dev-kit:audit --outdated` → outdated-skill audit (delegates to `audit-outdated` subskill — installed vs HEAD per-skill semver drift)
 - combined mode (default) → all three above
+
+## Related
+
+- `/dev-kit:inspect` is the **broader, project-wide, semantic** sibling:
+  6-dim fan-out (dead/dup/smell/overeng/cleancode/slop) → markdown
+  report at `.dev-kit/inspect-report.md`. Use `inspect` when you want
+  a deep, semantic health sweep across the whole codebase; use `audit`
+  when you want the fast, shallow, deterministic phrase+secret scan.
