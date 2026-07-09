@@ -1,11 +1,12 @@
 ---
 name: inspect
 category: audit
-description: 0-arg read-only code health audit. 6-dim fan-out (dead, dup, smell, over-eng, clean-code, slop) -> markdown report.
+description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
 when_to_use: |
   - User types /dev-kit:inspect
   - Pre-release hygiene sweep
   - Periodic codebase health check
+  - Pre-step for /dev-kit:simplify (baseline report)
 allowed-tools: Read Grep Glob Bash Agent
 disallowed-tools: Write Edit
 model: opus
@@ -14,11 +15,12 @@ user-invocable: true
 
 # /dev-kit:inspect -- read-only code health audit
 
-Whole-codebase health sweep across **6 dimensions in parallel**. Produces
+Whole-codebase health sweep across **8 dimensions in parallel**. Produces
 one markdown report at `.dev-kit/inspect-report.md`. **Never edits.**
-Distinct from `/dev-kit:review` (per-PR/diff) and `/dev-kit:build-simplify`
-(mutating 4-pass cleanup). Use inspect to *find* problems, then simplify
-to *fix* them.
+Distinct from `/dev-kit:review` (per-PR/diff), `/dev-kit:build-simplify`
+(mutating 4-pass cleanup), and `/dev-kit:simplify` (3-phase wrap of
+inspect + simplify + review). Use inspect to *find* problems, then
+simplify to *fix* them.
 
 ## Iron Law
 
@@ -32,7 +34,7 @@ would require an edit to validate.
 1. No positional arg (default) -> whole project directory.
 2. `<path>` -> that subtree only.
 3. `--dim <name>` -> restrict to one of `dead | dup | smell | overeng |
-   cleancode | slop`. Multiple `--dim` allowed.
+   overarch | cleancode | tokenbudget | slop`. Multiple `--dim` allowed.
 4. Empty source set -> tell user, stop.
 
 Filter: source files only. Skip `.git/`, `node_modules/`, `dist/`,
@@ -41,7 +43,7 @@ Filter: source files only. Skip `.git/`, `node_modules/`, `dist/`,
 
 ## Step 2 -- Fan out (THE PARALLEL STEP)
 
-> **Issue all 6 `Agent` calls inside ONE assistant message** so they run
+> **Issue all 8 `Agent` calls inside ONE assistant message** so they run
 > concurrently. Separate messages run sequentially and defeat the
 > purpose.
 
@@ -102,15 +104,18 @@ speculative ones.
   commented-out code blocks (>3 lines), orphan config keys (YAML/JSON
   keys no code reads), dead env vars (declared but never referenced),
   TODO/FIXME > 90 days old with no tracking issue.
+  *Concrete patterns*: `grep -rE "^\s*#\s*(TODO|FIXME|XXX|HACK)" --include="*.py" --include="*.ts" --include="*.js"` (for date stamps); import-but-never-used (lint-clean baseline); `__all__` entries that no caller imports.
 - **dup** -- copy-paste of >= 5 near-identical lines across 2+ files,
   parallel class hierarchies (A/B/C each with the same shape and one
   differing field), repeated test-setup blocks, repeated try/except
   boilerplate.
+  *Concrete patterns*: 3+ functions with same shape and 1 differing field; identical test-fixture setup across files (no shared `conftest.py` / `setup.ts`); copy-pasted error-handler blocks (catch + log + rethrow same shape).
 - **smell** -- long methods (>50 lines), long parameter lists (>4
   positional params), deep nesting (>4 levels), primitive obsession
   (loose dicts where a typed model would prevent bugs), feature envy
   (method that uses another class more than its own), data clumps (the
   same 3+ fields passed together through 3+ call sites).
+  *Concrete patterns*: function body > 50 lines; function with > 4 positional params; `if/elif/else` chain > 4 levels deep; dict with same 3 keys threaded through 3+ functions.
 - **overeng** -- interface with exactly one implementer that adds no
   indirection value, speculative parameters (declared but unused),
   premature generalization (Strategy/Factory/Builder for a single
@@ -118,11 +123,26 @@ speculative ones.
   repeated full-list scans, per-request recompiles), missing caching
   on hot-path lookups, deep inheritance (>3 levels with no clear
   contract), 1-class-per-file without justification.
+  *Concrete patterns*: `class IFoo(Protocol)` with one implementer; function arg with no in-body use; `if/elif type == "X"` chains that should be polymorphic; loop with inner `await`/DB call per item.
+- **overarch** -- module-boundary leaks (subpackage reaches into parent's privates via `from .._internal import`), premature layering (DTO ↔ service ↔ repo for a single CRUD endpoint), parallel hierarchies (one new field forces 3+ sibling classes to grow in lockstep), leaky abstractions (caller must know the implementation detail to use the API correctly), bidirectional coupling (A imports B and B imports A in non-trivial ways), circular imports.
+  *Concrete patterns*: `from .._impl import _private` (skipping the public surface); 3+ classes added in lockstep per new entity; 2 modules with mutual top-level imports; `Repository` exposed to the HTTP handler (skipping service).
 - **cleancode** -- SRP/DRY/KISS/YAGNI violations with concrete evidence;
   vague names (`helper`, `util`, `manager`, `data`, `stuff` -- any of
   these in a public/exported symbol), bare `except:`, swallowed errors
   (`except: pass`), magic numbers without named constants, mutable
   default arguments, comparison to `True`/`None` with `==`.
+  *Concrete patterns*: function named `do_stuff` / `handle_data` / `process` (no verb specificity); `except: pass` blocks; `if x == None` (use `is None`); `def f(items=[]):` (mutable default); bare HTTP status code `200` / `404` in handlers without named constant.
+- **tokenbudget** -- per-file line count > 800 with low signal (comment
+  blocks, repeated boilerplate, exported symbols with no external
+  consumer), dead-comment blocks (>5 lines of commented-out code that
+  has no archaeological value), export-count vs consumer-count skew
+  (module exports 30+ public symbols but only 3 are imported by the
+  rest of the codebase), large dead enums (enum class with > 20
+  members, half of which are never referenced), parameterized-but-
+  unused config (config key declared and read once at init, never
+  propagated to the call site), verbose docstrings that restate the
+  signature line-for-line.
+  *Concrete patterns*: `git ls-files | xargs wc -l | sort -rn | head -20` for the long-tail; `pylint --disable=all --enable=unused-public-symbol` for export skew; `find . -name "*.py" -exec grep -c "^\s*#" {} \;` for high comment density.
 - **slop** -- semantic AI slop: dead `else` branches after `return`,
   hallucinated API calls (lib/function not in the project's declared
   dependencies), over-defensive `try/except Exception: pass` around
@@ -204,14 +224,16 @@ Do NOT post PR comments, do NOT edit source. Format:
 
 ## Per-dimension summary
 
-| dim       | HIGH | MED | LOW |
-|-----------|------|-----|-----|
-| dead      |  ... | ... | ... |
-| dup       |  ... | ... | ... |
-| smell     |  ... | ... | ... |
-| overeng   |  ... | ... | ... |
-| cleancode |  ... | ... | ... |
-| slop      |  ... | ... | ... |
+| dim         | HIGH | MED | LOW |
+|-------------|------|-----|-----|
+| dead        |  ... | ... | ... |
+| dup         |  ... | ... | ... |
+| smell       |  ... | ... | ... |
+| overeng     |  ... | ... | ... |
+| overarch    |  ... | ... | ... |
+| cleancode   |  ... | ... | ... |
+| tokenbudget |  ... | ... | ... |
+| slop        |  ... | ... | ... |
 
 ## Notes
 
@@ -226,28 +248,49 @@ Verdict rules:
 - `Minor drift`  -- 0 HIGH AND 0~2 MED AND >= 1 LOW
 - `Healthy`      -- 0 findings
 
-## Hand-off
+## Hand-off -- per-dimension routing
 
 The report is the only artifact. Inspect itself does not fix anything.
+Use this table to route each finding cluster to the right mutating
+skill. Do not start a build cycle for MED/LOW alone.
 
-- **HIGH findings** -> feed the top items into `/dev-kit:plan` to scope a
-  cleanup PRD (one phase per finding cluster), then `/dev-kit:build` to
-  execute the 4-pass cleanup. Or fix the highest-severity items by
-  hand and re-run `/dev-kit:inspect` to confirm the backlog shrunk.
+| Dim         | Primary target                                  | Pass / phase           |
+|-------------|--------------------------------------------------|------------------------|
+| `dead`      | `build-simplify` pass 1 (DEAD CODE)             | `[1/4]`                |
+| `dup`       | `build-simplify` pass 2 (DUPLICATION)            | `[2/4]`                |
+| `smell`     | `build-simplify` pass 3 (NAMING) / refactor      | `[3/4]` + manual       |
+| `overeng`   | `build-simplify` pass 3 (NAMING) / simplify-3    | `[3/4]`                |
+| `overarch`  | `/dev-kit:plan` -> `/dev-kit:build` (PRD-shaped) | full cycle, not 4-pass |
+| `cleancode` | `build-simplify` pass 3 (NAMING)                 | `[3/4]`                |
+| `tokenbudget` | `build-simplify` pass 1 (DEAD CODE) + pass 3   | `[1/4] + [3/4]`        |
+| `slop`      | `/dev-kit:audit --slop-only` + manual edit       | out-of-band            |
+
+- **HIGH findings** -> feed the top items into `/dev-kit:plan` to scope
+  a cleanup PRD (one phase per finding cluster), then `/dev-kit:build`
+  to execute. Or fix the highest-severity items by hand and re-run
+  `/dev-kit:inspect` to confirm the backlog shrunk.
 - **MED/LOW**       -> logged in the report for the next sweep. Do not
   start a new build cycle for these alone.
 - **Cross-check**    -> if the report is suspiciously empty on a project
   that has obvious smells, run `/dev-kit:audit` (fast, deterministic
   slop+secret scan) and `/dev-kit:security` (10-dim OWASP) to
   triangulate.
+- **Whole-pipeline**  -> for "clean up everything" intent, run
+  `/dev-kit:simplify` (3-phase wrap of inspect + simplify + review).
+  This skill is its phase 1 (the baseline report).
 
-Next step: `/dev-kit:plan` (if HIGH > 0 and you want a structured
-cleanup) or `/dev-kit:review` (if you want a per-PR check on changes
-you make).
+Next step: `/dev-kit:simplify` (whole-pipeline cleanup), `/dev-kit:plan`
+(if HIGH > 0 and you want a structured cleanup), or `/dev-kit:review`
+(if you want a per-PR check on changes you make).
 
 ## Related
 
+- `/dev-kit:simplify` is the 3-phase wrapper: this skill (baseline) ->
+  `build-simplify` (4-pass cleanup) -> `review` (verify).
 - `/dev-kit:report` reads `.dev-kit/inspect-report.md` (this skill's
   output) and renders it as a self-contained HTML page alongside the
   eval report. Run report after inspect to share findings with
   non-technical reviewers.
+- `/dev-kit:feat-remove` removes a single named feature end-to-end
+  (call-graph sweep + deletion report) -- the targeted sibling of
+  inspect's whole-codebase audit.

@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-348%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-37-blueviolet)](skills/)
+[![Skills](https://img.shields.io/badge/skills-38-blueviolet)](skills/)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue)](.claude-plugin/plugin.json)
 
 ## What
@@ -156,7 +156,7 @@ Full set: 37 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 37 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 38 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (6 original + 3 worktree-rule) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
@@ -190,7 +190,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `ci-setup` |
 | `plan` | `plan` |
 | `design` | `design` (merged into `plan`), `build-harness-engine` |
-| `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise` |
+| `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `simplify` |
 | `review` | `review` (3-dim, unified) |
 | `security` | `security` (10-dim OWASP, unified) |
 | `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health), `report` (HTML viewer) |
@@ -409,6 +409,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.0 — 37 skills shipped across 14 categories, 348 pytest passing, 12 eval cases live. Ongoing: per-skill drift audit, Eval case expansion, template refresh.**
+🚀 **v0.3.0 — 38 skills shipped across 14 categories, 348 pytest passing, 12 eval cases live. Ongoing: per-skill drift audit, Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).

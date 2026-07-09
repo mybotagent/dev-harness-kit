@@ -2,7 +2,7 @@
 """test_smoke.py — End-to-end smoke test for dev-kit.
 
 Validates the plugin-only structure:
-- All 36 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
+- All 38 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
 - All 5 hook bash scripts executable + syntactically valid (hooks/)
 - 7 stage→hook mapping in active_hooks_codec
 - Iron Laws are SSOT in CLAUDE.md
@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SKILL_COUNT = 37
+SKILL_COUNT = 38
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
