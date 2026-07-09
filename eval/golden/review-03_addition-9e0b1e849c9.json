@@ -1,0 +1,24 @@
+{
+  "case_id": "review-03-addition",
+  "dim": "review",
+  "category": "clean",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:9e0b1e849c9",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "skills/review/fixtures/clean/addition.py",
+  "transcript_path": "eval/transcripts/review/review-03-addition.json",
+  "expected": {
+    "verdict": "Approve",
+    "min_severity": null,
+    "findings_must_contain": [],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 9
+  },
+  "expected_behavior": "Stable review case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    "skills/review/fixtures/clean/addition.py"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "case_id": "security-02-owasp-a05-sql-injection",
+  "dim": "security",
+  "agent_output": {
+    "verdict": "Blocked",
+    "per_category": {
+      "A01": {"n": 0, "severity_max": null, "findings": []},
+      "A02": {"n": 0, "severity_max": null, "findings": []},
+      "A03": {"n": 0, "severity_max": null, "findings": []},
+      "A04": {"n": 0, "severity_max": null, "findings": []},
+      "A05": {
+        "n": 1,
+        "severity_max": "critical",
+        "findings": [
+          {
+            "file": "eval/cases/security/02_owasp_a05_sql_injection.py",
+            "line": 7,
+            "dim": "security",
+            "severity": "critical",
+            "confidence": "high",
+            "title": "SQL injection via f-string interpolation",
+            "tldr": "User input `name` is interpolated directly into a SQL string with an f-string.",
+            "failure_scenario": "name = \"' OR 1=1 --\" dumps every user row in the table.",
+            "fix": "Use a parameterized query: db.execute('SELECT ... WHERE name = %s', (name,))."
+          }
+        ]
+      },
+      "A06": {"n": 0, "severity_max": null, "findings": []},
+      "A07": {"n": 0, "severity_max": null, "findings": []},
+      "A08": {"n": 0, "severity_max": null, "findings": []},
+      "A09": {"n": 0, "severity_max": null, "findings": []},
+      "A10": {"n": 0, "severity_max": null, "findings": []}
+    }
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

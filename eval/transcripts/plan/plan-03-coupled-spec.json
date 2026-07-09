@@ -1,0 +1,73 @@
+{
+  "case_id": "plan-03-coupled-spec",
+  "dim": "plan",
+  "agent_output": {
+    "prd": {
+      "frame": "Goal: ship the new dashboard in one release. Target user: end users. Situation: the old dashboard is missing key features.",
+      "validate": {"value_score": 3.5, "ambiguity_score": 3, "evidence_count": 3, "status": "ok"},
+      "non_goals": [
+        {"item": "mobile apps", "rationale": "v1 ships web only", "breach_response": "defer"},
+        {"item": "real-time updates", "rationale": "v1 polls", "breach_response": "defer"}
+      ],
+      "phase_plan": "see phases/0-dashboard/index.json — 4 steps, dependency-ordered",
+      "ac": [
+        "AC1: data migration runs end-to-end on staging",
+        "AC2: GET /api/dashboard returns 200 with the new schema",
+        "AC3: dashboard UI renders without console errors on Chrome/Firefox/Safari",
+        "AC4: rollout banner visible to 10% of users, killswitch toggles in <1 min"
+      ],
+      "hand_off": "next: /dev-kit:build"
+    },
+    "index": {
+      "schema_version": "1.0.0",
+      "phase": "0-dashboard",
+      "project": "kit",
+      "created_at": "2026-07-09T19:00:00+09:00",
+      "ambiguity_score": 3,
+      "value_score": 3.5,
+      "evidence_count": 3,
+      "steps": [
+        {"step": 0, "name": "data-migration", "title": "migrate the data layer to the new schema", "status": "pending", "ambiguity_delta": 0.0},
+        {"step": 1, "name": "dashboard-api", "title": "GET /api/dashboard endpoint", "status": "pending", "ambiguity_delta": 0.0},
+        {"step": 2, "name": "dashboard-ui", "title": "render the dashboard UI", "status": "pending", "ambiguity_delta": 0.0},
+        {"step": 3, "name": "rollout-banner", "title": "10% rollout + killswitch banner", "status": "pending", "ambiguity_delta": 0.0}
+      ]
+    },
+    "steps": [
+      {
+        "step": 0,
+        "name": "data-migration",
+        "title": "migrate the data layer to the new schema",
+        "status": "pending",
+        "ac": "alembic upgrade head && pytest tests/test_migration.py -v  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      },
+      {
+        "step": 1,
+        "name": "dashboard-api",
+        "title": "GET /api/dashboard endpoint",
+        "status": "pending",
+        "ac": "pytest tests/integration/test_dashboard_api.py -v  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      },
+      {
+        "step": 2,
+        "name": "dashboard-ui",
+        "title": "render the dashboard UI",
+        "status": "pending",
+        "ac": "npm run test:e2e -- dashboard.spec.ts  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      },
+      {
+        "step": 3,
+        "name": "rollout-banner",
+        "title": "10% rollout + killswitch banner",
+        "status": "pending",
+        "ac": "manual: killswitch toggles in <60s on staging; banner visible to 10% sample",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      }
+    ]
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

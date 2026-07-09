@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""llm_judge.py — LLM-as-judge for asset freshness (MUST-32~34).
+"""llm_judge.py — LLM-as-judge for eval (agent-behavior).
 
 Provider-agnostic via Anthropic-compatible API (default MiniMax).
-4 axes: semantic_drift / completeness / correctness / consistency.
+
+Two axis families:
+- JUDGE_AXES: legacy 4-axis asset-freshness rubric (semantic_drift /
+  completeness / correctness / consistency). Kept for backward-compat
+  with tests/test_llm_judge.py and any external callers.
+- DIM_AXES: per-dim agent-behavior rubric axes used by the new
+  /dev-kit:eval (review / security / plan). Each tuple is the axis
+  set a per-dim judge prompt is expected to return.
 """
 from __future__ import annotations
 
@@ -12,9 +19,40 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
-JUDGE_AXES = ("semantic_drift", "completeness", "correctness", "consistency")
+JUDGE_AXES: Tuple[str, ...] = (
+    "semantic_drift", "completeness", "correctness", "consistency",
+)
+
+# Per-dim axes for the new agent-behavior eval. The judge's prompt for
+# each dim MUST return a JSON object whose keys are exactly this tuple.
+DIM_AXES: Dict[str, Tuple[str, ...]] = {
+    "review": (
+        "verdict_consistency",
+        "severity_calibration",
+        "precision",
+        "recall",
+        "code_sanity_score",
+    ),
+    "security": (
+        "owasp_classification_accuracy",
+        "severity_accuracy",
+        "precision",
+    ),
+    "plan": (
+        "spec_clarity",
+        "step_atomicity",
+        "ac_executability",
+        "dependency_ordering",
+    ),
+}
+
+# Regex fragment used by parse_scores_json to recognize axis tokens. Built
+# lazily from the union of JUDGE_AXES + DIM_AXES so any new dim auto-extends.
+_AXIS_TOKEN_RE = r"(?:" + "|".join(
+    sorted({ax for axes in (JUDGE_AXES, *DIM_AXES.values()) for ax in axes})
+) + r")"
 
 
 def _env_get(env: Dict[str, str], key: str, default: str) -> str:
@@ -62,21 +100,40 @@ def format_prompt(project_root: Path, template_name: str, substitutions: Dict[st
     return text
 
 
-def parse_scores_json(raw: str) -> Dict[str, float]:
-    """Parse 4-axis scores from LLM response (extract JSON even if wrapped)."""
+def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[str, float]:
+    """Parse axis scores from LLM response. `axes` defaults to JUDGE_AXES.
+
+    Tries a strict JSON parse first; on failure falls back to regex
+    extraction of the first `{...}` block that mentions any axis token.
+    Returns {} if both fail.
+    """
+    target_axes = tuple(axes) if axes is not None else JUDGE_AXES
+    target_set = set(target_axes)
     try:
         data = json.loads(raw)
-        return {ax: float(data[ax]) for ax in JUDGE_AXES if ax in data}
+        return {ax: float(data[ax]) for ax in target_axes if ax in data}
     except (json.JSONDecodeError, KeyError, TypeError):
         pass
     m = re.search(
-        r"\{[^{}]*?(?:semantic_drift|completeness|correctness|consistency)[^{}]*?\}",
+        r"\{[^{}]*?" + _AXIS_TOKEN_RE + r"[^{}]*?\}",
         raw, re.DOTALL,
     )
     if m:
         try:
             data = json.loads(m.group(0))
-            return {ax: float(data[ax]) for ax in JUDGE_AXES if ax in data}
+            return {ax: float(data[ax]) for ax in target_axes if ax in data}
+        except Exception:
+            pass
+    # Last resort: pick axes that match regardless of the requested set,
+    # so callers can still see what the model emitted.
+    m2 = re.search(
+        r"\{[^{}]*?" + _AXIS_TOKEN_RE + r"[^{}]*?\}",
+        raw, re.DOTALL,
+    )
+    if m2:
+        try:
+            data = json.loads(m2.group(0))
+            return {ax: float(v) for ax, v in data.items() if ax in target_set}
         except Exception:
             pass
     return {}

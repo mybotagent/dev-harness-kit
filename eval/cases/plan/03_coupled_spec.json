@@ -1,0 +1,13 @@
+{
+  "case_id": "plan-03-coupled-spec",
+  "dim": "plan",
+  "category": "coupled-spec",
+  "input_inline": "Idea: Build the new dashboard. AC: (1) ship the UI, the API, the data migration, and the rollout banner in a single release.",
+  "expected": {
+    "verdict": "Changes Requested",
+    "min_steps": 4,
+    "coupling_should_be_split": true,
+    "single_step_with_multiple_deliverables_is_wrong": true
+  },
+  "schema_version": "2.0.0"
+}

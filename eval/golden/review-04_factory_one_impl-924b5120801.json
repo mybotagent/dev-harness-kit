@@ -1,0 +1,29 @@
+{
+  "case_id": "review-04-factory-one-impl",
+  "dim": "review",
+  "category": "over-engineering",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:924b5120801",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "eval/cases/review/04_factory_one_impl.py",
+  "transcript_path": "eval/transcripts/review/review-04-factory-one-impl.json",
+  "expected": {
+    "verdict": "Changes Requested",
+    "min_severity": "major",
+    "findings_must_contain": [
+      {
+        "dim": "architecture",
+        "severity": "major"
+      }
+    ],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "expected_behavior": "Stable review case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    "eval/cases/review/04_factory_one_impl.py"
+  ]
+}

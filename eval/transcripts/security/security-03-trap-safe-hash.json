@@ -1,0 +1,21 @@
+{
+  "case_id": "security-03-trap-safe-hash",
+  "dim": "security",
+  "agent_output": {
+    "verdict": "Approve",
+    "per_category": {
+      "A01": {"n": 0, "severity_max": null, "findings": []},
+      "A02": {"n": 0, "severity_max": null, "findings": []},
+      "A03": {"n": 0, "severity_max": null, "findings": []},
+      "A04": {"n": 0, "severity_max": null, "findings": []},
+      "A05": {"n": 0, "severity_max": null, "findings": []},
+      "A06": {"n": 0, "severity_max": null, "findings": []},
+      "A07": {"n": 0, "severity_max": null, "findings": []},
+      "A08": {"n": 0, "severity_max": null, "findings": []},
+      "A09": {"n": 0, "severity_max": null, "findings": []},
+      "A10": {"n": 0, "severity_max": null, "findings": []}
+    }
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

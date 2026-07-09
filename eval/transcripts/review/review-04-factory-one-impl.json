@@ -1,0 +1,35 @@
+{
+  "case_id": "review-04-factory-one-impl",
+  "dim": "review",
+  "agent_output": {
+    "verdict": "Changes Requested",
+    "findings": [
+      {
+        "file": "eval/cases/review/04_factory_one_impl.py",
+        "line": 9,
+        "dim": "architecture",
+        "severity": "major",
+        "confidence": "high",
+        "title": "Abstract base class with a single implementer",
+        "tldr": "StorageBackend is an ABC with one concrete class (S3Backend); no second impl is in scope.",
+        "failure_scenario": "Future 'add a new backend' work is a 30-line refactor instead of a 5-line subclass; cost paid now (YAGNI) for hypothetical future work.",
+        "good": null,
+        "fix": "```python\nclass S3Backend:\n    def __init__(self, bucket: str): self._bucket = bucket\n    def put(self, key: str, value: bytes) -> None: ...\n    def get(self, key: str) -> bytes: ...\n\ndef make_storage(bucket: str) -> S3Backend:\n    return S3Backend(bucket=bucket)\n```"
+      },
+      {
+        "file": "eval/cases/review/04_factory_one_impl.py",
+        "line": 28,
+        "dim": "architecture",
+        "severity": "minor",
+        "confidence": "high",
+        "title": "make_storage factory with one return value",
+        "tldr": "The factory function `make_storage` returns the only concrete type; the indirection adds no flexibility.",
+        "failure_scenario": "Every caller of make_storage() is tied to S3Backend via the type; the indirection is purely cosmetic.",
+        "good": null,
+        "fix": "Remove make_storage; instantiate S3Backend directly at the call site."
+      }
+    ]
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

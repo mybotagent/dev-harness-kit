@@ -1,0 +1,14 @@
+{
+  "case_id": "security-01-owasp-a01-idor",
+  "dim": "security",
+  "category": "owasp-a01",
+  "input_path": "eval/cases/security/01_owasp_a01_idor.py",
+  "expected": {
+    "verdict": "Blocked",
+    "min_severity": "major",
+    "owasp_category": "A01",
+    "findings_must_contain": [{"category": "A01", "severity": "major"}],
+    "findings_must_not_contain": []
+  },
+  "schema_version": "2.0.0"
+}

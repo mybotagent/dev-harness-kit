@@ -1,0 +1,16 @@
+{
+  "case_id": "review-02-parameterized-query",
+  "dim": "review",
+  "category": "trap",
+  "input_path": "skills/review/fixtures/traps/parameterized_query.py",
+  "expected": {
+    "verdict": "Approve",
+    "min_severity": null,
+    "findings_must_contain": [],
+    "findings_must_not_contain": [
+      {"dim": "security", "title_contains": "SQL"}
+    ],
+    "code_sanity_min_score": 8
+  },
+  "schema_version": "2.0.0"
+}

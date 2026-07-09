@@ -1,0 +1,15 @@
+{
+  "case_id": "review-06-churn-only",
+  "dim": "review",
+  "category": "no-value",
+  "input_path": "eval/cases/review/06_churn_only.py",
+  "expected": {
+    "verdict": "Approve",
+    "min_severity": null,
+    "findings_must_contain": [],
+    "findings_must_not_contain": [{"dim": "correctness"}],
+    "code_sanity_min_score": 8,
+    "value_comment_required": true
+  },
+  "schema_version": "2.0.0"
+}

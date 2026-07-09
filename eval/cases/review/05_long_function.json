@@ -1,0 +1,14 @@
+{
+  "case_id": "review-05-long-function",
+  "dim": "review",
+  "category": "clean-violation",
+  "input_path": "eval/cases/review/05_long_function.py",
+  "expected": {
+    "verdict": "Changes Requested",
+    "min_severity": "minor",
+    "findings_must_contain": [{"dim": "correctness", "severity": "minor"}],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "schema_version": "2.0.0"
+}

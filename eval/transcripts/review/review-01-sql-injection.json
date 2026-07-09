@@ -1,0 +1,23 @@
+{
+  "case_id": "review-01-sql-injection",
+  "dim": "review",
+  "agent_output": {
+    "verdict": "Blocked",
+    "findings": [
+      {
+        "file": "skills/review/fixtures/real-bugs/sql_injection.py",
+        "line": 4,
+        "dim": "security",
+        "severity": "critical",
+        "confidence": "high",
+        "title": "SQL injection via f-string interpolation",
+        "tldr": "User-controlled `name` is interpolated directly into a SQL string; trivial injection.",
+        "failure_scenario": "Pass name=\"' OR 1=1 --\" -> the query returns every row in users, leaking every user record.",
+        "good": null,
+        "fix": "```python\ndef find_user(name: str, db):\n    return db.execute(\n        \"SELECT id, email FROM users WHERE name = %s\", (name,)\n    ).fetchall()\n```"
+      }
+    ]
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

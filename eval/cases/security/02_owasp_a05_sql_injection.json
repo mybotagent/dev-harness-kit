@@ -1,0 +1,14 @@
+{
+  "case_id": "security-02-owasp-a05-sql-injection",
+  "dim": "security",
+  "category": "owasp-a05",
+  "input_path": "eval/cases/security/02_owasp_a05_sql_injection.py",
+  "expected": {
+    "verdict": "Blocked",
+    "min_severity": "critical",
+    "owasp_category": "A05",
+    "findings_must_contain": [{"category": "A05", "severity": "critical"}],
+    "findings_must_not_contain": []
+  },
+  "schema_version": "2.0.0"
+}

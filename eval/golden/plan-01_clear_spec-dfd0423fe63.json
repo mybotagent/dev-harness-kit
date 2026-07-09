@@ -1,0 +1,38 @@
+{
+  "case_id": "plan-01-clear-spec",
+  "dim": "plan",
+  "category": "clear-spec",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:dfd0423fe63",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "",
+  "transcript_path": "eval/transcripts/plan/plan-01-clear-spec.json",
+  "expected": {
+    "verdict": "Approve",
+    "min_ambiguity": 3,
+    "min_steps": 3,
+    "steps_must_contain": [
+      {
+        "step": 0,
+        "title_contains": "data model"
+      },
+      {
+        "step": 1,
+        "title_contains": "auth endpoints"
+      },
+      {
+        "step": 2,
+        "title_contains": "middleware"
+      }
+    ],
+    "every_step_ac_executable": true,
+    "dependency_ordered": true
+  },
+  "expected_behavior": "Stable plan case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    ""
+  ]
+}

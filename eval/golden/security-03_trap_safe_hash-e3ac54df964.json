@@ -1,0 +1,30 @@
+{
+  "case_id": "security-03-trap-safe-hash",
+  "dim": "security",
+  "category": "trap",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:e3ac54df964",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "eval/cases/security/03_trap_safe_hash.py",
+  "transcript_path": "eval/transcripts/security/security-03-trap-safe-hash.json",
+  "expected": {
+    "verdict": "Approve",
+    "min_severity": null,
+    "findings_must_contain": [],
+    "findings_must_not_contain": [
+      {
+        "category": "A02"
+      },
+      {
+        "category": "A04"
+      }
+    ]
+  },
+  "expected_behavior": "Stable security case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    "eval/cases/security/03_trap_safe_hash.py"
+  ]
+}

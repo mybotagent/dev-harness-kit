@@ -1,0 +1,19 @@
+{
+  "case_id": "plan-02-ambiguous-spec",
+  "dim": "plan",
+  "agent_output": {
+    "prd": {
+      "frame": "Goal: make the app better. Target user: unspecified. Situation: unspecified.",
+      "validate": {"value_score": 0.8, "ambiguity_score": 9, "evidence_count": 0, "status": "held"},
+      "non_goals": [],
+      "phase_plan": "(no phases emitted — held at Gate 2)",
+      "ac": [],
+      "hand_off": "next: ask the user for evidence + a concrete user + a concrete pain point before any further work"
+    },
+    "index": null,
+    "steps": [],
+    "notes": "Held at Gate 2 per the plan skill's safety valve. ambiguity_score did not converge (still 9 after safety_valve=8 cycles on the same dimension)."
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

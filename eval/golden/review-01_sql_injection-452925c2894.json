@@ -1,0 +1,29 @@
+{
+  "case_id": "review-01-sql-injection",
+  "dim": "review",
+  "category": "real-bug",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:452925c2894",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "skills/review/fixtures/real-bugs/sql_injection.py",
+  "transcript_path": "eval/transcripts/review/review-01-sql-injection.json",
+  "expected": {
+    "verdict": "Blocked",
+    "min_severity": "major",
+    "findings_must_contain": [
+      {
+        "dim": "security",
+        "severity": "major"
+      }
+    ],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "expected_behavior": "Stable review case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    "skills/review/fixtures/real-bugs/sql_injection.py"
+  ]
+}
