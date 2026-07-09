@@ -50,4 +50,7 @@ Build stage active. During cleanup edits, `tdd-guard` passes if test changes acc
 
 ## Hand-off
 
+Previous (read first): `/dev-kit:inspect` — produces the report that
+prioritizes which passes to run.
+
 After 4 passes, `state_codec.append_hand_off(root, "build", "review", "...")`. Next: `/dev-kit:review`.

@@ -80,6 +80,22 @@
 - **AC**: HIGH ≥ 5 = warning. 0 findings = clean.
 - **Active Skills**: `audit-slop`, `audit-secret`
 
+## Cross-cutting — Inspect (`/dev-kit:inspect`)
+
+- **Goal**: Whole-codebase (not per-PR, not per-diff) health audit
+  across 6 dimensions in parallel: `dead`, `dup`, `smell`, `overeng`,
+  `cleancode`, `slop`. Produces one markdown report at
+  `.dev-kit/inspect-report.md`.
+- **Must**: Single-message 6-dim fan-out. Verifier pass on survivors.
+  HIGH/MED/LOW bucketing in the report. `failure_scenario` required per
+  finding.
+- **Must-Not**: Modify source files (read-only invariant). Post PR
+  comments. Edit the report from outside the skill.
+- **AC**: Report exists at `.dev-kit/inspect-report.md`. Verdict is one
+  of `Critical | Major drift | Minor drift | Healthy`. Per-dimension
+  summary table present.
+- **Active Skills**: `inspect`
+
 ## Cross-cutting — Eval (`/dev-kit:eval`)
 
 - **Goal**: Asset freshness eval (CLAUDE.md / skill / hook / Iron Law).
