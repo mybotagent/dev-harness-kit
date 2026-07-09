@@ -2,6 +2,7 @@
 name: build
 category: build
 description: 0-arg. Per-step sub-agent delegation + self-fix loop (MUST-36~38). Uses harness-runner engine. TDD + verify + debug integrated.
+version: 0.1.0
 when_to_use: |
   - User types /dev-kit:build
   - After plan+design (PRD.md + phases/<name>/ exist)
@@ -18,7 +19,7 @@ Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one `claude -p` su
 
 ## Pre-flight gate
 
-Refuses to start if `.dev-kit/ci-config.json` is absent OR `ci_setup_version` < `0.1.0`. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first.
+Refuses to start if `.dev-kit/ci-config.json` is absent OR `ci_setup_version` < `0.1.0` OR any skill listed in the marker's `min_skill_versions` floor is below its declared version. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. See `lib/ci_setup.py:extract_skill_versions()` and `templates/ci/scripts/validate.py:validate_min_skill_versions()` for the check.
 
 ## Behavior
 

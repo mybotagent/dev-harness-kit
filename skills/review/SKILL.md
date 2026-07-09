@@ -2,6 +2,7 @@
 name: review
 category: review
 description: "Parallel multi-dimension code review with a false-positive filter. Fans out to specialized subagents (correctness, security, architecture) that run at the same time and return structured, evidence-backed findings; a verification pass confirms or rejects each candidate before rendering per-line inline comments plus one PR-style summary with a verdict. Use when the user types /dev-kit:review, or asks to review code, review a diff, review a PR, or check this before merge."
+version: 0.1.0
 when_to_use: |
   - User types /dev-kit:review [paths] [--diff] [--diff --staged] [--fast]
   - User asks to "review this code", "review the diff", "review the PR", "check this before merge"

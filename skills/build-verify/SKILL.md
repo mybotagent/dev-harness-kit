@@ -2,6 +2,7 @@
 name: build-verify
 category: build
 description: verification-before-completion. No "done" without quoted exit code + test count + build log (MUST-L3, hook stop-verify).
+version: 0.1.0
 when_to_use: |
   - User types "done" / "finished" / "passing" (declaration phrases)
 allowed-tools: Read Bash

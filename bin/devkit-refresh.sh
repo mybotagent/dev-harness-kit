@@ -54,9 +54,19 @@ done
 [ -d "$MARKETPLACE_DIR/.git" ] || die "marketplace clone not found at $MARKETPLACE_DIR"
 [ -d "$CACHE_ROOT" ] || die "cache root not found at $CACHE_ROOT"
 
+# Cache-dir segment: prefer plugin.json's `version` field; fall back to the
+# marketplace clone's current short SHA when the field is absent (PR #31
+# dropped the field; pre-this-feature checkouts have no version). The
+# fallback is the same shape Claude Code uses for commit-SHA-pinned plugins.
 VERSION="$(grep -m1 '"version"' "$MARKETPLACE_DIR/.claude-plugin/plugin.json" 2>/dev/null \
-           | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-[ -n "$VERSION" ] || die "could not parse version from $MARKETPLACE_DIR/.claude-plugin/plugin.json"
+           | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)"
+if [ -z "$VERSION" ]; then
+  VERSION="$(git -C "$MARKETPLACE_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+  if [ -n "$VERSION" ]; then
+    echo "  (no version field in plugin.json; using short SHA $VERSION)"
+  fi
+fi
+[ -n "$VERSION" ] || die "could not determine cache version (no version in plugin.json and git rev-parse failed)"
 CACHE_DIR="$CACHE_ROOT/$VERSION"
 
 echo "marketplace: $MARKETPLACE_DIR (version $VERSION)"

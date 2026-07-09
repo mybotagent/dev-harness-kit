@@ -2,6 +2,7 @@
 name: build-engine
 category: build
 description: harness-runner engine per step. atomic write + 2-commit protocol + parallel worktree. No own cycle (each step is a separate cycle, MUST-NO-LOOP).
+version: 0.1.0
 when_to_use: |
   - Auto-invoked by /dev-kit:build per step
 allowed-tools: Read Write Bash

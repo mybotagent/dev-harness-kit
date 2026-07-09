@@ -2,6 +2,7 @@
 name: eval
 category: eval
 description: Asset freshness (CLAUDE.md / skill / hook / Iron Law) LLM-as-judge evaluation. /dev-kit:eval dry-run + golden set cross-check.
+version: 0.1.0
 when_to_use: |
   - User types /dev-kit:eval
   - nightly cron auto-call

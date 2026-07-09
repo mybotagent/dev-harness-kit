@@ -2,6 +2,7 @@
 name: audit-secret
 category: audit
 description: secret scan read-only audit. credential pattern detection. NEVER print secret text.
+version: 0.1.0
 when_to_use: |
   - User types /dev-kit:audit (cross-cutting, or --secrets-only flag)
 allowed-tools: Read Grep Bash

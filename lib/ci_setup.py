@@ -84,6 +84,12 @@ MARKER_SCHEMA_VERSION = "1.0.0"
 # Kept in sync with templates/ci/ci-config.example.json contract.
 PLUGIN_CI_SETUP_VERSION = "0.1.0"
 
+# Per-skill semver (PEP 440 via packaging.version.Version). Used by
+# extract_skill_versions() to read each skill's `version:` frontmatter and
+# by validate_min_skill_versions() to compare installed vs consumer floor.
+# Pre-release sort must work: 0.1.0-rc.1 < 0.1.0.
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+
 # Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
 # AFTER the marker is written. Each tuple is (number, command-block with notes).
 # Empty <OWNER>/<REPO> placeholder is filled at print time from
@@ -203,7 +209,106 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
             p.chmod(mode | 0o111)  # set +x for owner/group/other
 
 
-def _build_marker() -> dict:
+def _parse_skill_frontmatter(path: Path) -> dict:
+    """Read a SKILL.md file and return the YAML frontmatter as a dict.
+
+    Self-contained (no `import yaml` dependency at module level) so the
+    helper stays available to consumers' `validate.py` even when they only
+    install `templates/ci/scripts/validate.py` (yaml is not in dev-kit's
+    guaranteed dependency set). The frontmatter is delimited by `---` lines
+    at the top of the file; everything between them is parsed as YAML.
+    Returns {} on missing/empty/invalid frontmatter.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    lines = text.splitlines()
+    if not lines or lines[0].rstrip() != "---":
+        return {}
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip() == "---":
+            end = i
+            break
+    if end is None:
+        return {}
+    block = "\n".join(lines[1:end])
+    try:
+        import yaml  # local import: see docstring
+
+        parsed = yaml.safe_load(block)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def extract_skill_versions(plugin_root: Path) -> dict:
+    """Read every `skills/*/SKILL.md` under `plugin_root` and return {name: version}.
+
+    Walks the top-level skills/ directory (flat layout per
+    .claude/rules/skill-authoring.md). For each skill directory containing a
+    SKILL.md, parses the frontmatter and extracts the `version:` field. The
+    field must match SEMVER_RE — otherwise the skill is listed in a
+    `ValueError` (so a missing/invalid version surfaces in CI rather than
+    silently being treated as 0.0.0).
+
+    Args:
+        plugin_root: absolute path to the dev-harness-kit checkout (the
+            directory that contains the `skills/` folder).
+
+    Returns:
+        Dict mapping skill name → semver string, e.g. `{"build": "0.1.0", ...}`.
+
+    Raises:
+        ValueError: one or more skills are missing the `version:` field or
+            the value does not match SEMVER_RE. The exception message lists
+            every offender so a single CI run shows the full set.
+    """
+    skills_dir = plugin_root / "skills"
+    if not skills_dir.is_dir():
+        return {}
+    result: dict = {}
+    missing: list = []
+    invalid: list = []
+    for child in sorted(skills_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        skill_md = child / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        meta = _parse_skill_frontmatter(skill_md)
+        name = meta.get("name") or child.name
+        version = meta.get("version")
+        if version is None or version == "":
+            missing.append(name)
+            continue
+        if not isinstance(version, str) or not SEMVER_RE.match(version):
+            invalid.append(f"{name}={version!r}")
+            continue
+        result[name] = version
+    problems: list = []
+    if missing:
+        problems.append(f"missing version: {', '.join(missing)}")
+    if invalid:
+        problems.append(f"invalid semver: {', '.join(invalid)}")
+    if problems:
+        raise ValueError(
+            "skills with bad version frontmatter — " + "; ".join(problems)
+        )
+    return result
+
+
+def _build_marker(min_skill_versions: dict | None = None) -> dict:
+    """Build the `.dev-kit/ci-config.json` payload.
+
+    Args:
+        min_skill_versions: consumer's opt-in floor, preserved across
+            `--force` rewrites. `None` means "no prior value" → the field
+            is written as `{}` (permissive default). The argument is
+            explicit so callers can't accidentally clobber a consumer's
+            floor by omitting it.
+    """
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
         "ci_setup_version": PLUGIN_CI_SETUP_VERSION,
@@ -226,6 +331,14 @@ def _build_marker() -> dict:
         ],
         "rules": [".claude/rules/git-workflow.md"],
         "tests": ["tests/test_worktree_guard.py"],
+        # Per-skill version mirror (auto-written; read by validate.py for
+        # the PR build gate). Live source of truth is skills/<name>/SKILL.md
+        # frontmatter in this dev-kit checkout; mirrored here so consumer
+        # PRs don't have to read dev-kit source files.
+        "installed_skill_versions": extract_skill_versions(_PLUGIN_ROOT),
+        # Consumer's opt-in floor. Empty {} = no constraint (permissive
+        # default; no behavior change for consumers who never edit it).
+        "min_skill_versions": dict(min_skill_versions) if min_skill_versions else {},
     }
 
 
@@ -303,8 +416,22 @@ def install_ci_config(
     _chmod_executable(EXECUTABLE_PATHS, target)
 
     # Write marker (overwrites on force, always succeeds idempotently).
+    # Preserve the consumer's opt-in min_skill_versions floor so a
+    # `ci-setup --force` does NOT clobber a deliberate declaration. Read
+    # the existing marker (if any) just before the write; absent or
+    # unparseable → default to empty (permissive).
     marker = target / MARKER_REL
-    _atomic_write_json(marker, _build_marker())
+    preserved_min: dict = {}
+    if existing_marker.exists():
+        try:
+            existing_data = json.loads(existing_marker.read_text(encoding="utf-8"))
+            if isinstance(existing_data, dict):
+                raw = existing_data.get("min_skill_versions")
+                if isinstance(raw, dict):
+                    preserved_min = raw
+        except (OSError, json.JSONDecodeError):
+            preserved_min = {}
+    _atomic_write_json(marker, _build_marker(min_skill_versions=preserved_min))
     report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and

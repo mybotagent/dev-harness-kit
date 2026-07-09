@@ -328,6 +328,72 @@ class TestCiSetup(unittest.TestCase):
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
+    def test_marker_writes_installed_skill_versions(self):
+        """feat/skill-versions: fresh install writes the skill-version mirror."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertIn("installed_skill_versions", marker, "marker missing installed_skill_versions")
+            mirror = marker["installed_skill_versions"]
+            self.assertIsInstance(mirror, dict)
+            # Mirror should contain an entry for every skill in the plugin
+            from importlib.util import spec_from_file_location, module_from_spec
+            spec = spec_from_file_location(
+                "_cs_min_skill_versions",
+                Path(__file__).parent.parent / "lib" / "ci_setup.py",
+            )
+            cs = module_from_spec(spec)
+            sys.modules["_cs_min_skill_versions"] = cs  # @dataclass needs sys.modules (Py3.14)
+            spec.loader.exec_module(cs)
+            live = cs.extract_skill_versions(Path(__file__).parent.parent)
+            self.assertEqual(
+                set(mirror), set(live),
+                f"mirror missing/extra skills: {set(mirror) ^ set(live)}",
+            )
+            for skill, ver in mirror.items():
+                self.assertRegex(
+                    ver, r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
+                    f"{skill}: {ver!r} is not valid semver",
+                )
+
+    def test_marker_min_skill_versions_default_empty(self):
+        """feat/skill-versions: first install writes min_skill_versions: {} (permissive)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertIn("min_skill_versions", marker)
+            self.assertEqual(marker["min_skill_versions"], {},
+                             "fresh install must default to empty floor")
+
+    def test_ci_setup_force_preserves_consumer_min_skill_versions(self):
+        """feat/skill-versions: `--force` rewrites the mirror but PRESERVES the
+        consumer's opt-in `min_skill_versions` declaration."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            # Consumer opts into a floor
+            marker_path = target / ".dev-kit" / "ci-config.json"
+            data = json.loads(marker_path.read_text())
+            data["min_skill_versions"] = {"build": "0.2.0", "ci-setup": "0.1.5"}
+            marker_path.write_text(json.dumps(data))
+            # `--force` must NOT clobber the floor
+            self.ci_setup.install_ci_config(target, force=True)
+            reread = json.loads(marker_path.read_text())
+            self.assertEqual(
+                reread["min_skill_versions"],
+                {"build": "0.2.0", "ci-setup": "0.1.5"},
+                "--force clobbered the consumer's min_skill_versions",
+            )
+            # The mirror should still be (re)written — proves the install ran
+            # end-to-end rather than short-circuiting.
+            self.assertIn("installed_skill_versions", reread)
+            self.assertGreater(len(reread["installed_skill_versions"]), 0)
+
     def test_post_install_checklist_is_complete(self):
         """5 numbered items; each is a gh secret set, a gh/git config, or a
         workflow-setting note. Must be actionable."""

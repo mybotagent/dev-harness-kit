@@ -4,8 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-255%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-29-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.1.1-blue)](.claude-plugin/marketplace.json)
+[![Skills](https://img.shields.io/badge/skills-30-blueviolet)](skills/)
 
 ## What
 

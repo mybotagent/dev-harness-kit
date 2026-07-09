@@ -4,6 +4,15 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Added — per-skill version management + audit + PR build fail (feat/skill-versions)
+
+- **feat(plugin)**: each of the 30 `skills/<name>/SKILL.md` files now declares a `version:` frontmatter field (seeded at `0.1.0`). `lib/ci_setup.py:extract_skill_versions()` walks the skills dir and parses them; `SEMVER_RE` enforces the format (3 numeric parts + optional `-prerelease` / `+build` per semver 2.0.0).
+- **feat(ci-setup)**: the `.dev-kit/ci-config.json` marker gains two new keys: `installed_skill_versions` (auto-written mirror of the plugin's skill versions at install time) and `min_skill_versions` (consumer-opt-in floor, defaults to `{}`). `/dev-kit:ci-setup --force` rewrites the mirror but **preserves** the consumer's floor declaration.
+- **feat(validate)**: `templates/ci/scripts/validate.py` appends a 4th check `validate_min_skill_versions()` to its existing 3-check gate. The check is **opt-in** — empty `min_skill_versions: {}` SKIPs (no behavior change for consumers who never edit the field). When the consumer declares a floor, the PR build fails with a per-skill message if any declared skill is below the required version. The check uses a self-contained `_semver_lt` (no `packaging` dep) so consumer repos don't need an extra requirement. 8 unit cases in `tests/test_validate_min_skill_versions.py` cover pre-release / build-metadata / numeric / invalid / unknown-skill / missing-mirror.
+- **feat(audit)**: new subskill `skills/audit-outdated/SKILL.md` (model-use, `user-invocable: false`) backs the user-facing `/dev-kit:audit --outdated` flag (added to parent `skills/audit/SKILL.md` Rules). Walks HEAD `skills/<name>/SKILL.md` vs `~/.claude/plugins/cache/dev-kit/dev-kit/*/skills/<name>/SKILL.md` (with marketplace fallback), prints a per-skill drift table, exits 1 on any below-HEAD skill (lets users wire it into pre-commit / cron).
+- **fix(refresh)**: `bin/devkit-refresh.sh` no longer `die`s when the plugin manifest's `version` field is absent (it was dropped in PR #31). Falls back to `git -C "$MARKETPLACE_DIR" rev-parse --short HEAD` for the cache-dir segment with a one-line note.
+- **docs(readme)**: removed the stale `[![Version](...-0.1.1-blue)](.claude-plugin/marketplace.json)` badge (it pointed at a file that no longer carries a version field); bumped the skills badge from 29 to 30.
+
 ### Changed — simplify `plan` skill gates (5 instead of 8)
 
 - 8-gate flow (`frame → evidence → diff → non-goals → socratic → phase-decompose → seed-convergence → prd-writer`) collapsed to 5 gates (`frame → validate → non-goals → decompose → emit`) by merging the three overlapping "is this idea worth building?" gates (evidence / diff-profit / socratic-deepen) into a single `validate` gate with quantified inputs.

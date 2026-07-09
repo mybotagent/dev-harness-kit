@@ -16,5 +16,7 @@
   ],
   "githooks": [
     ".githooks/pre-push"
-  ]
+  ],
+  "installed_skill_versions": {},
+  "min_skill_versions": {}
 }

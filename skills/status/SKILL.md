@@ -2,6 +2,7 @@
 name: status
 category: status
 description: HOTL visualization. Current loop progress + cumulative cycles + hand-off chain + eval score on one screen.
+version: 0.1.0
 when_to_use: |
   - User types @dev-kit status
 allowed-tools: Read Grep

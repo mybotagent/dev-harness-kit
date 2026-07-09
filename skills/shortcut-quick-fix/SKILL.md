@@ -2,6 +2,7 @@
 name: shortcut-quick-fix
 category: shortcuts
 description: verify+debug instant call. No code writing. Quick build verification / debug.
+version: 0.1.0
 when_to_use: |
   - User types /dev-kit:quick-fix
 allowed-tools: Read Bash
