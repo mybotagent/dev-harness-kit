@@ -244,3 +244,10 @@ The report is the only artifact. Inspect itself does not fix anything.
 Next step: `/dev-kit:plan` (if HIGH > 0 and you want a structured
 cleanup) or `/dev-kit:review` (if you want a per-PR check on changes
 you make).
+
+## Related
+
+- `/dev-kit:report` reads `.dev-kit/inspect-report.md` (this skill's
+  output) and renders it as a self-contained HTML page alongside the
+  eval report. Run report after inspect to share findings with
+  non-technical reviewers.

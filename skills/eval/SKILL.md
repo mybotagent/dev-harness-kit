@@ -115,3 +115,9 @@ python lib/eval_runner.py --project-root . [--dry-run] [--dim review|security|pl
 ## Next step
 
 On DRIFT_WARNING or ROT, `/dev-kit:repair` may invoke this skill to confirm the regression is still present after a fix attempt. Manual review recommended before any prompt change to a target skill.
+
+## Related
+
+- `/dev-kit:report` reads `.dev-kit/eval-report.md` (this skill's
+  output) and renders it as a self-contained HTML page. Run report
+  after eval to share results with non-technical reviewers.
