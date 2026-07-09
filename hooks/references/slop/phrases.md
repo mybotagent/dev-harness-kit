@@ -40,7 +40,7 @@ Make no mistake
 Here's why that matters
 (?:It's|That is) worth (?:noting|saying|mentioning|emphasizing)
 (?:Importantly|Crucially|Importantly,|Crucially,)
-(?:It is important to note|Importantly,|Notably,)
+(?:It is important to note|Notably,)
 (?:And|But) here's the (?:thing|real issue|reality)
 잊지 마세요
 주목할 (?:점은|만한 점은|필요가 있습니다)
@@ -105,7 +105,6 @@ across (?:the )?(?:board|industry|globe)
 (?:The |A )(?:implications?|consequences?|outcomes?|considerations?|takeaways?) (?:are|is) (?:significant|profound|substantial|far-?reaching|enormous)\.
 
 # === Wh-starters (sentence-level — first word) ===
-^[ ]*(?:What|When|Where|Which|Who|Why|How)[ ,]
 ^[ ]*(?:What|When|Where|Which|Who|Why|How)
 
 # === Em-dash overuse (count separately as rhythm signal) ===

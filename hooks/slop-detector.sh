@@ -91,7 +91,7 @@ scan_tier() {
   local pats
   pats="$(load_bank "$bank" 2>/dev/null)" || return 0
   [ -z "$pats" ] && return 0
-  PYTHONIOENCODING=utf-8 python3 - "$bank" "$content_file" <<'PY' 2>/dev/null | sort -u | head -10 || true
+  PYTHONIOENCODING=utf-8 python3 - "$bank" "$content_file" <<'PY' 2>/dev/null | sort -u | head -50 || true
 import re, sys, pathlib
 bank_path, content_path = sys.argv[1], sys.argv[2]
 # Drop `#` comments and blank lines; one ERE per remaining line.
@@ -145,7 +145,7 @@ t2_matches=""
 
 if [ ! -r "$PHRASES_BANK" ]; then
   echo "[slop-detector] WARN: $PHRASES_BANK not readable; using inline v1 fallback (T1 only)." >&2
-  t1_matches="$(grep -oE "$INLINE_BANK" "$CONTENT_FILE" 2>/dev/null | sort -u | head -10)"
+  t1_matches="$(grep -oE "$INLINE_BANK" "$CONTENT_FILE" 2>/dev/null | sort -u | head -50)"
 else
   t1_matches="$(scan_tier "$PHRASES_BANK" "$CONTENT_FILE")"
   if [ "$SLOP_LEVEL" -ge 2 ] && [ -r "$STRUCTURES_BANK" ]; then
@@ -154,21 +154,23 @@ else
 fi
 
 # ── severity ladder ─────────────────────────────────────────────────────────
+# SSOT: these thresholds are mirrored in references/slop/scoring.md.
+#   any KO phrase or KO structure                  → HIGH
+#   ≥3 unique T1 OR (≥1 T1 AND ≥1 T2)              → HIGH
+#   ≥2 unique T1                                    → MEDIUM
+#   1 unique T1 OR 1 T2                             → LOW
+#   0                                               → OK (clean)
 t1_n=$(count_lines "$t1_matches")
 t2_n=$(count_lines "$t2_matches")
 ko_t1=$(ko_present "$t1_matches")
 ko_t2=$(ko_present "$t2_matches")
 
 severity="OK"
-if [ "$ko_t2" = "yes" ]; then
-  severity="HIGH"                       # any KO structure → HIGH
-elif [ "$ko_t1" = "yes" ] && [ "$t1_n" -ge 3 ]; then
-  severity="HIGH"                       # ≥3 KO phrases → HIGH
+if [ "$ko_t1" = "yes" ] || [ "$ko_t2" = "yes" ]; then
+  severity="HIGH"
 elif [ "$t1_n" -ge 3 ] || { [ "$t1_n" -ge 1 ] && [ "$t2_n" -ge 1 ]; }; then
-  severity="HIGH"                       # ≥3 unique T1 OR ≥1 T1 + ≥1 T2 → HIGH
+  severity="HIGH"
 elif [ "$t1_n" -ge 2 ]; then
-  severity="MEDIUM"
-elif [ "$ko_t2" = "yes" ]; then
   severity="MEDIUM"
 elif [ "$t1_n" -ge 1 ] || [ "$t2_n" -ge 1 ]; then
   severity="LOW"

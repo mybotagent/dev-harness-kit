@@ -10,28 +10,36 @@ Rate 1-10 on each dimension. Below 35/50 → revise (per hardikpandya/stop-slop)
 | Authenticity | Sounds human? |
 | Density | Anything cuttable? |
 
-## Severity ladder
+## Severity ladder (matches the hook runtime — SSOT)
 
-The audit-slop skill applies this ladder to translate raw match counts into a HIGH / MEDIUM / LOW bucket.
+The `audit-slop` skill applies this ladder to translate raw match counts into a HIGH / MEDIUM / LOW bucket. The runtime hook uses the same thresholds.
 
-| Match count (T1+T2) | Bucket | Action |
+| Conditions | Bucket | Rationale |
 |---|---|---|
-| ≥ 6 unique patterns OR any KO structure | **HIGH** | block advisory + show fix hints |
-| 3-5 unique patterns | **MEDIUM** | block advisory, no fix hints |
-| 1-2 unique patterns | **LOW** | log only |
+| Any KO phrase OR any KO structure | **HIGH** | KO patterns are very rare in legitimate tech prose; their presence is a strong signal. |
+| ≥3 unique T1 phrases OR (≥1 T1 AND ≥1 T2) | **HIGH** | Either density of phrase tells, or one phrase + one shape tell. |
+| ≥2 unique T1 phrases | **MEDIUM** | Multiple phrase tells in one Write/Edit block. |
+| 1 unique T1 phrase OR 1 T2 structure | **LOW** | Single marker — may be domain jargon or intentional. |
+| 0 matches | clean | n/a |
 
-## Per-pattern weights (advanced)
-
-When more precision is wanted, weight each tier separately instead of stacking:
-
-| Tier | What it catches | Weight |
-|---|---|---|
-| T1 PHRASE | throat-clearing + emphasis + jargon + adverbs + meta | 3 |
-| T2 STRUCTURE | binary contrast + false agency + Wh-starters + lazy extremes + KO structure | 2 |
-| T3 RHYTHM | em-dash density + three-item lists + dramatic fragmentation | 1 |
-
-Weighted total ≥ 12 → HIGH. 6-11 → MEDIUM. <6 → LOW.
+Each tier in the hook caps at 50 unique matches via `head -50` (raised from the early v2 draft's 10, which biased severity on documents with many distinct slop patterns).
 
 ## Default behavior
 
-The post-write hook uses **bucket mode**: any single T1 (phrase) match → advisory stderr at severity LOW+; ≥2 unique T1 OR ≥1 T2 → MEDIUM; ≥3 unique OR ≥1 KO structure → HIGH. T3 (rhythm) is off by default to avoid noise in code commits — opt in via `SLOP_LEVEL=3`.
+The post-write hook uses **bucket mode**:
+- any KO structure or KO phrase  → HIGH
+- ≥3 unique T1 OR (≥1 T1 AND ≥1 T2) → HIGH
+- ≥2 unique T1 → MEDIUM
+- 1 unique T1 OR 1 T2 → LOW
+- 0 → clean
+
+Advisory `exit 0` by default. `SLOP_STRICT=1` opts in to `exit 2` on HIGH.
+
+## Env vars (sidebar; full table in `references/slop/README.md`)
+
+| Var | Effect |
+|---|---|
+| `SLOP_LEVEL=1` | T1 only |
+| `SLOP_LEVEL=2` | default; T1 + T2 |
+| `SLOP_STRICT=1` | exit 2 on HIGH |
+| `SLOP_QUIET=1` | suppress advisory stderr |

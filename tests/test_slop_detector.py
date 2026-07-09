@@ -110,6 +110,18 @@ class HighKoreanStructure(unittest.TestCase):
         for marker in ("오늘날의", "종합적인", "강력한"):
             self.assertIn(marker, proc.stderr)
 
+    def test_ko_structure_alone_triggers_high(self) -> None:
+        """A sentence that only carries KO structural crutches (no KO T1 phrases)
+        must still escalate to HIGH via the KO-T2 branch. Plain ASCII characters
+        would NOT trigger this path; the KO structure is the whole signal."""
+        content = "이것 때문에 우리는 잘못된 결정을 내렸습니다. 반드시 기억하시기 바랍니다."
+        proc = run_hook(content)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(
+            severity_of(proc.stderr), "HIGH",
+            msg=f"KO structure alone should be HIGH; stderr={proc.stderr}",
+        )
+
 
 class StructureShapes(unittest.TestCase):
     def test_binary_contrast_is_at_least_medium(self) -> None:
@@ -239,10 +251,12 @@ class BankFileInvariants(unittest.TestCase):
         self.assertEqual(bad, [], msg=f"non-portable escapes in {path.name}: {bad}")
 
     def test_phrases_bank(self) -> None:
-        self._assert_bank_loadable(PHRASES_BANK, min_lines=20)
+        # Floor at 80% of the current loadable line count so accidental
+        # halves of the bank during edits get caught.
+        self._assert_bank_loadable(PHRASES_BANK, min_lines=50)
 
     def test_structures_bank(self) -> None:
-        self._assert_bank_loadable(STRUCTURES_BANK, min_lines=20)
+        self._assert_bank_loadable(STRUCTURES_BANK, min_lines=30)
 
 
 if __name__ == "__main__":

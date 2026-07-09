@@ -178,7 +178,7 @@ dev-harness-kit/
 | `task-detector.sh` | UserPromptSubmit | Nudge new tasks to a worktree | advisory |
 | `session-start-check.sh` | SessionStart | Remind about worktree rule at session start | advisory |
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
-| `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop in edits (T1 phrase + T2 structure + 5-dim scoring, 100+ KO+EN patterns) | hard-block |
+| `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop in edits (T1 phrase + T2 structure + 5-dim scoring, 100+ KO+EN patterns) | advisory (opt-in strict) |
 | `stop-verify.sh` | Stop | Run regression tests on session end | hard-block |
 
 The 3 new hooks (worktree-guard, task-detector, session-start-check) implement the worktree enforcement rule. The worktree-rule scripts (hooks + `lib/worktree-detect.sh`) also ship to consumer repos via `templates/ci/`.
