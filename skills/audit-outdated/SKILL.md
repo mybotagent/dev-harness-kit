@@ -56,20 +56,18 @@ mirror in `.dev-kit/ci-config.json` if present) for the installed side.
 | Installed present, HEAD missing    | `removed` — flag loudly (skill was deleted from the plugin) |
 | Either side fails SEMVER_RE        | `invalid` — flag loudly with both raw values |
 
-Use the semver compare from `lib/ci_setup.py` (PEP 440 via
-`packaging.version.Version` when available; the self-contained
-`_semver_lt` in `templates/ci/scripts/validate.py` otherwise). Both
-files in dev-harness-kit have access to one of the two.
+Use `lib/ci_setup.py:semver_lt` (public function in this dev-kit checkout — the
+same implementation `validate.py` falls back to).
 
 ## Output
 
 ```
-=== /dev-kit:audit --outdated -- N outdated of 29 skills ===
+=== /dev-kit:audit --outdated -- N outdated of 30 skills ===
 
 SKILL          INSTALLED  HEAD      DRIFT
 build          0.1.0      0.2.0     minor
 audit-secret   0.1.0      0.1.1     patch
-... 27 unchanged ...
+... 28 unchanged ...
 
 To refresh: /dev-kit:ci-setup --force
 ```
@@ -79,7 +77,7 @@ To refresh: /dev-kit:ci-setup --force
   bottom (these are surprises and deserve attention).
 - 4-space fixed column for the eye to scan; do not align to the
   longest name (the table is human-readable, not machine-parseable).
-- If **zero** drift: print `=== /dev-kit:audit --outdated -- all 29 skills current ===` and exit 0.
+- If **zero** drift: print `=== /dev-kit:audit --outdated -- all 30 skills current ===` and exit 0.
 - No file written.
 
 ## Exit codes

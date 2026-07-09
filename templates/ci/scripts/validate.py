@@ -105,13 +105,29 @@ def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
 def _semver_lt(a: str, b: str) -> bool:
     """Return True iff semver string `a` is strictly less than `b`.
 
-    Per semver 2.0.0: numeric (major, minor, patch) compare first; a
-    version with a pre-release identifier has LOWER precedence than the
-    same version without one (so `0.1.0-rc.1 < 0.1.0`); build metadata is
-    ignored in precedence. Returns False when either input fails
-    SEMVER_RE (the caller should treat that as a data-shape failure, not
-    a comparison outcome).
+    Canonical implementation lives at `lib/ci_setup.py:semver_lt`. This
+    shim prefers that import (when dev-kit is installed alongside the
+    consumer's `scripts/` dir, the lib/ path is reachable) and falls
+    back to a self-contained regex comparator when it isn't, so this
+    file remains a single, dependency-free script that runs on any
+    consumer runner (see audit-outdated review M2 — single source).
     """
+    try:
+        import importlib.util as _ilu
+        import sys as _sys
+        from pathlib import Path as _P
+        _lib = _P(__file__).parent.parent.parent.parent / "lib" / "ci_setup.py"
+        if _lib.exists():
+            _spec = _ilu.spec_from_file_location("_ci_setup_for_validate", _lib)
+            _mod = _ilu.module_from_spec(_spec)
+            _sys.modules.setdefault("_ci_setup_for_validate", _mod)
+            _spec.loader.exec_module(_mod)
+            return _mod.semver_lt(a, b)
+    except Exception:
+        pass
+    # Fallback: self-contained comparator (kept for environments where
+    # lib/ci_setup.py is not present — e.g. a consumer who only copied
+    # scripts/validate.py out of templates/ci/).
     if not (SEMVER_RE.match(a) and SEMVER_RE.match(b)):
         return False
     a_main, _, a_pre = a.partition("-")
@@ -120,8 +136,6 @@ def _semver_lt(a: str, b: str) -> bool:
     b_main, _, b_pre = b.partition("-")
     if "+" in b_pre:
         b_pre = b_pre.split("+", 1)[0]
-    # Build metadata may also appear without a pre-release; strip it from
-    # the main part so X.Y.Z+build parses as just X.Y.Z.
     if "+" in a_main:
         a_main = a_main.split("+", 1)[0]
     if "+" in b_main:
@@ -130,16 +144,12 @@ def _semver_lt(a: str, b: str) -> bool:
     b_nums = tuple(int(x) for x in b_main.split("."))
     if a_nums != b_nums:
         return a_nums < b_nums
-    # Numeric parts equal. Pre-release precedence per semver §11:
-    # a version WITHOUT pre-release has HIGHER precedence than one with.
     if a_pre and not b_pre:
-        return True   # 0.1.0-rc.1 < 0.1.0
+        return True
     if b_pre and not a_pre:
-        return False  # 0.1.0 > 0.1.0-rc.1
+        return False
     if not a_pre and not b_pre:
         return False
-    # Both have pre-release: compare identifier tuple (lexicographic on
-    # dot-separated components, numeric when both sides parse as int).
     def _id_tuple(s: str) -> tuple:
         out = []
         for part in s.split("."):

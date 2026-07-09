@@ -84,10 +84,9 @@ MARKER_SCHEMA_VERSION = "1.0.0"
 # Kept in sync with templates/ci/ci-config.example.json contract.
 PLUGIN_CI_SETUP_VERSION = "0.1.0"
 
-# Per-skill semver (PEP 440 via packaging.version.Version). Used by
-# extract_skill_versions() to read each skill's `version:` frontmatter and
-# by validate_min_skill_versions() to compare installed vs consumer floor.
-# Pre-release sort must work: 0.1.0-rc.1 < 0.1.0.
+# Per-skill semver (semver 2.0.0: X.Y.Z with optional `-prerelease`/`+build`).
+# SEMVER_RE validates each skill's `version:` frontmatter and is reused by
+# templates/ci/scripts/validate.py for the PR-build floor check.
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 # Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
@@ -207,6 +206,60 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
         if p.exists():
             mode = p.stat().st_mode
             p.chmod(mode | 0o111)  # set +x for owner/group/other
+
+
+def semver_lt(a: str, b: str) -> bool:
+    """Return True iff semver string `a` is strictly less than `b`.
+
+    Public API: single canonical semver 2.0.0 comparator used by
+    extract_skill_versions, the audit-outdated subskill, and (via
+    importlib.util in the consumer-shipped
+    `templates/ci/scripts/validate.py`) the PR-build floor check.
+    Self-contained — no `packaging` import — because lib/ci_setup.py
+    runs on consumer CI runners whose Python may not have it.
+
+    Semver 2.0.0 precedence:
+      - Numeric (major, minor, patch) compare first.
+      - A version with a pre-release identifier has LOWER precedence
+        than the same version without one (`0.1.0-rc.1 < 0.1.0`).
+      - Pre-release identifiers are compared dot-separated; numeric
+        segments compare as integers, alphanumeric as strings.
+      - Build metadata (`+...`) is IGNORED in precedence.
+
+    Returns False when either input fails `SEMVER_RE`; callers should
+    treat that as a data-shape failure, not a comparison outcome.
+    """
+    if not (SEMVER_RE.match(a) and SEMVER_RE.match(b)):
+        return False
+    a_main, _, a_pre = a.partition("-")
+    if "+" in a_pre:
+        a_pre = a_pre.split("+", 1)[0]
+    b_main, _, b_pre = b.partition("-")
+    if "+" in b_pre:
+        b_pre = b_pre.split("+", 1)[0]
+    if "+" in a_main:
+        a_main = a_main.split("+", 1)[0]
+    if "+" in b_main:
+        b_main = b_main.split("+", 1)[0]
+    a_nums = tuple(int(x) for x in a_main.split("."))
+    b_nums = tuple(int(x) for x in b_main.split("."))
+    if a_nums != b_nums:
+        return a_nums < b_nums
+    if a_pre and not b_pre:
+        return True   # 0.1.0-rc.1 < 0.1.0
+    if b_pre and not a_pre:
+        return False  # 0.1.0 > 0.1.0-rc.1
+    if not a_pre and not b_pre:
+        return False
+    def _id_tuple(s: str) -> tuple:
+        out = []
+        for part in s.split("."):
+            try:
+                out.append((0, int(part)))
+            except ValueError:
+                out.append((1, part))
+        return tuple(out)
+    return _id_tuple(a_pre) < _id_tuple(b_pre)
 
 
 def _parse_skill_frontmatter(path: Path) -> dict:
