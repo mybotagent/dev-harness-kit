@@ -22,6 +22,19 @@
 
 set -eo pipefail
 
+# ── locale ──────────────────────────────────────────────────────────────────
+# CI runners often default to POSIX/C locale, which makes `grep -E` reject
+# multi-byte (Korean) patterns in references/slop/{phrases,structures}.md with
+# "Invalid collation character" and silently emit zero matches. Force a UTF-8
+# locale before any grep call so the SSOT loads cleanly. Prefer C.UTF-8
+# (always present on Linux CI) and fall back to en_US.UTF-8 (macOS dev).
+if locale -a 2>/dev/null | grep -q '^C\.UTF-8$'; then
+  LC_ALL=C.UTF-8 LANG=C.UTF-8
+elif locale -a 2>/dev/null | grep -q '^en_US\.UTF-8$'; then
+  LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+fi
+export LC_ALL LANG
+
 # ── inputs ──────────────────────────────────────────────────────────────────
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
