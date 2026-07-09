@@ -12,20 +12,16 @@
 # Allows everything else. See .claude/rules/git-workflow.md for rationale.
 
 set -uo pipefail
-INPUT="$(cat)"
+# Use %/* parameter expansion (POSIX, no external `dirname` required) so
+# the source line still works when PATH is broken (jq-less test envs
+# strip dirname along with jq — see TestGitGuardRefactor.fails_closed).
+# shellcheck source=lib/payload-parse.sh
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+require_jq git-guard
+read_stdin_json git-guard
+[ -z "$INPUT_JSON" ] && exit 0
 
-# M2: Fail CLOSED if jq is missing. A silent fail-open here disables all
-# enforcement (the next `jq -r ... 2>/dev/null` returns "" and the script
-# exits 0 on every command). Without this guard, git-guard is no-op on
-# Alpine / stripped Docker / fresh macOS.
-if ! command -v jq >/dev/null 2>&1; then
-  # Use printf (POSIX builtin) so this works even when PATH is broken —
-  # test_blocks_when_jq_missing deliberately strips jq from PATH.
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"GIT GUARD: jq is required by git-guard.sh but not installed. Install jq (apt/brew/apk) — without it, branch protection cannot be enforced."}}\n' >&2
-  exit 2
-fi
-
-CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
+CMD="$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 [ -z "$CMD" ] && exit 0
 
 # Skip non-git commands entirely.
