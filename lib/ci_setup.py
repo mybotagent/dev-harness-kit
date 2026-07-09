@@ -212,12 +212,17 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
 def _parse_skill_frontmatter(path: Path) -> dict:
     """Read a SKILL.md file and return the YAML frontmatter as a dict.
 
-    Self-contained (no `import yaml` dependency at module level) so the
-    helper stays available to consumers' `validate.py` even when they only
-    install `templates/ci/scripts/validate.py` (yaml is not in dev-kit's
-    guaranteed dependency set). The frontmatter is delimited by `---` lines
-    at the top of the file; everything between them is parsed as YAML.
-    Returns {} on missing/empty/invalid frontmatter.
+    Self-contained: regex-based key scan, NO external `yaml` dependency.
+    Rationale: `lib/ci_setup.py` runs on consumer CI runners whose Python
+    may not have `pyyaml` installed (CI installs only `pytest` per
+    .github/workflows/ci.yml). A yaml import that fails at runtime would
+    silently turn every skill into `{"version": None}` and trip the
+    extract_skill_versions ValueError on first call. The regex approach
+    only extracts scalar values per top-level key; for the values
+    extract_skill_versions actually consumes (`name`, `version`) this is
+    sufficient.
+
+    Returns {} on missing/malformed frontmatter.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -233,14 +238,40 @@ def _parse_skill_frontmatter(path: Path) -> dict:
             break
     if end is None:
         return {}
-    block = "\n".join(lines[1:end])
-    try:
-        import yaml  # local import: see docstring
-
-        parsed = yaml.safe_load(block)
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    # Walk the frontmatter block as top-level scalar keys. A `key: value`
+    # on its own line is a scalar. A `key: |` is a block scalar whose
+    # value spans indented lines; we collect its text but don't parse it
+    # as YAML (caller only needs `name` + `version`, both scalars).
+    result: dict = {}
+    i = 1
+    while i < end:
+        line = lines[i]
+        if not line or line[0] in (" ", "\t", "#"):
+            i += 1
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$", line)
+        if not m:
+            i += 1
+            continue
+        key = m.group(1)
+        tail = m.group(2).rstrip()
+        if tail == "|" or tail == ">":
+            # Block scalar (literal / folded). Indented continuation lines
+            # follow; capture them as a single string until next
+            # top-level key or end of frontmatter.
+            buf: list = []
+            i += 1
+            while i < end and (lines[i].startswith((" ", "\t")) or lines[i] == ""):
+                buf.append(lines[i].strip())
+                i += 1
+            result[key] = "\n".join(buf).strip()
+            continue
+        # Strip surrounding quotes if present
+        if len(tail) >= 2 and tail[0] in ('"', "'") and tail[-1] == tail[0]:
+            tail = tail[1:-1]
+        result[key] = tail
+        i += 1
+    return result
 
 
 def extract_skill_versions(plugin_root: Path) -> dict:
