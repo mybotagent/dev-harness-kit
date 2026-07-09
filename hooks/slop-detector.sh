@@ -28,12 +28,23 @@ set -eo pipefail
 # "Invalid collation character" and silently emit zero matches. Force a UTF-8
 # locale before any grep call so the SSOT loads cleanly. Prefer C.UTF-8
 # (always present on Linux CI) and fall back to en_US.UTF-8 (macOS dev).
-if locale -a 2>/dev/null | grep -q '^C\.UTF-8$'; then
-  LC_ALL=C.UTF-8 LANG=C.UTF-8
-elif locale -a 2>/dev/null | grep -q '^en_US\.UTF-8$'; then
-  LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+#
+# NB: read `locale -a` into a variable FIRST. `set -o pipefail` + `grep -q`
+# (which exits on first match) causes SIGPIPE upstream and kills the script
+# under `set -e` before the if-condition is even evaluated. Buffering avoids
+# the SIGPIPE entirely.
+_LOCALES="$(locale -a 2>/dev/null || true)"
+if echo "$_LOCALES" | grep -qE '^(C\.UTF-8|C\.utf8)$'; then
+  export LC_ALL=C.UTF-8 LANG=C.UTF-8
+elif echo "$_LOCALES" | grep -qE '^en_US\.UTF-8$'; then
+  export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+else
+  # Last resort: grep will reject KO patterns but at least ASCII matches load.
+  # Surface the limitation so the failure is visible rather than silent.
+  printf '[slop-detector] WARN: no UTF-8 locale available; KO pattern matching disabled.\n' >&2
+  export LC_ALL=POSIX LANG=POSIX
 fi
-export LC_ALL LANG
+unset _LOCALES
 
 # ── inputs ──────────────────────────────────────────────────────────────────
 INPUT=$(cat)
