@@ -34,7 +34,7 @@ The hook reports a `severity:` line in stderr; the audit-slop skill escalates by
 
 | Var | Default | Effect |
 |---|---|---|
-| `SLOP_LEVEL` | `2` | `1` = phrase only, `2` = + structure, `3` = + rhythm density |
+| `SLOP_LEVEL` | `2` | `1` = phrase only, `2` = + structure; `3` is accepted as an alias of `2` (the rhythm-density patterns live inside `structures.md` and fire whenever T2 fires) |
 | `SLOP_QUIET` | `0` | `1` = suppress stderr (still exit 0) |
 | `SLOP_STRICT` | `0` | `1` = exit 2 on HIGH (default = advisory exit 0) |
 

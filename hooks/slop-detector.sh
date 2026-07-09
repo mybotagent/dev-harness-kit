@@ -6,16 +6,19 @@
 #
 # Default advisory (exit 0). Opt-in strict via SLOP_STRICT=1 (exit 2 on HIGH).
 #
-# Tiers (env SLOP_LEVEL=1|2|3, default 2):
+# Tiers (env SLOP_LEVEL=1|2, default 2 — SLOP_LEVEL=3 is accepted as alias of 2):
 #   T1 PHRASE    phrases.md     — KO + EN n-grams (throat-clearing, jargon, adverbs, meta)
-#   T2 STRUCTURE structures.md  — regex shapes (binary contrast, false agency, Wh-starters, lazy extremes, KO structure)
-#   T3 RHYTHM    structures.md  — density (em-dash count, three-item lists, dramatic fragmentation)
+#   T2 STRUCTURE structures.md  — regex shapes incl. KO structure, false agency, three-item lists,
+#                                 dramatic fragmentation, em-dash density, lazy extremes, Wh-starters
+#   (T3 RHYTHM  was reserved for a future opt-in density-only tier. v2 ships T2 carrying the
+#                rhythm patterns because in practice they only matter when a document is already
+#                triggering the structural ladder; SLOP_LEVEL=3 is therefore aliased to 2.)
 #
 # Severity rules (see hooks/references/slop/README.md for the full ladder):
-#   - Any KO phrase/structure match → HIGH immediately.
-#   - ≥3 unique T1 OR ≥1 T2 + ≥1 T1 → HIGH
-#   - ≥2 unique T1 OR KO structure → MEDIUM
-#   - 1 unique T1 OR 1 T2          → LOW
+#   - Any KO phrase or KO structure match → HIGH immediately.
+#   - ≥3 unique T1 OR (≥1 T2 + ≥1 T1) → HIGH
+#   - ≥2 unique T1 → MEDIUM
+#   - 1 unique T1 OR 1 T2 → LOW
 #
 # If references/slop/{phrases,structures}.md is missing, falls back to the v1 inline
 # bank and prints a one-shot WARN to stderr. No silent failure.
@@ -91,7 +94,9 @@ scan_tier() {
   local pats
   pats="$(load_bank "$bank" 2>/dev/null)" || return 0
   [ -z "$pats" ] && return 0
-  PYTHONIOENCODING=utf-8 python3 - "$bank" "$content_file" <<'PY' 2>/dev/null | sort -u | head -50 || true
+  # No head cap on the scan — `count_lines` needs every unique match to decide severity.
+  # The print-time cap in `emit` below limits how many markers show up in stderr.
+  PYTHONIOENCODING=utf-8 python3 - "$bank" "$content_file" <<'PY' 2>/dev/null | sort -u || true
 import re, sys, pathlib
 bank_path, content_path = sys.argv[1], sys.argv[2]
 # Drop `#` comments and blank lines; one ERE per remaining line.
@@ -145,7 +150,7 @@ t2_matches=""
 
 if [ ! -r "$PHRASES_BANK" ]; then
   echo "[slop-detector] WARN: $PHRASES_BANK not readable; using inline v1 fallback (T1 only)." >&2
-  t1_matches="$(grep -oE "$INLINE_BANK" "$CONTENT_FILE" 2>/dev/null | sort -u | head -50)"
+  t1_matches="$(grep -oE "$INLINE_BANK" "$CONTENT_FILE" 2>/dev/null | sort -u)"
 else
   t1_matches="$(scan_tier "$PHRASES_BANK" "$CONTENT_FILE")"
   if [ "$SLOP_LEVEL" -ge 2 ] && [ -r "$STRUCTURES_BANK" ]; then
@@ -177,13 +182,22 @@ elif [ "$t1_n" -ge 1 ] || [ "$t2_n" -ge 1 ]; then
 fi
 
 # ── emit ────────────────────────────────────────────────────────────────────
+# Args: <severity> <body> -> stdout-via-stderr advisory block.
+# Print-time cap of 50 markers per report section; the severity counts above
+# still see every unique match (cap is presentation-only).
 emit() {
   [ "$SLOP_QUIET" = "1" ] && return 0
   local sev="$1"; shift
   echo "[slop-detector] ${sev} — ${FILE}" >&2
-  while IFS= read -r line; do
+  head -50 <<< "$*" | while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] && echo "  ${line}" >&2
-  done <<< "$*"
+  done || true
+  # Show a "more" cue when the input was truncated.
+  local total
+  total=$(printf '%s\n' "$*" | awk 'NF' | wc -l | tr -d ' ')
+  if [ "$total" -gt 50 ]; then
+    echo "[slop-detector]   (+$((total-50)) more unique matches hidden; severity count already reflects every match)" >&2
+  fi
   echo "[slop-detector] If intentional, ignore. Otherwise delete the phrases." >&2
 }
 
