@@ -5,6 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-255%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Skills](https://img.shields.io/badge/skills-30-blueviolet)](skills/)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](.claude-plugin/plugin.json)
 
 ## What
 

@@ -2,7 +2,6 @@
 name: log
 category: shortcuts
 description: Toggle /log setup|on|off|status — install/remove loghooks from ~/dev/loghooks into the current project's Claude/Codex settings.
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:log on
   - User types /dev-kit:log off

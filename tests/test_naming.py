@@ -115,26 +115,26 @@ class TestNaming(unittest.TestCase):
         self.assertEqual(m_name, "dev-kit")
         self.assertEqual(p_name, "dev-kit")
 
-    def test_skill_version_is_semver(self):
-        """feat/skill-versions: every SKILL.md frontmatter `version:` must match semver.
+    def test_plugin_manifest_version_is_semver(self):
+        """feat/skill-versions: `.claude-plugin/plugin.json:version` must match semver.
 
-        Per-skill diagnostic (smoke only asserts count + regex) — a single
-        failure here prints the exact offender.
+        Single source of truth — the refactor dropped per-skill `version:`
+        fields to avoid bureaucratic tax. Plugin-level is the only one
+        maintained; if it goes stale the PR gate and the audit-outdated
+        subskill both surface the drift.
         """
-        skills_dir = PROJECT_ROOT / "skills"
-        if not skills_dir.exists():
-            self.skipTest("no skills dir yet")
+        mp = PROJECT_ROOT / ".claude-plugin" / "plugin.json"
+        if not mp.exists():
+            self.skipTest("plugin manifest missing")
+        import json
+        data = json.loads(mp.read_text())
+        ver = data.get("version")
         semver = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-        bad: list = []
-        for skill_dir in skills_dir.rglob("SKILL.md"):
-            text = skill_dir.read_text(encoding="utf-8")
-            ver = extract_frontmatter_field(text, "version")
-            if ver is None:
-                bad.append(f"{skill_dir.relative_to(PROJECT_ROOT)}: missing version")
-                continue
-            if not semver.match(ver):
-                bad.append(f"{skill_dir.relative_to(PROJECT_ROOT)}: version={ver!r} is not valid semver")
-        self.assertEqual(bad, [], f"Skill version frontmatter violations:\n" + "\n".join(bad))
+        self.assertIsNotNone(ver, f"{mp}: missing `version:` field")
+        self.assertRegex(
+            ver or "", semver,
+            f"{mp}: version={ver!r} is not valid semver",
+        )
 
 
 if __name__ == "__main__":

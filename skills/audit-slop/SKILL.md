@@ -2,7 +2,6 @@
 name: audit-slop
 category: audit
 description: slop-detector SSOT bulk audit. KO+EN banned phrase scan. HIGH/MEDIUM/LOW buckets report.
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:audit (cross-cutting)
   - Bulk audit before release

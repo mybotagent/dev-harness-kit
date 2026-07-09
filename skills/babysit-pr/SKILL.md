@@ -2,7 +2,6 @@
 name: babysit-pr
 category: ship
 description: 0-arg PR babysitter. Polls `gh pr checks`, fetches failing run logs, applies minimal fixes, commits + pushes, and re-iterates until review verdict = Approve and all required checks pass. Hard cap on iterations to prevent infinite loops.
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:babysit-pr
   - PR is open on current branch and CI is red / review requested changes

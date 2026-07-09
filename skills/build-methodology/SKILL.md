@@ -2,7 +2,6 @@
 name: build-methodology
 category: build
 description: methodology router. TDD/SDD/DDD/BDD/FDD/custom selection (MUST-48). Auto-dispatched via lib/methodology/<name>.py.
-version: 0.1.0
 when_to_use: |
   - User runs /dev-kit:config "methodology" question
   - Auto-invoked by build-engine per step

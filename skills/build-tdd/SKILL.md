@@ -2,7 +2,6 @@
 name: build-tdd
 category: build
 description: Red-Green-Refactor cycle. Active when methodology=tdd (default). No production code without a failing test. tdd-guard hook enforces.
-version: 0.1.0
 when_to_use: |
   - User types "build X" / "add X" / "implement X"
   - methodology=tdd (default) sub-skill of /dev-kit:build

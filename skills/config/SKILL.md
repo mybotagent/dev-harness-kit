@@ -2,7 +2,6 @@
 name: config
 category: config
 description: skill + MCP + hook + methodology picker (multiSelect).
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:config
 allowed-tools: Read Write Edit

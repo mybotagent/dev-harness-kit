@@ -2,7 +2,6 @@
 name: bootstrap-codebase-map
 category: bootstrap
 description: deterministic synthesis of codebase tree + manifest + dependencies + conventions → CLAUDE.md §3. Read-only, no LLM call.
-version: 0.1.0
 when_to_use: |
   - When `/dev-kit:bootstrap` after sanity PASS
   - When user runs `/dev-kit:map` or `--refresh-codebase-map`

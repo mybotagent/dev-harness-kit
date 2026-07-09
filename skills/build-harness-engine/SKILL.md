@@ -2,7 +2,6 @@
 name: build-harness-engine
 category: design
 description: phase step file generation. Synthesizes plan-skill 6-step output into phases/<name>/{index.json, step<N>.md}. Dispatched by plan.
-version: 0.1.0
 when_to_use: |
   - Auto-invoked by plan after gate-pass
   - User triggers manual regeneration via `@dev-kit:plan`

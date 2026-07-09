@@ -2,7 +2,6 @@
 name: bootstrap-sanity
 category: bootstrap
 description: read-only audit of project preconditions. Deterministic (regex + glob, no LLM call). Outputs PASS/WARN/FAIL to .dev-kit/sanity-report.md.
-version: 0.1.0
 when_to_use: |
   - When `/dev-kit:bootstrap` first run
   - When user runs `/dev-kit:audit` with --sanity-only

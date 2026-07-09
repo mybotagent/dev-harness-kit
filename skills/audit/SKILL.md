@@ -2,7 +2,6 @@
 name: audit
 category: audit
 description: 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY.
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:audit
   - Bulk audit before release

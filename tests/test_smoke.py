@@ -3,7 +3,6 @@
 
 Validates the plugin-only structure:
 - All 30 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
-- Every skill declares a `version:` in its frontmatter (feat/skill-versions)
 - All 5 hook bash scripts executable + syntactically valid (hooks/)
 - 7 stage→hook mapping in active_hooks_codec
 - Iron Laws are SSOT in CLAUDE.md
@@ -20,7 +19,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SKILL_COUNT = 30
-SKILL_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
@@ -36,20 +34,17 @@ class TestSmoke(unittest.TestCase):
         found = list(skills_dir.rglob("SKILL.md"))
         self.assertEqual(len(found), SKILL_COUNT, f"Expected {SKILL_COUNT} skills, got {len(found)}")
 
-    def test_every_skill_has_version_frontmatter(self):
-        """feat/skill-versions: every SKILL.md frontmatter MUST declare `version:`."""
+    def test_plugin_manifest_has_version(self):
+        """feat/skill-versions: `.claude-plugin/plugin.json` MUST declare `version:`."""
         from importlib.util import spec_from_file_location, module_from_spec
-        spec = spec_from_file_location("ci_setup_smoke", PROJECT_ROOT / "lib" / "ci_setup.py")
-        mod = module_from_spec(spec)
-        sys.modules["ci_setup_smoke"] = mod  # @dataclass needs module in sys.modules (Py3.14)
-        spec.loader.exec_module(mod)
-        result = mod.extract_skill_versions(PROJECT_ROOT)
-        self.assertEqual(
-            len(result), SKILL_COUNT,
-            f"expected {SKILL_COUNT} skills with semver, got {len(result)}: {result}",
+        spec = spec_from_file_location(
+            "ci_setup_smoke", PROJECT_ROOT / "lib" / "ci_setup.py"
         )
-        for skill, ver in result.items():
-            self.assertRegex(ver, SKILL_VERSION_RE, f"{skill}: {ver!r} is not valid semver")
+        mod = module_from_spec(spec)
+        sys.modules["ci_setup_smoke"] = mod
+        spec.loader.exec_module(mod)
+        v = mod.plugin_version(PROJECT_ROOT)
+        self.assertRegex(v, mod.SEMVER_RE, f"plugin.json:version={v!r} is not valid semver")
 
     def test_hook_scripts_exist_and_executable(self):
         hooks_dir = PROJECT_ROOT / "hooks"

@@ -1,11 +1,10 @@
 ---
 name: audit-outdated
 category: audit
-description: outdated-skill audit. Compares installed dev-kit snapshot vs current dev-harness-kit HEAD. Reports per-skill semver drift.
-version: 0.1.0
+description: outdated-skill audit. Diff-based per-skill drift report between installed dev-kit snapshot and dev-harness-kit HEAD. Zero bookkeeping.
 when_to_use: |
   - User types /dev-kit:audit --outdated
-  - User wants to know which installed skills are below current HEAD before /dev-kit:ci-setup --force
+  - User wants to know which installed skills are behind current HEAD before /dev-kit:ci-setup --force
 allowed-tools: Read Grep Glob Bash
 disallowed-tools: Write Edit
 model: haiku
@@ -14,77 +13,87 @@ user-invocable: false
 
 # audit-outdated — Outdated-skill audit
 
-Read-only per-skill version drift report. Compares the dev-kit plugin
-snapshot the user has **installed** against the **HEAD** checkout of
-`dev-harness-kit`. Surfaces skills where the installed version is
-behind HEAD, so the user can decide whether to
-`/dev-kit:ci-setup --force`.
+Read-only per-skill drift report. Compares the dev-kit plugin snapshot the
+user has **installed** against the **HEAD** checkout of `dev-harness-kit`.
+Surfaces skills whose installed file content differs from HEAD, so the
+user can decide whether to `/dev-kit:ci-setup --force`.
 
 ## Iron Law
-**Read-only ❌.** No file writes. No edits. The output is stdout only —
-intentionally no `audit-report.md` (KISS; committing a generated report
-risks bit-rot; a future consumer can redirect stdout to a file if they
-want a persistent artifact).
+**Read-only ❌.** No file writes. No edits. Stdout only — no
+`audit-report.md` (KISS; committing a generated report risks bit-rot;
+future consumers can redirect stdout to a file if persistence is needed).
+
+## Why file-content diff (not per-skill versions)
+
+Earlier draft attempted to track each skill with its own `version:`
+frontmatter field and bump per bump. We scrapped that — it was
+bureaucratic tax with no real benefit at this scale. Drift detection at
+the SKILL.md file-content level is:
+
+- **Honest**: a version number can lie; file bytes cannot. If the
+  installed SKILL.md bytes match HEAD, the skill is current.
+- **Zero-bookkeeping**: nothing to forget. No `version:` line to bump in
+  frontmatter on every PR. No `installed_skill_versions` map in the
+  marker. No audit-of-the-audit to catch missing bumps.
+- **Cheap to run**: diff is two stat calls + content compare per skill.
+
+The PR-build floor (the only enforcement surface) is **plugin-level**,
+not per-skill — see `templates/ci/scripts/validate.py:validate_min_version`.
+Consumers opt in once with `"min_version": "0.2.0"`; per-skill bookkeeping
+for both author and consumer is gone.
 
 ## Walk
 
-Two directories to compare for each `skills/<name>/SKILL.md`:
+Use `lib/ci_setup.py:per_skill_drift(plugin_root) -> dict[str, str]`. The
+helper:
 
-1. **HEAD** (the candidate): `<cwd>/skills/<name>/SKILL.md` in the
-   dev-harness-kit checkout the user is currently in.
-2. **Installed** (the baseline): glob
+1. Walks `skills/<name>/SKILL.md` (HEAD) in this checkout.
+2. Picks the **newest** installed snapshot dir at
    `~/.claude/plugins/cache/dev-kit/dev-kit/*/skills/<name>/SKILL.md`
-   where `*` is the semver dir (or commit-SHA dir per PR #31). Pick
-   the **semver-max** entry if multiple. If the cache is empty (fresh
-   install pre-this-feature, or cache was never refreshed), fall back
-   to `~/.claude/plugins/marketplaces/dev-kit/skills/<name>/SKILL.md`
-   (the marketplace clone `bin/devkit-refresh.sh` keeps up to date).
+   (semver-max when the version field is present; latest mtime
+   otherwise). Falls back to
+   `~/.claude/plugins/marketplaces/dev-kit/skills/<name>/SKILL.md` when
+   the cache is empty. Override with `DEV_KIT_INSTALLED_ROOT` for
+   offline/test.
+3. Compares file bytes. Returns `behind` / `current` / `no_install`
+   per skill.
 
-For each skill, extract the `version:` field from the frontmatter of
-both files. Use `lib/ci_setup.py:extract_skill_versions()` on the HEAD
-side; the same logic inlined (or the cached `installed_skill_versions`
-mirror in `.dev-kit/ci-config.json` if present) for the installed side.
+## Drift classification (output rows)
 
-## Drift classification
+| Diff result                | Drift tag      |
+|----------------------------|----------------|
+| Installed file bytes == HEAD | `current`     |
+| Installed file bytes ≠ HEAD  | `behind`      |
+| Installed snapshot missing   | `no_install`  |
 
-| Relationship                       | Drift tag |
-|------------------------------------|-----------|
-| Installed == HEAD                  | `same`    |
-| Installed < HEAD (numeric)         | `patch` / `minor` / `major` per the magnitude |
-| Installed > HEAD (HEAD regressed)  | `regress` — flag loudly (likely a hand-edit or partial checkout) |
-| Installed missing, HEAD present    | `new`     |
-| Installed present, HEAD missing    | `removed` — flag loudly (skill was deleted from the plugin) |
-| Either side fails SEMVER_RE        | `invalid` — flag loudly with both raw values |
-
-Use `lib/ci_setup.py:semver_lt` (public function in this dev-kit checkout — the
-same implementation `validate.py` falls back to).
+(`regress` / `removed` / `invalid` are no longer applicable — diff is
+binary. A "removed" skill simply doesn't appear in the output.)
 
 ## Output
 
 ```
-=== /dev-kit:audit --outdated -- N outdated of 30 skills ===
+=== /dev-kit:audit --outdated -- N behind of 30 skills ===
 
-SKILL          INSTALLED  HEAD      DRIFT
-build          0.1.0      0.2.0     minor
-audit-secret   0.1.0      0.1.1     patch
-... 28 unchanged ...
+SKILL                  STATUS
+build                  behind
+audit-secret           behind
+... N current ...
+... (no_install) ...
 
 To refresh: /dev-kit:ci-setup --force
 ```
 
-- Sort: outdated first (most-outdated by semver magnitude within ties),
-  then `same`, then `new` / `removed` / `regress` / `invalid` at the
-  bottom (these are surprises and deserve attention).
+- Sort: `behind` first, `current` middle, `no_install` last.
 - 4-space fixed column for the eye to scan; do not align to the
   longest name (the table is human-readable, not machine-parseable).
-- If **zero** drift: print `=== /dev-kit:audit --outdated -- all 30 skills current ===` and exit 0.
+- If **zero** drift: print
+  `=== /dev-kit:audit --outdated -- all 30 skills current ===` and exit 0.
 - No file written.
 
 ## Exit codes
 
-- `0` if every installed skill is at-or-above HEAD (no actionable drift).
-- `1` if at least one skill is below HEAD, OR any surprise
-  (`regress` / `removed` / `invalid`).
+- `0` if every installed skill's SKILL.md bytes match HEAD (no action).
+- `1` if at least one skill is `behind` or `no_install`.
 
 The non-zero exit lets a user wire this into a pre-commit hook or a
 nightly cron with `|| true` if they only want a heads-up, or `|| exit 1`
@@ -93,12 +102,13 @@ if they want it to block.
 ## Edge cases
 
 - **No installed snapshot at all** (no `~/.claude/plugins/.../dev-kit/`
-  cache, no marketplace clone): all skills report `new`. Exit 1 with
-  the message: "No installed dev-kit snapshot found — run
+  cache, no marketplace clone): every skill reports `no_install`. Exit 1
+  with the message: "No installed dev-kit snapshot found — run
   `claude plugin install dev-kit` first."
-- **Cache has multiple installed versions** (shouldn't happen, but):
-  pick the semver-max. Note the pick in the output header so the user
-  knows which snapshot was inspected.
-- **`.dev-kit/ci-config.json` exists with `installed_skill_versions`**:
-  prefer that mirror over walking the cache (faster + matches the
-  PR-gate's source of truth).
+- **Cache has multiple installed versions**: pick the newest mtime
+  (deterministic for repeated runs). Note the pick in the output header
+  so the user knows which snapshot was inspected.
+- **Snapshot is non-git** (no commit metadata available): the helper
+  uses raw file bytes; no `git log` is consulted. Means we can't show
+  "behind by N commits", only "behind yes/no." That's the trade-off for
+  zero-bookkeeping.

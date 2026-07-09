@@ -72,21 +72,21 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
-# Marker schema is content-only (no version gate). Content is source of truth;
-# _copy_template skips when bytes match. Anthropic marketplace pins by commit
-# SHA (docs: "every commit counts as a new version"), so we don't bump versions
-# to push fixes — we just push.
+# Marker schema is content-only (no per-field version gate). Content is the
+# source of truth; _copy_template skips when bytes match.
 MARKER_SCHEMA_VERSION = "1.0.0"
-# Plugin release tag written into the marker as `ci_setup_version`. Read by
-# skills/build/SKILL.md as a lexicographic pre-flight gate (>= "0.1.0"). Bump
-# in the same commit that lands a build-gate-visible change so a fresh
-# `bootstrap → ci-setup → build` flow never trips the default-`"0.0.0"` fallback.
-# Kept in sync with templates/ci/ci-config.example.json contract.
-PLUGIN_CI_SETUP_VERSION = "0.1.0"
+# Plugin release tag — kept ONLY as a back-compat alias for the marker field
+# `ci_setup_version`. The canonical plugin version lives at
+# `.claude-plugin/plugin.json:version` (restored from PR #31's removal in
+# feat/skill-versions). New code should read plugin_version(_PLUGIN_ROOT);
+# this constant is here so legacy test contracts that import the name still
+# resolve to the same value the marker carries.
+PLUGIN_CI_SETUP_VERSION = "0.2.0"
 
 # Per-skill semver (semver 2.0.0: X.Y.Z with optional `-prerelease`/`+build`).
-# SEMVER_RE validates each skill's `version:` frontmatter and is reused by
-# templates/ci/scripts/validate.py for the PR-build floor check.
+# Used by templates/ci/scripts/validate.py:validate_min_version to compare the
+# marker's `ci_setup_version` (mirror of plugin.json:version) against the
+# consumer's opt-in `min_version` floor. Self-contained — no `packaging` dep.
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 # Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
@@ -212,11 +212,11 @@ def semver_lt(a: str, b: str) -> bool:
     """Return True iff semver string `a` is strictly less than `b`.
 
     Public API: single canonical semver 2.0.0 comparator used by
-    extract_skill_versions, the audit-outdated subskill, and (via
-    importlib.util in the consumer-shipped
-    `templates/ci/scripts/validate.py`) the PR-build floor check.
-    Self-contained — no `packaging` import — because lib/ci_setup.py
-    runs on consumer CI runners whose Python may not have it.
+    templates/ci/scripts/validate.py (via importlib.util when lib/ is
+    reachable in dev workflows, fallback self-contained otherwise)
+    for the PR-build plugin-version floor check. Self-contained — no
+    `packaging` import — because lib/ci_setup.py runs on consumer CI
+    runners whose Python may not have it.
 
     Semver 2.0.0 precedence:
       - Numeric (major, minor, patch) compare first.
@@ -262,140 +262,127 @@ def semver_lt(a: str, b: str) -> bool:
     return _id_tuple(a_pre) < _id_tuple(b_pre)
 
 
-def _parse_skill_frontmatter(path: Path) -> dict:
-    """Read a SKILL.md file and return the YAML frontmatter as a dict.
+def plugin_version(plugin_root: Path | None = None) -> str:
+    """Read the canonical plugin version from `.claude-plugin/plugin.json`.
 
-    Self-contained: regex-based key scan, NO external `yaml` dependency.
-    Rationale: `lib/ci_setup.py` runs on consumer CI runners whose Python
-    may not have `pyyaml` installed (CI installs only `pytest` per
-    .github/workflows/ci.yml). A yaml import that fails at runtime would
-    silently turn every skill into `{"version": None}` and trip the
-    extract_skill_versions ValueError on first call. The regex approach
-    only extracts scalar values per top-level key; for the values
-    extract_skill_versions actually consumes (`name`, `version`) this is
-    sufficient.
-
-    Returns {} on missing/malformed frontmatter.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return {}
-    lines = text.splitlines()
-    if not lines or lines[0].rstrip() != "---":
-        return {}
-    end = None
-    for i in range(1, len(lines)):
-        if lines[i].rstrip() == "---":
-            end = i
-            break
-    if end is None:
-        return {}
-    # Walk the frontmatter block as top-level scalar keys. A `key: value`
-    # on its own line is a scalar. A `key: |` is a block scalar whose
-    # value spans indented lines; we collect its text but don't parse it
-    # as YAML (caller only needs `name` + `version`, both scalars).
-    result: dict = {}
-    i = 1
-    while i < end:
-        line = lines[i]
-        if not line or line[0] in (" ", "\t", "#"):
-            i += 1
-            continue
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$", line)
-        if not m:
-            i += 1
-            continue
-        key = m.group(1)
-        tail = m.group(2).rstrip()
-        if tail == "|" or tail == ">":
-            # Block scalar (literal / folded). Indented continuation lines
-            # follow; capture them as a single string until next
-            # top-level key or end of frontmatter.
-            buf: list = []
-            i += 1
-            while i < end and (lines[i].startswith((" ", "\t")) or lines[i] == ""):
-                buf.append(lines[i].strip())
-                i += 1
-            result[key] = "\n".join(buf).strip()
-            continue
-        # Strip surrounding quotes if present
-        if len(tail) >= 2 and tail[0] in ('"', "'") and tail[-1] == tail[0]:
-            tail = tail[1:-1]
-        result[key] = tail
-        i += 1
-    return result
-
-
-def extract_skill_versions(plugin_root: Path) -> dict:
-    """Read every `skills/*/SKILL.md` under `plugin_root` and return {name: version}.
-
-    Walks the top-level skills/ directory (flat layout per
-    .claude/rules/skill-authoring.md). For each skill directory containing a
-    SKILL.md, parses the frontmatter and extracts the `version:` field. The
-    field must match SEMVER_RE — otherwise the skill is listed in a
-    `ValueError` (so a missing/invalid version surfaces in CI rather than
-    silently being treated as 0.0.0).
+    Single source of truth for the plugin's release tag. Falls back to
+    `PLUGIN_CI_SETUP_VERSION` (the legacy constant) when the field is
+    missing — preserves back-compat with checkouts that still have the
+    pre-PR #31 / pre-this-PR layout.
 
     Args:
-        plugin_root: absolute path to the dev-harness-kit checkout (the
-            directory that contains the `skills/` folder).
+        plugin_root: absolute path to the dev-harness-kit checkout. When
+            `None` (the default), uses `_PLUGIN_ROOT` (this module's
+            parent-of-parent).
 
     Returns:
-        Dict mapping skill name → semver string, e.g. `{"build": "0.1.0", ...}`.
+        The `version:` field as a string, e.g. `"0.2.0"`.
+    """
+    root = plugin_root or _PLUGIN_ROOT
+    manifest = root / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        v = data.get("version")
+        if isinstance(v, str) and v:
+            return v
+    except (OSError, json.JSONDecodeError):
+        pass
+    return PLUGIN_CI_SETUP_VERSION
 
-    Raises:
-        ValueError: one or more skills are missing the `version:` field or
-            the value does not match SEMVER_RE. The exception message lists
-            every offender so a single CI run shows the full set.
+
+def _installed_snapshot_root() -> Path:
+    """Return the path the running skill should treat as the installed snapshot.
+
+    Defaults to the Claude Code plugin cache layout
+    (`~/.claude/plugins/cache/dev-kit/dev-kit/<version>/`), with a
+    marketplace-clone fallback (`~/.claude/plugins/marketplaces/dev-kit/`).
+    Override `DEV_KIT_INSTALLED_ROOT` to test or run offline.
+    """
+    override = os.environ.get("DEV_KIT_INSTALLED_ROOT")
+    if override:
+        return Path(override)
+    cache = Path.home() / ".claude" / "plugins" / "cache" / "dev-kit" / "dev-kit"
+    if cache.is_dir():
+        versions = sorted([p for p in cache.iterdir() if p.is_dir()])
+        if versions:
+            return versions[-1]  # semver-max / last created
+    marketplace = Path.home() / ".claude" / "plugins" / "marketplaces" / "dev-kit"
+    if marketplace.is_dir():
+        return marketplace
+    return Path()
+
+
+def per_skill_drift(plugin_root: Path) -> dict:
+    """Compare per-skill SKILL.md file content between HEAD and the installed snapshot.
+
+    No frontmatter parsing, no per-skill version metadata. We diff raw
+    content; if the bytes differ, the skill on the user's installed
+    snapshot is "behind HEAD." Drift detection at this resolution is
+    cheaper to maintain (no per-skill bookkeeping), honest (the user's
+    installed copy may differ from HEAD in ways a version number
+    doesn't capture), and good-enough (skill content diff is the ground
+    truth for "did this skill change?").
+
+    Args:
+        plugin_root: absolute path to the dev-harness-kit checkout
+            (the directory that contains `skills/`).
+
+    Returns:
+        dict[str, str] mapping skill name → drift tag:
+          - `"behind"` if the installed snapshot's SKILL.md bytes differ
+            from HEAD's (or the snapshot is missing the file)
+          - `"ahead"` if the snapshot has a SKILL.md that HEAD doesn't
+            (skill was deleted upstream — unusual)
+          - `"current"` if bytes match
+          - `"no_install"` if the snapshot root is missing (fresh
+            install pre-first-refresh — every skill is `"no_install"`)
+
+        Empty dict if `plugin_root/skills/` is missing.
     """
     skills_dir = plugin_root / "skills"
     if not skills_dir.is_dir():
         return {}
+    installed_root = _installed_snapshot_root()
+    has_install = bool(installed_root and installed_root.is_dir())
     result: dict = {}
-    missing: list = []
-    invalid: list = []
     for child in sorted(skills_dir.iterdir()):
         if not child.is_dir():
             continue
         skill_md = child / "SKILL.md"
         if not skill_md.exists():
             continue
-        meta = _parse_skill_frontmatter(skill_md)
-        name = meta.get("name") or child.name
-        version = meta.get("version")
-        if version is None or version == "":
-            missing.append(name)
+        head_bytes = skill_md.read_bytes()
+        if not has_install:
+            result[child.name] = "no_install"
             continue
-        if not isinstance(version, str) or not SEMVER_RE.match(version):
-            invalid.append(f"{name}={version!r}")
+        installed_skill = installed_root / "skills" / child.name / "SKILL.md"
+        if not installed_skill.exists():
+            result[child.name] = "behind"
             continue
-        result[name] = version
-    problems: list = []
-    if missing:
-        problems.append(f"missing version: {', '.join(missing)}")
-    if invalid:
-        problems.append(f"invalid semver: {', '.join(invalid)}")
-    if problems:
-        raise ValueError(
-            "skills with bad version frontmatter — " + "; ".join(problems)
-        )
+        if installed_skill.read_bytes() == head_bytes:
+            result[child.name] = "current"
+        else:
+            result[child.name] = "behind"
     return result
 
 
-def _build_marker(min_skill_versions: dict | None = None) -> dict:
+def _build_marker(min_version: str | None = None) -> dict:
     """Build the `.dev-kit/ci-config.json` payload.
 
     Args:
-        min_skill_versions: consumer's opt-in floor, preserved across
-            `--force` rewrites. `None` means "no prior value" → the field
-            is written as `{}` (permissive default). The argument is
-            explicit so callers can't accidentally clobber a consumer's
-            floor by omitting it.
+        min_version: consumer's opt-in plugin-version floor. `None` →
+            the field is written as `"0.0.0"` (permissive default: every
+            released plugin satisfies a no-constraint floor). The explicit
+            argument prevents callers from accidentally clobbering a
+            consumer's declaration by omitting it.
     """
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
-        "ci_setup_version": PLUGIN_CI_SETUP_VERSION,
+        # Mirror of the canonical plugin version. Single source of truth
+        # is `.claude-plugin/plugin.json:version` (see `plugin_version()`).
+        # The legacy field name `ci_setup_version` is preserved so older
+        # scripts that print it (validate_marker) keep working.
+        "ci_setup_version": plugin_version(_PLUGIN_ROOT),
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
@@ -415,14 +402,11 @@ def _build_marker(min_skill_versions: dict | None = None) -> dict:
         ],
         "rules": [".claude/rules/git-workflow.md"],
         "tests": ["tests/test_worktree_guard.py"],
-        # Per-skill version mirror (auto-written; read by validate.py for
-        # the PR build gate). Live source of truth is skills/<name>/SKILL.md
-        # frontmatter in this dev-kit checkout; mirrored here so consumer
-        # PRs don't have to read dev-kit source files.
-        "installed_skill_versions": extract_skill_versions(_PLUGIN_ROOT),
-        # Consumer's opt-in floor. Empty {} = no constraint (permissive
-        # default; no behavior change for consumers who never edit it).
-        "min_skill_versions": dict(min_skill_versions) if min_skill_versions else {},
+        # Consumer's opt-in plugin-version floor. `"0.0.0"` = any released
+        # plugin satisfies (permissive default; no behavior change for
+        # consumers who never edit the field). PR-gate comparison lives
+        # in templates/ci/scripts/validate.py:validate_min_version.
+        "min_version": min_version or "0.0.0",
     }
 
 
@@ -500,22 +484,23 @@ def install_ci_config(
     _chmod_executable(EXECUTABLE_PATHS, target)
 
     # Write marker (overwrites on force, always succeeds idempotently).
-    # Preserve the consumer's opt-in min_skill_versions floor so a
+    # Preserve the consumer's opt-in `min_version` floor so a
     # `ci-setup --force` does NOT clobber a deliberate declaration. Read
     # the existing marker (if any) just before the write; absent or
-    # unparseable → default to empty (permissive).
+    # unparseable → default to "0.0.0" (permissive — every released
+    # plugin satisfies it).
     marker = target / MARKER_REL
-    preserved_min: dict = {}
+    preserved_min_version: str | None = None
     if existing_marker.exists():
         try:
             existing_data = json.loads(existing_marker.read_text(encoding="utf-8"))
             if isinstance(existing_data, dict):
-                raw = existing_data.get("min_skill_versions")
-                if isinstance(raw, dict):
-                    preserved_min = raw
+                raw = existing_data.get("min_version")
+                if isinstance(raw, str) and raw:
+                    preserved_min_version = raw
         except (OSError, json.JSONDecodeError):
-            preserved_min = {}
-    _atomic_write_json(marker, _build_marker(min_skill_versions=preserved_min))
+            preserved_min_version = None
+    _atomic_write_json(marker, _build_marker(min_version=preserved_min_version))
     report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and

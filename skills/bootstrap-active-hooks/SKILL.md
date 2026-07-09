@@ -2,7 +2,6 @@
 name: bootstrap-active-hooks
 category: bootstrap
 description: stage-aware hook matrix initialization. Reads `.claude-plugin/plugin/hooks/hooks.json` and writes `.dev-kit/.active-hooks.json` with stage-aware defaults.
-version: 0.1.0
 when_to_use: |
   - When `/dev-kit:bootstrap` after codebase-map
   - When stage transition (Plan → Design → Build, etc.)

@@ -2,7 +2,6 @@
 name: security
 category: security
 description: Full OWASP Top 10 2025 fan-out (A01–A10) with a verifier pass. Ten parallel subagents, one per category, return evidence-backed findings; a verification pass confirms or rejects each before a per-category breakdown table + verdict. Use when the user types /dev-kit:security, or asks for a security audit / OWASP scan / pre-release security check.
-version: 0.1.0
 when_to_use: |
   - User types /dev-kit:security
   - Pre-release / quarterly / before major refactor

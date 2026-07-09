@@ -2,7 +2,6 @@
 name: ci-setup
 category: bootstrap
 description: Install dev-kit's reusable CI workflow templates into a target project. Idempotent + version-gated via `.dev-kit/ci-config.json`. Hand-off to /dev-kit:build.
-version: 0.1.0
 when_to_use: |
   - User types `/dev-kit:ci-setup` after `/dev-kit:bootstrap`
   - User wants the same CI shape (branch-policy + validate + test + auto-fix) in a new repo

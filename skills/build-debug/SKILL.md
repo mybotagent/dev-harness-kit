@@ -2,7 +2,6 @@
 name: build-debug
 category: build
 description: 4-phase systematic debugging. No fix proposal before Phase 1 (reproduce) completes (MUST-L2). Root-cause-first Iron Law.
-version: 0.1.0
 when_to_use: |
   - User types "bug" / "doesn't work" / "why failing" / "error"
 allowed-tools: Read Bash

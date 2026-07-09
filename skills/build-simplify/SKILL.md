@@ -2,7 +2,6 @@
 name: build-simplify
 category: build
 description: 4-pass cleanup (dead → dup → naming → coverage). No cleanup without regression test (MUST-L1 + L4).
-version: 0.1.0
 when_to_use: |
   - User types "cleanup" / "refactor" / "simplify"
 allowed-tools: Read Write Bash Glob Grep

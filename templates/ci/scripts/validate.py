@@ -12,8 +12,8 @@ Checks performed (each prints `OK (...)` or `FAIL (...):`):
 1. validate_installation_complete — all 8 required files present
 2. validate_marker              — `.dev-kit/ci-config.json` shape + version
 3. validate_bash_syntax         — `bash -n` on every installed .sh + pre-push
-4. validate_min_skill_versions  — min_skill_versions floor (consumer-opt-in,
-   empty {} → SKIP)
+4. validate_min_version         — `min_version` plugin floor (consumer-opt-in,
+   empty/missing → SKIP)
 """
 from __future__ import annotations
 
@@ -161,58 +161,48 @@ def _semver_lt(a: str, b: str) -> bool:
     return _id_tuple(a_pre) < _id_tuple(b_pre)
 
 
-def validate_min_skill_versions(repo_root: pathlib.Path) -> bool:
-    """Fail the PR if the consumer's opt-in `min_skill_versions` floor is violated.
+def validate_min_version(repo_root: pathlib.Path) -> bool:
+    """Fail the PR if the consumer's opt-in `min_version` floor is violated.
 
-    Behavior matrix (see plan §3 in `.claude/plans/luminous-spinning-pascal.md`):
-      - Marker absent                     → SKIP (bootstrap not run)
-      - Marker present, no floor declared → SKIP (permissive default)
-      - Marker present, empty floor {}    → SKIP (no constraint)
-      - Marker present, floor declared,
-        no installed_skill_versions       → FAIL (data integrity)
-      - Marker present, install >= floor  → OK
-      - Marker present, install < floor   → FAIL (exit 1)
+    Compares the marker's `ci_setup_version` (mirror of the canonical
+    `.claude-plugin/plugin.json:version`) against the consumer's opt-in
+    `min_version` field. Single plugin-level comparison — no per-skill
+    bookkeeping required.
+
+    Behavior matrix:
+      - Marker absent                                 → SKIP
+      - Marker present, `min_version` missing/empty   → SKIP (permissive)
+      - Marker present, `min_version` not semver      → FAIL (data shape)
+      - Marker present, ci_setup_version < min_version → FAIL (exit 1)
+      - Marker present, ci_setup_version >= min_version → OK
     """
     marker = repo_root / ".dev-kit" / "ci-config.json"
     if not marker.exists():
-        _skip("min_skill_versions: no .dev-kit/ci-config.json marker")
+        _skip("min_version: no .dev-kit/ci-config.json marker")
         return True
     try:
         data = json.loads(marker.read_text())
     except json.JSONDecodeError as e:
-        _fail(f"min_skill_versions: marker unreadable: {e}")
+        _fail(f"min_version: marker unreadable: {e}")
         return False
     if not isinstance(data, dict):
-        _skip("min_skill_versions: marker is not a JSON object")
+        _skip("min_version: marker is not a JSON object")
         return True
-    floor = data.get("min_skill_versions")
-    if not isinstance(floor, dict) or not floor:
-        _skip("min_skill_versions: no floor declared (permissive)")
+    floor = data.get("min_version")
+    if not isinstance(floor, str) or not floor.strip():
+        _skip("min_version: no floor declared (permissive)")
         return True
-    installed = data.get("installed_skill_versions")
-    if not isinstance(installed, dict) or not installed:
-        _fail("min_skill_versions: marker missing installed_skill_versions mirror")
+    have = data.get("ci_setup_version")
+    if not isinstance(have, str) or not SEMVER_RE.match(have):
+        _fail(f"min_version: marker missing/invalid ci_setup_version {have!r}")
         return False
-    bad: list = []
-    for skill, want in floor.items():
-        have = installed.get(skill)
-        if have is None:
-            bad.append(f"      {skill}: declared min {want!r} but skill not installed")
-            continue
-        if not isinstance(have, str) or not SEMVER_RE.match(have):
-            bad.append(f"      {skill}: installed version {have!r} is not valid semver")
-            continue
-        if not isinstance(want, str) or not SEMVER_RE.match(want):
-            bad.append(f"      {skill}: required version {want!r} is not valid semver")
-            continue
-        if _semver_lt(have, want):
-            bad.append(f"      {skill}: installed {have} < required {want}")
-    if bad:
-        _fail(f"min_skill_versions: {len(bad)} below floor")
-        for line in bad:
-            print(line)
+    if not SEMVER_RE.match(floor):
+        _fail(f"min_version: required floor {floor!r} is not valid semver")
         return False
-    _ok(f"min_skill_versions ({len(floor)} floor(s) satisfied)")
+    if _semver_lt(have, floor):
+        _fail(f"min_version: installed plugin {have} < required {floor}")
+        return False
+    _ok(f"min_version (installed {have} >= floor {floor})")
     return True
 
 
@@ -223,7 +213,7 @@ def main(repo_root: pathlib.Path | None = None) -> int:
         validate_installation_complete,
         validate_marker,
         validate_bash_syntax,
-        validate_min_skill_versions,
+        validate_min_version,
     ]
     results = [c(repo_root) for c in checks]
     if all(results):
