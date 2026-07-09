@@ -56,42 +56,51 @@ def _extract_install_script(yml_path: Path) -> str:
     return textwrap.dedent(m.group(1))
 
 
-def _run_install_script(script: str, workspace: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+def _run_install_script(
+    script: str,
+    workspace: Path,
+    home: Path,
+    env_extra: dict | None = None,
+) -> subprocess.CompletedProcess:
     """Run the extracted install script in a subprocess. The script
     references $GITHUB_WORKSPACE, $HOME, etc. — caller provides them.
     `git` is mocked on PATH so consumer-install doesn't hit the network.
+    Returns the CompletedProcess; caller asserts on the filesystem state
+    under `home` (which the caller owns and must keep alive for the
+    assertion — typically by creating `home` inside the test's own
+    `tempfile.TemporaryDirectory`).
     """
-    with tempfile.TemporaryDirectory() as td:
-        # Mock git on PATH: any `git clone ... /some/path` creates an
-        # empty dir at /some/path with a fake .git/ marker (enough to
-        # pass the post-install verifications).
-        stub_dir = Path(td) / "stub-bin"
-        stub_dir.mkdir()
-        mock = stub_dir / "git"
-        mock.write_text(
-            "#!/usr/bin/env bash\n"
-            "# Mock git for tests: `git clone <src> <dest>` → mkdir <dest>/.git\n"
-            "if [ \"$1\" = \"clone\" ]; then\n"
-            "  mkdir -p \"$4/.git\"\n"
-            "  exit 0\n"
-            "fi\n"
-            "exit 0\n"
-        )
-        mock.chmod(0o755)
+    # Mock git on PATH. `git clone <flags> <src> <dest>` — the dest is
+    # the LAST positional arg, not a fixed $N (the script passes
+    # `--depth 1` between src and dest, which shifts the dest to $5).
+    # Mock creates an empty dir at <dest>/.git (enough to pass the
+    # post-install verifications).
+    stub_dir = home.parent / "stub-bin"
+    stub_dir.mkdir(exist_ok=True)
+    mock = stub_dir / "git"
+    mock.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Mock git for tests: `git clone <src> <dest>` → mkdir <dest>/.git\n"
+        "if [ \"$1\" = \"clone\" ]; then\n"
+        "  for last; do :; done\n"
+        "  mkdir -p \"$last/.git\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    mock.chmod(0o755)
 
-        fake_home = Path(td) / "home"
-        fake_home.mkdir()
-        env = {
-            "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-            "HOME": str(fake_home),
-            "GITHUB_WORKSPACE": str(workspace),
-        }
-        if env_extra:
-            env.update(env_extra)
-        return subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True, text=True, timeout=30, env=env,
-        )
+    env = {
+        "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(home),
+        "GITHUB_WORKSPACE": str(workspace),
+    }
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
 
 
 def _make_workspace(tmp: Path, *, is_devkit_plugin: bool) -> Path:
@@ -118,37 +127,69 @@ class TestReviewInstallScript(unittest.TestCase):
 
     def test_self_install_when_checkout_is_devkit(self):
         with tempfile.TemporaryDirectory() as td:
-            ws = _make_workspace(Path(td), is_devkit_plugin=True)
+            td_p = Path(td)
+            ws = _make_workspace(td_p, is_devkit_plugin=True)
+            home = td_p / "home"
+            home.mkdir()
             script = _extract_install_script(TEMPLATE_REVIEW_YML)
-            r = _run_install_script(script, ws)
+            r = _run_install_script(script, ws, home)
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}\nstdout={r.stdout}")
-            # Self-install: the marketplace is a symlink to the workspace.
-            marketplace = Path(r.env if hasattr(r, "env") else ".")  # noqa
-            # Read HOME from the actual subprocess env via a marker.
             self.assertIn("self-install", r.stdout)
             self.assertIn("symlinked", r.stdout)
             self.assertNotIn("consumer-install", r.stdout)
             self.assertNotIn("cloning", r.stdout)
+            # Filesystem assertion: self-install must leave a symlink at
+            # $HOME/.claude/plugins/marketplaces/dev-kit pointing at the
+            # workspace. Stdout strings alone wouldn't catch a regression
+            # that prints "symlinked" but creates a real dir (or vice versa).
+            marketplace = home / ".claude/plugins/marketplaces/dev-kit"
+            self.assertTrue(
+                marketplace.is_symlink(),
+                f"self-install must create a symlink at {marketplace} (got: "
+                f"{'symlink' if marketplace.is_symlink() else 'real dir' if marketplace.is_dir() else 'missing'})",
+            )
+            self.assertEqual(
+                marketplace.resolve(), ws.resolve(),
+                f"symlink must point at the workspace (expected {ws}, got {marketplace.resolve()})",
+            )
 
     def test_consumer_install_when_checkout_is_plain(self):
         with tempfile.TemporaryDirectory() as td:
-            ws = _make_workspace(Path(td), is_devkit_plugin=False)
+            td_p = Path(td)
+            ws = _make_workspace(td_p, is_devkit_plugin=False)
+            home = td_p / "home"
+            home.mkdir()
             script = _extract_install_script(TEMPLATE_REVIEW_YML)
-            r = _run_install_script(script, ws, env_extra={"DEV_KIT_GITHUB_TOKEN": "fake-pat"})
+            r = _run_install_script(script, ws, home, env_extra={"DEV_KIT_GITHUB_TOKEN": "fake-pat"})
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}\nstdout={r.stdout}")
             self.assertIn("consumer-install", r.stdout)
             self.assertIn("cloning", r.stdout)
             self.assertNotIn("self-install", r.stdout)
             self.assertNotIn("symlinked", r.stdout)
+            # Filesystem assertion: consumer-install (git clone path) must
+            # leave a real directory, NOT a symlink. Stdout strings alone
+            # wouldn't catch a regression that takes the wrong branch.
+            marketplace = home / ".claude/plugins/marketplaces/dev-kit"
+            self.assertFalse(
+                marketplace.is_symlink(),
+                f"consumer-install must NOT leave a symlink at {marketplace}",
+            )
+            self.assertTrue(
+                marketplace.is_dir(),
+                f"consumer-install must leave a real directory at {marketplace}",
+            )
 
     def test_consumer_install_fails_without_token(self):
         """When DEV_KIT_GITHUB_TOKEN is unset and the checkout isn't the
         dev-kit plugin, the consumer-install path must fail loudly with
         a clear ::error:: explaining the secret requirement."""
         with tempfile.TemporaryDirectory() as td:
-            ws = _make_workspace(Path(td), is_devkit_plugin=False)
+            td_p = Path(td)
+            ws = _make_workspace(td_p, is_devkit_plugin=False)
+            home = td_p / "home"
+            home.mkdir()
             script = _extract_install_script(TEMPLATE_REVIEW_YML)
-            r = _run_install_script(script, ws)
+            r = _run_install_script(script, ws, home)
             self.assertNotEqual(r.returncode, 0, f"expected failure; got stdout={r.stdout}")
             self.assertIn("DEV_KIT_GITHUB_TOKEN", r.stdout)
             self.assertIn("required", r.stdout)
