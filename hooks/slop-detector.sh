@@ -4,9 +4,16 @@
 # Default advisory (exit 0).
 
 set -eo pipefail
-INPUT=$(cat)
-FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
-CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // ""' 2>/dev/null)
+# Use %/* parameter expansion (POSIX, no external `dirname` required) so
+# the source line still works when PATH is broken (jq-less test envs
+# strip dirname along with jq — see TestSlopDetectorRefactor.fails_closed).
+# shellcheck source=lib/payload-parse.sh
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+require_jq slop-detector
+read_stdin_json slop-detector
+[ -z "$INPUT_JSON" ] && exit 0
+FILE=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.file_path // ""')
+extract_content
 [ -z "$CONTENT" ] && exit 0
 
 # SSOT — keep in sync with /dev-kit:audit
