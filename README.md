@@ -4,8 +4,8 @@
 
 [![Tests](https://img.shields.io/badge/tests-255%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-31-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue)](.claude-plugin/plugin.json)
+[![Skills](https://img.shields.io/badge/skills-36-blueviolet)](skills/)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](.claude-plugin/plugin.json)
 
 ## What
 
@@ -143,7 +143,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 31 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 36 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
