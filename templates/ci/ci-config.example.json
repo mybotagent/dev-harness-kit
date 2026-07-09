@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "ci_setup_version": "0.1.0",
+  "ci_setup_version": "0.2.0",
   "installed_at": "TEMPLATE",
   "installed_by": "dev-kit:ci-setup",
   "runners": [
@@ -16,5 +16,6 @@
   ],
   "githooks": [
     ".githooks/pre-push"
-  ]
+  ],
+  "min_version": "0.0.0"
 }

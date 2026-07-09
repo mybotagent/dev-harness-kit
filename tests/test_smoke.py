@@ -2,7 +2,7 @@
 """test_smoke.py — End-to-end smoke test for dev-kit.
 
 Validates the plugin-only structure:
-- All 28 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
+- All 30 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
 - All 5 hook bash scripts executable + syntactically valid (hooks/)
 - 7 stage→hook mapping in active_hooks_codec
 - Iron Laws are SSOT in CLAUDE.md
@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SKILL_COUNT = 29
+SKILL_COUNT = 30
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
@@ -33,6 +33,18 @@ class TestSmoke(unittest.TestCase):
         skills_dir = PROJECT_ROOT / "skills"
         found = list(skills_dir.rglob("SKILL.md"))
         self.assertEqual(len(found), SKILL_COUNT, f"Expected {SKILL_COUNT} skills, got {len(found)}")
+
+    def test_plugin_manifest_has_version(self):
+        """feat/skill-versions: `.claude-plugin/plugin.json` MUST declare `version:`."""
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location(
+            "ci_setup_smoke", PROJECT_ROOT / "lib" / "ci_setup.py"
+        )
+        mod = module_from_spec(spec)
+        sys.modules["ci_setup_smoke"] = mod
+        spec.loader.exec_module(mod)
+        v = mod.plugin_version(PROJECT_ROOT)
+        self.assertRegex(v, mod.SEMVER_RE, f"plugin.json:version={v!r} is not valid semver")
 
     def test_hook_scripts_exist_and_executable(self):
         hooks_dir = PROJECT_ROOT / "hooks"

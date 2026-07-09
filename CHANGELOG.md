@@ -4,6 +4,17 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Added — plugin-level version management + per-skill drift audit (feat/skill-versions)
+
+This started as per-skill `version:` frontmatter on each of the 30 skills. The design was scrapped and replaced with a single-plugin-level version + diff-based per-skill audit — per-skill bookkeeping was bureaucratic tax with no real benefit at this scale (most "consumer-visible" changes touch multiple skills; the version number is a label without an enforced meaning). Final design:
+
+- **feat(plugin)**: `.claude-plugin/plugin.json` now declares `version: "0.2.0"` (single source of truth, restoring the field PR #31 had dropped). `lib/ci_setup.py:plugin_version()` reads it; `SEMVER_RE` + `semver_lt` validate semver 2.0.0 (no `packaging` dep).
+- **feat(ci-setup)**: the `.dev-kit/ci-config.json` marker carries `ci_setup_version` (mirror of `plugin.json:version`, auto-written) plus a single new opt-in field `min_version` (defaults to `"0.0.0"`; every released plugin satisfies the permissive default). `/dev-kit:ci-setup --force` rewrites `ci_setup_version` but **preserves** the consumer's `min_version` declaration.
+- **feat(validate)**: `templates/ci/scripts/validate.py` appends a 4th check `validate_min_version()`. Single plugin-version compare (`ci_setup_version >= min_version`). Empty/missing `min_version` SKIPs (no behavior change for consumers who never edit the field). The check uses a self-contained `_semver_lt` (no `packaging` dep) so consumer repos don't need an extra requirement. 8 unit cases in `tests/test_validate_min_version.py` cover marker absent / no floor / empty floor / satisfied / violated / invalid semver (floor + installed).
+- **feat(audit)**: new subskill `skills/audit-outdated/SKILL.md` (model-use, `user-invocable: false`) backs the user-facing `/dev-kit:audit --outdated` flag (added to parent `skills/audit/SKILL.md` Rules). Uses `lib/ci_setup.py:per_skill_drift()` to compare installed snapshot bytes vs HEAD on each `skills/<name>/SKILL.md` — no frontmatter parsing, no per-skill metadata to maintain. Stdout table, exit 1 on any drift, no `audit-report.md` file (KISS).
+- **fix(refresh)**: `bin/devkit-refresh.sh` no longer `die`s on missing `version` field (PR #31's orphan); falls back to `git rev-parse --short HEAD` for the cache-dir segment with a one-line note. With `version:` restored in `plugin.json`, the fallback is now rarely needed but kept for forward-compat.
+- **fix(ci-setup)**: self-contained regex-based frontmatter parser (replaces `yaml.safe_load` path that failed at runtime when `pyyaml` wasn't installed on CI Python 3.12).
+
 ### Changed — simplify `plan` skill gates (5 instead of 8)
 
 - 8-gate flow (`frame → evidence → diff → non-goals → socratic → phase-decompose → seed-convergence → prd-writer`) collapsed to 5 gates (`frame → validate → non-goals → decompose → emit`) by merging the three overlapping "is this idea worth building?" gates (evidence / diff-profit / socratic-deepen) into a single `validate` gate with quantified inputs.

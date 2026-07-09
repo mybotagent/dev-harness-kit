@@ -19,4 +19,5 @@ read-only. HIGH/MEDIUM/LOW buckets output. Never write ❌.
 
 - `/dev-kit:audit --secrets-only` → secrets only
 - `/dev-kit:audit --slop-only` → slop only
-- combined mode (default) → both
+- `/dev-kit:audit --outdated` → outdated-skill audit (delegates to `audit-outdated` subskill — installed vs HEAD per-skill semver drift)
+- combined mode (default) → all three above

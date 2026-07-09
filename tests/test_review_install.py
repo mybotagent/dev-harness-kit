@@ -294,25 +294,18 @@ class TestMarketplaceJsonSource(unittest.TestCase):
             f"marketplace.json source must point at the dev-harness-kit repo, got: {url!r}",
         )
 
-    def test_marketplace_version_matches_plugin_json(self):
-        """Both manifests must omit `version` (marketplace pins by commit SHA,
-        docs: "If omitted and your plugin is distributed via git, the commit
-        SHA is used and every commit counts as a new version.")."""
+    def test_marketplace_plugin_version_present(self):
+        """feat/skill-versions: `plugin.json` MUST declare `version:` (single
+        source of truth restored from PR #31's removal). Per-skill version
+        bookkeeping was dropped (DRY) so this is the ONLY version field
+        the project maintains for an installed plugin's release tag.
+        """
         import json
-        m = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
         p = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
-        self.assertNotIn(
-            "version", p,
-            f"plugin.json should omit `version` field (got: {p.get('version')!r})",
-        )
-        self.assertNotIn(
-            "version", m,
-            f"marketplace.json root should omit `version` field (got: {m.get('version')!r})",
-        )
-        self.assertNotIn(
-            "version", m["plugins"][0],
-            f"marketplace.json plugin entry should omit `version` field (got: {m['plugins'][0].get('version')!r})",
-        )
+        v = p.get("version")
+        self.assertIsNotNone(v, "plugin.json must declare `version:` (the canonical plugin-level version)")
+        self.assertRegex(v or "", r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
+                         f"plugin.json:version={v!r} is not valid semver")
 
 
 if __name__ == "__main__":

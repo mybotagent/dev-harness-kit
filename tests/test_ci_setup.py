@@ -328,6 +328,62 @@ class TestCiSetup(unittest.TestCase):
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
+    def test_marker_writes_ci_setup_version_from_manifest(self):
+        """feat/skill-versions: marker `ci_setup_version` mirrors plugin.json:version."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertIn("ci_setup_version", marker, "marker missing ci_setup_version")
+            # Mirror must equal the canonical plugin version (single source
+            # of truth at .claude-plugin/plugin.json).
+            from importlib.util import spec_from_file_location, module_from_spec
+            spec = spec_from_file_location(
+                "_cs_min_version",
+                Path(__file__).parent.parent / "lib" / "ci_setup.py",
+            )
+            cs = module_from_spec(spec)
+            sys.modules["_cs_min_version"] = cs  # @dataclass needs sys.modules (Py3.14)
+            spec.loader.exec_module(cs)
+            self.assertEqual(
+                marker["ci_setup_version"], cs.plugin_version(Path(__file__).parent.parent),
+                "marker ci_setup_version must mirror .claude-plugin/plugin.json:version",
+            )
+
+    def test_marker_min_version_default_zero(self):
+        """feat/skill-versions: first install writes min_version='0.0.0' (permissive)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertEqual(marker["min_version"], "0.0.0",
+                             "fresh install must default to '0.0.0' (permissive)")
+
+    def test_ci_setup_force_preserves_consumer_min_version(self):
+        """feat/skill-versions: `--force` rewrites the mirror but PRESERVES the
+        consumer's opt-in `min_version` declaration."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            marker_path = target / ".dev-kit" / "ci-config.json"
+            data = json.loads(marker_path.read_text())
+            data["min_version"] = "0.5.0"
+            marker_path.write_text(json.dumps(data))
+            self.ci_setup.install_ci_config(target, force=True)
+            reread = json.loads(marker_path.read_text())
+            self.assertEqual(
+                reread["min_version"], "0.5.0",
+                "--force clobbered the consumer's min_version",
+            )
+            # ci_setup_version was still (re)written from the new plugin checkout.
+            self.assertIn("ci_setup_version", reread)
+            self.assertRegex(
+                reread["ci_setup_version"], r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
+            )
+
     def test_post_install_checklist_is_complete(self):
         """5 numbered items; each is a gh secret set, a gh/git config, or a
         workflow-setting note. Must be actionable."""
