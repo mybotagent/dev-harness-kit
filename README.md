@@ -125,6 +125,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 ```
 /dev-kit:bootstrap              # first entry (auto-generate CLAUDE.md)
 /dev-kit:ci-setup                # install dev-kit CI templates (workflows + hooks + scripts + worktree-rule files) into target repo
+/dev-kit:log setup|on|off|status # toggle loghooks (Stop/SessionEnd transcripts) per project
 /dev-kit:plan                    # PRD + phases auto (Plan+Design unified)
 /dev-kit:build                   # run per-step sub-agents
 /dev-kit:review                  # 3-dim code review (correctness + security + architecture)
@@ -207,6 +208,19 @@ Enforced by 3 hooks:
 - `session-start-check.sh` — gentle reminder at session start
 
 Plus `bin/devkit-refresh.sh` for the consumer side (refresh cache after PR merge via `git pull` + `rsync`).
+
+## Loghooks (`/dev-kit:log`)
+
+Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo (Claude Code `Stop` + `SessionEnd` + Codex equivalents) as a one-command on/off per project.
+
+```bash
+/dev-kit:log setup   # copy tools/save_log.py + scaffold logs/{claude-code,codex}/
+/dev-kit:log on      # merge hooks into .claude/settings.json + .codex/hooks.json
+/dev-kit:log status  # managed=N captured=N
+/dev-kit:log off     # strip sentinel-tagged entries; scaffold left in place
+```
+
+Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<sid>.jsonl` and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
 
 ## Consumer-install via `/dev-kit:ci-setup` (new in 0.1.1)
 
