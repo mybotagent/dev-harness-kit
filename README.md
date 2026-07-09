@@ -107,8 +107,8 @@ claude plugin install dev-kit
 # 3. Bootstrap (writes CLAUDE.md + AGENTS.md + active-hooks.json; no source change)
 /dev-kit:bootstrap
 
-# 4. Install CI templates (15 files; idempotent)
-/dev-kit:ci-setup
+# 4. Install CI templates (15 files)
+/dev-kit:ci-setup --force
 
 # 5. First commit + push
 git add -A
@@ -116,7 +116,7 @@ git commit -m "chore: bootstrap dev-kit"
 git push -u origin main
 ```
 
-**Don't use `--force` on first install** — default install already copies all 15 files. `--force` is only for *refreshing* an existing install when dev-kit's templates have changed upstream. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for the refresh workflow.
+**Use `--force` on first install** — for consumers (the dominant case), `--force` is the safe standard. On a truly fresh repo the result is identical to default install (all 15 files copy either way), but `--force` is robust against partial installs from a previous attempt and is robust to a stale plugin cache. Re-run with `--force` later to pull in upstream template changes. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for refresh vs first-install semantics.
 
 Typical next step: `/dev-kit:plan` for PRD + phases auto.
 
@@ -243,13 +243,13 @@ After install, consumer repos get:
 `ci-setup` is **idempotent by default**. The marker file `.dev-kit/ci-config.json` records installed_at + content hashes; if all 15 EXPECTED_PATHS files are present and match, the re-run is a no-op (skip + report). `--force` overwrites the 15 EXPECTED_PATHS files regardless.
 
 **Use `--force` when:**
+- First install on a fresh repo (default install is also correct on a truly fresh repo, but `--force` is robust against partial installs from a previous attempt and against a stale plugin cache — see "First-time consumer setup" above)
 - A new template was added to dev-kit (e.g. `templates/ci/scripts/branch-policy.sh`) and you want it on your consumer repo
 - A template was fixed in dev-kit (e.g. PR #45 patched a stale `review.yml` gate) and you want the fix
 - You suspect the install is stale: marker exists but a template file is missing or drifted (often from a stale plugin cache — see "Plugin cache refresh" above)
 - The lint pass on a previous install reported warnings that need a refresh to clear
 
 **Do NOT use `--force` when:**
-- First install on a fresh repo (default install is correct)
 - Re-running after no upstream changes (default is a no-op skip; `--force` creates noise in the diff and may overwrite local customizations)
 - The consumer repo has hand-edited any of the 15 EXPECTED_PATHS files (e.g. a customized `branch-policy.sh`). `--force` overwrites your edits — review the diff before committing
 - You're unsure what changed in dev-kit since your last install. Run `git log --oneline templates/ci/` in your dev-kit checkout first
