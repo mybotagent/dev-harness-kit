@@ -4,6 +4,17 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Added — slop-detector v2: multi-tier scanner + KO structural coverage + 5-dim audit (feat/slop-detector-v2)
+
+The slop-detector shipped as a single regex (`hooks/slop-detector.sh`) covering ~24 KO+EN patterns. v2 splits detection into three tiers — phrase (T1, high-signal n-grams), structure (T2, regex shapes), rhythm (T3, opt-in density) — sourced from a single SSOT under `hooks/references/slop/`. Pattern count grew from 24 to ~110 (KO + EN + KO structural). The audit-slop subskill (`skills/audit-slop/SKILL.md`) is now a real multi-dim scanner that buckets files HIGH/MEDIUM/LOW against the 5-dim rubric (Directness / Rhythm / Trust / Authenticity / Density) defined in `hooks/references/slop/scoring.md`, replacing the previous count-only bucket. Phrase bank skips CLI-positions-incompatible `\b`/`\m`/`\s`/`\w` escapes (BSD-grep / ugrep on macOS reject them); boundaries use `[[:<:]]` / `[[:>:]]` only where unavoidable, otherwise literal match.
+
+- **feat(hook)**: `hooks/slop-detector.sh` rewritten as a three-tier scanner. T1 always on, T2 default-on via `SLOP_LEVEL=2`, T3 off by default. Severity ladder: KO match → HIGH; ≥3 distinct T1 OR (≥1 T1 + ≥1 T2) → HIGH; ≥2 T1 → MEDIUM; 1 T1 OR 1 T2 → LOW. `SLOP_STRICT=1` exits 2 on HIGH. Lockfile and minified paths are skipped.
+- **feat(references)**: new `hooks/references/slop/{phrases,structures,examples,scoring,README}.md` — single source of truth. ~50 phrase patterns (KO+EN), ~30 structural regexes (binary contrast, false agency, Wh-starters, lazy extremes, KO structural crutches, adverbs, three-item lists), 5-dim rubric, before/after examples.
+- **feat(audit-slop)**: `skills/audit-slop/SKILL.md` upgraded from "regex + bucket by count" to a real multi-dim scanner that walks paths, applies T1+T2, scores per the rubric, and emits HIGH/MEDIUM/LOW with per-file fix hints. Same haiku model, same read-only invariant, `Write`/`Edit` remain disallowed-tools.
+- **test**: new `tests/test_slop_detector.py` (13 cases) covers clean / HIGH-EN / HIGH-KO / binary contrast / Wh-starter / lockfile skip / minified skip / strict mode / inline fallback / regression fixtures / bank-file invariants. Fixtures: `tests/fixtures/slop/{sample-with-slop.md, sample-clean.md}`.
+
+Reference: implementation borrows the categorization shape from hardikpandya/stop-slop (MIT).
+
 ### Added — plugin-level version management + per-skill drift audit (feat/skill-versions)
 
 This started as per-skill `version:` frontmatter on each of the 30 skills. The design was scrapped and replaced with a single-plugin-level version + diff-based per-skill audit — per-skill bookkeeping was bureaucratic tax with no real benefit at this scale (most "consumer-visible" changes touch multiple skills; the version number is a label without an enforced meaning). Final design:
