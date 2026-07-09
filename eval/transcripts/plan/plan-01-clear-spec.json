@@ -1,0 +1,64 @@
+{
+  "case_id": "plan-01-clear-spec",
+  "dim": "plan",
+  "agent_output": {
+    "prd": {
+      "frame": "Goal: add user auth via email+password. Target user: a developer integrating the kit into a service. Situation: today the kit has no auth layer.",
+      "validate": {"value_score": 4.2, "ambiguity_score": 2, "evidence_count": 3, "status": "ok"},
+      "non_goals": [
+        {"item": "OAuth", "rationale": "v1 ships email+password only", "breach_response": "defer to v2"},
+        {"item": "MFA", "rationale": "out of scope for v1", "breach_response": "defer to v2"},
+        {"item": "password reset", "rationale": "v1 ships signup/login only", "breach_response": "defer to v2"}
+      ],
+      "phase_plan": "see phases/0-mvp/index.json",
+      "ac": [
+        "AC1: POST /signup with valid creds returns 201 + Set-Cookie: session=... (test: integration/signup_test.py passes)",
+        "AC2: POST /login with correct creds returns 200 + Set-Cookie; with wrong creds returns 401 (test: integration/login_test.py passes)",
+        "AC3: a protected endpoint without cookie returns 401 (test: integration/middleware_test.py passes)"
+      ],
+      "hand_off": "next: /dev-kit:build"
+    },
+    "index": {
+      "schema_version": "1.0.0",
+      "phase": "0-mvp",
+      "project": "kit",
+      "created_at": "2026-07-09T19:00:00+09:00",
+      "ambiguity_score": 2,
+      "value_score": 4.2,
+      "evidence_count": 3,
+      "steps": [
+        {"step": 0, "name": "data-model", "title": "users + sessions data model + migration", "status": "pending", "ambiguity_delta": 0.0},
+        {"step": 1, "name": "auth-endpoints", "title": "POST /signup + POST /login", "status": "pending", "ambiguity_delta": 0.0},
+        {"step": 2, "name": "auth-middleware", "title": "session-cookie middleware on protected endpoints", "status": "pending", "ambiguity_delta": 0.0}
+      ]
+    },
+    "steps": [
+      {
+        "step": 0,
+        "name": "data-model",
+        "title": "users + sessions data model + migration",
+        "status": "pending",
+        "ac": "alembic upgrade head && pytest tests/test_user_model.py -v  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      },
+      {
+        "step": 1,
+        "name": "auth-endpoints",
+        "title": "POST /signup + POST /login",
+        "status": "pending",
+        "ac": "pytest tests/integration/test_signup.py tests/integration/test_login.py -v  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      },
+      {
+        "step": 2,
+        "name": "auth-middleware",
+        "title": "session-cookie middleware on protected endpoints",
+        "status": "pending",
+        "ac": "pytest tests/integration/test_middleware.py -v  # exit 0",
+        "marker": "<!-- status: completed | error | blocked -->\n<!-- summary: ... | error_message: ... | blocked_reason: ... -->"
+      }
+    ]
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

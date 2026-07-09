@@ -1,0 +1,10 @@
+{
+  "case_id": "review-02-parameterized-query",
+  "dim": "review",
+  "agent_output": {
+    "verdict": "Approve",
+    "findings": []
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

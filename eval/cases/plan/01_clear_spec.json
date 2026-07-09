@@ -1,0 +1,19 @@
+{
+  "case_id": "plan-01-clear-spec",
+  "dim": "plan",
+  "category": "clear-spec",
+  "input_inline": "Idea: Add user auth via email+password. AC: (1) POST /signup creates a user and returns 201 with a session cookie; (2) POST /login returns 200 with a session cookie on correct creds, 401 otherwise; (3) protected endpoints reject missing cookie with 401. Non-goals: no OAuth, no MFA, no password reset in v1.",
+  "expected": {
+    "verdict": "Approve",
+    "min_ambiguity": 3,
+    "min_steps": 3,
+    "steps_must_contain": [
+      {"step": 0, "title_contains": "data model"},
+      {"step": 1, "title_contains": "auth endpoints"},
+      {"step": 2, "title_contains": "middleware"}
+    ],
+    "every_step_ac_executable": true,
+    "dependency_ordered": true
+  },
+  "schema_version": "2.0.0"
+}

@@ -1,0 +1,14 @@
+{
+  "case_id": "review-01-sql-injection",
+  "dim": "review",
+  "category": "real-bug",
+  "input_path": "skills/review/fixtures/real-bugs/sql_injection.py",
+  "expected": {
+    "verdict": "Blocked",
+    "min_severity": "major",
+    "findings_must_contain": [{"dim": "security", "severity": "major"}],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "schema_version": "2.0.0"
+}

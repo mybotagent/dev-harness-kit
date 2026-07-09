@@ -1,0 +1,23 @@
+{
+  "case_id": "plan-02-ambiguous-spec",
+  "dim": "plan",
+  "category": "ambiguous-spec",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:021c9469ea5",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "",
+  "transcript_path": "eval/transcripts/plan/plan-02-ambiguous-spec.json",
+  "expected": {
+    "verdict": "DRIFT_WARNING",
+    "min_ambiguity": 7,
+    "ambiguity_should_be_flagged": true,
+    "re_decompose_expected": true
+  },
+  "expected_behavior": "Stable plan case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    ""
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "case_id": "plan-02-ambiguous-spec",
+  "dim": "plan",
+  "category": "ambiguous-spec",
+  "input_inline": "Idea: Make the app better. AC: (vague).",
+  "expected": {
+    "verdict": "DRIFT_WARNING",
+    "min_ambiguity": 7,
+    "ambiguity_should_be_flagged": true,
+    "re_decompose_expected": true
+  },
+  "schema_version": "2.0.0"
+}

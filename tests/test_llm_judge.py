@@ -106,5 +106,57 @@ class TestLlmJudge(unittest.TestCase):
         self.assertEqual(result["tokens_in"], 100)
 
 
+class TestDimAxes(unittest.TestCase):
+    """Per-dim axis tuples for the new agent-behavior eval."""
+
+    def test_dim_axes_defined_for_three_dims(self):
+        for dim in ("review", "security", "plan"):
+            self.assertIn(dim, llm_judge.DIM_AXES)
+            self.assertIsInstance(llm_judge.DIM_AXES[dim], tuple)
+            self.assertGreater(len(llm_judge.DIM_AXES[dim]), 0)
+
+    def test_review_axes_count_is_5(self):
+        self.assertEqual(len(llm_judge.DIM_AXES["review"]), 5)
+
+    def test_security_axes_count_is_3(self):
+        self.assertEqual(len(llm_judge.DIM_AXES["security"]), 3)
+
+    def test_plan_axes_count_is_4(self):
+        self.assertEqual(len(llm_judge.DIM_AXES["plan"]), 4)
+
+    def test_review_axes_includes_code_sanity_score(self):
+        self.assertIn("code_sanity_score", llm_judge.DIM_AXES["review"])
+
+    def test_security_axes_includes_owasp_classification(self):
+        self.assertIn(
+            "owasp_classification_accuracy", llm_judge.DIM_AXES["security"]
+        )
+
+    def test_parse_scores_with_dim_axes(self):
+        # Parse JSON using the security dim's axes, ignoring the legacy
+        # JUDGE_AXES fields the model may also have emitted.
+        text = json.dumps({
+            "owasp_classification_accuracy": 9,
+            "severity_accuracy": 8,
+            "precision": 10,
+            # legacy axes that should be ignored
+            "semantic_drift": 5,
+            "completeness": 5,
+        })
+        scores = llm_judge.parse_scores_json(text, axes=llm_judge.DIM_AXES["security"])
+        self.assertEqual(scores["owasp_classification_accuracy"], 9)
+        self.assertEqual(scores["severity_accuracy"], 8)
+        self.assertEqual(scores["precision"], 10)
+        # Legacy axes not in security DIM_AXES -> not returned.
+        self.assertNotIn("semantic_drift", scores)
+        self.assertNotIn("completeness", scores)
+
+    def test_parse_scores_default_axis_unchanged(self):
+        # Backward compat: default axes still works as before.
+        text = '{"semantic_drift":7,"completeness":8,"correctness":6,"consistency":9}'
+        scores = llm_judge.parse_scores_json(text)
+        self.assertEqual(set(scores), set(llm_judge.JUDGE_AXES))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

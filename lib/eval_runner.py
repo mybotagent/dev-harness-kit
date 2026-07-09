@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""eval_runner.py — Asset freshness evaluator (MUST-32~34).
+"""eval_runner.py — Agent-behavior evaluator.
 
-Scans repository for assets (CLAUDE.md / skills / hooks / iron laws),
-runs LLM-as-judge per asset (4 axes), writes .dev-kit/eval-report.md.
+Discovers case fixtures in `eval/cases/{review,security,plan}/*.json`,
+replays recorded agent outputs from `eval/transcripts/<dim>/<case>.json`,
+runs the per-dim LLM-as-judge prompt, and writes
+`.dev-kit/eval-report.md`.
+
+Unit of eval: a case fixture + a recorded agent transcript -> per-dim
+axis scores -> verdict. Three dims (review / security / plan) each with
+its own axis set (see `llm_judge.DIM_AXES`). No code discovery; no file
+freshness. Code-sanity is folded into the review judge via a 20-checkbox
+rubric (see `eval/prompts/judge-code-sanity.md`).
 """
 from __future__ import annotations
 
@@ -15,112 +23,118 @@ sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
 from atomic import atomic_write_json, now_iso  # noqa: E402
 
-GOLDEN_SCHEMA_VERSION = "1.0.0"
-ASSET_KINDS = ("claude_md", "skill", "hook", "iron_law", "methodology")
+GOLDEN_SCHEMA_VERSION = "2.0.0"
+CASE_SCHEMA_VERSION = "2.0.0"
+SUPPORTED_DIMS: tuple = ("review", "security", "plan")
+PROMPT_BY_DIM: Dict[str, str] = {
+    "review": "judge-review.md",
+    "security": "judge-security.md",
+    "plan": "judge-plan.md",
+}
 
 
-def discover_assets(project_root: Path) -> List[Dict]:
-    """Find all evaluable assets in the project. Returns list of {path, kind, content}.
+# ---------- discovery ----------
 
-    Discovers:
-    - CLAUDE.md (kind=claude_md)
-    - skills/<name>/SKILL.md (kind=skill)
-    - .claude-plugin/plugin/hooks/*.sh (kind=hook)
-    - lib/write_project_md.py IRON_LAWS (kind=iron_law)
-    - lib/methodology/*.py excluding abc.py (kind=methodology)
+def discover_cases(project_root: Path) -> List[Dict]:
+    """Find all evaluable cases in `eval/cases/<dim>/*.json`.
+
+    Returns list of `{case_id, dim, category, input_path, input_inline,
+    expected, schema_version, raw_path}` dicts. Skips dim directories
+    that don't exist (e.g. a dim not yet seeded).
     """
-    assets = []
-    claude_md = project_root / "CLAUDE.md"
-    if claude_md.exists():
-        assets.append({
-            "path": "CLAUDE.md",
-            "kind": "claude_md",
-            "content": claude_md.read_text(encoding="utf-8"),
-        })
-    skills_dir = project_root / "skills"
-    if skills_dir.exists():
-        for skill_md in sorted(skills_dir.rglob("SKILL.md")):
-            rel = skill_md.relative_to(project_root)
-            assets.append({
-                "path": str(rel),
-                "kind": "skill",
-                "content": skill_md.read_text(encoding="utf-8"),
-            })
-    hooks_dir = project_root / ".claude-plugin" / "plugin" / "hooks"
-    if hooks_dir.exists():
-        for hook in sorted(hooks_dir.glob("*.sh")):
-            rel = hook.relative_to(project_root)
-            assets.append({
-                "path": str(rel),
-                "kind": "hook",
-                "content": hook.read_text(encoding="utf-8"),
-            })
-    iron_law_src = project_root / "lib" / "write_project_md.py"
-    if iron_law_src.exists():
-        for line in iron_law_src.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if any(stripped.startswith(f"L{n}_") for n in range(1, 6)):
-                assets.append({
-                    "path": f"lib/write_project_md.py: {stripped[:40]}",
-                    "kind": "iron_law",
-                    "content": stripped,
-                })
-    method_dir = project_root / "lib" / "methodology"
-    if method_dir.exists():
-        for m in sorted(method_dir.glob("*.py")):
-            if m.stem not in ("__init__", "abc"):
-                rel = m.relative_to(project_root)
-                assets.append({
-                    "path": str(rel),
-                    "kind": "methodology",
-                    "content": m.read_text(encoding="utf-8"),
-                })
-    return assets
+    cases: List[Dict] = []
+    cases_dir = project_root / "eval" / "cases"
+    if not cases_dir.exists():
+        return cases
+    for dim in SUPPORTED_DIMS:
+        dim_dir = cases_dir / dim
+        if not dim_dir.exists():
+            continue
+        for case_path in sorted(dim_dir.glob("*.json")):
+            try:
+                data = json.loads(case_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("dim") not in SUPPORTED_DIMS:
+                # Wrong dim or missing dim field; skip.
+                continue
+            if data.get("dim") != dim:
+                # Case lives under one dim dir but claims another; skip.
+                continue
+            data.setdefault("case_id", case_path.stem)
+            data["raw_path"] = str(case_path.relative_to(project_root))
+            cases.append(data)
+    return cases
 
 
-def load_golden(path: Path) -> Dict:
-    """Load golden baseline JSON or return default placeholder."""
-    if not path.exists():
+# ---------- transcript I/O ----------
+
+def transcript_path(project_root: Path, dim: str, case_id: str) -> Path:
+    return project_root / "eval" / "transcripts" / dim / f"{case_id}.json"
+
+
+def load_transcript(project_root: Path, dim: str, case_id: str) -> Optional[Dict]:
+    """Return recorded transcript or None if not present / not parseable."""
+    p = transcript_path(project_root, dim, case_id)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def save_transcript(project_root: Path, dim: str, case_id: str, data: Dict) -> Path:
+    """Atomic write of a transcript. Returns the path written."""
+    p = transcript_path(project_root, dim, case_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(p, data)
+    return p
+
+
+# ---------- judgment ----------
+
+def _judge_case(
+    project_root: Path,
+    case: Dict,
+    transcript: Optional[Dict],
+    config: Dict,
+) -> Dict:
+    """Run the per-dim LLM-as-judge on a case. Returns
+    {scores, tokens_in, tokens_out, raw, verdict, score}.
+
+    If `transcript` is None, the case is marked as SKIPPED (a setup gap,
+    not a regression) with axis scores of 0.0 and verdict "SKIPPED".
+    """
+    dim = case["dim"]
+    axes = llm_judge.DIM_AXES[dim]
+    if transcript is None:
         return {
-            "asset": "",
-            "schema_version": GOLDEN_SCHEMA_VERSION,
-            "captured_at": "",
-            "summary": "(no golden baseline captured yet)",
-            "expected_behavior": "",
-            "iron_law_refs": [],
-            "code_refs": [],
-            "status": "pending",
+            "scores": {ax: 0.0 for ax in axes},
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "raw": "TRANSCRIPT_MISSING",
+            "verdict": "SKIPPED",
+            "score": 0.0,
         }
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def save_golden(path: Path, data: Dict) -> None:
-    """Save golden baseline. Atomic write."""
-    atomic_write_json(path, data)
-
-
-def _judge_asset(project_root: Path, asset: Dict, config: Dict) -> Dict:
-    """Run LLM-as-judge on asset. Returns {scores, tokens_in, tokens_out, raw, verdict, score}."""
-    prompt_key = {
-        "claude_md": "judge-claude-md",
-        "skill": "judge-skill",
-        "hook": "judge-hook",
-        "iron_law": "judge-claude-md",
-        "methodology": "judge-skill",
-    }.get(asset["kind"], "judge-skill")
-    prompt = llm_judge.format_prompt(project_root, prompt_key + ".md", {
-        "ASSET_NAME": asset["path"],
-        "ASSET_KIND": asset["kind"],
-        "ASSET_CONTENT": asset["content"][:4000],  # truncate
-    })
+    prompt_name = PROMPT_BY_DIM[dim]
+    substitutions = {
+        "CASE_ID": case.get("case_id", ""),
+        "DIM": dim,
+        "CATEGORY": case.get("category", ""),
+        "INPUT": _read_input(project_root, case),
+        "AGENT_OUTPUT": json.dumps(transcript.get("agent_output", {}), indent=2),
+        "EXPECTED": json.dumps(case.get("expected", {}), indent=2),
+        "RUBRIC": _read_rubric(project_root),
+    }
+    prompt = llm_judge.format_prompt(project_root, prompt_name, substitutions)
     if not prompt:
-        # fallback inline judge
+        # Fallback inline prompt if the per-dim template is missing.
         prompt = (
-            f"You are a code review judge. Evaluate this {asset['kind']} asset.\n\n"
-            f"Path: {asset['path']}\n\n"
-            f"Content:\n{asset['content'][:4000]}\n\n"
-            "Respond ONLY with a JSON object containing 4 axis scores (semantic_drift, "
-            "completeness, correctness, consistency), each 0-10."
+            f"You are an eval judge for the {dim} dimension. "
+            f"Compare the agent output against the expected behavior and "
+            f"return a JSON object with these axes: {list(axes)}. "
+            f"Each axis is 0-10. ONLY a JSON object, no prose."
         )
     raw = llm_judge.call_judge(
         provider=config["provider"],
@@ -129,102 +143,212 @@ def _judge_asset(project_root: Path, asset: Dict, config: Dict) -> Dict:
         prompt=prompt,
         base_url=config.get("base_url", "https://api.minimax.io/anthropic"),
     )
-    scores = raw["scores"]
+    scores = raw.get("scores") or {}
+    # Keep only the requested dim's axes (drop any extra fields the model
+    # might emit). Missing axes default to 0 so the verdict is well-defined.
+    scores = {ax: float(scores.get(ax, 0.0)) for ax in axes}
     score = llm_judge.score_aggregate(scores) if scores else 0.0
-    verdict = llm_judge.verdict_from_score(score)
+    verdict = llm_judge.verdict_from_score(score) if score > 0 else "ROT"
     return {
         "scores": scores,
-        "tokens_in": raw["tokens_in"],
-        "tokens_out": raw["tokens_out"],
-        "raw": raw["raw"][:500],
+        "tokens_in": raw.get("tokens_in", 0),
+        "tokens_out": raw.get("tokens_out", 0),
+        "raw": (raw.get("raw") or "")[:500],
         "verdict": verdict,
         "score": score,
     }
 
 
-def score_asset(project_root: Path, asset: Dict, config: Optional[Dict] = None) -> Dict:
-    """Score a single asset. Config defaults from llm_judge.load_config()."""
+def _read_input(project_root: Path, case: Dict) -> str:
+    """Render the case input. If `input_path` exists, read it; else use
+    `input_inline`. Returns a string suitable for embedding in a prompt.
+    """
+    inline = case.get("input_inline")
+    if inline is not None:
+        return inline
+    rel = case.get("input_path")
+    if rel:
+        p = project_root / rel
+        if p.exists():
+            try:
+                return p.read_text(encoding="utf-8")
+            except OSError:
+                return f"(unreadable: {rel})"
+        return f"(missing: {rel})"
+    return ""
+
+
+def _read_rubric(project_root: Path) -> str:
+    """Return the shared code-sanity rubric prompt body (review dim only
+    needs the full rubric; others get a one-liner reminder)."""
+    p = project_root / "eval" / "prompts" / "judge-code-sanity.md"
+    if not p.exists():
+        return "(code-sanity rubric not found)"
+    return p.read_text(encoding="utf-8")
+
+
+# ---------- public API ----------
+
+def judge_case(
+    project_root: Path,
+    case: Dict,
+    transcript: Optional[Dict] = None,
+    config: Optional[Dict] = None,
+) -> Dict:
+    """Score a single case. If `transcript` is None it is loaded from
+    `eval/transcripts/<dim>/<case_id>.json`."""
     if config is None:
         config = llm_judge.load_config(project_root)
-    return _judge_asset(project_root, asset, config)
+    if transcript is None:
+        transcript = load_transcript(project_root, case["dim"], case["case_id"])
+    return _judge_case(project_root, case, transcript, config)
 
 
-def write_report(project_root: Path, results: List[Dict], config: Optional[Dict] = None) -> Path:
-    """Write .dev-kit/eval-report.md human-readable summary."""
+# ---------- report ----------
+
+def write_report(
+    project_root: Path,
+    results: List[Dict],
+    config: Optional[Dict] = None,
+) -> Path:
+    """Write `.dev-kit/eval-report.md` with a per-dim table + verdict counts."""
     path = project_root / ".dev-kit" / "eval-report.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "# Eval Report — dev-harness-kit",
+    lines: List[str] = [
+        "# Eval Report — agent-behavior (dev-harness-kit)",
         f"> Generated: {now_iso()}",
         f"> Provider: {config.get('provider', 'minimax') if config else 'minimax'}",
         f"> Model: {config.get('model', 'MiniMax-M3[1m]') if config else 'MiniMax-M3[1m]'}",
         "",
         "## Summary",
     ]
-    by_verdict = {"OK": 0, "DRIFT_WARNING": 0, "ROT": 0}
+    by_verdict: Dict[str, int] = {"OK": 0, "DRIFT_WARNING": 0, "ROT": 0, "SKIPPED": 0}
     for r in results:
         by_verdict[r.get("verdict", "OK")] += 1
-    lines.append(f"- Total assets: {len(results)}")
-    lines.append(f"- OK: {by_verdict['OK']}")
-    lines.append(f"- DRIFT_WARNING: {by_verdict['DRIFT_WARNING']}")
-    lines.append(f"- ROT: {by_verdict['ROT']}")
+    lines.append(f"- Total cases: {len(results)}")
+    for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED"):
+        lines.append(f"- {v}: {by_verdict[v]}")
     lines.append("")
-    lines.append("## Per-Asset Scores")
+    # Per-dim table.
+    lines.append("## Per-Dimension Scores")
+    by_dim: Dict[str, List[Dict]] = {d: [] for d in SUPPORTED_DIMS}
+    for r in results:
+        by_dim.setdefault(r.get("dim", "?"), []).append(r)
+    for dim, dim_results in by_dim.items():
+        if not dim_results:
+            continue
+        scored = [r for r in dim_results if r.get("verdict") != "SKIPPED"]
+        if not scored:
+            lines.append(f"### {dim} (no cases with transcripts)")
+            lines.append("")
+            continue
+        axes = llm_judge.DIM_AXES[dim]
+        axis_means: Dict[str, float] = {}
+        for ax in axes:
+            vals = [r["scores"].get(ax, 0.0) for r in scored]
+            axis_means[ax] = round(sum(vals) / max(1, len(vals)), 2)
+        overall = round(
+            sum(axis_means.values()) / max(1, len(axis_means)), 2
+        )
+        lines.append(f"### {dim} (n={len(scored)}, overall={overall})")
+        lines.append("")
+        lines.append("| Axis | Mean |")
+        lines.append("|---|---|")
+        for ax in axes:
+            lines.append(f"| `{ax}` | {axis_means[ax]} |")
+        lines.append("")
+    # Per-case detail.
+    lines.append("## Per-Case Results")
     for r in results:
         verdict = r.get("verdict", "?")
         score = r.get("score", 0)
-        path_str = r.get("path", "?")
-        s = r.get("scores", {})
-        axis_str = ", ".join(f"{k}={s.get(k, '-')}" for k in llm_judge.JUDGE_AXES)
-        lines.append(f"- **{verdict}** `{path_str}` score={score} ({axis_str})")
-    path.write_text("\n".join(lines), encoding="utf-8")
+        case_id = r.get("case_id", "?")
+        dim = r.get("dim", "?")
+        axes_str = ", ".join(
+            f"{ax}={r.get('scores', {}).get(ax, '-')}"
+            for ax in llm_judge.DIM_AXES.get(dim, ())
+        )
+        lines.append(f"- **{verdict}** `{case_id}` (dim={dim}) score={score} ({axes_str})")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
-def run_eval(project_root: Path, config: Optional[Dict] = None, *, dry_run: bool = False) -> Dict:
-    """Run full eval cycle. Returns report dict.
+# ---------- top-level driver ----------
+
+def run_eval(
+    project_root: Path,
+    config: Optional[Dict] = None,
+    *,
+    dry_run: bool = False,
+    dim: Optional[str] = None,
+    case: Optional[str] = None,
+) -> Dict:
+    """Run the agent-behavior eval.
 
     Args:
         project_root: project root.
         config: llm_judge config (defaults to load_config()).
-        dry_run: when True, skip LLM calls (return mock verdict per asset).
+        dry_run: skip real LLM calls; mock each case at 7.0/DRIFT_WARNING.
+        dim: restrict to one of {review, security, plan}. None = all.
+        case: restrict to a single case_id. None = all.
     """
     if config is None:
         config = llm_judge.load_config(project_root)
+    if dim is not None and dim not in SUPPORTED_DIMS:
+        raise ValueError(
+            f"unknown dim={dim!r}; must be one of {SUPPORTED_DIMS}"
+        )
+
+    cases = discover_cases(project_root)
+    if dim is not None:
+        cases = [c for c in cases if c["dim"] == dim]
+    if case is not None:
+        cases = [c for c in cases if c["case_id"] == case]
+
+    results: List[Dict] = []
     if dry_run or not config.get("api_key"):
-        # dry run / no api key → skip real LLM calls
-        def _mock(asset):
-            return {
-                "path": asset["path"],
-                "kind": asset["kind"],
-                "scores": {ax: 7.0 for ax in llm_judge.JUDGE_AXES},
+        # Mock each case at 7.0 / DRIFT_WARNING, except SKIPPED for cases
+        # with no transcript (a real setup gap).
+        for c in cases:
+            t = load_transcript(project_root, c["dim"], c["case_id"])
+            if t is None:
+                results.append({
+                    "case_id": c["case_id"],
+                    "dim": c["dim"],
+                    "scores": {ax: 0.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
+                    "tokens_in": 0, "tokens_out": 0, "raw": "DRY_RUN_NO_TRANSCRIPT",
+                    "verdict": "SKIPPED", "score": 0.0,
+                })
+                continue
+            results.append({
+                "case_id": c["case_id"],
+                "dim": c["dim"],
+                "scores": {ax: 7.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
                 "tokens_in": 0, "tokens_out": 0, "raw": "DRY_RUN",
                 "verdict": "DRIFT_WARNING", "score": 7.0,
-            }
-        results = [_mock(a) for a in discover_assets(project_root)]
+            })
     else:
-        results = []
-        for asset in discover_assets(project_root):
+        for c in cases:
+            t = load_transcript(project_root, c["dim"], c["case_id"])
             try:
-                result = score_asset(project_root, asset, config)
-                result["path"] = asset["path"]
-                result["kind"] = asset["kind"]
-                results.append(result)
+                r = _judge_case(project_root, c, t, config)
+                r["case_id"] = c["case_id"]
+                r["dim"] = c["dim"]
+                results.append(r)
             except Exception as e:
                 results.append({
-                    "path": asset["path"],
-                    "kind": asset["kind"],
-                    "scores": {ax: 0 for ax in llm_judge.JUDGE_AXES},
+                    "case_id": c["case_id"],
+                    "dim": c["dim"],
+                    "scores": {ax: 0 for ax in llm_judge.DIM_AXES[c["dim"]]},
                     "tokens_in": 0, "tokens_out": 0, "raw": str(e),
-                    "verdict": "ROT",
-                    "score": 0.0,
+                    "verdict": "ROT", "score": 0.0,
                     "error": str(e),
                 })
+
     write_report(project_root, results, config)
-    summary = {
-        v: sum(1 for r in results if r.get("verdict") == v)
-        for v in ("OK", "DRIFT_WARNING", "ROT")
-    }
+    summary: Dict[str, int] = {v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED")}
+    for r in results:
+        summary[r.get("verdict", "OK")] += 1
     return {
         "results": results,
         "config": {k: v for k, v in config.items() if k != "api_key"},
@@ -234,10 +358,21 @@ def run_eval(project_root: Path, config: Optional[Dict] = None, *, dry_run: bool
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Run asset freshness eval")
+    parser = argparse.ArgumentParser(description="Run agent-behavior eval")
     parser.add_argument("--project-root", default=".", help="project root")
     parser.add_argument("--dry-run", action="store_true", help="skip LLM calls")
+    parser.add_argument(
+        "--dim",
+        choices=SUPPORTED_DIMS,
+        help="restrict to one dimension (default: all)",
+    )
+    parser.add_argument("--case", help="restrict to a single case_id")
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
-    report = run_eval(root, dry_run=args.dry_run)
+    report = run_eval(
+        root,
+        dry_run=args.dry_run,
+        dim=args.dim,
+        case=args.case,
+    )
     print(json.dumps(report["summary"], indent=2))

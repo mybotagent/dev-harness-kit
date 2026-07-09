@@ -1,0 +1,29 @@
+{
+  "case_id": "review-05-long-function",
+  "dim": "review",
+  "category": "clean-violation",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:c97ff88aac7",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "input_path": "eval/cases/review/05_long_function.py",
+  "transcript_path": "eval/transcripts/review/review-05-long-function.json",
+  "expected": {
+    "verdict": "Changes Requested",
+    "min_severity": "minor",
+    "findings_must_contain": [
+      {
+        "dim": "correctness",
+        "severity": "minor"
+      }
+    ],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "expected_behavior": "Stable review case for dev-harness-kit eval (schema 2.0.0)",
+  "iron_law_refs": [
+    "CLAUDE.md \u00a71 L1 No-Test-No-Code"
+  ],
+  "code_refs": [
+    "eval/cases/review/05_long_function.py"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "case_id": "review-05-long-function",
+  "dim": "review",
+  "agent_output": {
+    "verdict": "Changes Requested",
+    "findings": [
+      {
+        "file": "eval/cases/review/05_long_function.py",
+        "line": 9,
+        "dim": "correctness",
+        "severity": "minor",
+        "confidence": "high",
+        "title": "Function exceeds 50 lines and takes 5 parameters",
+        "tldr": "process_user_submission is 60+ lines and mixes parse/fetch/validate/transform/format in one body.",
+        "failure_scenario": "Future maintainer adds a 6th step inside this function; cognitive load makes it easy to forget to log the failed parse branch and silently return an error.",
+        "good": "The 5 sub-sections are labeled with comments, which is the right shape for a 5-function split.",
+        "fix": "```python\ndef process_user_submission(payload, user, ip, ua, db):\n    parsed = parse_payload(payload)\n    if not parsed: return parsed\n    row = fetch_user(user, db)\n    if not row: return {'error': 'no such user'}\n    valid = validate_submission(parsed)\n    if not valid: return valid\n    return format_record(parsed, row, ip, ua)\n```"
+      }
+    ]
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

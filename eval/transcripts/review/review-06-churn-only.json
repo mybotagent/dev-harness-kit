@@ -1,0 +1,11 @@
+{
+  "case_id": "review-06-churn-only",
+  "dim": "review",
+  "agent_output": {
+    "verdict": "Approve",
+    "findings": [],
+    "walkthrough": "Diff is rename + import reorder only. No bug, no perf win, no user impact. Approving as churn."
+  },
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "captured_by": "human"
+}

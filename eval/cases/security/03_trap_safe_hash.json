@@ -1,0 +1,13 @@
+{
+  "case_id": "security-03-trap-safe-hash",
+  "dim": "security",
+  "category": "trap",
+  "input_path": "eval/cases/security/03_trap_safe_hash.py",
+  "expected": {
+    "verdict": "Approve",
+    "min_severity": null,
+    "findings_must_contain": [],
+    "findings_must_not_contain": [{"category": "A02"}, {"category": "A04"}]
+  },
+  "schema_version": "2.0.0"
+}

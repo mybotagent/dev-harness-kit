@@ -1,0 +1,14 @@
+{
+  "case_id": "review-04-factory-one-impl",
+  "dim": "review",
+  "category": "over-engineering",
+  "input_path": "eval/cases/review/04_factory_one_impl.py",
+  "expected": {
+    "verdict": "Changes Requested",
+    "min_severity": "major",
+    "findings_must_contain": [{"dim": "architecture", "severity": "major"}],
+    "findings_must_not_contain": [],
+    "code_sanity_min_score": 7
+  },
+  "schema_version": "2.0.0"
+}
