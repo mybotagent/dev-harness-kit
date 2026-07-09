@@ -49,12 +49,17 @@ require_jq() {
 }
 
 # Atomic JSON write: $1 = path, stdin = new contents.
+# Cleanup trap on ERR ensures a partial write never leaves a stray
+# .tmp.XXXXXX file in the project dir.
 write_json_atomic() {
     local path="$1"
     local tmp
     tmp="$(mktemp "${path}.tmp.XXXXXX")"
+    # shellcheck disable=SC2064  # we WANT $tmp expanded now, not at signal time
+    trap "rm -f '$tmp'" ERR
     cat >"$tmp"
     mv -f "$tmp" "$path"
+    trap - ERR
 }
 
 # Read a JSON file safely; returns {} when missing.
@@ -72,6 +77,12 @@ read_json_or_empty() {
 # Idempotent: replaces existing entries with the same .hooks[0].command,
 # adds new ones, marks every inserted entry with _loghooks_managed=true.
 # Preserves all other top-level keys (e.g. permissions, $schema).
+#
+# A08 mitigation: every merged entry's command MUST match the documented
+# shape — a `for`-style python3 lookup that ends by exec'ing
+# "${CLAUDE_PROJECT_DIR}/tools/save_log.py --tool <name>". Anything else
+# (including bare shell, `curl | sh`, etc.) is rejected and the merge
+# fails. This is a command allow-list, not a heuristic.
 #   $1 = source settings.json path (the loghooks repo's settings)
 #   $2 = target settings.json path (the project to log)
 merge_loghooks_into() {
@@ -80,6 +91,27 @@ merge_loghooks_into() {
 
     local current
     current="$(read_json_or_empty "$target")"
+
+    # First pass: validate every source command matches the documented
+    # structural shape via a single regex. Both Claude and Codex hooks
+    # are shell `for` loops that iterate python3/python/py, call
+    # save_log.py --tool <name>, and end with `fi; done`. Anything else
+    # (curl|sh, arbitrary rm -rf, etc.) is rejected here so a poisoned
+    # $LOGHOOKS_DIR cannot exfiltrate through the merged command field.
+    local bad
+    bad="$(printf '%s' "$current" | jq \
+        --slurpfile src "$src" '
+        [ $src[0].hooks // {} | to_entries[] | .value[] | .hooks[]? | select(.type == "command") | (.command // "")]
+        | map(select(test("^for i in python3 python py;.*save_log\\.py.*--tool [a-z0-9-]+.*fi; done$") | not))
+    ')"
+    if [[ "$bad" != "[]" ]]; then
+        echo "ERROR: $src contains commands that do not match the documented save_log.py shape." >&2
+        echo "Refusing to merge — review $src manually." >&2
+        echo "Required shape: shell 'for' loop iterating python3/python/py, calling save_log.py --tool <name>, ending 'fi; done'." >&2
+        echo "Offending entries:" >&2
+        printf '%s\n' "$bad" | jq -r '.[]' | sed 's/^/  /' >&2
+        return 6
+    fi
 
     printf '%s' "$current" | jq \
         --slurpfile src "$src" \

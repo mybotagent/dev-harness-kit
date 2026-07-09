@@ -93,4 +93,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly 28 skills total.
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (29 as of #66; bump both test_smoke.py and this rule together when adding a new skill).

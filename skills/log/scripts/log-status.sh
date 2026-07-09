@@ -65,11 +65,15 @@ else
     printf '  setup:    %-44s  MISSING — run /dev-kit:log setup\n' "$SETUP_PY"
 fi
 
-# captured transcripts
+# captured transcripts (shell loop, no fork to find; tolerates any filename)
 for sub in claude-code codex; do
     D="$TARGET_DIR/logs/$sub"
     if [[ -d "$D" ]]; then
-        N=$(find "$D" -maxdepth 1 -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
-        printf '  logs:     %-44s  captured=%d\n' "$D/" "$N"
+        n=0
+        for f in "$D"/*.jsonl; do
+            [[ -f "$f" ]] || continue
+            n=$((n + 1))
+        done
+        printf '  logs:     %-44s  captured=%d\n' "$D/" "$n"
     fi
 done

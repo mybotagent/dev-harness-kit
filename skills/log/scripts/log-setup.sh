@@ -62,11 +62,21 @@ fi
 
 mkdir -p "$TARGET_DIR/tools"
 
+# Portable SHA-256: prefer coreutils sha256sum, fall back to BSD shasum.
+# Alpine / distroless / many debian-slim images ship only sha256sum;
+# macOS / FreeBSD ship only shasum.
+sha256_cmd() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256
+    else echo "ERROR: no sha256 tool installed (need sha256sum or shasum)" >&2; return 1
+    fi
+}
+
 LOCAL_SHA=""
 if [[ -f "$DST_PY" ]]; then
-    LOCAL_SHA="$(shasum -a 256 "$DST_PY" | awk '{print $1}')"
+    LOCAL_SHA="$(sha256_cmd < "$DST_PY" | awk '{print $1}')"
 fi
-SRC_SHA="$(shasum -a 256 "$SRC_PY" | awk '{print $1}')"
+SRC_SHA="$(sha256_cmd < "$SRC_PY" | awk '{print $1}')"
 
 if [[ -n "$LOCAL_SHA" && "$LOCAL_SHA" == "$SRC_SHA" && "$FORCE" -eq 0 ]]; then
     echo "OK: $DST_PY already up to date (sha matches)"
