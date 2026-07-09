@@ -178,6 +178,16 @@ class BankFallback(unittest.TestCase):
             tmp_path = Path(tmp)
             tmp_hook = tmp_path / "slop-detector.sh"
             shutil.copy(str(HOOK), str(tmp_hook))
+            # slop-detector.sh now sources ${BASH_SOURCE[0]%/*}/lib/payload-parse.sh;
+            # the test fixture copies both the hook AND its lib/ sibling so the
+            # `require_jq`/`read_stdin_json`/`extract_content` helpers are
+            # available. The fallback we exercise is the missing-`references/slop/`
+            # path (v1 inline bank), NOT a broken-payload path.
+            shutil.copytree(
+                REPO_ROOT / "hooks" / "lib",
+                tmp_path / "lib",
+                symlinks=True,
+            )
             # no references/ dir — fallback path
             content = "Certainly! This is a robust and comprehensive solution."
             payload = json.dumps({"tool_input": {"file_path": "test.md", "content": content}})

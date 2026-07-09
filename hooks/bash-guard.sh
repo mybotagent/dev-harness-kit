@@ -3,8 +3,15 @@
 # Default advisory (exit 0); hard-block (exit 2) with --strict.
 
 set -eo pipefail
-INPUT=$(cat)
-CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
+# Use %/* parameter expansion (POSIX, no external `dirname` required) so
+# the source line still works when PATH is broken (jq-less test envs
+# strip dirname along with jq — see TestBashGuardRefactor.fails_closed).
+# shellcheck source=lib/payload-parse.sh
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+require_jq bash-guard
+read_stdin_json bash-guard
+[ -z "$INPUT_JSON" ] && exit 0
+CMD=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.command // ""')
 [ -z "$CMD" ] && exit 0
 
 # Destructive patterns

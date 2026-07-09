@@ -24,6 +24,14 @@
 # bank and prints a one-shot WARN to stderr. No silent failure.
 
 set -eo pipefail
+# Use %/* parameter expansion (POSIX, no external `dirname` required) so
+# the source line still works when PATH is broken (jq-less test envs
+# strip dirname along with jq — see TestSlopDetectorRefactor.fails_closed).
+# shellcheck source=lib/payload-parse.sh
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+require_jq slop-detector
+read_stdin_json slop-detector
+[ -z "$INPUT_JSON" ] && exit 0
 
 # ── locale ──────────────────────────────────────────────────────────────────
 # CI runners often default to POSIX/C locale, which makes `grep -E` reject
@@ -57,10 +65,8 @@ else
 fi
 unset _LOCALES _existing_utf 2>/dev/null || true
 
-# ── inputs ──────────────────────────────────────────────────────────────────
-INPUT=$(cat)
-FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
-CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // ""' 2>/dev/null)
+FILE=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.file_path // ""')
+extract_content
 [ -z "$CONTENT" ] && exit 0
 
 # File path scope skip — checks/lockfiles produce noise without value.
