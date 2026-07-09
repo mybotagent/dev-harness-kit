@@ -150,7 +150,7 @@ Full set: 36 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 31 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 36 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (5 original + 4 worktree-rule) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
