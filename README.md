@@ -362,7 +362,12 @@ This is a CLI, not a `/dev-kit:*` skill, because it operates on local files with
 
 ## Skills by audience
 
-The kit ships **42 skills**. They split into two audiences — pick the one that matches your role.
+The kit ships **42 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
+
+- **`user-invocable: true`** (or unset) — surfaces in `/dev-kit:` autocomplete. *You* type it.
+- **`user-invocable: false`** — hidden from autocomplete. *Claude* auto-invokes it as a sub-step when its parent skill runs.
+
+**If a skill name doesn't autocomplete, it's an internal sub-skill — you can't (and shouldn't) invoke it directly.** Type the user-facing parent instead (e.g. type `/dev-kit:refactor`, not `/dev-kit:build-refactor`).
 
 ### For you — type `/dev-kit:<name>`
 
@@ -393,9 +398,19 @@ These appear in slash autocomplete. Run them when you have a job to do.
 | `/dev-kit:quick-fix` | Shortcut: verify + debug, no code changes. |
 | `/dev-kit:babysit-pr` | 0-arg PR babysitter loop. |
 
-### For Claude — auto-invoked, hidden from slash
+### For Claude — internal sub-skills, hidden from slash autocomplete
 
-These are internal building blocks. Claude calls them when one of the user-facing skills above dispatches its worktree. You don't type these directly.
+These 14 skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
+
+The naming convention tells you which parent owns each:
+
+| Prefix | Parent skill |
+|---|---|
+| `build-*` (e.g. `build-engine`, `build-tdd`, `build-debug`, `build-refactor`, `build-prune`) | dispatched by `build`, `refactor`, or `prune` |
+| `bootstrap-*` (e.g. `bootstrap-sanity`, `bootstrap-codebase-map`) | dispatched by `bootstrap` |
+| `audit-*` (e.g. `audit-secret`, `audit-slop`) | dispatched by `audit` |
+
+The `Called by` column below names the specific parent for each one.
 
 | Skill | Called by | Purpose |
 |---|---|---|
