@@ -4,6 +4,19 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Changed — rename `simplify` → `refactor`; add `/dev-kit:prune` (feat/refactor-rename-and-prune)
+
+The `/dev-kit:simplify` skill was misnamed: it *refactors* (rewrites/extracts/renames) but does not delete code, so running it never reduced LOC. This release splits the verb along its real axis.
+
+- **refactor!**: `skills/simplify/SKILL.md` → `skills/refactor/SKILL.md` (frontmatter `name: refactor`). The 3-phase wrapper now reads `inspect → build-refactor → review` and the body explicitly disambiguates from `/dev-kit:prune`. The internal `build-simplify` → `build-refactor` rename follows. The slash command `/dev-kit:simplify` is **not** preserved as an alias — update your muscle memory; `/dev-kit:refactor` is the new verb. ADR-0010 + docs/NAMING.md examples updated.
+- **feat(skill)**: new `skills/prune/SKILL.md` (human-use, `user-invocable: true`, category=build, model=opus). 3-phase wrapper for project-wide *deletion* of AI slop, orphan code, and dead features: `inspect → build-prune → review`. Mirrors `/dev-kit:refactor` in shape; emits `rm`/`git rm` commands to a report and waits for the user to run them, mirroring `/dev-kit:feat-remove` discipline (no silent cascade, no self-deletion).
+- **feat(skill)**: new `skills/build-prune/SKILL.md` (model-use, `user-invocable: false`). 3 internal passes: `orphan-code` (exports with no callers, files with no importers, unreachable branches) → `dead-feature` (capabilities with no live users) → `slop-pattern` (matches `audit-slop` heuristics but mutates rather than reports). Each pass ends with a quoted regression-test green.
+- **feat(skill)**: new `skills/build-refactor/SKILL.md` (model-use, `user-invocable: false`). Internal 4-pass cleanup moved from the old `build-simplify`. No behavior change; rename only.
+- **docs(readme)**: new "Skills by audience" section. Splits the 41 skills into user-facing (slash-autocomplete, 23) and model-use (auto-invoked, 18). Each user-facing row carries a one-line "when to use it" hint. New "Refactor" and "Prune" sections replace the old "Simplify" section, with a `refactor ≠ prune ≠ feat-remove` disambiguation table.
+- **docs(adr)**: ADR-0010 + docs/NAMING.md example lists updated (`build-simplify` → `build-refactor`; `simplify` → `refactor`; add `prune` + `build-prune`).
+- **test**: `tests/test_smoke.py` SKILL_COUNT 39 → 41. New `tests/test_refactor.py` (migrated from `test_simplify.py`; adds `disambiguates_from_prune` assertion). New `tests/test_prune.py` (covers both `prune/` and `build-prune/` schemas, MUST-L1..L4, never-rm-itself invariant). `tests/test_inspect.py` updated to assert both `/dev-kit:refactor` and `/dev-kit:prune` in the hand-off.
+- **chore(skill-authoring)**: `.claude/rules/skill-authoring.md` human-use list (24 skills) and model-use list (14 skills) updated to match. The 38 → 41 count note corrected.
+
 ### Added — /dev-kit:bootstrap-full: one-shot CLAUDE.md + CI setup (feat/bootstrap-full)
 
 New human-use skill that runs `/dev-kit:bootstrap` (CLAUDE.md + AGENTS.md + .dev-kit/.active-hooks.json) and `/dev-kit:ci-setup` (15 CI templates + pre-push hook + marker) in a single call. End state on disk is identical to running both parents in sequence, with no intermediate prompt. Hidden flags only: `--target DIR`, `--skip-ci`, `--force`, `--skip-verify`, `--slim|--full`, `--skip-sanity`, `--skip-map`, `--strict`, `--persist-audit`. `/dev-kit:bootstrap` and `/dev-kit:ci-setup` remain standalone for granular cases (refreshing just one half, or onboarding an existing repo).

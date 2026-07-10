@@ -38,7 +38,7 @@
 - **Must**: (a) Follow `phases/<name>/step<N>.md` exactly. (b) Run AC commands and quote output. (c) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (d) 2-commit protocol (feat + chore).
 - **Must-Not**: Speculate on AC ("should work", "probably fine"). Delete `output.json`. Batch multiple changes.
 - **AC**: All steps `status=completed`. `pytest` exit code 0 + count quoted. 2-commit protocol followed.
-- **Active Skills**: `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-simplify`, `build-methodology`
+- **Active Skills**: `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology`
 - **Active Hooks**: `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` — all ON
 - **Sub-agent**: Phase 3 (planned). Currently sequential-only.
 - **Hand-off out**: `build→review.md`

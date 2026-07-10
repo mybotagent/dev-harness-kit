@@ -143,21 +143,22 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
-/dev-kit:simplify                # 3-phase cleanup: inspect -> build-simplify -> review
+/dev-kit:refactor               # 3-phase refactor: inspect -> build-refactor -> review (rewrites code)
+/dev-kit:prune                  # 3-phase deletion sweep: inspect -> build-prune -> review (deletes slop/dead features)
 
 # Shortcuts (urgent hotfix)
 /dev-kit:tdd-fast                # skip Bootstrap+Plan → straight to Build
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 39 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 41 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 38 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 41 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (6 original + 3 worktree-rule) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
@@ -191,7 +192,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `bootstrap-full`, `ci-setup` |
 | `plan` | `plan` |
 | `design` | `design` (merged into `plan`), `build-harness-engine` |
-| `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `simplify` |
+| `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-refactor`, `build-prune`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `refactor`, `prune` |
 | `review` | `review` (3-dim, unified) |
 | `security` | `security` (10-dim OWASP, unified) |
 | `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health), `report` (HTML viewer) |
@@ -231,20 +232,91 @@ Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo
 
 Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<sid>.jsonl` and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
 
-## Simplify (`/dev-kit:simplify`)
+## Skills by audience
 
-Whole-pipeline cleanup in 3 gated phases — read-only baseline (`/dev-kit:inspect`) → mutating 4-pass cleanup (`/dev-kit:build-simplify`: dead → dup → naming → coverage) → per-diff verification (`/dev-kit:review`). Each phase gates the next on a quoted exit code + test count; no phase starts without the previous phase's green evidence (MUST-L3, hook `stop-verify`).
+The kit ships **41 skills**. They split into two audiences — pick the one that matches your role.
+
+### For you — type `/dev-kit:<name>`
+
+These appear in slash autocomplete. Run them when you have a job to do.
+
+| Skill | When to use it |
+|---|---|
+| `/dev-kit:bootstrap` | One-shot setup: CLAUDE.md + AGENTS.md + 15 CI templates + active-hooks. First run on a new project. |
+| `/dev-kit:ci-setup` | Wire `.dev-kit/ci-config.json` + CI workflows. Re-run with `--force` to regenerate. |
+| `/dev-kit:plan` | Design a feature before coding. Emits `phases/<name>/step<N>.md` + index.json. |
+| `/dev-kit:build` | Main TDD cycle. Per-phase execution against the plan. |
+| `/dev-kit:review` | 3-dim review of the diff (correctness + security + architecture). |
+| `/dev-kit:security` | 10-dim OWASP audit. Independent of review. |
+| `/dev-kit:audit` | Batch slop + secret scan. |
+| `/dev-kit:inspect` | Read-only 8-dim code health audit. Outputs `.dev-kit/inspect-report.md`. |
+| `/dev-kit:eval` | Agent-behavior eval (judge a recorded transcript). |
+| `/dev-kit:report` | Render eval + inspect reports as a self-contained HTML page. |
+| `/dev-kit:refactor` | 3-phase refactor chain. **Rewrites** code (dead → dup → naming → coverage). Use when the code should be cleaner, not smaller. |
+| `/dev-kit:prune` | 3-phase deletion sweep. **Deletes** AI slop + dead features. Use when the codebase has accumulated cruft and you want it gone. |
+| `/dev-kit:feat-add` / `feat-fix` / `feat-revise` / `feat-remove` | One feature, one shape (add / fix / revise / remove). |
+| `/dev-kit:adapt` | Adapt the dev-kit to a different AI assistant harness. |
+| `/dev-kit:onboard` | Newcomer onboarding tour of a project. |
+| `/dev-kit:repair` | Eval-Repair loop with Human Review terminal. For LLM-eval assets scored against a golden set. |
+| `/dev-kit:ship` | Emit the release tag. The human gate. |
+| `/dev-kit:status` | HOTL visualization of the running pipeline. |
+| `/dev-kit:config` | Edit the dev-kit config (model, hooks, slop regex). |
+| `/dev-kit:tdd-fast` | Shortcut: skip Bootstrap+Plan → straight to Build. |
+| `/dev-kit:quick-fix` | Shortcut: verify + debug, no code changes. |
+| `/dev-kit:babysit-pr` | 0-arg PR babysitter loop. |
+
+### For Claude — auto-invoked, hidden from slash
+
+These are internal building blocks. Claude calls them when one of the user-facing skills above dispatches its worktree. You don't type these directly.
+
+| Skill | Called by | Purpose |
+|---|---|---|
+| `build-engine` / `build-harness-engine` | `build` | Per-step sub-agent harness runner. |
+| `build-tdd` | `build` | Red-Green-Refactor cycle. |
+| `build-debug` | `build` (on failure) | 4-phase debug. |
+| `build-verify` | `build` (terminal) | Verify-before-completion gate. |
+| `build-methodology` | `build` | Per-methodology selector (TDD/SDD/etc). |
+| `build-refactor` | `refactor` | 4-pass refactor: dead → dup → naming → coverage. |
+| `build-prune` | `prune` | 3-pass deletion: orphan-code → dead-feature → slop-pattern. |
+| `bootstrap-sanity` / `bootstrap-codebase-map` / `bootstrap-active-hooks` | `bootstrap` | Sanity / codebase-map / hook wiring. |
+| `audit-secret` / `audit-slop` / `audit-outdated` | `audit` | Per-subject audit. |
+
+**Mental model**: user-facing skills are verbs (the *what*). Model-use skills are the actual mutating machinery (the *how*). Slash autocomplete surfaces only the verbs; Claude fills in the machinery.
+
+## Refactor (`/dev-kit:refactor`)
+
+Whole-pipeline **refactor** in 3 gated phases — read-only baseline (`/dev-kit:inspect`) → mutating 4-pass cleanup (`/dev-kit:build-refactor`: dead → dup → naming → coverage) → per-diff verification (`/dev-kit:review`). Each phase gates the next on a quoted exit code + test count; no phase starts without the previous phase's green evidence (MUST-L3, hook `stop-verify`).
 
 ```
-[1/3] inspect   -> /dev-kit:inspect          (read-only)
-                  ↓ quoted: report path + verdict + finding count
-[2/3] simplify  -> /dev-kit:build-simplify   (4 internal passes; mutating)
-                  ↓ quoted: 4 x (pass name + test count + exit 0)
-[3/3] review    -> /dev-kit:review           (3-dim: correctness + security + architecture)
-                  ↓ quoted: per-dim finding count + overall verdict
+[1/3] inspect  -> /dev-kit:inspect         (read-only)
+                 ↓ quoted: report path + verdict + finding count
+[2/3] refactor -> /dev-kit:build-refactor  (4 internal passes; mutating)
+                 ↓ quoted: 4 x (pass name + test count + exit 0)
+[3/3] review   -> /dev-kit:review          (3-dim: correctness + security + architecture)
+                 ↓ quoted: per-dim finding count + overall verdict
 ```
 
-Refuses to start without `.dev-kit/ci-config.json` (`ci_setup_version` >= 0.2.0 — run `/dev-kit:ci-setup` first). Optional `--phase N` (1|2|3) re-runs only that phase. Full contract: [`skills/simplify/SKILL.md`](skills/simplify/SKILL.md).
+Refuses to start without `.dev-kit/ci-config.json` (`ci_setup_version` >= 0.2.0 — run `/dev-kit:ci-setup` first). Optional `--phase N` (1|2|3) re-runs only that phase. Full contract: [`skills/refactor/SKILL.md`](skills/refactor/SKILL.md).
+
+> **This skill rewrites code, it does not delete it.** For project-wide deletion of AI slop, dead code, and unused features, use `/dev-kit:prune` instead. For removing one named feature end-to-end, use `/dev-kit:feat-remove <feature>`.
+
+## Prune (`/dev-kit:prune`)
+
+Whole-pipeline **deletion sweep** in 3 gated phases — same baseline (`/dev-kit:inspect`) → 3-pass deletion (`/dev-kit:build-prune`: orphan-code → dead-feature → slop-pattern) → per-diff verification (`/dev-kit:review`). Mirrors `refactor` in shape but **removes** rather than rewrites.
+
+```
+[1/3] inspect  -> /dev-kit:inspect         (read-only)
+                 ↓ quoted: report path + verdict + finding count
+[2/3] prune    -> /dev-kit:build-prune     (3 internal passes; deletion sweep)
+                 ↓ quoted: 3 x (pass name + test count + exit 0)
+                 ↓ each pass emits rm/git-rm commands for the user to run
+[3/3] review   -> /dev-kit:review          (3-dim: correctness + security + architecture)
+                 ↓ quoted: per-dim finding count + overall verdict
+```
+
+The skill never calls `rm` itself. It writes deletion candidates (path + reason + dependents) to `.dev-kit/hand-off/prune-report.md` and waits for the user to run the commands — same discipline as `/dev-kit:feat-remove`. Refuses to cascade to dependents without explicit user ack. Full contract: [`skills/prune/SKILL.md`](skills/prune/SKILL.md).
+
+> **This skill deletes code, it does not refactor it.** For pure refactoring (rename, extract, dedup), use `/dev-kit:refactor` instead. For one named feature, use `/dev-kit:feat-remove <feature>`.
 
 ## Agent-behavior eval (`/dev-kit:eval`)
 

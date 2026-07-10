@@ -66,9 +66,11 @@ safety:
 | **Human-use** (stage commands, utilities, shortcuts) | `true` | `false` (default) or `true` | ✅ Yes |
 | **Model-use** (internal building blocks) | **`false`** | `false` (default) | ❌ No |
 
-**Current human-use skills** (23): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `simplify`, `adapt`.
+**Current human-use skills** (24): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `adapt`.
 
-**Current model-use skills** (13): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-simplify`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`.
+**Current model-use skills** (14): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`.
+
+> Note: `simplify` → `refactor` rename (this PR) and `build-simplify` → `build-refactor` rename. The verb `simplify` still appears in the human-facing description of `refactor` (e.g., "refactor everything" is a common user phrase) but the skill name is `refactor`. For the deletion counterpart, see `/dev-kit:prune`.
 
 > Note: `plan-ralph` was merged into `plan` (issue #58) — the plan skill is
 > now self-contained and does not delegate to a non-invocable sub-skill.
@@ -93,4 +95,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (38 as of #<feat/simplify-skill-and-inspect-bolster PR>; bump both test_smoke.py and this rule together when adding a new skill).
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (41 as of #feat/refactor-rename-and-prune; bump both test_smoke.py and this rule together when adding a new skill).
