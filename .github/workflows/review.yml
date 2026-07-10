@@ -39,6 +39,14 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
+    # The bump content is version-bump.yml-generated and is auto-merged by
+    # `peter-evans/enable-pull-request-automerge`. Running /dev-kit:review
+    # on it would only confirm "plugin.json version bumped by 0.0.1" — no
+    # reviewable change. Replaces the previous `[skip ci]` literal that
+    # globally suppressed ALL workflows on the bump commit (which broke
+    # the round-trip — see version-bump.yml).
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -148,6 +156,8 @@ jobs:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Skip on bump-PRs — same rationale as `review:` above.
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -256,7 +266,15 @@ jobs:
     name: severity gate (review + security)
     runs-on: ubuntu-latest
     needs: [review, security]
-    if: always()
+    # Skip on bump-PRs: `review` and `security` are skipped via their own
+    # `if:` filters above; `needs: [review, security]` with `if: always()`
+    # would still cause gate to run. Mirror the skip here so the entire
+    # job chain is silenced in one logical place for bump PRs. The `if:`
+    # is wrapped in `always() && ...` so the gate still runs on partial
+    # upstream failures for non-bump PRs.
+    if: |
+      always() &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     # No permissions: gate only needs `gh api` (read) for verdict extraction
     # and does NOT auto-approve. Actual PR approval is the human's job.
     env:

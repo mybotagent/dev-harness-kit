@@ -37,7 +37,14 @@ jobs:
   test:
     name: test (python 3.12)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
+    # Per-workflow replacement for the previous convention of putting
+    # [skip ci] in the bump commit message — that suppressed EVERY
+    # workflow on the bump push, including version-bump.yml's own
+    # auto-tag step. See also review.yml for the same pattern.
+    if: |
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+      && !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -54,7 +61,13 @@ jobs:
   validate:
     name: validate
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # Skip on bump-PRs — same rationale as `test:` above. The bump commit
+    # is auto-generated; running the full validate suite on it would
+    # only re-check plugin manifest shape, skill count, and bash hook
+    # syntax, all of which are invariant under a 0.3.X → 0.3.Y bump.
+    if: |
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+      && !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     steps:
       - uses: actions/checkout@v4
 

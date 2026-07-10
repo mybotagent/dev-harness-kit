@@ -75,13 +75,11 @@ MARKER_REL = ".dev-kit/ci-config.json"
 # Marker schema is content-only (no per-field version gate). Content is the
 # source of truth; _copy_template skips when bytes match.
 MARKER_SCHEMA_VERSION = "1.0.0"
-# Plugin release tag — kept ONLY as a back-compat alias for the marker field
-# `ci_setup_version`. The canonical plugin version lives at
-# `.claude-plugin/plugin.json:version` (restored from PR #31's removal in
-# feat/skill-versions). New code should read plugin_version(_PLUGIN_ROOT);
-# this constant is here so legacy test contracts that import the name still
-# resolve to the same value the marker carries.
-PLUGIN_CI_SETUP_VERSION = "0.3.0"
+# Plugin release tag — there is NO constant here. The canonical plugin
+# version is `.claude-plugin/plugin.json:version`, read at runtime via
+# `plugin_version(_PLUGIN_ROOT)`. Hardcoding a release tag was the source
+# of a version-drift bug (see PR #111): every plugin bump had to chase
+# a Python constant and a template literal. Derive at runtime instead.
 
 # Per-skill semver (semver 2.0.0: X.Y.Z with optional `-prerelease`/`+build`).
 # Used by templates/ci/scripts/validate.py:validate_min_version to compare the
@@ -265,10 +263,10 @@ def semver_lt(a: str, b: str) -> bool:
 def plugin_version(plugin_root: Path | None = None) -> str:
     """Read the canonical plugin version from `.claude-plugin/plugin.json`.
 
-    Single source of truth for the plugin's release tag. Falls back to
-    `PLUGIN_CI_SETUP_VERSION` (the legacy constant) when the field is
-    missing — preserves back-compat with checkouts that still have the
-    pre-PR #31 / pre-this-PR layout.
+    Single source of truth for the plugin's release tag. There is no
+    fallback constant — when `plugin.json` is missing or unreadable,
+    returns `"0.0.0"` (the sentinel that means "no release tag pinned
+    yet", i.e. an in-development checkout, not a published release).
 
     Args:
         plugin_root: absolute path to the dev-harness-kit checkout. When
@@ -276,7 +274,8 @@ def plugin_version(plugin_root: Path | None = None) -> str:
             parent-of-parent).
 
     Returns:
-        The `version:` field as a string, e.g. `"0.3.0"`.
+        The `version:` field as a string, e.g. `"0.3.0"`, or `"0.0.0"`
+        when the manifest can't be read.
     """
     root = plugin_root or _PLUGIN_ROOT
     manifest = root / ".claude-plugin" / "plugin.json"
@@ -287,7 +286,7 @@ def plugin_version(plugin_root: Path | None = None) -> str:
             return v
     except (OSError, json.JSONDecodeError):
         pass
-    return PLUGIN_CI_SETUP_VERSION
+    return "0.0.0"  # sentinel — not a published release
 
 
 def _installed_snapshot_root() -> Path:
