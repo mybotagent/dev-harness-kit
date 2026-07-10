@@ -105,13 +105,12 @@ claude plugin marketplace add sh-ai-x/dev-harness-kit
 claude plugin install dev-kit
 # (live source: claude --plugin-dir /path/to/dev-harness-kit)
 
-# 3. Bootstrap (writes CLAUDE.md + AGENTS.md + active-hooks.json; no source change)
-/dev-kit:bootstrap
+# 3. One-shot setup (CLAUDE.md + AGENTS.md + active-hooks.json + 15 CI templates + marker)
+/dev-kit:bootstrap-full
+#    Equivalent to running `/dev-kit:bootstrap` then `/dev-kit:ci-setup --force` in sequence.
+#    Use the two separately when you only want one half.
 
-# 4. Install CI templates (15 files)
-/dev-kit:ci-setup --force
-
-# 5. First commit + push
+# 4. First commit + push
 git add -A
 git commit -m "chore: bootstrap dev-kit"
 git push -u origin main
@@ -187,7 +186,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 
 | Category | Skills |
 |---|---|
-| `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `ci-setup` |
+| `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `bootstrap-full`, `ci-setup` |
 | `plan` | `plan` |
 | `design` | `design` (merged into `plan`), `build-harness-engine` |
 | `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-simplify`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `simplify` |
