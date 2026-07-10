@@ -1,18 +1,15 @@
 name: version-bump
 
-# Auto-bump PATCH in .claude-plugin/plugin.json on every push to main that
-# touches skills/**. Creates the dev-kit--vX.Y.Z git tag the marketplace
-# ships with, so /plugin marketplace update -> /reload-plugins detects the
-# diff and re-fetches (CLI uses plugin.json:version as cache key; see
-# docs/plugins-reference#version-management).
-#
-# The paths::filter avoids a loop: this commit only touches plugin.json, so
-# the next push won't re-match paths: ['skills/**'].
+# Auto-bump PATCH in .claude-plugin/plugin.json on every merged PR to
+# main, creating the dev-kit--vX.Y.Z tag. With marketplace autoUpdate
+# set, /plugin marketplace update dev-kit then /reload-skills refresh
+# the local cache. Per the docs release-flow note: bump it every time
+# you want users to receive changes. Loop guard: the bump records
+# itself with [skip ci] so the next upload does not re-trigger.
 
 on:
   push:
     branches: [main]
-    paths: ['skills/**']
 
 permissions:
   contents: write
@@ -30,7 +27,7 @@ jobs:
       - name: Bump PATCH in plugin.json
         run: |
           set -euo pipefail
-          VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
+          VERSION=$(jq -r ".version" .claude-plugin/plugin.json)
           if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             echo "plugin.json:version=$VERSION is not MAJOR.MINOR.PATCH; aborting"
             exit 1
@@ -40,15 +37,15 @@ jobs:
           PATCH="${BASH_REMATCH[3]}"
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json \
+          jq --arg v "$NEW_VERSION" ".version = $v" .claude-plugin/plugin.json \\
             > .claude-plugin/plugin.json.tmp
           mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
           echo "version=$NEW_VERSION"
 
-      - name: Commit bump and tag
+      - name: Record and upload
         run: |
           set -euo pipefail
-          VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
+          VERSION=$(jq -r ".version" .claude-plugin/plugin.json)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .claude-plugin/plugin.json
