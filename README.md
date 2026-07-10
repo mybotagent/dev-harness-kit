@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-403%20passed-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-38-blueviolet)](skills/)
+[![Skills](https://img.shields.io/badge/skills-42-blueviolet)](skills/)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue)](.claude-plugin/plugin.json)
 
 ## What
@@ -141,6 +141,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:inspect                 # 6-dim code health audit (read-only, project-wide)
 /dev-kit:eval                    # agent-behavior eval (review/security/plan + code-sanity rubric)
 /dev-kit:report                  # HTML viewer for eval + inspect markdown reports
+/dev-kit:token-analyzer           # token-efficiency dashboard from logs/{claude-code,codex}/*.jsonl
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
@@ -152,14 +153,14 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 41 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 42 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 41 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 42 skills, flat: skills/<skill-name>/SKILL.md
 ├── hooks/                 # 9 hook scripts (6 original + 3 worktree-rule) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
@@ -197,7 +198,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-refactor`, `build-prune`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `refactor`, `prune` |
 | `review` | `review` (3-dim, unified) |
 | `security` | `security` (10-dim OWASP, unified) |
-| `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health), `report` (HTML viewer) |
+| `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health), `report` (HTML viewer), `token-analyzer` (token-efficiency dashboard) |
 | `eval` | `eval` |
 | `onboard` | `onboard` |
 | `repair` | `repair` |
@@ -234,9 +235,15 @@ Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo
 
 Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<sid>.jsonl` and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
 
-## Token efficiency analyzer (`tools/token_efficiency_analyzer.py`)
+## Token efficiency analyzer (`/dev-kit:token-analyzer` → `tools/token_efficiency_analyzer.py`)
 
 A standalone stdlib-only Python CLI that consumes the `logs/{claude-code,codex}/*.jsonl` transcripts captured by the loghooks above and emits a single self-contained HTML dashboard. No external dependencies, no JavaScript, no network — the output is one HTML file with inline CSS that opens directly in a browser.
+
+The user-facing entry point is the **`/dev-kit:token-analyzer`** skill (in the `audit` category) which invokes the underlying `tools/token_efficiency_analyzer.py` driver — see [`skills/token-analyzer/SKILL.md`](skills/token-analyzer/SKILL.md) for the skill contract. The CLI itself is also invokable directly for scripted / CI use:
+
+```bash
+python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
+```
 
 The dashboard answers three questions for any given repository over the last N days:
 
@@ -618,6 +625,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.0 — 38 skills shipped across 14 categories, 403 pytest passing, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **v0.3.0 — 40 skills shipped across 14 categories, 403 pytest passing, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
