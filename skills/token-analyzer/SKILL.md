@@ -56,6 +56,10 @@ The CLI accepts:
 | `--days <n>` | `30` | Look-back window |
 | `--logs-dir <path>` | `./logs` | Root for `claude-code/` + `codex/` subdirs |
 | `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
+| `--cost-gate-tokens <int>` | `200000` | Per-session `input + cache_read` gate; sessions over this trigger stderr WARN |
+| `--cost-gate-usd <float>` | `5.00` | Per-session USD gate; sessions over this trigger stderr WARN |
+| `--pricing-override <path>` | _(none)_ | JSON file overriding the PRICING dict (shape: `{tier: {in, out, cache_write_5m, cache_write_1h, cache_read}}`) |
+| `--json` | _(off)_ | Emit machine-readable JSON summary to stdout, skip HTML write. Exit code 3 on `cost_gate=bad`. |
 
 If the user did not pass `--repo`, derive it from the most common
 basename of `cwd` in the captured sessions and confirm with the user
@@ -69,50 +73,86 @@ Dark-mode aware. Safe to email, archive, or open from `file://`.
 
 Sections (rendered by `tools/token_efficiency_analyzer.py:render_dashboard`):
 
+- **Cost Gate banner** (top of page): green `ok` / amber `warn` / red `bad`
+  with the offending session IDs and reasons. Driven by `--cost-gate-tokens`
+  and `--cost-gate-usd`.
 - **Overview**: 4 metric tiles -- active sessions, total cost, avg
-  score, avg cache hit ratio
-- **Cost & Token Distribution**: cost by repo (share bar) + cost by
-  tool (share bar, with yellow banner if `Read` is #1)
+  score (with letter grade badge), avg cache hit ratio.
+- **Cost & Token Distribution**: cost by repo (share bar, all repos in
+  window -- not just the filtered one) + cost by tool (share bar, with
+  yellow banner if `Read` is #1).
+- **Cost by Model & Cache TTL Mix**: per-model spend table + four-bar
+  Cache TTL Mix showing `cache_read` / `write 5m` / `write 1h` / `pure miss`
+  token share with a TTL pricing caveat.
 - **Sessions**: per-session row -- model, start time, input/output/
-  cache-hit/cost, score pill, warning chips
+  tools/cache-hit/cost, score pill **+ letter grade**, warning chips.
+- **ROI Actions (ranked by estimated savings)**: deduplicated
+  warnings sorted descending by `estimated_save_usd` with priority tag.
 - **Actionable Insights & Estimated Savings**: USD savings callout
-  (green gradient) + deduplicated warning blocks
+  (green gradient) split into cache-miss / dup-read / model-downgrade
+  sub-reclaims + deduplicated warning blocks.
+- **Recommended Optimizations**: do/don't list per warning code --
+  green ✓ for the code that fired, muted ✗ for codes that didn't.
 
-## Scoring rubric (4 dimensions, 0-100 weighted)
+## Scoring rubric (4 dimensions, 0-100 weighted, with letter grade)
 
 | Dim | Weight | Formula | Penalizes |
 |---|---:|---|---|
-| Cache Utilization | 0.35 | `cache_read / (input + cache_read) * 100` | prefix misalignment |
-| Output Density | 0.25 | `min(100, output / total_input * 400)` | read-only sessions |
+| Cache Utilization | 0.40 | stepped: `0..0.50` → `0..50` (1:1), `0.50..0.85` → `50..100`, `≥0.85` → `100` | prefix misalignment |
+| Output Density | 0.20 | `min(100, output / total_input * 400)` | read-only sessions |
 | Read Redundancy | 0.20 | `max(0, 100 - (max_repeat_reads - 1) * 12.5)` | cartography failure |
 | Tool Economy | 0.20 | `max(0, 100 - tools_per_1k_out * 2)` | tool thrashing |
 
-Total = `0.35*cache + 0.25*density + 0.20*redundancy + 0.20*economy`.
+Total = `0.40*cache + 0.20*density + 0.20*redundancy + 0.20*economy`.
 
-## Warning triggers (6 anti-patterns)
+Letter grade bands: `A: ≥90`, `B: ≥80`, `C: ≥70`, `D: ≥60`, `F: <60`.
+Rendered as a colored badge next to the numeric score in the Overview
+tile and every per-session row.
+
+## Pricing model (USD per 1M tokens, per-tier)
+
+| Tier | in | out | cache_write_5m | cache_write_1h | cache_read |
+|---|---:|---:|---:|---:|---:|
+| opus   | 15.00 | 75.00 | 18.75 | 30.00 | 1.50 |
+| sonnet |  3.00 | 15.00 |  3.75 |  6.00 | 0.30 |
+| haiku  |  0.80 |  4.00 |  1.00 |  1.60 | 0.08 |
+
+5m TTL write = 1.25x base input. 1h TTL write = 2.0x base input. Override
+any tier with `--pricing-override <path>.json`. Unknown model ids fall
+back to sonnet pricing AND print a stderr WARN line.
+
+## Warning triggers (6 anti-patterns) with reclaim-axis attribution
 
 Each trigger has the exact emoji-prefixed message from the prompt;
-rendered verbatim in the dashboard.
+rendered verbatim in the dashboard. Each `Warning` dataclass carries
+`estimated_save_usd`, `priority` (1-4), and `reclaim_axis`
+(`cache_miss` | `dup_read` | `model_downgrade` | `""`) so the dashboard
+can rank ROI actions by dollar value.
 
-| Code | Condition | Fix |
-|---|---|---|
-| `CACHE_HIT_LOW` | `cache_hit < 50%` | move volatile data to prompt tail; don't switch models mid-session |
-| `READ_HEAVY` | `Read` >= 40% of tool cost | pin large files once; build a cartography |
-| `HEAVY_CONTEXT` | `total_input > 500K` in one session | delegate to sub-agents; run `/compact` |
-| `MODEL_OVERSPEC` | Opus + density score < 20 | downgrade to Sonnet / Haiku |
-| `WRITE_NOT_REUSED` | `cache_write > 50K` AND `cache_read < 2*cache_write` | only put re-readable data in front of prompt |
-| `REPEATED_USER_MSG` | any user message text appears >= 2x | drop finished sub-tasks from context |
+| Code | Condition | Fix | Reclaim axis |
+|---|---|---|---|
+| `CACHE_HIT_LOW` | `cache_hit < 50%` | move volatile data to prompt tail; don't switch models mid-session | `cache_miss` |
+| `READ_HEAVY` | `Read` >= 40% of tool cost | pin large files once; build a cartography | `dup_read` |
+| `HEAVY_CONTEXT` | `total_input > 500K` in one session | delegate to sub-agents; run `/compact` | `cache_miss` |
+| `MODEL_OVERSPEC` | Opus + density score < 20 | downgrade to Sonnet / Haiku | `model_downgrade` |
+| `WRITE_NOT_REUSED` | `cache_write > 50K` AND `cache_read < 2*cache_write` | only put re-readable data in front of prompt | `cache_miss` |
+| `REPEATED_USER_MSG` | any user message text appears >= 2x | drop finished sub-tasks from context | `cache_miss` |
 
-## Estimated savings (USD)
+## Estimated savings (USD) — three reclaim axes
 
-Conservative reclaim model -- only the cache-miss penalty + duplicate-read
-waste, not the entire bill. Target = 70% cache hit + 0 duplicate reads.
+Conservative reclaim model. Only the cache-miss + duplicate-read +
+model-downgrade penalty is reclaimed, not the entire bill. Target = 85%
+cache hit (Anthropic's recommended minimum) + 0 duplicate reads + Opus
+sessions with density<20 swapped to Sonnet.
 
-- **Cache-miss delta**: shift tokens from billable input into
-  `cache_read` until the session hits 70%. Saved = `shifted *
-  (input_price - cache_read_price)`.
-- **Duplicate-read delta**: `2K tokens * (n - 1)` per file read > 1x,
-  at base input price.
+- **Cache-miss delta** (`cache_miss_reclaim`): shift tokens from
+  billable input into `cache_read` until the session hits 85%. Saved =
+  `shifted * (input_price - cache_read_price)`.
+- **Duplicate-read delta** (`dup_read_reclaim`): `2K tokens * (n - 1)`
+  per file read > 1x, at base input price.
+- **Model-downgrade delta** (`model_downgrade_reclaim`): for Opus
+  sessions with density<20, recompute cost under Sonnet pricing for the
+  same token volume and take the diff.
 
 Per-tool cost column is imputed from `n_calls * 2K_tokens *
 input_price` (heuristic, not a billing-API call).
@@ -125,6 +165,12 @@ estimated_savings=$Y.YY` on success; copy that line verbatim into
 the conversation so the user can audit the numbers without opening
 the HTML. Do not claim "done" or "passed" without that line.
 
+**Stdout vs stderr contract.** The `[ok]` summary line goes to **stdout**.
+Cost Gate WARN lines (`WARN: session ... input=N > N gate ...`) and
+unknown-model WARN lines go to **stderr**. A consumer that parses stdout
+must never see a WARN line in it. Exit code 3 means `cost_gate=bad` under
+`--json` only; HTML mode always exits 0 unless the log dir is empty (2).
+
 ## Hand-off
 
 Previous: `/dev-kit:log setup` + `/dev-kit:log on` (captures the
@@ -134,12 +180,20 @@ If `logs/claude-code/` is empty, refuse to run and tell the user to
 enable capture first. Re-run at any time -- the analyzer re-reads
 disk, no caching, so a fresh log shows up on the next invocation.
 
+For CI / automation, prefer `--json` over the HTML output: it is stable,
+machine-readable, and returns exit code 3 when a Cost Gate fires so a
+PR pipeline can block on it.
+
 ## Related
 
-- `tools/token_efficiency_analyzer.py` -- the CLI driver (782 lines,
-  stdlib only, py_compile-verified)
+- `tools/token_efficiency_analyzer.py` -- the CLI driver (stdlib only,
+  py_compile-verified)
 - `fixtures/make_fixture.py` -- generates 6 synthetic JSONL files
   (one per warning trigger) for regression
+- `tests/test_token_efficiency_analyzer.py` -- 13 unit tests covering
+  scoring curve, letter grade, per-warning $ attribution, Cost Gate,
+  unknown-model warn, pricing override, and end-to-end HTML + JSON
+  outputs
 - `/dev-kit:log` -- captures the input this skill consumes
 
 Next: open the output HTML in a browser, or share the file path

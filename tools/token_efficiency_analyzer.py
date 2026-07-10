@@ -23,54 +23,142 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
+from typing import Iterable
 
 
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
 #
-# Cache *write* is ~25% pricier than base input (one-time priming premium).
-# Cache *read* is ~10% of base input (recovers the miss on subsequent turns).
-# These match Anthropic's published rates for the Claude 4.x family at the
-# time of writing. ``pricing_for()`` matches the model id substring so any
-# variant (claude-opus-4-7, claude-sonnet-5, claude-haiku-4-5, ...) resolves.
+# Cache *write* TTL split: Anthropic's prompt-cache TTL is either 5 minutes
+# or 1 hour. The 5-minute write costs 1.25x base input (a one-time priming
+# premium that recovers over a few re-uses within the window). The 1-hour
+# write costs 2.0x base input — roughly double, since the cache stays valid
+# 12x longer. We read both buckets from ``message.usage.cache_creation``
+# (``ephemeral_5m_input_tokens`` and ``ephemeral_1h_input_tokens``) so a
+# session that pins long-lived context (CLAUDE.md, architecture maps)
+# is priced correctly.
+#
+# Cache *read* is ~10% of base input and recovers the miss on subsequent
+# turns. The 0.85 cache-hit threshold in the scoring rubric is set just
+# above the typical Anthropic-recommended 80% to leave a margin.
+#
+# Rates match Anthropic's published rates for the Claude 4.x family at
+# the time of writing. ``pricing_for()`` matches the model id substring
+# so any variant (claude-opus-4-7, claude-sonnet-5, claude-haiku-4-5, ...)
+# resolves.
 # ---------------------------------------------------------------------------
 PRICING: dict[str, dict[str, float]] = {
-    "opus":   {"in": 15.00, "out": 75.00, "cache_write": 18.75, "cache_read": 1.50},
-    "sonnet": {"in":  3.00, "out": 15.00, "cache_write":  3.75, "cache_read": 0.30},
-    "haiku":  {"in":  0.80, "out":  4.00, "cache_write":  1.00, "cache_read": 0.08},
+    "opus":   {"in": 15.00, "out": 75.00, "cache_write_5m": 18.75, "cache_write_1h": 30.00, "cache_read": 1.50},
+    "sonnet": {"in":  3.00, "out": 15.00, "cache_write_5m":  3.75, "cache_write_1h":  6.00, "cache_read": 0.30},
+    "haiku":  {"in":  0.80, "out":  4.00, "cache_write_5m":  1.00, "cache_write_1h":  1.60, "cache_read": 0.08},
 }
 DEFAULT_PRICING_KEY = "sonnet"
+DEFAULT_CACHE_HIT_TARGET = 0.85   # score = 100 at this ratio; below 0.50 = critical warning
+DEFAULT_DUP_READ_TOKENS  = 2000   # heuristic: each duplicate Read = ~2K token waste
+
+# Cost Gate thresholds (per-session). Anything above either fires a stderr WARN.
+DEFAULT_COST_GATE_TOKENS = 200_000   # input + cache_read in one session
+DEFAULT_COST_GATE_USD    = 5.00      # dollar cost in one session
+
+# Recommendation strings keyed by warning code. Rendered into the
+# "Recommended Optimizations" block in the dashboard.
+WARNING_RECOMMENDATIONS: dict[str, str] = {
+    "CACHE_HIT_LOW":     "단기 세션 캐시 적중률 저조: 세션 도중 CLAUDE.md 수정을 금지하고 자주 변하는 데이터(날짜/시간)는 프롬프트 맨 뒤로 옮기세요.",
+    "READ_HEAVY":        "툴 호출 과다: architecture.md에 구조 지도를 추가하여 탐색 시간을 절감하고 큰 파일은 한 번만 읽어 캐시에 핀(Pin)하세요.",
+    "WRITE_NOT_REUSED":  "비효율적 프리픽스 캐싱: 5분 안에 2~3번 재사용되지 않을 데이터는 캐시 앞단에 두지 마세요. 첫 호출(Write)이 25%(5m) 또는 100%(1h) 더 비쌉니다.",
+    "HEAVY_CONTEXT":     "장기 세션 컨텍스트 비대화: 무거운 탐색은 서브에이전트에 위임하거나 /compact로 적시에 압축하세요.",
+    "MODEL_OVERSPEC":    "모델 오버스펙: 단순 typo 수정/탐색 작업에는 Opus 대신 Sonnet/Haiku로 다운그레이드해 절감하세요.",
+    "REPEATED_USER_MSG": "반복된 사용자 메시지: 막힐 때마다 새 세션을 만들거나 이미 끝난 작업 노드를 컨텍스트에서 즉시 제거하세요.",
+}
+
+# "Don't do" strings keyed by warning code. Rendered into the same block,
+# listing anti-patterns that were *not* observed (so the user sees the
+# contrast and remembers what to keep avoiding).
+WARNING_DONT: dict[str, str] = {
+    "CACHE_HIT_LOW":     "세션 중간에 모델이나 CLAUDE.md를 바꾸지 마세요. 한 토큰만 엇갈려도 전체 캐시가 무효화됩니다.",
+    "READ_HEAVY":        "매 턴 큰 파일을 처음부터 다시 읽지 마세요. 카르토그래피(구조 지도)를 한 번 만들고 진입점만 재사용하세요.",
+    "WRITE_NOT_REUSED":  "재사용 빈도 낮은 컨텐츠(날짜/시간/임시 ID)를 prefix 앞에 두지 마세요.",
+    "HEAVY_CONTEXT":     "/clear 후 새 세션으로 도망가지 마세요. /compact와 서브에이전트 위임을 우선 검토하세요.",
+    "MODEL_OVERSPEC":    "설계든 typo 수정이라도 무조건 Opus를 쓰지 마세요. 작업 성격에 맞춰 모델을 선택하세요.",
+    "REPEATED_USER_MSG": "이미 캐시된 컨텍스트를 user message로 반복 주입하지 마세요.",
+}
+
+# Cache TTL caveat text. Rendered under the Cache TTL Mix panel.
+CACHE_TTL_CAVEAT = (
+    "5m TTL 쓰기는 base input의 1.25배, 1h TTL 쓰기는 2.0배입니다. "
+    "재사용 간격이 1h를 넘는 데이터만 1h로 캐시하세요. "
+    "그 외에는 5m 또는 캐시 없음이 더 저렴합니다."
+)
 
 
-def pricing_for(model_id: str) -> dict[str, float]:
-    """Pick the pricing row whose key appears in the model id (case-insensitive)."""
+def load_pricing_override(path: Path | None) -> None:
+    """Merge a JSON pricing override into the module-level PRICING dict.
+
+    The JSON shape mirrors PRICING: ``{"opus": {"in": ..., "out": ..., ...}, ...}``.
+    A non-existent file is a no-op (CLI flag is optional).
+    """
+    if path is None:
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    for tier, row in data.items():
+        if not isinstance(row, dict):
+            continue
+        existing = PRICING.setdefault(tier, {})
+        for k, v in row.items():
+            if isinstance(v, (int, float)):
+                existing[k] = float(v)
+
+
+def pricing_for(model_id: str, *,
+                _unknown_models: set[str] | None = None) -> dict[str, float]:
+    """Pick the pricing row whose key appears in the model id (case-insensitive).
+
+    If ``_unknown_models`` is provided, ids that match no tier are added to
+    the set so the caller can warn on stderr (instead of silently falling
+    back to sonnet pricing — which under-counts Opus sessions and over-
+    counts Haiku ones).
+    """
     if not model_id:
         return PRICING[DEFAULT_PRICING_KEY]
     mid = model_id.lower()
     for key in ("opus", "sonnet", "haiku"):
         if key in mid:
             return PRICING[key]
+    if _unknown_models is not None:
+        _unknown_models.add(model_id)
     return PRICING[DEFAULT_PRICING_KEY]
 
 
 def cost_usd(model_id: str, *, input_tokens: int, output_tokens: int,
-             cache_write_tokens: int, cache_read_tokens: int) -> float:
+             cache_write_tokens: int = 0, cache_read_tokens: int = 0,
+             cache_write_5m_tokens: int = 0, cache_write_1h_tokens: int = 0,
+             _unknown_models: set[str] | None = None) -> float:
     """Dollar cost of one assistant turn.
 
     ``input_tokens`` is the *non-cached* input (what the cache missed on).
-    Cached input is billed separately under cache_read. The cache *write*
-    surcharge reflects the 25% premium on the first turn that primes the
-    cache prefix.
+    Cached input is billed separately under cache_read. The cache write
+    surcharge reflects the TTL-based premium: 5m at 1.25x and 1h at 2.0x
+    base input. If only the legacy flat ``cache_write_tokens`` is passed
+    (no 5m/1h split), it is priced at the 5m rate for backwards compat.
     """
-    p = pricing_for(model_id)
+    p = pricing_for(model_id, _unknown_models=_unknown_models)
+    legacy_write = max(0, cache_write_tokens - cache_write_5m_tokens - cache_write_1h_tokens)
     return (
-        input_tokens         * p["in"]          / 1_000_000
-        + output_tokens      * p["out"]         / 1_000_000
-        + cache_write_tokens * p["cache_write"] / 1_000_000
-        + cache_read_tokens  * p["cache_read"]  / 1_000_000
+        input_tokens             * p["in"]              / 1_000_000
+        + output_tokens          * p["out"]             / 1_000_000
+        + cache_write_5m_tokens  * p["cache_write_5m"] / 1_000_000
+        + cache_write_1h_tokens  * p["cache_write_1h"] / 1_000_000
+        + legacy_write           * p["cache_write_5m"] / 1_000_000
+        + cache_read_tokens      * p["cache_read"]      / 1_000_000
     )
 
 
@@ -222,20 +310,61 @@ def aggregate_session(path: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 # Scoring rubric (per session, 0-100 weighted)
 #
-# Weights: cache 0.35, density 0.25, redundancy 0.20, economy 0.20.
+# Weights: cache 0.40, density 0.20, redundancy 0.20, economy 0.20.
 # Total is the weighted sum; each dim is reported alongside.
+#
+# Cache Utilization uses a *stepped* curve so a 0.85 hit ratio scores the
+# full 100 (Anthropic's recommended minimum). Below 0.50 the score is
+# steeply penalized (1:1 with the ratio) — sessions that never hit cache
+# get 0; sessions at 0.50 hit get 50. Between 0.50 and 0.85 the slope
+# softens (≈142.86 per unit) so partial credit is awarded.
 # ---------------------------------------------------------------------------
+
+WEIGHT_CACHE       = 0.40
+WEIGHT_DENSITY     = 0.20
+WEIGHT_REDUNDANCY  = 0.20
+WEIGHT_ECONOMY     = 0.20
+assert round(WEIGHT_CACHE + WEIGHT_DENSITY + WEIGHT_REDUNDANCY + WEIGHT_ECONOMY, 6) == 1.0
+
+CACHE_HIT_FULL = 0.85
+CACHE_HIT_WARN = 0.50
+
+GRADE_BANDS: tuple[tuple[float, str], ...] = (
+    (90.0, "A"), (80.0, "B"), (70.0, "C"), (60.0, "D"),
+)
+
+
+def grade_for(total_score: float) -> str:
+    """A: 90+, B: 80+, C: 70+, D: 60+, F: <60."""
+    for threshold, letter in GRADE_BANDS:
+        if total_score >= threshold:
+            return letter
+    return "F"
+
+
+def score_cache_utilization(cache_hit: float) -> float:
+    """Stepped curve: 0 -> 0, 0.50 -> 50, 0.85 -> 100, >0.85 -> 100.
+
+    Below 0.50: slope 1:1 (1 unit of ratio = 1 unit of score).
+    0.50 -> 0.85: slope ≈ 142.86 (50 units of score across 0.35 ratio).
+    >= 0.85: capped at 100 (avoid over-rewarding marginal gains).
+    """
+    if cache_hit >= CACHE_HIT_FULL:
+        return 100.0
+    if cache_hit >= CACHE_HIT_WARN:
+        return round(50.0 + (cache_hit - CACHE_HIT_WARN) * (50.0 / (CACHE_HIT_FULL - CACHE_HIT_WARN)), 1)
+    return round(cache_hit * 100.0, 1)
+
 
 def score_session(s: dict) -> dict:
     """Apply the 4-dim rubric. Returns a dict of dim scores + a weighted total.
 
-    Cache Utilization (weight 0.35)
-        cache_read / (input + cache_read). Low ratio = critical penalty
-        because the prompt prefix is misaligned and we keep re-priming.
-        A perfectly cached session scores 100; a session that never hits
-        cache scores 0.
+    Cache Utilization (weight 0.40)
+        cache_read / (input + cache_read). Stepped curve, full marks at 0.85.
+        Low ratio = critical penalty because the prompt prefix is misaligned
+        and we keep re-priming.
 
-    Output Density (weight 0.25)
+    Output Density (weight 0.20)
         output / (input + cache_read). Sessions that only read without ever
         producing artifacts score near 0; sessions that ship a lot of output
         relative to input score high.
@@ -251,7 +380,7 @@ def score_session(s: dict) -> dict:
     """
     total_input = s["input_tokens"] + s["cache_read_tokens"]
     cache_hit = (s["cache_read_tokens"] / total_input) if total_input else 0.0
-    s_cache = round(min(100.0, cache_hit * 100.0), 1)
+    s_cache = score_cache_utilization(cache_hit)
 
     out_density = s["output_tokens"] / total_input if total_input else 0.0
     # Map density: 0 -> 0, 0.10 -> 50, 0.25+ -> 100 (cap)
@@ -267,10 +396,10 @@ def score_session(s: dict) -> dict:
     s_economy = round(max(0.0, 100.0 - tools_per_1k_out * 2.0), 1)
 
     total = round(
-        0.35 * s_cache
-        + 0.25 * s_density
-        + 0.20 * s_redundancy
-        + 0.20 * s_economy,
+        WEIGHT_CACHE       * s_cache
+        + WEIGHT_DENSITY   * s_density
+        + WEIGHT_REDUNDANCY * s_redundancy
+        + WEIGHT_ECONOMY   * s_economy,
         1,
     )
     return {
@@ -279,6 +408,7 @@ def score_session(s: dict) -> dict:
         "redundancy": s_redundancy,
         "economy": s_economy,
         "total": total,
+        "grade": grade_for(total),
         "cache_hit_ratio": cache_hit,
         "max_repeat_reads": max_repeat,
         "tools_per_1k_out": tools_per_1k_out,
@@ -286,31 +416,58 @@ def score_session(s: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Warning engine (anti-pattern detection).
+# Warning engine (anti-pattern detection) with $ attribution.
 #
 # Each trigger maps to one of the messages from the meta-prompt. Messages
 # are prefixed with the emoji already; we keep them intact so the dashboard
 # can render them verbatim.
+#
+# Each Warning is tagged with ``reclaim_axis`` (cache_miss / dup_read /
+# model_downgrade) so the dashboard can sum per-axis $ attribution and
+# rank ROI actions by descending savings.
 # ---------------------------------------------------------------------------
 
-def evaluate_warnings(s: dict, score: dict) -> list[dict]:
-    """Return a list of {level, code, message} dicts."""
-    warnings: list[dict] = []
+@dataclass
+class Warning:
+    """A single anti-pattern finding attached to one session."""
+    level: str                # "critical" | "warn"
+    code: str                 # "CACHE_HIT_LOW", "READ_HEAVY", ...
+    message: str              # full emoji-prefixed Korean message
+    estimated_save_usd: float = 0.0   # populated by evaluate_warnings
+    priority: int = 0                  # 1 = highest; set from reclaim axis
+    reclaim_axis: str = ""             # cache_miss | dup_read | model_downgrade | ""
+
+
+def evaluate_warnings(s: dict, score: dict,
+                      reclaim_cache_miss: float = 0.0,
+                      reclaim_dup_read: float = 0.0,
+                      reclaim_downgrade: float = 0.0) -> list[Warning]:
+    """Return a list of Warning instances with $ attribution populated.
+
+    The three ``reclaim_*`` floats are the *session-attributable* dollar
+    savings from cache_miss_reclaim / dup_read_reclaim / model_downgrade_reclaim.
+    Each warning that maps to an axis inherits its share so the dashboard
+    can rank by ``estimated_save_usd`` descending.
+    """
+    warnings: list[Warning] = []
     total_input = s["input_tokens"] + s["cache_read_tokens"]
     cache_hit = score["cache_hit_ratio"]
 
     # 1. Cache hit < 50% — prefix misalignment suspected.
     if total_input > 0 and cache_hit < 0.50:
-        warnings.append({
-            "level": "critical",
-            "code": "CACHE_HIT_LOW",
-            "message": (
+        warnings.append(Warning(
+            level="critical",
+            code="CACHE_HIT_LOW",
+            message=(
                 "🚨 캐시 적중률 50% 미만: 프리픽스(Prefix) 정렬이 깨졌을 "
                 "확률이 높습니다. 자주 변하는 데이터(날짜, 시간 등)는 프롬프트 "
                 "맨 뒤로 빼고, 세션 중간에 모델이나 CLAUDE.md를 변경하지 마세요. "
                 "한 토큰만 엇갈려도 전체 캐시가 무효화됩니다."
             ),
-        })
+            estimated_save_usd=round(reclaim_cache_miss, 2),
+            priority=1,
+            reclaim_axis="cache_miss",
+        ))
 
     # 2. Read tool cost >= 40% of total tool-imputed cost.
     #
@@ -324,107 +481,245 @@ def evaluate_warnings(s: dict, score: dict) -> list[dict]:
     total_tool_cost = sum(tool_costs.values()) or 1.0
     read_share = tool_costs.get("Read", 0.0) / total_tool_cost
     if read_share >= 0.40 and s["tool_counts"].get("Read", 0) > 0:
-        warnings.append({
-            "level": "critical",
-            "code": "READ_HEAVY",
-            "message": (
+        warnings.append(Warning(
+            level="critical",
+            code="READ_HEAVY",
+            message=(
                 "🚨 대용량 파일 Turn Read 의심: 파일을 반복해서 읽고 있습니다. "
                 "큰 파일은 한 번 읽어 캐시에 고정(Pin)하고, 아키텍처 지도"
                 "(Cartography)를 만들어 에이전트가 진입점을 바로 찾게 하세요."
             ),
-        })
+            estimated_save_usd=round(reclaim_dup_read, 2),
+            priority=2,
+            reclaim_axis="dup_read",
+        ))
 
     # 3. Context growth > 500K (one session accumulating a lot of input).
     if total_input > 500_000:
-        warnings.append({
-            "level": "warn",
-            "code": "HEAVY_CONTEXT",
-            "message": (
+        warnings.append(Warning(
+            level="warn",
+            code="HEAVY_CONTEXT",
+            message=(
                 "💡 무거운 탐색 위임 권고: 무거운 탐색은 Sub-agent에게 위임하고, "
                 "메인 세션에는 요약본만 넘기세요. 장기 세션의 경우 /compact "
                 "명령으로 적시에 컨텍스트를 압축해야 합니다."
             ),
-        })
+            estimated_save_usd=round(reclaim_cache_miss, 2),
+            priority=3,
+            reclaim_axis="cache_miss",
+        ))
 
     # 4. Opus on low-density simple work.
     is_opus = "opus" in (s["model"] or "").lower()
     if is_opus and score["density"] < 20.0 and s["output_tokens"] > 0:
-        warnings.append({
-            "level": "warn",
-            "code": "MODEL_OVERSPEC",
-            "message": (
+        warnings.append(Warning(
+            level="warn",
+            code="MODEL_OVERSPEC",
+            message=(
                 "💡 모델 오버스펙: 단순 타이포 수정이나 간단한 로직에는 작업 "
                 "성격에 맞춰 하위 모델(Sonnet/Haiku)로 다운그레이드 하세요."
             ),
-        })
+            estimated_save_usd=round(reclaim_downgrade, 2),
+            priority=4,
+            reclaim_axis="model_downgrade",
+        ))
 
     # 5. Cache writes high but reads < 2 per write on average.
     writes = s["cache_write_tokens"]
     if writes > 50_000 and s["cache_read_tokens"] < 2 * writes:
-        warnings.append({
-            "level": "critical",
-            "code": "WRITE_NOT_REUSED",
-            "message": (
+        warnings.append(Warning(
+            level="critical",
+            code="WRITE_NOT_REUSED",
+            message=(
                 "🚨 비효율적 프리픽스 캐싱: 첫 호출(Write)은 25% 더 비쌉니다. "
                 "5분 안에 2~3번 이상 재사용되지 않을 데이터는 캐시 앞단에 "
                 "두지 마세요."
             ),
-        })
+            estimated_save_usd=round(reclaim_cache_miss, 2),
+            priority=2,
+            reclaim_axis="cache_miss",
+        ))
 
     # 6. Repeated user messages (same text appears >= 2 times).
     repeats = [t for t, n in Counter(s["user_texts"]).items() if n >= 2 and len(t) > 5]
     if repeats:
-        warnings.append({
-            "level": "critical",
-            "code": "REPEATED_USER_MSG",
-            "message": (
+        warnings.append(Warning(
+            level="critical",
+            code="REPEATED_USER_MSG",
+            message=(
                 "🚨 안티패턴 감지: 막힐 때마다 세션을 새로 파거나, 이미 캐시된 "
                 "컨텍스트를 유저 메시지로 반복 주입하지 마세요. 끝난 작업의 "
                 "노드는 컨텍스트에서 즉시 제거하세요."
             ),
-        })
+            estimated_save_usd=round(reclaim_cache_miss, 2),
+            priority=3,
+            reclaim_axis="cache_miss",
+        ))
 
     return warnings
 
 
 # ---------------------------------------------------------------------------
-# Estimated savings.
+# Estimated savings — split into three reclaim axes.
 #
-# Conservative model: for each session, compute the *delta* between the actual
-# cost and an "optimized" cost assuming (a) cache hit >= 70% (good prefix
-# alignment) and (b) zero duplicate reads (cartography in place).
+# Conservative model: for each session, compute the *delta* between the
+# actual cost and an "optimized" cost. The three axes map 1:1 to the
+# dashboard's ROI Actions and Warning.reclaim_axis tags:
 #
-# The cache-hit delta is computed by *shifting* tokens from the billable input
-# bucket into the cache_read bucket until the target hit ratio is reached.
-# The cost saved is ``shifted * (input_price - cache_read_price)`` — i.e. the
-# difference between paying full input price and paying the much smaller
-# cache_read price for those tokens.
+#   1. cache_miss_reclaim      — what we save by hitting the target cache ratio
+#                                (default 85% — Anthropic's recommended minimum).
+#                                Tokens are *shifted* from billable input into
+#                                cache_read until the session hits the target.
+#                                Saved = shifted * (input_price - cache_read_price).
 #
-# The redundancy delta is computed per duplicate read above 1, assuming each
-# duplicate reads ~2K tokens of context that would otherwise be cached.
+#   2. dup_read_reclaim        — waste from re-reading the same file in one
+#                                session. Each duplicate Read above 1 is assumed
+#                                to surface ~2K tokens of context that could
+#                                otherwise be served from cache. Priced at base
+#                                input.
 #
-# This intentionally leaves the model room — we only reclaim the cache-miss
-# penalty + the duplicate-read penalty, not the entire spend.
+#   3. model_downgrade_reclaim — what we save by swapping Opus sessions
+#                                (low density < 20) to Sonnet for the SAME
+#                                token volume. Difference in total cost.
+#
+# Each function takes a list of (session, score) tuples AND returns a
+# parallel list of per-session $ values — so evaluate_warnings() can
+# attribute axis share to its warnings. The aggregate sums feed the
+# dashboard's "Estimated Savings" panel and the JSON output.
 # ---------------------------------------------------------------------------
 
-def estimated_savings(sessions: list[dict], scored: list[tuple[dict, dict]]) -> float:
-    """USD saved if all sessions ran at 70% cache hit + 0 duplicate reads."""
-    if not scored:
-        return 0.0
-    total_saved = 0.0
+def cache_miss_reclaim(scored: list[tuple[dict, dict]],
+                       target_hit: float = DEFAULT_CACHE_HIT_TARGET
+                      ) -> list[float]:
+    """Per-session USD saved if cache_hit reached ``target_hit``."""
+    out: list[float] = []
     for s, sc in scored:
-        model = s["model"]
-        target_hit = 0.70
         current_hit = sc["cache_hit_ratio"]
         total_input = s["input_tokens"] + s["cache_read_tokens"]
         if current_hit < target_hit and total_input > 0:
             shift = (target_hit - current_hit) * total_input
-            p = pricing_for(model)
-            total_saved += shift * (p["in"] - p["cache_read"]) / 1_000_000
-        # Redundancy savings: each duplicate Read above 1 is ~2K token waste.
-        dup_tokens = sum(max(0, n - 1) for n in s["read_files"].values()) * 2000
-        total_saved += dup_tokens * pricing_for(model)["in"] / 1_000_000
-    return round(total_saved, 2)
+            p = pricing_for(s["model"])
+            out.append(round(shift * (p["in"] - p["cache_read"]) / 1_000_000, 2))
+        else:
+            out.append(0.0)
+    return out
+
+
+def dup_read_reclaim(scored: list[tuple[dict, dict]],
+                     tokens_per_dup: int = DEFAULT_DUP_READ_TOKENS) -> list[float]:
+    """Per-session USD saved if no file were read more than once."""
+    out: list[float] = []
+    for s, _ in scored:
+        dup_tokens = sum(max(0, n - 1) for n in s["read_files"].values()) * tokens_per_dup
+        out.append(round(dup_tokens * pricing_for(s["model"])["in"] / 1_000_000, 2))
+    return out
+
+
+def model_downgrade_reclaim(scored: list[tuple[dict, dict]]) -> list[float]:
+    """Per-session USD saved if Opus sessions with density<20 swapped to Sonnet.
+
+    Other models: $0 (already at the bottom of the tier ladder, or already
+    on the right model). We intentionally do NOT recommend Sonnet→Haiku
+    here — too aggressive a downgrade for the heuristic to make blindly.
+    """
+    out: list[float] = []
+    for s, sc in scored:
+        is_opus = "opus" in (s["model"] or "").lower()
+        if not (is_opus and sc["density"] < 20.0 and s["output_tokens"] > 0):
+            out.append(0.0)
+            continue
+        opus_cost = cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        sonnet_cost = cost_usd(
+            "sonnet",
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        out.append(round(max(0.0, opus_cost - sonnet_cost), 2))
+    return out
+
+
+def estimated_savings(scored: list[tuple[dict, dict]]) -> dict[str, float]:
+    """Return total $ savings split by reclaim axis. Backwards-compatible:
+    callers that used the old single-float API should switch to
+    ``estimated_savings(...)["total"]``.
+    """
+    cache_miss = sum(cache_miss_reclaim(scored))
+    dup_read   = sum(dup_read_reclaim(scored))
+    downgrade  = sum(model_downgrade_reclaim(scored))
+    return {
+        "cache_miss":      round(cache_miss, 2),
+        "dup_read":        round(dup_read, 2),
+        "model_downgrade": round(downgrade, 2),
+        "total":           round(cache_miss + dup_read + downgrade, 2),
+    }
+
+
+def enforce_cost_gate(scored: list[tuple[dict, dict]],
+                      gate_tokens: int, gate_usd: float
+                     ) -> tuple[str, list[dict]]:
+    """Apply per-session Cost Gate. Returns (status, violations).
+
+    status is one of: ``"ok"`` (no violations), ``"warn"`` (some violations),
+    ``"bad"`` (gate exceeded by a large margin on at least one session — used
+    by --json to set exit code 3).
+
+    A session violates the gate if either ``input_tokens + cache_read_tokens``
+    exceeds ``gate_tokens`` OR its USD cost exceeds ``gate_usd``. Each
+    violation is a dict ``{session_id, total_input, cost, reason}``.
+    """
+    violations: list[dict] = []
+    for s, _ in scored:
+        total_input = s["input_tokens"] + s["cache_read_tokens"]
+        cost = cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        if total_input > gate_tokens:
+            violations.append({
+                "session_id": s["session_id"],
+                "total_input": total_input,
+                "cost": cost,
+                "reason": f"input={total_input:,} > {gate_tokens:,}",
+            })
+        elif cost > gate_usd:
+            violations.append({
+                "session_id": s["session_id"],
+                "total_input": total_input,
+                "cost": cost,
+                "reason": f"cost=${cost:.2f} > ${gate_usd:.2f}",
+            })
+    if not violations:
+        return "ok", violations
+    # "bad" if any single session blew past both thresholds OR the total
+    # spend is 3x the USD gate — i.e., it's not just a noisy outlier.
+    total_spend = sum(v["cost"] for v in violations)
+    if any(v["total_input"] > 3 * gate_tokens or v["cost"] > 3 * gate_usd for v in violations):
+        return "bad", violations
+    if total_spend > 3 * gate_usd:
+        return "bad", violations
+    return "warn", violations
+
+
+def cost_gate_stderr_lines(violations: list[dict]) -> list[str]:
+    """Render one WARN line per violation (human-readable, stderr-only)."""
+    return [
+        f"WARN: session {v['session_id'][:8]} {v['reason']} (cost=${v['cost']:.2f})"
+        for v in violations
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +818,58 @@ tr:last-child td { border-bottom: none; }
 .muted { color: var(--muted); }
 .footer { color: var(--muted); font-size: 12px; margin-top: 36px; text-align: center; }
 code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.grade {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.grade-A { background: rgba(63,185,80,0.18); color: var(--good); }
+.grade-B { background: rgba(88,166,255,0.18); color: var(--accent); }
+.grade-C { background: rgba(210,153,34,0.18); color: var(--warn); }
+.grade-D { background: rgba(248,81,73,0.12); color: var(--warn); }
+.grade-F { background: rgba(248,81,73,0.22); color: var(--bad); }
+.cost-gate {
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+.cost-gate.ok   { background: rgba(63,185,80,0.06); border-color: rgba(63,185,80,0.35); }
+.cost-gate.warn { background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.45); }
+.cost-gate.bad  { background: rgba(248,81,73,0.08); border-color: rgba(248,81,73,0.55); }
+.cost-gate .label { font-weight: 600; margin-right: 8px; }
+.cost-gate ul { margin: 8px 0 0 18px; padding: 0; }
+.cost-gate li { color: var(--muted); }
+.ttl-mix { display: grid; grid-template-columns: 140px 1fr 80px; gap: 6px 12px; align-items: center; font-size: 12px; }
+.ttl-mix .ttl-name { color: var(--muted); }
+.ttl-mix .ttl-pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.roi { padding: 0; margin: 0; list-style: none; }
+.roi li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.roi li:last-child { border-bottom: none; }
+.roi .rank { color: var(--muted); min-width: 22px; font-variant-numeric: tabular-nums; }
+.roi .save { color: var(--good); font-weight: 600; min-width: 80px; font-variant-numeric: tabular-nums; }
+.roi .code { min-width: 170px; }
+.optimize { padding: 0; margin: 0; list-style: none; }
+.optimize li { padding: 6px 0; font-size: 13px; line-height: 1.55; }
+.optimize li.do::before { content: "✓ "; color: var(--good); font-weight: 700; }
+.optimize li.dont::before { content: "✗ "; color: var(--bad); font-weight: 700; }
+.optimize li.muted-item { color: var(--muted); }
+.ttl-caveat { font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.bar-legend { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.bar-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.bar-legend .legend-read::before { background: var(--accent); }
+.bar-legend .legend-5m::before { background: var(--good); }
+.bar-legend .legend-1h::before { background: var(--warn); }
+.bar-legend .legend-miss::before { background: var(--bad); }
+.bar.read > span { background: var(--accent); }
+.bar.write5m > span { background: var(--good); }
+.bar.write1h > span { background: var(--warn); }
+.bar.miss > span { background: var(--bad); }
 """
 
 HTML_TEMPLATE = """<!doctype html>
@@ -537,18 +884,20 @@ HTML_TEMPLATE = """<!doctype html>
   <h1>Token Efficiency Dashboard</h1>
   <div class="subtitle">{repo} · last {days} days · {session_count} active sessions · generated {generated_at}</div>
 
+  {cost_gate_banner}
+
   <div class="section-title">Overview</div>
   <div class="grid cols-4">
     <div class="panel metric"><div class="label">Active Sessions</div><div class="value">{session_count}</div><div class="delta">{repos_named} distinct repo labels</div></div>
     <div class="panel metric"><div class="label">Total Cost</div><div class="value">${total_cost:.2f}</div><div class="delta">{total_tokens:,} tokens processed</div></div>
-    <div class="panel metric"><div class="label">Avg Score</div><div class="value">{avg_score:.1f}<span class="muted" style="font-size:14px">/100</span></div><div class="delta">cache {avg_cache:.0f} · density {avg_density:.0f} · redundancy {avg_redundancy:.0f} · economy {avg_economy:.0f}</div></div>
+    <div class="panel metric"><div class="label">Avg Score</div><div class="value">{avg_score:.1f}<span class="muted" style="font-size:14px">/100</span><span class="grade grade-{avg_grade}">{avg_grade}</span></div><div class="delta">cache {avg_cache:.0f} · density {avg_density:.0f} · redundancy {avg_redundancy:.0f} · economy {avg_economy:.0f}</div></div>
     <div class="panel metric"><div class="label">Cache Hit Ratio</div><div class="value">{avg_cache_hit:.0%}</div><div class="delta">cache_read / total_input</div></div>
   </div>
 
   <div class="section-title">Cost &amp; Token Distribution</div>
   <div class="grid cols-2">
     <div class="panel">
-      <div style="font-weight:600;margin-bottom:10px">Cost by Repository</div>
+      <div style="font-weight:600;margin-bottom:10px">Cost by Repository <span class="muted" style="font-weight:400;font-size:11px">(all repos in window)</span></div>
       <table>
         <thead><tr><th>Repo</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:30%">Share</th></tr></thead>
         <tbody>{repo_rows}</tbody>
@@ -564,12 +913,41 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
+  <div class="section-title">Cost by Model &amp; Cache TTL Mix</div>
+  <div class="grid cols-2">
+    <div class="panel">
+      <div style="font-weight:600;margin-bottom:10px">Cost by Model</div>
+      <table>
+        <thead><tr><th>Model</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tokens</th><th style="text-align:right">Cost</th><th style="width:30%">Share</th></tr></thead>
+        <tbody>{model_rows}</tbody>
+      </table>
+      {unknown_model_html}
+    </div>
+    <div class="panel">
+      <div style="font-weight:600;margin-bottom:10px">Cache TTL Mix</div>
+      <div class="ttl-mix">
+        <div class="ttl-name">cache_read</div><div class="bar read"><span style="width:{ttl_read_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_read_tokens:,}</div>
+        <div class="ttl-name">write 5m TTL</div><div class="bar write5m"><span style="width:{ttl_5m_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_5m_tokens:,}</div>
+        <div class="ttl-name">write 1h TTL</div><div class="bar write1h"><span style="width:{ttl_1h_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_1h_tokens:,}</div>
+        <div class="ttl-name">pure miss</div><div class="bar miss"><span style="width:{ttl_miss_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_miss_tokens:,}</div>
+      </div>
+      <div class="bar-legend">
+        <span class="legend-read">cache_read</span>
+        <span class="legend-5m">write 5m</span>
+        <span class="legend-1h">write 1h</span>
+        <span class="legend-miss">miss</span>
+      </div>
+      <div class="ttl-caveat">{ttl_caveat}</div>
+    </div>
+  </div>
+
   <div class="section-title">Sessions</div>
   <div class="panel" style="overflow-x:auto">
     <table>
       <thead><tr>
         <th>Session</th><th>Model</th><th>Started</th>
         <th style="text-align:right">Input</th><th style="text-align:right">Output</th>
+        <th style="text-align:right">Tools</th>
         <th style="text-align:right">Cache Hit</th><th style="text-align:right">Cost</th>
         <th style="text-align:right">Score</th><th>Warnings</th>
       </tr></thead>
@@ -577,13 +955,23 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
+  <div class="section-title">ROI Actions (ranked by estimated savings)</div>
+  <div class="panel">
+    <ol class="roi">{roi_items}</ol>
+  </div>
+
   <div class="section-title">Actionable Insights &amp; Estimated Savings</div>
   <div class="savings">
     <div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:0.06em">Estimated Savings if Recommendations Applied</div>
-    <div class="big">${estimated_savings:.2f}</div>
-    <div class="muted" style="margin-top:6px">Reclaimable from cache-miss penalty + duplicate-read waste across the {session_count} sessions.</div>
+    <div class="big">${estimated_total:.2f}</div>
+    <div class="muted" style="margin-top:6px">cache-miss ${estimated_cache_miss:.2f} · duplicate-read ${estimated_dup_read:.2f} · model-downgrade ${estimated_downgrade:.2f} across the {session_count} sessions.</div>
   </div>
   <div>{warnings_html}</div>
+
+  <div class="section-title">Recommended Optimizations</div>
+  <div class="panel">
+    <ul class="optimize">{optimize_items}</ul>
+  </div>
 
   <div class="footer">Computed by tools/token_efficiency_analyzer.py · stdlib only · no external assets</div>
 </div>
@@ -594,9 +982,24 @@ HTML_TEMPLATE = """<!doctype html>
 
 def render_dashboard(repo: str, days: int, sessions: list[dict],
                      scored: list[tuple[dict, dict]],
-                     warnings_per_session: list[list[dict]],
-                     estimated: float) -> str:
-    """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``."""
+                     warnings_per_session: list[list["Warning"]],
+                     estimated: dict[str, float] | float,
+                     cost_gate: tuple[str, list[dict]] = ("ok", []),
+                     all_sessions_in_window: list[dict] | None = None,
+                     unknown_models: set[str] | None = None) -> str:
+    """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``.
+
+    ``estimated`` may be a legacy single float (sum) or a dict from the new
+    ``estimated_savings()`` with ``cache_miss / dup_read / model_downgrade / total``.
+    ``cost_gate`` is ``(status, violations)`` from ``enforce_cost_gate()``.
+    ``all_sessions_in_window`` is the unfiltered-by-repo set used for the
+    per-repo panel — fixes the collapse-to-one-row bug.
+    """
+    if isinstance(estimated, (int, float)):
+        estimated = {
+            "cache_miss": float(estimated), "dup_read": 0.0,
+            "model_downgrade": 0.0, "total": float(estimated),
+        }
 
     session_costs: list[float] = []
     for s, _ in scored:
@@ -604,6 +1007,8 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             s["model"],
             input_tokens=s["input_tokens"],
             output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
             cache_write_tokens=s["cache_write_tokens"],
             cache_read_tokens=s["cache_read_tokens"],
         ))
@@ -620,16 +1025,29 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
     avg_redundancy = mean(sc["redundancy"] for _, sc in scored) if scored else 0.0
     avg_economy = mean(sc["economy"] for _, sc in scored) if scored else 0.0
     avg_cache_hit = mean(sc["cache_hit_ratio"] for _, sc in scored) if scored else 0.0
+    avg_grade = grade_for(avg_score)
 
-    # Cost by repo
+    # Cost by repo — use the unfiltered-by-repo session set so the panel
+    # is not a single self-row.
+    repo_pool = all_sessions_in_window if all_sessions_in_window is not None else sessions
     repo_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for (s, _), c in zip(scored, session_costs):
+    for s in repo_pool:
+        c = cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
         repo_costs[s["repo"]][0] += 1
         repo_costs[s["repo"]][1] += c
+    repo_total_for_share = sum(rc[1] for rc in repo_costs.values()) or 1.0
     repo_rows_html = "".join(
         f"<tr><td>{html.escape(rr)}</td><td style='text-align:right'>{int(repo_costs[rr][0])}</td>"
         f"<td style='text-align:right'>${repo_costs[rr][1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(repo_costs[rr][1] / total_cost * 100) if total_cost else 0:.1f}%'></span></div></td></tr>"
+        f"<td><div class='bar'><span style='width:{(repo_costs[rr][1] / repo_total_for_share * 100):.1f}%'></span></div></td></tr>"
         for rr in sorted(repo_costs, key=lambda k: -repo_costs[k][1])
     )
 
@@ -656,17 +1074,85 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             '</div>'
         )
 
+    # Cost by Model — group sessions by their dominant model id.
+    model_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0.0])
+    # accumulator: [sessions, total_tokens, cost]
+    for s, c in zip(sessions, [cost_usd(
+        s["model"],
+        input_tokens=s["input_tokens"],
+        output_tokens=s["output_tokens"],
+        cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+        cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+        cache_write_tokens=s["cache_write_tokens"],
+        cache_read_tokens=s["cache_read_tokens"],
+    ) for s in sessions]):
+        tokens = s["input_tokens"] + s["output_tokens"] + s["cache_write_tokens"] + s["cache_read_tokens"]
+        model_costs[s["model"] or "(unknown)"][0] += 1
+        model_costs[s["model"] or "(unknown)"][1] += tokens
+        model_costs[s["model"] or "(unknown)"][2] += c
+    model_total_for_share = sum(mc[2] for mc in model_costs.values()) or 1.0
+    model_rows_html = "".join(
+        f"<tr><td>{html.escape(m)}</td>"
+        f"<td style='text-align:right'>{int(model_costs[m][0])}</td>"
+        f"<td style='text-align:right'>{int(model_costs[m][1]):,}</td>"
+        f"<td style='text-align:right'>${model_costs[m][2]:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{(model_costs[m][2] / model_total_for_share * 100):.1f}%'></span></div></td></tr>"
+        for m in sorted(model_costs, key=lambda k: -model_costs[k][2])
+    )
+    unknown_model_html = ""
+    if unknown_models:
+        items = "".join(f"<li>{html.escape(m)}</li>" for m in sorted(unknown_models))
+        unknown_model_html = (
+            f'<div class="warning warn" style="margin-top:12px">'
+            f'⚠ Unknown model id(s) — falling back to Sonnet pricing:'
+            f'<ul style="margin:6px 0 0 18px;padding:0">{items}</ul></div>'
+        )
+
+    # Cache TTL mix panel
+    ttl_read  = sum(s["cache_read_tokens"] for s, _ in scored)
+    ttl_5m    = sum(s.get("ephemeral_5m", 0) for s, _ in scored)
+    ttl_1h    = sum(s.get("ephemeral_1h", 0) for s, _ in scored)
+    ttl_miss  = sum(s["input_tokens"] for s, _ in scored)
+    ttl_total = (ttl_read + ttl_5m + ttl_1h + ttl_miss) or 1
+    ttl_read_pct = ttl_read / ttl_total * 100
+    ttl_5m_pct   = ttl_5m   / ttl_total * 100
+    ttl_1h_pct   = ttl_1h   / ttl_total * 100
+    ttl_miss_pct = ttl_miss / ttl_total * 100
+
+    # Cost Gate banner
+    gate_status, gate_violations = cost_gate
+    if not gate_violations:
+        cost_gate_banner = (
+            f'<div class="cost-gate {gate_status}">'
+            f'<span class="label">Cost Gate:</span> all sessions within '
+            f'tokens/cost thresholds.'
+            f'</div>'
+        )
+    else:
+        items = "".join(
+            f"<li><code>{html.escape(v['session_id'][:8])}</code> — {html.escape(v['reason'])} "
+            f"(cost=${v['cost']:.2f})</li>"
+            for v in gate_violations
+        )
+        cost_gate_banner = (
+            f'<div class="cost-gate {gate_status}">'
+            f'<span class="label">Cost Gate: {gate_status.upper()}</span>'
+            f'{len(gate_violations)} session(s) exceeded thresholds:'
+            f'<ul>{items}</ul></div>'
+        )
+
     # Session rows
     session_rows_parts: list[str] = []
     for idx, ((s, sc), cost) in enumerate(zip(scored, session_costs)):
-        total_in = s["input_tokens"] + s["cache_read_tokens"]
         hit = sc["cache_hit_ratio"]
         started = s["first_ts"].strftime("%Y-%m-%d %H:%M") if s["first_ts"] else "—"
         score = sc["total"]
+        grade = sc["grade"]
         pill_cls = "pill-good" if score >= 75 else ("pill-warn" if score >= 50 else "pill-bad")
         warns = warnings_per_session[idx]
+        total_tools = sum(s["tool_counts"].values())
         warn_chips = " ".join(
-            f"<span class='pill {'pill-bad' if w['level']=='critical' else 'pill-warn'}'>{html.escape(w['code'])}</span>"
+            f"<span class='pill {'pill-bad' if w.level=='critical' else 'pill-warn'}'>{html.escape(w.code)}</span>"
             for w in warns
         ) or "<span class='muted'>—</span>"
         session_rows_parts.append(
@@ -675,24 +1161,55 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             f"<td class='muted'>{html.escape(started)}</td>"
             f"<td style='text-align:right'>{s['input_tokens']:,}</td>"
             f"<td style='text-align:right'>{s['output_tokens']:,}</td>"
+            f"<td style='text-align:right'>{total_tools:,}</td>"
             f"<td style='text-align:right'>{hit:.0%}</td>"
             f"<td style='text-align:right'>${cost:.2f}</td>"
-            f"<td style='text-align:right'><span class='pill {pill_cls}'>{score:.0f}</span></td>"
+            f"<td style='text-align:right'><span class='pill {pill_cls}'>{score:.0f}</span>"
+            f"<span class='grade grade-{grade}'>{grade}</span></td>"
             f"<td>{warn_chips}</td></tr>"
         )
-    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='9' class='muted'>No sessions.</td></tr>"
+    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='10' class='muted'>No sessions.</td></tr>"
 
     # Warnings list (deduped by code)
     seen_codes: set[str] = set()
     warn_blocks: list[str] = []
     for warns in warnings_per_session:
         for w in warns:
-            if w["code"] in seen_codes:
+            if w.code in seen_codes:
                 continue
-            seen_codes.add(w["code"])
-            css = "warning" if w["level"] == "critical" else "warning warn"
-            warn_blocks.append(f'<div class="{css}">{html.escape(w["message"])}</div>')
+            seen_codes.add(w.code)
+            css = "warning" if w.level == "critical" else "warning warn"
+            warn_blocks.append(f'<div class="{css}">{html.escape(w.message)}</div>')
     warnings_html = "\n".join(warn_blocks) or '<div class="muted">No anti-patterns detected.</div>'
+
+    # ROI Actions ranked by $ save
+    roi_candidates: list[tuple[float, str, str, int]] = []   # (save, code, msg, priority)
+    for warns in warnings_per_session:
+        for w in warns:
+            if w.estimated_save_usd > 0:
+                roi_candidates.append((w.estimated_save_usd, w.code, w.message, w.priority))
+    roi_candidates.sort(key=lambda x: -x[0])
+    if roi_candidates:
+        roi_items = "".join(
+            f"<li><span class='rank'>#{i+1}</span>"
+            f"<span class='save'>${save:.2f}</span>"
+            f"<span class='code'>{html.escape(code)}</span>"
+            f"<span class='muted'>(priority P{prio})</span></li>"
+            for i, (save, code, _msg, prio) in enumerate(roi_candidates[:20])
+        )
+    else:
+        roi_items = '<li class="muted">No reclaimable savings detected — cache hit and tool usage are within targets.</li>'
+
+    # Recommended Optimizations (do/don't) — show do for fired codes, dont for not-fired.
+    fired_codes = seen_codes
+    all_codes = list(WARNING_RECOMMENDATIONS.keys())
+    opt_items: list[str] = []
+    for code in all_codes:
+        if code in fired_codes:
+            opt_items.append(f'<li class="do">{html.escape(WARNING_RECOMMENDATIONS[code])}</li>')
+        else:
+            opt_items.append(f'<li class="dont muted-item">{html.escape(WARNING_DONT.get(code, ""))}</li>')
+    optimize_items = "\n".join(opt_items)
 
     return HTML_TEMPLATE.format(
         repo=html.escape(repo),
@@ -702,17 +1219,35 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         total_cost=total_cost,
         total_tokens=total_tokens,
         avg_score=avg_score,
+        avg_grade=avg_grade,
         avg_cache=avg_cache,
         avg_density=avg_density,
         avg_redundancy=avg_redundancy,
         avg_economy=avg_economy,
         avg_cache_hit=avg_cache_hit,
+        cost_gate_banner=cost_gate_banner,
         repo_rows=repo_rows_html,
         tool_rows=tool_rows_html,
         read_warning_html=read_warning_html,
+        model_rows=model_rows_html,
+        unknown_model_html=unknown_model_html,
+        ttl_read_tokens=ttl_read,
+        ttl_5m_tokens=ttl_5m,
+        ttl_1h_tokens=ttl_1h,
+        ttl_miss_tokens=ttl_miss,
+        ttl_read_pct=ttl_read_pct,
+        ttl_5m_pct=ttl_5m_pct,
+        ttl_1h_pct=ttl_1h_pct,
+        ttl_miss_pct=ttl_miss_pct,
+        ttl_caveat=html.escape(CACHE_TTL_CAVEAT),
         session_rows=session_rows_html,
         warnings_html=warnings_html,
-        estimated_savings=estimated,
+        estimated_total=estimated["total"],
+        estimated_cache_miss=estimated["cache_miss"],
+        estimated_dup_read=estimated["dup_read"],
+        estimated_downgrade=estimated["model_downgrade"],
+        roi_items=roi_items,
+        optimize_items=optimize_items,
         css=CSS,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
@@ -728,7 +1263,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--days", type=int, default=30, help="Look-back window in days (default 30).")
     parser.add_argument("--logs-dir", default="logs", help="Logs root directory (default: ./logs).")
     parser.add_argument("--out", default=None, help="Output HTML path (default: token-dashboard-<repo>-<days>d.html).")
+    parser.add_argument("--cost-gate-tokens", type=int, default=DEFAULT_COST_GATE_TOKENS,
+                        help=f"Per-session input+cache_read gate (default {DEFAULT_COST_GATE_TOKENS:,}).")
+    parser.add_argument("--cost-gate-usd", type=float, default=DEFAULT_COST_GATE_USD,
+                        help=f"Per-session USD gate (default ${DEFAULT_COST_GATE_USD:.2f}).")
+    parser.add_argument("--pricing-override", default=None,
+                        help="Optional JSON file overriding the PRICING dict (see PRICING docstring for shape).")
+    parser.add_argument("--json", action="store_true",
+                        help="Emit a machine-readable JSON summary to stdout (skips HTML write). Exit 3 on cost_gate==bad.")
     args = parser.parse_args(argv)
+
+    # Apply pricing override before any pricing call.
+    load_pricing_override(Path(args.pricing_override) if args.pricing_override else None)
 
     logs_dir = Path(args.logs_dir).resolve()
     files = discover_logs(logs_dir)
@@ -736,19 +1282,93 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/", file=sys.stderr)
         return 2
 
+    unknown_models: set[str] = set()
+
     sessions: list[dict] = []
     for p in files:
         s = aggregate_session(p)
         if s is not None:
             sessions.append(s)
 
+    # Time-window only (no repo filter) — feeds the per-repo panel so it
+    # shows the full distribution, not a single self-row.
+    windowed = filter_sessions(sessions, "", args.days)
     selected = filter_sessions(sessions, args.repo, args.days)
     if not selected:
         print(f"[warn] No sessions matched repo='{args.repo}' within {args.days} days.", file=sys.stderr)
 
     scored: list[tuple[dict, dict]] = [(s, score_session(s)) for s in selected]
-    warnings_per_session = [evaluate_warnings(s, sc) for s, sc in scored]
-    estimated = estimated_savings(selected, scored)
+    reclaim_cache = cache_miss_reclaim(scored)
+    reclaim_dup   = dup_read_reclaim(scored)
+    reclaim_dn    = model_downgrade_reclaim(scored)
+    warnings_per_session = [
+        evaluate_warnings(s, sc, rc, rd, rdn)
+        for (s, sc), rc, rd, rdn in zip(scored, reclaim_cache, reclaim_dup, reclaim_dn)
+    ]
+    estimated = estimated_savings(scored)
+
+    gate_status, gate_violations = enforce_cost_gate(scored, args.cost_gate_tokens, args.cost_gate_usd)
+
+    # Detect unknown model ids (collect during scoring). Re-walk once.
+    for s in selected:
+        pricing_for(s["model"], _unknown_models=unknown_models)
+
+    # Warn about unknown models on stderr (not stdout — stdout is the [ok] contract).
+    for m in sorted(unknown_models):
+        print(f"WARN: unknown model '{m}' — using sonnet fallback pricing", file=sys.stderr)
+
+    # Cost Gate WARN lines (stderr only, after HTML is written so stdout order is stable).
+    for line in cost_gate_stderr_lines(gate_violations):
+        print(line, file=sys.stderr)
+
+    total_cost = sum(
+        cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        for s in selected
+    )
+
+    if args.json:
+        out = {
+            "repo": args.repo,
+            "days": args.days,
+            "files_scanned": len(files),
+            "sessions": len(selected),
+            "total_cost_usd": round(total_cost, 4),
+            "estimated_savings_usd": estimated,
+            "cost_gate": {
+                "status": gate_status,
+                "tokens_threshold": args.cost_gate_tokens,
+                "usd_threshold": args.cost_gate_usd,
+                "violations": [
+                    {k: (round(v[k], 4) if isinstance(v[k], float) else v[k]) for k in v}
+                    for v in gate_violations
+                ],
+            },
+            "warnings": [
+                {
+                    "code": w.code,
+                    "level": w.level,
+                    "estimated_save_usd": w.estimated_save_usd,
+                    "reclaim_axis": w.reclaim_axis,
+                    "priority": w.priority,
+                    "session_id": s["session_id"],
+                }
+                for (s, _), warns in zip(scored, warnings_per_session)
+                for w in warns
+            ],
+            "unknown_models": sorted(unknown_models),
+        }
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        if gate_status == "bad":
+            return 3
+        return 0
 
     html_out = render_dashboard(
         repo=args.repo,
@@ -757,24 +1377,17 @@ def main(argv: list[str] | None = None) -> int:
         scored=scored,
         warnings_per_session=warnings_per_session,
         estimated=estimated,
+        cost_gate=(gate_status, gate_violations),
+        all_sessions_in_window=windowed,
+        unknown_models=unknown_models,
     )
 
     out_path = Path(args.out) if args.out else Path(f"token-dashboard-{args.repo}-{args.days}d.html")
     out_path.write_text(html_out, encoding="utf-8")
 
-    # Console summary
-    total_cost = sum(
-        cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        for s in selected
-    )
+    # Console summary (stdout — Iron Law contract).
     print(f"[ok] sessions={len(selected)}  files_scanned={len(files)}  "
-          f"total_cost=${total_cost:.2f}  estimated_savings=${estimated:.2f}")
+          f"total_cost=${total_cost:.2f}  estimated_savings=${estimated['total']:.2f}")
     print(f"[ok] dashboard -> {out_path}")
     return 0
 
