@@ -257,11 +257,17 @@ class TestCiSetup(unittest.TestCase):
     def test_marker_schema_version_current(self):
         """Schema is content-only (1.0.0). The ci_setup_version gate is separate."""
         self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.0.0")
-        self.assertTrue(hasattr(self.ci_setup, "PLUGIN_CI_SETUP_VERSION"))
+        # ci_setup_version is derived at runtime from plugin.json — there is
+        # no hardcoded constant for it. Pin the API surface + the floor
+        # contract, but not the value itself.
+        self.assertTrue(hasattr(self.ci_setup, "plugin_version"),
+                        "ci_setup must expose a runtime `plugin_version()` reader")
+        live = self.ci_setup.plugin_version()
         # Lexicographic gate threshold (skills/build/SKILL.md reads >= "0.1.0").
         self.assertGreaterEqual(
-            tuple(int(x) for x in self.ci_setup.PLUGIN_CI_SETUP_VERSION.split(".")),
+            tuple(int(x) for x in live.split(".")),
             (0, 1, 0),
+            f"plugin_version()={live!r} fails the build gate (>= 0.1.0)",
         )
 
     def test_marker_writes_ci_setup_version(self):
@@ -281,8 +287,8 @@ class TestCiSetup(unittest.TestCase):
             self.assertIn("ci_setup_version", marker, "marker missing ci_setup_version")
             self.assertEqual(
                 marker["ci_setup_version"],
-                self.ci_setup.PLUGIN_CI_SETUP_VERSION,
-                "marker ci_setup_version must match the plugin constant",
+                self.ci_setup.plugin_version(),
+                "marker ci_setup_version must mirror .claude-plugin/plugin.json:version",
             )
             # The gate evaluates lexicographically; the value must clear 0.1.0.
             self.assertGreaterEqual(
@@ -291,9 +297,11 @@ class TestCiSetup(unittest.TestCase):
             )
 
     def test_marker_ci_setup_version_matches_template_contract(self):
-        """The template contract (templates/ci/ci-config.example.json) and the
-        runtime marker carry the same ci_setup_version field — gates and
-        templates can't drift."""
+        """The template carries a `"TEMPLATE"` placeholder for
+        `ci_setup_version`; the install substitutes the live plugin
+        version from `.claude-plugin/plugin.json`. This pins the contract:
+        no hardcoded version strings drift apart from each other over time.
+        """
         import tempfile
         template_marker = json.loads(
             (PROJECT_ROOT / "templates" / "ci" / "ci-config.example.json").read_text()
@@ -302,16 +310,24 @@ class TestCiSetup(unittest.TestCase):
             "ci_setup_version", template_marker,
             "template contract lost the ci_setup_version field",
         )
+        # Template value is the sentinel; install must overwrite.
+        self.assertEqual(template_marker["ci_setup_version"], "TEMPLATE",
+                         "template must use 'TEMPLATE' placeholder, not a hardcoded version")
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self.ci_setup.install_ci_config(target)
             installed_marker = json.loads(
                 (target / ".dev-kit" / "ci-config.json").read_text()
             )
+            # Installed value is the live plugin version (NOT the sentinel).
+            self.assertNotEqual(
+                installed_marker["ci_setup_version"], "TEMPLATE",
+                "install did not substitute the live plugin version into the marker",
+            )
             self.assertEqual(
                 installed_marker["ci_setup_version"],
-                template_marker["ci_setup_version"],
-                "installed marker drifted from template contract",
+                self.ci_setup.plugin_version(),
+                "installed marker ci_setup_version must match plugin_version()",
             )
 
     def test_marker_records_hooks_rules_tests(self):

@@ -125,10 +125,48 @@ class TestBumpWorkflow(unittest.TestCase):
                         "current run is going, which is the opposite of serialisation. The idempotency "
                         "step is the only thing preventing duplicate bump PRs from racing.")
 
-    def test_08_skip_ci_literal_in_commit_message(self):
+    def test_08_no_skip_ci_literal_in_bump_commit_message(self):
+        """`[skip ci]` (or `[no ci]`, `[ci skip]`, `[skip actions]`, `[actions skip]`)
+        in any commit message tells GitHub Actions to globally suppress
+        ALL workflows on that push — including `version-bump.yml` itself,
+        which broke the auto-tag cycle (after squash-merge of the bump PR,
+        version-bump.yml never re-fired so `dev-kit--vX.Y.Z` never got pushed).
+        Per-workflow `if:` filters on `ci.yml` / `review.yml` now skip
+        the bump commit instead.
+
+        Note: the file as a whole may still mention `[skip ci]` inside the
+        idempotency regex (T10's tolerance for backward-compat with old
+        format bump commits). What matters is the *bump commit MESSAGE*
+        — the `git commit -m "..."` invocation — does NOT carry it.
+        """
         text = _yaml_text()
-        self.assertIn("[skip ci]", text,
-                      "loop guard: the bump commit message must carry [skip ci]")
+        # Locate the bump-commit `git commit -m ...` line. It's the only
+        # `git commit -m` invocation in this workflow file (T10 will catch
+        # future re-introductions; here we only assert the commit message).
+        bump_lines = [
+            l for l in text.splitlines()
+            if "git commit -m" in l and "bump dev-kit to v" in l
+        ]
+        self.assertEqual(
+            len(bump_lines), 1,
+            "expected exactly one `git commit -m` line containing "
+            "'bump dev-kit to v'; ensure T10 hasn't been bypassed.")
+        bump_line = bump_lines[0]
+        for forbidden in ("[skip ci]", "[no ci]", "[ci skip]", "[actions skip]"):
+            self.assertNotIn(
+                forbidden, bump_line,
+                f"bump commit message must NOT contain {forbidden!r} — "
+                "GitHub Actions globally suppresses ALL workflows on such "
+                f"commits (and would break version-bump.yml's auto-tag step). Offending line: {bump_line!r}")
+        # Sanity check: the idempotency regex (further down) still mentions
+        # `[skip ci]` as an OPTIONAL suffix. That is intentional — it lets
+        # old-format bump commits (which DID carry `[skip ci]`) still match
+        # the regex on a squash-merge re-fire, preserving idempotency while
+        # we transition. We pin that line to catch accidental cleanups.
+        self.assertIn(
+            "\\[skip\\ ci\\]", text,
+            "idempotency regex must still tolerate '[skip ci]' as optional "
+            "suffix (for backward compat with old-format bump commits)")
 
     def test_09_auto_merge_via_peter_evans_action(self):
         doc = _yaml_doc()
@@ -278,6 +316,110 @@ class TestBumpWorkflow(unittest.TestCase):
                          "on the very run where the tag needs to be pushed.")
         self.assertIn("new_version", cond,
                       "Tag step should be gated on new_version != '' (set on both paths)")
+
+
+def _load_yaml(path: Path) -> dict:
+    """Load a workflow YAML file and return its parsed doc."""
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+class TestBumpSkipFilters(unittest.TestCase):
+    """Per-workflow `if:` filters that skip the bump PR (title
+    `chore(release): bump dev-kit to vX.Y.Z`). This replaces the
+    previous `[skip ci]` literal in the bump commit message, which
+    suppressed ALL workflows on the bump push — including
+    version-bump.yml's own auto-tag re-fire, which broke the round-trip.
+
+    Files covered: ci.yml (test + validate), review.yml (review +
+    security + gate). auto-fix-pr.yml triggers on `pull_request_review:
+    submitted` (not on PR open/synchronize), and the bump PR is
+    auto-merged by `peter-evans/enable-pull-request-automerge` so a
+    human review is unlikely; left untouched here.
+    """
+
+    BUMP_TITLE_PREFIX = "chore(release): bump dev-kit to v"
+
+    @staticmethod
+    def _job_if(workflow_path: Path, job_name: str) -> str:
+        """Return the `if:` clause of the named job in the workflow,
+        or '' if the job has no `if:` condition at all."""
+        doc = _load_yaml(workflow_path)
+        jobs = doc.get("jobs", {}) or {}
+        job = jobs.get(job_name, {}) or {}
+        return job.get("if", "") or ""
+
+    @staticmethod
+    def _wf(name: str) -> Path:
+        # WORKFLOW_PATH is `<repo>/.github/workflows/version-bump.yml`. Its
+        # parent is already `.github/workflows/`, so siblings resolve there.
+        return WORKFLOW_PATH.parent / name
+
+    def _assert_skips_bump(self, workflow: Path, job_name: str):
+        cond = self._job_if(workflow, job_name)
+        self.assertTrue(cond,
+                        f"{workflow.name}: job={job_name!r} has no `if:` — "
+                        "bump-PRs would re-fire this job and cause feedback-loop noise. "
+                        f"Add `!startsWith(github.event.pull_request.title, '{self.BUMP_TITLE_PREFIX}')` "
+                        "(or equivalent) to its `if:` condition.")
+        self.assertIn(self.BUMP_TITLE_PREFIX, cond,
+                      f"{workflow.name}: job={job_name!r} `if:` must mention "
+                      f"'{self.BUMP_TITLE_PREFIX}' so the bump PR is skipped")
+        self.assertRegex(cond, r"!startsWith\(github\.event\.pull_request\.title",
+                         f"{workflow.name}: job={job_name!r} must guard the bump-PR "
+                         "skip with !startsWith(...) — not just an existence check")
+
+    def test_16_ci_test_skips_bump_pr(self):
+        self._assert_skips_bump(self._wf("ci.yml"), "test")
+
+    def test_17_ci_validate_skips_bump_pr(self):
+        self._assert_skips_bump(self._wf("ci.yml"), "validate")
+
+    def test_18_review_review_skips_bump_pr(self):
+        self._assert_skips_bump(self._wf("review.yml"), "review")
+
+    def test_19_review_security_skips_bump_pr(self):
+        self._assert_skips_bump(self._wf("review.yml"), "security")
+
+    def test_20_review_gate_skips_bump_pr_even_under_always(self):
+        """`gate` uses `if: always()` (because it depends on review +
+        security and must run after a partial failure). The bump-PR skip
+        must compose WITH `always()`, not replace it — i.e. the `if:` is
+        `always() && !<bump-skip>` (or a YAML equivalent)."""
+        cond = self._job_if(self._wf("review.yml"), "gate")
+        self.assertIn("always()", cond,
+                      "review.yml: job='gate' must preserve `if: always()` semantics")
+        self.assertIn(self.BUMP_TITLE_PREFIX, cond,
+                      f"review.yml: job='gate' `if:` must skip bump-PRs by title-prefix "
+                      f"('{self.BUMP_TITLE_PREFIX}')")
+        # The compose order matters: AND with always(). Accept either
+        # `always() && !startsWith(...)` or `!startsWith(...) && always()`.
+        self.assertRegex(cond, r"always\(\)\s*(&&|and)\s*!?startsWith",
+                         "review.yml: job='gate' `if:` must compose `always()` AND "
+                         "the bump-skip with a logical AND")
+
+    def test_21_review_workflow_pull_request_trigger_includes_opened(self):
+        """Sanity: review.yml must continue to trigger on `pull_request:
+        opened` so the per-PR review chain still fires for non-bump PRs."""
+        doc = _load_yaml(self._wf("review.yml"))
+        on = doc.get("on") or doc.get(True) or {}
+        pr = on.get("pull_request")
+        self.assertIsNotNone(pr, "review.yml must declare pull_request trigger")
+        types = pr.get("types") or []
+        self.assertIn("opened", types,
+                      "review.yml pull_request.types must include 'opened' "
+                      "(otherwise per-PR review never fires)")
+
+    def test_22_ci_workflow_pull_request_types_include_synchronize(self):
+        """Sanity: ci.yml must include `pull_request: synchronize` so
+        re-running edits to existing PRs still trigger the suite."""
+        doc = _load_yaml(self._wf("ci.yml"))
+        on = doc.get("on") or doc.get(True) or {}
+        pr = on.get("pull_request")
+        self.assertIsNotNone(pr, "ci.yml must declare pull_request trigger")
+        types = pr.get("types") or []
+        self.assertIn("synchronize", types,
+                      "ci.yml pull_request.types must include 'synchronize' "
+                      "(otherwise re-running edits skip CI)")
 
 
 if __name__ == "__main__":
