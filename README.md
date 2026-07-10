@@ -145,8 +145,8 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
-/dev-kit:refactor               # 3-phase refactor: inspect -> build-refactor -> review (rewrites code)
-/dev-kit:prune                  # 3-phase deletion sweep: inspect -> build-prune -> review (deletes slop/dead features)
+/dev-kit:refactor               # 3-phase refactor: inspect -> 4-pass cleanup -> review (rewrites code)
+/dev-kit:prune                  # 3-phase deletion sweep: inspect -> 3-pass deletion -> review (deletes slop/dead features)
 
 # Shortcuts (urgent hotfix)
 /dev-kit:tdd-fast                # skip Bootstrap+Plan → straight to Build
@@ -414,12 +414,12 @@ These are internal building blocks. Claude calls them when one of the user-facin
 
 ## Refactor (`/dev-kit:refactor`)
 
-Whole-pipeline **refactor** in 3 gated phases — read-only baseline (`/dev-kit:inspect`) → mutating 4-pass cleanup (`/dev-kit:build-refactor`: dead → dup → naming → coverage) → per-diff verification (`/dev-kit:review`). Each phase gates the next on a quoted exit code + test count; no phase starts without the previous phase's green evidence (MUST-L3, hook `stop-verify`).
+Whole-pipeline **refactor** in 3 gated phases — read-only baseline (`/dev-kit:inspect`) → mutating 4-pass cleanup (dead → dup → naming → coverage) → per-diff verification (`/dev-kit:review`). Each phase gates the next on a quoted exit code + test count; no phase starts without the previous phase's green evidence (MUST-L3, hook `stop-verify`).
 
 ```
 [1/3] inspect  -> /dev-kit:inspect         (read-only)
                  ↓ quoted: report path + verdict + finding count
-[2/3] refactor -> /dev-kit:build-refactor  (4 internal passes; mutating)
+[2/3] refactor -> 4-pass cleanup   (dead → dup → naming → coverage; mutating)
                  ↓ quoted: 4 x (pass name + test count + exit 0)
 [3/3] review   -> /dev-kit:review          (3-dim: correctness + security + architecture)
                  ↓ quoted: per-dim finding count + overall verdict
@@ -431,12 +431,12 @@ Refuses to start without `.dev-kit/ci-config.json` (`ci_setup_version` >= 0.2.0 
 
 ## Prune (`/dev-kit:prune`)
 
-Whole-pipeline **deletion sweep** in 3 gated phases — same baseline (`/dev-kit:inspect`) → 3-pass deletion (`/dev-kit:build-prune`: orphan-code → dead-feature → slop-pattern) → per-diff verification (`/dev-kit:review`). Mirrors `refactor` in shape but **removes** rather than rewrites.
+Whole-pipeline **deletion sweep** in 3 gated phases — same baseline (`/dev-kit:inspect`) → 3-pass deletion (orphan-code → dead-feature → slop-pattern) → per-diff verification (`/dev-kit:review`). Mirrors `refactor` in shape but **removes** rather than rewrites.
 
 ```
 [1/3] inspect  -> /dev-kit:inspect         (read-only)
                  ↓ quoted: report path + verdict + finding count
-[2/3] prune    -> /dev-kit:build-prune     (3 internal passes; deletion sweep)
+[2/3] prune    -> 3-pass deletion  (orphan-code → dead-feature → slop-pattern)
                  ↓ quoted: 3 x (pass name + test count + exit 0)
                  ↓ each pass emits rm/git-rm commands for the user to run
 [3/3] review   -> /dev-kit:review          (3-dim: correctness + security + architecture)
