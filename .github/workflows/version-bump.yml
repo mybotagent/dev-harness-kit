@@ -1,35 +1,77 @@
 name: version-bump
 
-# Auto-bump PATCH in .claude-plugin/plugin.json on every merged PR to
-# main, creating the dev-kit--vX.Y.Z tag. With marketplace autoUpdate
-# set, /plugin marketplace update dev-kit then /reload-skills refresh
-# the local cache. Per the docs release-flow note: bump it every time
-# you want users to receive changes. Loop guard: the bump records
-# itself with [skip ci] so the next upload does not re-trigger.
+# Auto-bump PATCH in .claude-plugin/plugin.json after every merged PR to
+# main, creating the dev-kit--vX.Y.Z tag. With marketplace autoUpdate=true
+# (set in known_marketplaces.json on the user's machine), the chain is:
+#
+#   push-to-main  ->  version-bump workflow (this file)
+#                  ->  opens chore/bump-vX.Y.Z PR
+#                  ->  peter-evans/enable-pull-request-automerge
+#                  ->  bumps plugin.json:version on main
+#                  ->  tag dev-kit--vX.Y.Z emitted
+#
+# On the user side, marketplace update then /reload-skills picks up the
+# new version because the install contract is gated by marketplace-version
+# mismatch with the installed-version record (see installed_plugins.json).
+#
+# Loop guard (concurrency + idempotent bump): the workflow first inspects
+# the head commit message on main and the current plugin.json:version.
+# If main already carries a "chore(release): bump dev-kit to vX.Y.Z"
+# commit whose X.Y.Z equals what we are about to write, the job exits 0
+# silently. Belt-and-suspenders triggers (push + pull_request closed)
+# give us two paths to the same outcome; concurrency serialises racing
+# runs.
 
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [closed]
 
 permissions:
   contents: write
+  pull-requests: write
+
+# Serialise concurrent bumps so a long-running PR-merge can't collide
+# with a fast push-to-main that reaches the bump first. cancel-in-progress
+# MUST be false here — true drops newer runs that come in while a current
+# run is going, which is the opposite of serialisation.
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
 
 jobs:
   bump:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'closed' &&
+        github.event.pull_request.merged == true &&
+        github.event.pull_request.base.ref == 'main'
+      )
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Bump PATCH in plugin.json
+      - name: Read + bump PATCH in plugin.json
+        id: bump
         run: |
           set -euo pipefail
-          VERSION=$(jq -r ".version" .claude-plugin/plugin.json)
+
+          # Read head commit message fresh from git, NOT a GitHub webhook
+          # field. The PR payload exposes `merge_commit_sha` but NOT
+          # `merge_commit_message`; reading from git makes this step
+          # branch- and trigger-agnostic.
+          HEAD_MSG="$(git log -1 --format=%s origin/main)"
+
+          VERSION="$(jq -r .version .claude-plugin/plugin.json)"
           if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "plugin.json:version=$VERSION is not MAJOR.MINOR.PATCH; aborting"
+            echo "::error::plugin.json:version=$VERSION is not MAJOR.MINOR.PATCH; aborting"
             exit 1
           fi
           MAJOR="${BASH_REMATCH[1]}"
@@ -37,20 +79,121 @@ jobs:
           PATCH="${BASH_REMATCH[3]}"
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          jq --arg v "$NEW_VERSION" ".version = $v" .claude-plugin/plugin.json \\
+
+          # Idempotency: if main already carries a bump commit for the
+          # CURRENT plugin.json:version (${VERSION}, not ${NEW_VERSION}),
+          # skip. Otherwise the bump PR's own squash-merge push re-fires
+          # this workflow and we loop forever.
+          #
+          # Compare against ${VERSION} (current), not ${NEW_VERSION} (next):
+          # if we compared against the next, the comparison would never match
+          # because the head commit (just-squash-merged bump) always refers
+          # to the version we just wrote, i.e. the PREVIOUS NEW_VERSION,
+          # while this run's NEW_VERSION is PATCH+1 of that. Off-by-one.
+          #
+          # Accept GitHub's optional ` (#PR-number)` suffix that
+          # squash-merge prepends to the original commit message, plus
+          # the optional `[skip ci]` literal we append ourselves.
+          NORMALISED_HEAD_MSG="$(echo "$HEAD_MSG" | tr -d '\r' | tr '\n' ' ' | head -c 200)"
+          if [[ "$NORMALISED_HEAD_MSG" =~ ^chore\(release\):\ bump\ dev-kit\ to\ v${VERSION}(\ \(#[0-9]+\))?\ (\[skip\ ci\])?$ ]]; then
+            echo "idempotent_skip=true main already at v${VERSION} via bump commit"
+            echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pr=false"   >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json \
             > .claude-plugin/plugin.json.tmp
           mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
-          echo "version=$NEW_VERSION"
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "should_publish_pr=true"      >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION -> $NEW_VERSION"
 
-      - name: Record and upload
+      - name: Open auto-merge PR for the bump
+        if: steps.bump.outputs.should_publish_pr == 'true'
+        id: create-pr
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          # GitHub Actions expressions hoisted out of the shell `run:` block
+          # so they cannot be subject to shell-quoting hazards if upstream
+          # values ever change shape. event_name is server-controlled (literal
+          # push|pull_request); both URLs are GitHub-generated; risk today
+          # is nil — this is hardening for future edits.
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_COMMIT_URL: ${{ github.event.head_commit.url }}
         run: |
           set -euo pipefail
-          VERSION=$(jq -r ".version" .claude-plugin/plugin.json)
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="chore/bump-v${NEW_VERSION}"
+          # -B (uppercase) = create-or-reset. If a previous run pushed the
+          # branch but its PR was force-closed before re-merge, a retry
+          # would otherwise non-fast-forward on `git push -u origin "$BRANCH"`.
+          git checkout -B "$BRANCH" origin/main
           git add .claude-plugin/plugin.json
-          git commit -m "chore(release): bump dev-kit to v${VERSION} [skip ci]"
-          git tag "dev-kit--v${VERSION}"
-          REMOTE="origin"
-          BRANCH="main"
-          git push "$REMOTE" "$BRANCH" --follow-tags
+          # [skip ci] literal — must remain present so the bump commit
+          # does not re-trigger ci.yml / review.yml / auto-fix-pr.yml on itself.
+          git commit -m "chore(release): bump dev-kit to v${NEW_VERSION} [skip ci]"
+          git push -u origin "$BRANCH"
+
+          BODY=$'Auto-generated by version-bump.yml.\n\n'
+          if [ "${EVENT_NAME}" = 'pull_request' ]; then
+            BODY="${BODY}Source PR: ${PR_HTML_URL}"
+          else
+            BODY="${BODY}Source push: ${HEAD_COMMIT_URL}"
+          fi
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(release): bump dev-kit to v${NEW_VERSION}" \
+            --body "$BODY"
+
+          NUMBER="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number // empty')"
+          if [ -z "$NUMBER" ]; then
+            echo "::error::could not resolve PR number for branch $BRANCH"
+            exit 1
+          fi
+          echo "pr_number=${NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge on the bump PR
+        if: steps.bump.outputs.should_publish_pr == 'true'
+        uses: peter-evans/enable-pull-request-automerge@a660677d5469627102a1c1e11409dd063606628d  # v3
+        with:
+          pull-request-number: ${{ steps.create-pr.outputs.pr_number }}
+          merge-method: squash
+
+      - name: Tag the version on main
+        # Run on both code paths:
+        # - Publish path: tag the version we just wrote to plugin.json
+        # - Idempotent-skip path: tag the version already on main (we just
+        #   verified head commit IS this version's bump commit).
+        # `new_version` is set in both cases (the bump step computes it
+        # before deciding whether to publish). Gating on new_version instead
+        # of should_publish_pr closes the loop-where-tag-never-pushed gap.
+        if: steps.bump.outputs.new_version != ''
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          TAG="dev-kit--v${NEW_VERSION}"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "tag ${TAG} already exists on origin; skipping"
+            exit 0
+          fi
+          # Wait for the squash-merge to land on main so the tag
+          # points at the commit that actually carries the new version.
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            git fetch origin main --depth=1
+            HEAD_VERSION="$(git show origin/main:.claude-plugin/plugin.json | jq -r .version)"
+            if [ "$HEAD_VERSION" = "$NEW_VERSION" ]; then
+              git tag "$TAG" origin/main
+              git push origin "$TAG"
+              echo "tagged ${TAG} at origin/main@${NEW_VERSION}"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "::warning::timed out waiting for auto-merge to land; tag push deferred to next run"
+          exit 0
