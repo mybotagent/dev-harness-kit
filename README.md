@@ -370,7 +370,7 @@ These appear in slash autocomplete. Run them when you have a job to do.
 
 | Skill | When to use it |
 |---|---|
-| `/dev-kit:bootstrap` | One-shot setup: CLAUDE.md + AGENTS.md + 15 CI templates + active-hooks. First run on a new project. |
+| `/dev-kit:bootstrap` | Minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default. Use `/dev-kit:bootstrap-full` to also install CI templates. |
 | `/dev-kit:ci-setup` | Wire `.dev-kit/ci-config.json` + CI workflows. Re-run with `--force` to regenerate. |
 | `/dev-kit:plan` | Design a feature before coding. Emits `phases/<name>/step<N>.md` + index.json. |
 | `/dev-kit:build` | Main TDD cycle. Per-phase execution against the plan. |
@@ -383,12 +383,12 @@ These appear in slash autocomplete. Run them when you have a job to do.
 | `/dev-kit:refactor` | 3-phase refactor chain. **Rewrites** code (dead → dup → naming → coverage). Use when the code should be cleaner, not smaller. |
 | `/dev-kit:prune` | 3-phase deletion sweep. **Deletes** AI slop + dead features. Use when the codebase has accumulated cruft and you want it gone. |
 | `/dev-kit:feat-add` / `feat-fix` / `feat-revise` / `feat-remove` | One feature, one shape (add / fix / revise / remove). |
-| `/dev-kit:adapt` | Adapt the dev-kit to a different AI assistant harness. |
+| `/dev-kit:adapt` | Mid-build plan/spec amendment. Pauses the current step, diffs PRD + step file, proposes a minimal patch on user approval, resumes build-engine. |
 | `/dev-kit:onboard` | Newcomer onboarding tour of a project. |
 | `/dev-kit:repair` | Eval-Repair loop with Human Review terminal. For LLM-eval assets scored against a golden set. |
 | `/dev-kit:ship` | Emit the release tag. The human gate. |
 | `/dev-kit:status` | HOTL visualization of the running pipeline. |
-| `/dev-kit:config` | Edit the dev-kit config (model, hooks, slop regex). |
+| `/dev-kit:config` | Skill + MCP + hook + methodology picker (multiSelect). |
 | `/dev-kit:tdd-fast` | Shortcut: skip Bootstrap+Plan → straight to Build. |
 | `/dev-kit:quick-fix` | Shortcut: verify + debug, no code changes. |
 | `/dev-kit:babysit-pr` | 0-arg PR babysitter loop. |
@@ -399,7 +399,8 @@ These are internal building blocks. Claude calls them when one of the user-facin
 
 | Skill | Called by | Purpose |
 |---|---|---|
-| `build-engine` / `build-harness-engine` | `build` | Per-step sub-agent harness runner. |
+| `build-engine` | `build` | Harness-runner engine per step (atomic write + 2-commit + parallel worktree). |
+| `build-harness-engine` | `plan` | Phase step file generation (`phases/<name>/{index.json, step<N>.md}`). |
 | `build-tdd` | `build` | Red-Green-Refactor cycle. |
 | `build-debug` | `build` (on failure) | 4-phase debug. |
 | `build-verify` | `build` (terminal) | Verify-before-completion gate. |
