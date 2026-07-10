@@ -31,51 +31,69 @@ VERDICT_CLASS = {
 }
 
 INLINE_CSS = """
-:root { color-scheme: light dark; }
+:root {
+  color-scheme: light dark;
+  --fg:        #1a1a1a;
+  --bg:        #fafafa;
+  --muted:     #3a3a3a;     /* light mode: dark enough to read on white */
+  --border:    #c8c8c8;
+  --card-bg:   #ffffff;
+  --th-bg:     #ededed;
+  --row-alt:   #f5f5f5;
+  --code-bg:   #f1f1f1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg:      #ececec;
+    --bg:      #1a1a1a;
+    --muted:   #c8c8c8;     /* dark mode: light enough to read on near-black */
+    --border:  #444444;
+    --card-bg: #232323;
+    --th-bg:   #2e2e2e;
+    --row-alt: #1e1e1e;
+    --code-bg: #2a2a2a;
+  }
+}
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
        max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.5;
-       color: #1a1a1a; background: #fafafa; }
-@media (prefers-color-scheme: dark) {
-  body { color: #e6e6e6; background: #1a1a1a; }
-  .card { background: #242424; }
-  table { background: #242424; }
-  th { background: #2e2e2e; }
-  tr:nth-child(even) td { background: #1f1f1f; }
-}
-h1 { border-bottom: 2px solid #888; padding-bottom: 0.5rem; }
-h2 { margin-top: 2.5rem; border-bottom: 1px solid #ccc; padding-bottom: 0.3rem; }
+       color: var(--fg); background: var(--bg); }
+h1 { border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+h2 { margin-top: 2.5rem; border-bottom: 1px solid var(--border);
+     padding-bottom: 0.3rem; }
 h3 { margin-top: 1.5rem; }
-.meta { color: #666; font-size: 0.9em; }
+.meta { color: var(--muted); font-size: 0.9em; }
 .cards { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
-.card { background: white; border: 1px solid #ddd; border-radius: 6px;
-        padding: 0.8rem 1.2rem; min-width: 140px; }
-.card .label { font-size: 0.8em; color: #666; text-transform: uppercase;
+.card { background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 0.8rem 1.2rem; min-width: 140px; }
+.card .label { font-size: 0.8em; color: var(--muted); text-transform: uppercase;
                letter-spacing: 0.05em; }
 .card .value { font-size: 1.8em; font-weight: 600; }
 table { border-collapse: collapse; width: 100%; margin: 0.8rem 0;
-        background: white; }
-th, td { border: 1px solid #ddd; padding: 0.5rem 0.7rem; text-align: left; }
-th { background: #f0f0f0; font-weight: 600; }
-tr:nth-child(even) td { background: #f8f8f8; }
+        background: var(--card-bg); }
+th, td { border: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: left; }
+th { background: var(--th-bg); font-weight: 600; }
+tr:nth-child(even) td { background: var(--row-alt); }
 .bar { display: inline-block; height: 0.7em; background: #4a9eff;
        vertical-align: middle; border-radius: 2px; }
-.finding { background: white; border: 1px solid #ddd; border-left: 4px solid #888;
-           border-radius: 4px; padding: 0.6rem 1rem; margin: 0.5rem 0; }
+.finding { background: var(--card-bg); border: 1px solid var(--border);
+           border-left: 4px solid var(--muted); border-radius: 4px;
+           padding: 0.6rem 1rem; margin: 0.5rem 0; }
 .finding-high { border-left-color: #d33; }
 .finding-med  { border-left-color: #e6a700; }
 .finding-low  { border-left-color: #4a9eff; }
-.finding pre { background: #f4f4f4; padding: 0.4rem 0.6rem; border-radius: 3px;
-               overflow-x: auto; font-size: 0.9em; }
+.finding pre { background: var(--code-bg); padding: 0.4rem 0.6rem;
+               border-radius: 3px; overflow-x: auto; font-size: 0.9em; }
 .verdict-ok    { color: #157a3a; font-weight: 600; }
 .verdict-warn  { color: #a06400; font-weight: 600; }
 .verdict-soft  { color: #7a5a00; }
 .verdict-bad   { color: #b03030; font-weight: 600; }
-.verdict-skip  { color: #888; }
+.verdict-skip  { color: var(--muted); }
 .missing { background: #fff8e0; border: 1px solid #e0c060; border-radius: 4px;
            padding: 0.8rem 1rem; margin: 1rem 0; }
-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc;
-         color: #888; font-size: 0.85em; }
+footer { margin-top: 3rem; padding-top: 1rem;
+         border-top: 1px solid var(--border);
+         color: var(--muted); font-size: 0.85em; }
 """
 
 
