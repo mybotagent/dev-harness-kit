@@ -4,6 +4,13 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Added — /dev-kit:bootstrap-full: one-shot CLAUDE.md + CI setup (feat/bootstrap-full)
+
+New human-use skill that runs `/dev-kit:bootstrap` (CLAUDE.md + AGENTS.md + .dev-kit/.active-hooks.json) and `/dev-kit:ci-setup` (15 CI templates + pre-push hook + marker) in a single call. End state on disk is identical to running both parents in sequence, with no intermediate prompt. Hidden flags only: `--target DIR`, `--skip-ci`, `--force`, `--skip-verify`, `--slim|--full`, `--skip-sanity`, `--skip-map`, `--strict`, `--persist-audit`. `/dev-kit:bootstrap` and `/dev-kit:ci-setup` remain standalone for granular cases (refreshing just one half, or onboarding an existing repo).
+
+- **feat(skill)**: `skills/bootstrap-full/SKILL.md` (human-use, `user-invocable: true`, category=bootstrap). 4-phase orchestration: bootstrap sub-skills → write_project_md → install_ci_config → verify. Combined summary printed on success.
+- **test**: `tests/test_smoke.py` SKILL_COUNT 38 → 39.
+
 ### Added — slop-detector v2: multi-tier scanner + KO structural coverage + 5-dim audit (feat/slop-detector-v2)
 
 The slop-detector shipped as a single regex (`hooks/slop-detector.sh`) covering ~24 KO+EN patterns. v2 splits detection into two tiers — phrase (T1, high-signal n-grams) and structure (T2, regex shapes incl. KO structural crutches, lazy extremes, false agency) — sourced from a single SSOT under `hooks/references/slop/`. Pattern count grew from 24 to ~110 (KO + EN + KO structural). The audit-slop subskill (`skills/audit-slop/SKILL.md`) is now a real multi-dim scanner that buckets files HIGH/MEDIUM/LOW against the 5-dim rubric (Directness / Rhythm / Trust / Authenticity / Density) defined in `hooks/references/slop/scoring.md`, replacing the previous count-only bucket. Bank files are portable POSIX ERE — BSD-grep and ugrep on macOS reject `\b`/`\m`/`\s`/`\w` in ERE mode (per the `BankFileInvariants` regression in `tests/test_slop_detector.py`), so the hook normalizes POSIX classes to Python `\s`/`\w`/`\d` for its in-process scan while leaving the bank readable by grep for manual eyeballing.
