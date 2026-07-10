@@ -6,7 +6,8 @@ when_to_use: |
   - User types /dev-kit:inspect
   - Pre-release hygiene sweep
   - Periodic codebase health check
-  - Pre-step for /dev-kit:simplify (baseline report)
+  - Pre-step for /dev-kit:refactor (baseline report) — refactor rewrites code
+  - Pre-step for /dev-kit:prune (baseline report) — prune deletes slop/dead features
 allowed-tools: Read Grep Glob Bash Agent
 disallowed-tools: Write Edit
 model: opus
@@ -17,10 +18,10 @@ user-invocable: true
 
 Whole-codebase health sweep across **8 dimensions in parallel**. Produces
 one markdown report at `.dev-kit/inspect-report.md`. **Never edits.**
-Distinct from `/dev-kit:review` (per-PR/diff), `/dev-kit:build-simplify`
-(mutating 4-pass cleanup), and `/dev-kit:simplify` (3-phase wrap of
-inspect + simplify + review). Use inspect to *find* problems, then
-simplify to *fix* them.
+Distinct from `/dev-kit:review` (per-PR/diff), `/dev-kit:build-refactor`
+(mutating 4-pass cleanup), and `/dev-kit:refactor` (3-phase wrap of
+inspect + refactor + review). Use inspect to *find* problems, then
+refactor (or `prune` for deletions) to *fix* them.
 
 ## Iron Law
 
@@ -256,14 +257,14 @@ skill. Do not start a build cycle for MED/LOW alone.
 
 | Dim         | Primary target                                  | Pass / phase           |
 |-------------|--------------------------------------------------|------------------------|
-| `dead`      | `build-simplify` pass 1 (DEAD CODE)             | `[1/4]`                |
-| `dup`       | `build-simplify` pass 2 (DUPLICATION)            | `[2/4]`                |
-| `smell`     | `build-simplify` pass 3 (NAMING) / refactor      | `[3/4]` + manual       |
-| `overeng`   | `build-simplify` pass 3 (NAMING) / simplify-3    | `[3/4]`                |
+| `dead`      | `build-refactor` pass 1 (DEAD CODE)             | `[1/4]`                |
+| `dup`       | `build-refactor` pass 2 (DUPLICATION)            | `[2/4]`                |
+| `smell`     | `build-refactor` pass 3 (NAMING) / refactor      | `[3/4]` + manual       |
+| `overeng`   | `build-refactor` pass 3 (NAMING) / refactor-3    | `[3/4]`                |
 | `overarch`  | `/dev-kit:plan` -> `/dev-kit:build` (PRD-shaped) | full cycle, not 4-pass |
-| `cleancode` | `build-simplify` pass 3 (NAMING)                 | `[3/4]`                |
-| `tokenbudget` | `build-simplify` pass 1 (DEAD CODE) + pass 3   | `[1/4] + [3/4]`        |
-| `slop`      | `/dev-kit:audit --slop-only` + manual edit       | out-of-band            |
+| `cleancode` | `build-refactor` pass 3 (NAMING)                 | `[3/4]`                |
+| `tokenbudget` | `build-refactor` pass 1 (DEAD CODE) + pass 3   | `[1/4] + [3/4]`        |
+| `slop`      | `/dev-kit:prune` (deletion sweep) or `/dev-kit:audit --slop-only` | `[2/3]` PRUNE or out-of-band |
 
 - **HIGH findings** -> feed the top items into `/dev-kit:plan` to scope
   a cleanup PRD (one phase per finding cluster), then `/dev-kit:build`
@@ -276,21 +277,27 @@ skill. Do not start a build cycle for MED/LOW alone.
   slop+secret scan) and `/dev-kit:security` (10-dim OWASP) to
   triangulate.
 - **Whole-pipeline**  -> for "clean up everything" intent, run
-  `/dev-kit:simplify` (3-phase wrap of inspect + simplify + review).
+  `/dev-kit:refactor` (3-phase wrap of inspect + refactor + review).
   This skill is its phase 1 (the baseline report).
+- **Whole-pipeline deletion** -> for "remove slop / dead code" intent,
+  run `/dev-kit:prune` (3-phase wrap of inspect + prune + review).
+  Same baseline, different phase 2.
 
-Next step: `/dev-kit:simplify` (whole-pipeline cleanup), `/dev-kit:plan`
-(if HIGH > 0 and you want a structured cleanup), or `/dev-kit:review`
-(if you want a per-PR check on changes you make).
+Next step: `/dev-kit:refactor` (whole-pipeline refactor), `/dev-kit:prune`
+(whole-pipeline deletion), `/dev-kit:plan` (if HIGH > 0 and you want a
+structured cleanup), or `/dev-kit:review` (per-PR check).
 
 ## Related
 
-- `/dev-kit:simplify` is the 3-phase wrapper: this skill (baseline) ->
-  `build-simplify` (4-pass cleanup) -> `review` (verify).
+- `/dev-kit:refactor` is the 3-phase wrapper: this skill (baseline) ->
+  `build-refactor` (4-pass cleanup) -> `review` (verify). Rewrites code.
+- `/dev-kit:prune` is the 3-phase wrapper: this skill (baseline) ->
+  `build-prune` (3-pass deletion sweep) -> `review` (verify). Deletes code.
 - `/dev-kit:report` reads `.dev-kit/inspect-report.md` (this skill's
   output) and renders it as a self-contained HTML page alongside the
   eval report. Run report after inspect to share findings with
   non-technical reviewers.
 - `/dev-kit:feat-remove` removes a single named feature end-to-end
   (call-graph sweep + deletion report) -- the targeted sibling of
-  inspect's whole-codebase audit.
+  inspect's whole-codebase audit. Use when you know the feature name;
+  use `/dev-kit:prune` for an automatic whole-project sweep.

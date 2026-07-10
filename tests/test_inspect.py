@@ -10,7 +10,8 @@ gate before merge. Asserts:
 - dimension-charter bullets cover 8 named dims
 - per-dim summary table has 8 rows
 - hand-off routing table has 8 rows
-- hand-off mentions the simplify skill as the whole-pipeline wrapper
+- hand-off mentions the refactor skill as the whole-pipeline wrapper
+- hand-off mentions the prune skill as the whole-pipeline deletion wrapper
 """
 from __future__ import annotations
 
@@ -83,14 +84,17 @@ class TestInspectSchema(unittest.TestCase):
             f"Hand-off table has {len(rows)} rows; expected {len(EXPECTED_DIMS)} (one per dim)",
         )
 
-    def test_hand_off_mentions_simplify(self):
+    def test_hand_off_mentions_refactor(self):
         m = re.search(
             r"## Hand-off(.*?)## Related",
             self.text, re.DOTALL,
         )
         self.assertIsNotNone(m, "Hand-off section missing")
         block = m.group(1)
-        self.assertIn("/dev-kit:simplify", block, "Hand-off should route whole-pipeline to /dev-kit:simplify")
+        self.assertIn("/dev-kit:refactor", block, "Hand-off should route whole-pipeline to /dev-kit:refactor")
+        # The deletion counterpart should also be mentioned so the
+        # baseline report can route deletion candidates to the right skill.
+        self.assertIn("/dev-kit:prune", block, "Hand-off should route deletion candidates to /dev-kit:prune")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@
 | `bootstrap` | `<category>-<instrument>` | `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `ci-setup` (slash brevity; see note) |
 | `plan` | (none — `plan` is standalone) | — |
 | `design` | `design-<instrument>` | (deprecated — merged into plan) |
-| `build` | `build-<discipline>` | `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-simplify`, `build-methodology` |
+| `build` | `build-<discipline>` | `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology` |
 | `review` | `review-<subject>` | (none — `review` is standalone) |
 | `security` | `security-<subject>` | (none — `security` is standalone) |
 | `audit` | `audit-<subject>` | `audit-slop`, `audit-secret` |
