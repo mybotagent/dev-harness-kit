@@ -143,13 +143,14 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
+/dev-kit:simplify                # 3-phase cleanup: inspect -> build-simplify -> review
 
 # Shortcuts (urgent hotfix)
 /dev-kit:tdd-fast                # skip Bootstrap+Plan → straight to Build
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 37 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 38 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
@@ -229,6 +230,21 @@ Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo
 ```
 
 Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<sid>.jsonl` and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
+
+## Simplify (`/dev-kit:simplify`)
+
+Whole-pipeline cleanup in 3 gated phases — read-only baseline (`/dev-kit:inspect`) → mutating 4-pass cleanup (`/dev-kit:build-simplify`: dead → dup → naming → coverage) → per-diff verification (`/dev-kit:review`). Each phase gates the next on a quoted exit code + test count; no phase starts without the previous phase's green evidence (MUST-L3, hook `stop-verify`).
+
+```
+[1/3] inspect   -> /dev-kit:inspect          (read-only)
+                  ↓ quoted: report path + verdict + finding count
+[2/3] simplify  -> /dev-kit:build-simplify   (4 internal passes; mutating)
+                  ↓ quoted: 4 x (pass name + test count + exit 0)
+[3/3] review    -> /dev-kit:review           (3-dim: correctness + security + architecture)
+                  ↓ quoted: per-dim finding count + overall verdict
+```
+
+Refuses to start without `.dev-kit/ci-config.json` (`ci_setup_version` >= 0.2.0 — run `/dev-kit:ci-setup` first). Optional `--phase N` (1|2|3) re-runs only that phase. Full contract: [`skills/simplify/SKILL.md`](skills/simplify/SKILL.md).
 
 ## Agent-behavior eval (`/dev-kit:eval`)
 
