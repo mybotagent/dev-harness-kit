@@ -159,12 +159,16 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertIsNotNone(bump_step,
                              "expected a 'Bump PATCH in plugin.json' step")
         run = bump_step.get("run", "")
-        # The loop guard must compare the head-commit message to the
-        # synthetic bump message shape BEFORE publishing the PR.
-        self.assertIn("chore(release): bump dev-kit to v", run,
-                      "idempotency check must reference the synthetic bump commit message")
+        # T11: structural anchors — the idempotency step must exist and
+        # short-circuit on its skip flag. The exact regex shape (use of
+        # ${VERSION} not ${NEW_VERSION} + bash regex `=~` with optional
+        # (#PR-number) suffix) is pinned by T14, T15.
         self.assertIn("idempotent_skip", run,
                       "idempotency step must short-circuit on its skip flag")
+        self.assertIn("NORMALISED_HEAD_MSG", run,
+                      "idempotency check must read the head-commit message")
+        self.assertIn("should_publish_pr=false", run,
+                      "idempotent path must set should_publish_pr=false")
 
     def test_12_idempotent_skip_emits_no_pr(self):
         doc = _yaml_doc()
@@ -176,6 +180,72 @@ class TestBumpWorkflow(unittest.TestCase):
                               "PR-open step must be gated on should_publish_pr == 'true'")
                 return
         self.fail("expected an 'Open auto-merge PR' step that gates on should_publish_pr")
+
+    def test_13_tag_step_runs_on_idempotent_skip(self):
+        """Tag step must run on the idempotent-skip path (new_version != '')
+        — NOT be gated on should_publish_pr — so the tag lands even when the
+        bump PR's own squash-merge re-fires the workflow.
+
+        Scenario that exposes the bug if regressed:
+          1. Workflow fires on `pull_request: closed` (merged).
+          2. bumps 0.3.0 -> 0.3.1, publishes chore/bump-v0.3.1 PR.
+          3. Auto-merge takes >60s; tag step times out and exits 0.
+          4. Auto-merge completes (head commit on main is now the 0.3.1 bump).
+          5. Next push-to-main fires version-bump.
+          6. Idempotency step: head message matches bump-of-0.3.1, skips.
+          7. Tag step gated on should_publish_pr == 'true': SKIPPED.
+          8. Tag dev-kit--v0.3.1 never pushed.
+        """
+        doc = _yaml_doc()
+        tag_step = None
+        for step in _resolve_steps(doc):
+            name = step.get("name", "").lower()
+            if "tag" in name and "version" in name:
+                tag_step = step
+                break
+        self.assertIsNotNone(tag_step, "expected a 'Tag ... version' step")
+        cond = tag_step.get("if", "")
+        self.assertNotIn("should_publish_pr", cond,
+                         "Tag step MUST NOT be gated on should_publish_pr — "
+                         "the head-commit idempotency check sets that to false "
+                         "on the very run where the tag needs to be pushed.")
+        self.assertIn("new_version", cond,
+                      "Tag step should be gated on new_version != '' (set on both paths)")
+
+    def test_14_idempotency_uses_current_version_not_next(self):
+        """The idempotency check MUST compare against ${VERSION} (current
+        plugin.json value), NOT ${NEW_VERSION} (the next bump target).
+
+        Off-by-one scenario if regressed:
+          - Iter 1: VERSION=0.3.0, NEW_VERSION=0.3.1. head irrelevant.
+          - Iter 2 (squash re-fire): VERSION=0.3.1, NEW_VERSION=0.3.2.
+                    head = "bump v0.3.1". Compare against "bump v0.3.2"
+                    -> never matches -> bumps 0.3.1 -> 0.3.2 anyway.
+          - Iter 3: head = "v0.3.2", compare = "v0.3.3" -> bumps again. Infinite.
+        """
+        doc = _yaml_doc()
+        bump_step = _find_step(doc, "bump patch")
+        run = bump_step.get("run", "")
+        self.assertIn("v${VERSION}", run,
+                      "idempotency regex must reference ${VERSION} (current)")
+        self.assertNotIn("v${NEW_VERSION}", run,
+                         "idempotency MUST NOT compare against ${NEW_VERSION} — "
+                         "causes infinite bump loop on squash re-fire")
+
+    def test_15_idempotency_accepts_squash_merge_pr_suffix(self):
+        """The idempotency regex must use bash `=~` (regex match) and accept
+        GitHub's optional ` (#PR-number)` suffix that squash-merge prepends.
+        Plain string equality never matches post-squash because the suffix
+        breaks the literal comparison."""
+        doc = _yaml_doc()
+        bump_step = _find_step(doc, "bump patch")
+        run = bump_step.get("run", "")
+        self.assertRegex(run, r"=~",
+                         "idempotency check must use bash regex match (=~), "
+                         "not plain [ \"...\" = \"...\" ]")
+        self.assertIn("#[0-9]+", run,
+                      "idempotency regex must allow GitHub's optional "
+                      "` (#PR-number)` suffix on squash-merge commits")
 
     def test_13_tag_step_runs_on_idempotent_skip(self):
         """Tag step must run on the idempotent-skip path (new_version != '')
