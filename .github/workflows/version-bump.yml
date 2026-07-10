@@ -127,10 +127,26 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BRANCH="chore/bump-v${NEW_VERSION}"
-          # -B (uppercase) = create-or-reset. If a previous run pushed the
-          # branch but its PR was force-closed before re-merge, a retry
-          # would otherwise non-fast-forward on `git push -u origin "$BRANCH"`.
-          git checkout -B "$BRANCH" origin/main
+          # Race recovery: if origin/${BRANCH} already has a tip from an
+          # earlier run (push succeeded but PR never auto-merged, or got
+          # force-closed), reanchor onto current main via cherry-pick
+          # instead of discarding the prior work. Falling back to
+          # `git checkout -B ... origin/main` here is exactly the
+          # non-fast-forward push error this branch was meant to avoid
+          # — and was the root cause of the v0.3.2 bump orphan at
+          # `fe3c80f` on 2026-07-10.
+          REMOTE_TIP="$(git ls-remote origin "$BRANCH" 2>/dev/null | awk '{print $1}')"
+          if [ -n "$REMOTE_TIP" ]; then
+            echo "remote ${BRANCH} already has tip ${REMOTE_TIP}; rebasing bump on top via cherry-pick"
+            git fetch origin "$BRANCH"
+            git checkout -B "$BRANCH" origin/main
+            if ! git cherry-pick "$REMOTE_TIP"; then
+              echo "::error::cherry-pick of remote tip ${REMOTE_TIP} onto origin/main failed; resolve manually"
+              exit 1
+            fi
+          else
+            git checkout -B "$BRANCH" origin/main
+          fi
           git add .claude-plugin/plugin.json
           # The bump commit message intentionally does NOT carry a [skip ci]
           # (or any [skip ci] variant) literal — GitHub Actions globally
