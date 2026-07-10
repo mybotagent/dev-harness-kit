@@ -125,6 +125,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 ```
 /dev-kit:bootstrap              # first entry (auto-generate CLAUDE.md)
 /dev-kit:ci-setup                # install dev-kit CI templates (workflows + hooks + scripts + worktree-rule files) into target repo
+/dev-kit:bootstrap-full          # one-shot: bootstrap + ci-setup in a single call (new-project default)
 /dev-kit:log setup|on|off|status # toggle loghooks (Stop/SessionEnd transcripts) per project
 /dev-kit:plan                    # PRD + phases auto (Plan+Design unified)
 /dev-kit:build                   # run per-step sub-agents
@@ -149,7 +150,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 38 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 39 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
