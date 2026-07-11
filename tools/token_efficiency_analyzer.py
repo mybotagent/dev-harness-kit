@@ -33,7 +33,20 @@ from typing import Iterable
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
 #
-# Cache *write* TTL split: Anthropic's prompt-cache TTL is either 5 minutes
+# Two providers are tracked:
+#   * Anthropic Claude (opus / sonnet / haiku) — rates match
+#     https://platform.claude.com/docs/en/docs/about-claude/pricing
+#     current as of 2026-07-11. Prompt-cache multipliers are
+#     5m write = 1.25x, 1h write = 2.0x, cache read = 0.1x — these
+#     multipliers are documented as universal for the Claude family.
+#   * MiniMax (minimax) — MiniMax-M3 standard tier (≤512k input) and
+#     MiniMax-M2.7 from https://platform.minimax.io/docs/guides/pricing-paygo
+#     current as of 2026-07-11. MiniMax publishes only a single cache-write
+#     rate (1.25x base input) — same multiplier Anthropic uses for 5m TTL.
+#     We mirror that as cache_write_5m; cache_write_1h is set equal since
+#     no separate 1h rate is published for MiniMax.
+#
+# Cache *write* TTL split (Anthropic): prompt-cache TTL is either 5 minutes
 # or 1 hour. The 5-minute write costs 1.25x base input (a one-time priming
 # premium that recovers over a few re-uses within the window). The 1-hour
 # write costs 2.0x base input — roughly double, since the cache stays valid
@@ -42,19 +55,24 @@ from typing import Iterable
 # session that pins long-lived context (CLAUDE.md, architecture maps)
 # is priced correctly.
 #
-# Cache *read* is ~10% of base input and recovers the miss on subsequent
-# turns. The 0.85 cache-hit threshold in the scoring rubric is set just
-# above the typical Anthropic-recommended 80% to leave a margin.
+# Cache *read* is ~10% of base input (Anthropic) or $0.06/M (MiniMax) and
+# recovers the miss on subsequent turns. The 0.85 cache-hit threshold in
+# the scoring rubric is set just above the typical Anthropic-recommended
+# 80% to leave a margin.
 #
-# Rates match Anthropic's published rates for the Claude 4.x family at
-# the time of writing. ``pricing_for()`` matches the model id substring
-# so any variant (claude-opus-4-7, claude-sonnet-5, claude-haiku-4-5, ...)
-# resolves.
+# Substring matcher in ``pricing_for()`` resolves any variant:
+#   "minimax"  → PRICING["minimax"]  (matched BEFORE claude tiers)
+#   "opus"     → PRICING["opus"]
+#   "sonnet"   → PRICING["sonnet"]
+#   "haiku"    → PRICING["haiku"]
 # ---------------------------------------------------------------------------
 PRICING: dict[str, dict[str, float]] = {
-    "opus":   {"in": 15.00, "out": 75.00, "cache_write_5m": 18.75, "cache_write_1h": 30.00, "cache_read": 1.50},
+    "opus":   {"in":  5.00, "out": 25.00, "cache_write_5m":  6.25, "cache_write_1h": 10.00, "cache_read": 0.50},
     "sonnet": {"in":  3.00, "out": 15.00, "cache_write_5m":  3.75, "cache_write_1h":  6.00, "cache_read": 0.30},
-    "haiku":  {"in":  0.80, "out":  4.00, "cache_write_5m":  1.00, "cache_write_1h":  1.60, "cache_read": 0.08},
+    "haiku":  {"in":  1.00, "out":  5.00, "cache_write_5m":  1.25, "cache_write_1h":  2.00, "cache_read": 0.10},
+    # MiniMax — M3 standard tier (≤512k input) and M2.7.
+    # "Permanent 50% off" price (the strike-through $0.60/$2.40 is the list rate).
+    "minimax": {"in": 0.30, "out": 1.20, "cache_write_5m": 0.375, "cache_write_1h": 0.375, "cache_read": 0.06},
 }
 DEFAULT_PRICING_KEY = "sonnet"
 DEFAULT_CACHE_HIT_TARGET = 0.85   # score = 100 at this ratio; below 0.50 = critical warning
@@ -91,7 +109,8 @@ WARNING_DONT: dict[str, str] = {
 CACHE_TTL_CAVEAT = (
     "5m TTL 쓰기는 base input의 1.25배, 1h TTL 쓰기는 2.0배입니다. "
     "재사용 간격이 1h를 넘는 데이터만 1h로 캐시하세요. "
-    "그 외에는 5m 또는 캐시 없음이 더 저렴합니다."
+    "그 외에는 5m 또는 캐시 없음이 더 저렴합니다. "
+    "(MiniMax는 별도 1h 요금을 공개하지 않아 5m과 동일한 요금이 적용됩니다.)"
 )
 
 
@@ -122,15 +141,19 @@ def pricing_for(model_id: str, *,
                 _unknown_models: set[str] | None = None) -> dict[str, float]:
     """Pick the pricing row whose key appears in the model id (case-insensitive).
 
+    Order matters: ``minimax`` is checked before the Claude tiers so a
+    hypothetical ``minimax-sonnet`` variant does not get misrouted to Sonnet
+    pricing (Sonnet input is 10x more expensive than MiniMax-M3 input).
+
     If ``_unknown_models`` is provided, ids that match no tier are added to
     the set so the caller can warn on stderr (instead of silently falling
     back to sonnet pricing — which under-counts Opus sessions and over-
-    counts Haiku ones).
+    counts Haiku/MiniMax ones).
     """
     if not model_id:
         return PRICING[DEFAULT_PRICING_KEY]
     mid = model_id.lower()
-    for key in ("opus", "sonnet", "haiku"):
+    for key in ("minimax", "opus", "sonnet", "haiku"):
         if key in mid:
             return PRICING[key]
     if _unknown_models is not None:

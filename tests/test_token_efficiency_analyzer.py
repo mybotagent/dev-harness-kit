@@ -138,11 +138,40 @@ class TestPricingFor(unittest.TestCase):
         p = pricing_for("claude-haiku-4-5")
         self.assertEqual(p["in"], PRICING["haiku"]["in"])
 
-    def test_unknown_collects(self):
+    def test_minimax_substring(self):
+        # MiniMax tier must be matched by substring (covers MiniMax-M3,
+        # MiniMax-M2.7, and any future variant) and NOT fall through to a
+        # Claude tier via DEFAULT_PRICING_KEY.
+        for mid in ("MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"):
+            p = pricing_for(mid)
+            self.assertEqual(p["in"], PRICING["minimax"]["in"],
+                             f"model {mid!r} did not route to minimax tier")
+            self.assertEqual(p["out"], PRICING["minimax"]["out"])
+
+    def test_minimax_routed_before_claude_tiers(self):
+        # If a future "minimax-sonnet" variant exists, it must NOT match
+        # the sonnet substring — Sonnet input is 10x more expensive than
+        # MiniMax-M3 input, so misrouting would silently inflate costs.
+        unknown: set[str] = set()
+        p = pricing_for("minimax-sonnet", _unknown_models=unknown)
+        self.assertEqual(unknown, set(),
+                         "minimax-sonnet must resolve to minimax tier, not sonnet")
+        self.assertEqual(p["in"], PRICING["minimax"]["in"])
+
+    def test_minimax_known_after_pricing_add(self):
+        """MiniMax-M3 now has its own tier — was previously unknown and
+        silently fell back to sonnet pricing. Verify (a) it routes to
+        PRICING['minimax'] and (b) it is NOT collected as unknown."""
         unknown: set[str] = set()
         p = pricing_for("MiniMax-M3", _unknown_models=unknown)
-        self.assertIn("MiniMax-M3", unknown)
-        # Falls back to sonnet pricing
+        self.assertNotIn("MiniMax-M3", unknown)
+        self.assertEqual(p["in"], PRICING["minimax"]["in"])
+
+    def test_unknown_collects(self):
+        # An id matching no tier must be collected AND fall back to sonnet.
+        unknown: set[str] = set()
+        p = pricing_for("totally-unrecognized-model-abc", _unknown_models=unknown)
+        self.assertIn("totally-unrecognized-model-abc", unknown)
         self.assertEqual(p["in"], PRICING["sonnet"]["in"])
 
     def test_empty_falls_back(self):
