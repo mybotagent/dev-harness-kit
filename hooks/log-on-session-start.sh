@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# log-on-session-start.sh — SessionStart hook.
+#
+# Auto-installs dev-kit loghooks (Stop + SessionEnd transcripts) at
+# every session start. log-on is idempotent (entry merge is sentinel-
+# keyed on the command string), so this never duplicates. Without
+# this hook, every new `git worktree add` cuts a session that is
+# invisible to /dev-kit:token-analyzer until the developer remembers
+# to run `/dev-kit:log on` by hand.
+#
+# Fires only when the session is INSIDE a worktree. The main checkout
+# is silent here — its loghooks are owned by the user's machine setup,
+# not by per-session automation.
+#
+# Discriminator: WORKTREE_DETECT = "worktree" ⇒ fire; anything else
+# (main, outside, "") ⇒ silent. Fails open (stderr warning) when
+# `jq` is missing — same policy as session-start-check.sh.
+
+set -uo pipefail
+INPUT="$(cat)"
+
+# Source the shared worktree-detection helper.
+# shellcheck source=lib/worktree-detect.sh
+source "$(dirname "$0")/lib/worktree-detect.sh"
+
+# Warn (not fail) if jq is missing.
+if ! command -v jq >/dev/null 2>&1; then
+  worktree_detect_jq_missing_warn "log-on-session-start.sh"
+  exit 0
+fi
+
+# Prefer the cwd from the hook payload (more authoritative than $PWD),
+# fall back to PWD if missing.
+HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
+if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
+  cd "$HOOK_CWD" || exit 0
+fi
+
+# Detect whether we are in a worktree. Stay silent in main checkout,
+# outside any git repo, detached HEADs, and unset cases.
+worktree_detect
+case "$WORKTREE_DETECT" in
+  worktree) ;;
+  *) exit 0 ;;
+esac
+
+# Guard: log-on.sh refuses to run if `tools/save_log.py` is missing.
+# No-op silently here — the user runs `/dev-kit:log setup` to create
+# it (a heavier operation not appropriate for every session start).
+if [ ! -f "tools/save_log.py" ]; then
+  exit 0
+fi
+
+# Resolve plugin root. Prefer the runtime env var; fall back to a
+# path-relative resolution (matches the slop-detector pattern).
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+LOG_ON="$PLUGIN_ROOT/skills/log/scripts/log-on.sh"
+
+if [ ! -f "$LOG_ON" ]; then
+  printf 'log-on-session-start: log-on.sh missing at %s\n' "$LOG_ON" >&2
+  exit 0
+fi
+
+# Run log-on with TARGET_DIR=$PWD (its default too, but explicit so
+# the script's behavior doesn't drift if defaults change) and capture
+# stdout for the additionalContext block.
+LOG_OUTPUT="$(TARGET_DIR="$PWD" bash "$LOG_ON" 2>&1)"
+LOG_RC=$?
+
+if [ "$LOG_RC" -ne 0 ]; then
+  printf 'log-on-session-start: log-on.sh rc=%d\n%s\n' "$LOG_RC" "$LOG_OUTPUT" >&2
+  exit 0
+fi
+
+# Build additionalContext from the captured log-on summary. Always
+# includes a brief line so the assistant sees what got installed.
+SUMMARY="$(printf '%s' "$LOG_OUTPUT" | grep -E '^(claude|codex):' | head -2)"
+if [ -z "$SUMMARY" ]; then
+  SUMMARY="log-on idempotent (no managed-entry delta)"
+fi
+
+CTX="loghooks: auto-installed at session start in $PWD
+$SUMMARY"
+jq -nc --arg ctx "$CTX" \
+  '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+exit 0
