@@ -234,10 +234,42 @@ def parse_iso(ts: str) -> datetime | None:
 
 
 def repo_from_cwd(cwd: str | None) -> str:
-    """Derive a repo label from the working directory's basename."""
+    """Derive the project root label from ``cwd``.
+
+    For a session running inside a worktree (``.claude/worktrees/<name>/``)
+    the project's logical name is the segment immediately above that
+    marker, not the worktree dir itself. Walking up lets a single
+    ``--repo <project>`` invocation surface sessions from every checkout
+    instead of only the main one.
+    """
     if not cwd:
         return ""
+    parts = Path(cwd).parts
+    for i, part in enumerate(parts):
+        if (part == ".claude" and i + 2 < len(parts)
+                and parts[i + 1] == "worktrees" and i >= 1):
+            return parts[i - 1]
     return Path(cwd).name
+
+
+def worktree_from_cwd(cwd: str | None) -> str:
+    """Derive the git worktree dir name from ``cwd``.
+
+    A worktree in this repo lives under ``<repo>/.claude/worktrees/<name>/``
+    (project convention enforced by ``.claude/rules/git-workflow.md``).
+    Returns ``(main)`` when ``cwd`` is the main checkout, the worktree
+    basename when ``cwd`` sits under ``.claude/worktrees/<name>/``, and
+    ``(unknown)`` when ``cwd`` is missing. The literal bucket names keep
+    the Cost by Worktree panel populated even when only the main checkout
+    has been used.
+    """
+    if not cwd:
+        return "(unknown)"
+    parts = Path(cwd).parts
+    for i, part in enumerate(parts):
+        if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
+            return parts[i + 2]
+    return "(main)"
 
 
 def aggregate_session(path: Path) -> dict | None:
@@ -256,6 +288,7 @@ def aggregate_session(path: Path) -> dict | None:
     read_files: Counter[str] = Counter()
     user_texts: list[str] = []
     branch_counts: Counter[str] = Counter()
+    worktree_counts: Counter[str] = Counter()
     first_ts: datetime | None = None
     last_ts: datetime | None = None
 
@@ -284,6 +317,9 @@ def aggregate_session(path: Path) -> dict | None:
                 gb = rec.get("gitBranch")
                 if isinstance(gb, str) and gb.strip():
                     branch_counts[gb.strip()] += 1
+                cwd_raw = rec.get("cwd")
+                if isinstance(cwd_raw, str) and cwd_raw.strip():
+                    worktree_counts[worktree_from_cwd(cwd_raw)] += 1
 
                 msg = rec.get("message") or {}
                 rec_type = rec.get("type")
@@ -348,11 +384,16 @@ def aggregate_session(path: Path) -> dict | None:
         parent = path.parent.name
         branch = "main" if parent in _KNOWN_SOURCES else (parent or "main")
 
+    # Worktree: most-common value across the session (mirrors branch logic —
+    # users can technically switch worktrees mid-session, though rare).
+    worktree = worktree_counts.most_common(1)[0][0] if worktree_counts else "(unknown)"
+
     return {
         "session_id": session_id,
         "source": source,
         "repo": repo or path.stem.split("__")[0],
         "branch": branch,
+        "worktree": worktree,
         "model": models.most_common(1)[0][0] if models else "",
         "first_ts": first_ts,
         "last_ts": last_ts,
@@ -789,20 +830,24 @@ def cost_gate_stderr_lines(violations: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def filter_sessions(sessions: list[dict], repo: str, days: int,
-                    branch: str = "") -> list[dict]:
+                    branch: str = "", worktree: str = "") -> list[dict]:
     """Keep sessions whose derived repo matches ``repo`` AND branch matches
-    ``branch`` (case-insensitive substring) AND last_ts within ``days``.
+    ``branch`` (case-insensitive substring) AND worktree matches ``worktree``
+    (case-insensitive substring) AND last_ts within ``days``.
 
-    Empty ``repo`` or ``branch`` disables that filter.
+    Empty ``repo``, ``branch``, or ``worktree`` disables that filter.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     repo = repo or ""
     branch_lc = branch.lower() if branch else ""
+    worktree_lc = worktree.lower() if worktree else ""
     out: list[dict] = []
     for s in sessions:
         if repo and repo not in (s["repo"] or ""):
             continue
         if branch_lc and branch_lc not in (s.get("branch") or "").lower():
+            continue
+        if worktree_lc and worktree_lc not in (s.get("worktree") or "").lower():
             continue
         last = s["last_ts"]
         if last is None:
@@ -992,6 +1037,14 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
+  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout)</span></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:40%">Share</th></tr></thead>
+      <tbody>{worktree_rows}</tbody>
+    </table>
+  </div>
+
   <div class="section-title">Cost by Model &amp; Cache TTL Mix</div>
   <div class="grid cols-2">
     <div class="panel">
@@ -1024,7 +1077,7 @@ HTML_TEMPLATE = """<!doctype html>
   <div class="panel" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>Session</th><th>Branch</th><th>Model</th><th>Started</th>
+        <th>Session</th><th>Branch</th><th>Worktree</th><th>Model</th><th>Started</th>
         <th style="text-align:right">Input</th><th style="text-align:right">Output</th>
         <th style="text-align:right">Tools</th>
         <th style="text-align:right">Cache Hit</th><th style="text-align:right">Cost</th>
@@ -1154,6 +1207,30 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         for b in sorted(branch_costs, key=lambda k: -branch_costs[k][1])
     )
 
+    # Cost by worktree — same source as the branch panel (unfiltered-by-repo
+    # window) so a --worktree filter doesn't collapse it to one self-row.
+    worktree_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in repo_pool:
+        c = cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        wkey = s.get("worktree") or "(unknown)"
+        worktree_costs[wkey][0] += 1
+        worktree_costs[wkey][1] += c
+    worktree_total_for_share = sum(wc[1] for wc in worktree_costs.values()) or 1.0
+    worktree_rows_html = "".join(
+        f"<tr><td>{html.escape(w)}</td><td style='text-align:right'>{int(worktree_costs[w][0])}</td>"
+        f"<td style='text-align:right'>${worktree_costs[w][1]:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{(worktree_costs[w][1] / worktree_total_for_share * 100):.1f}%'></span></div></td></tr>"
+        for w in sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+    )
+
     # Cost by tool (imputed — see evaluate_warnings comment for the heuristic)
     tool_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
     for s, _ in scored:
@@ -1261,6 +1338,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         session_rows_parts.append(
             f"<tr><td><code>{html.escape(s['session_id'][:8])}</code></td>"
             f"<td>{html.escape(s.get('branch') or '—')}</td>"
+            f"<td>{html.escape(s.get('worktree') or '—')}</td>"
             f"<td>{html.escape(s['model'] or '?')}</td>"
             f"<td class='muted'>{html.escape(started)}</td>"
             f"<td style='text-align:right'>{s['input_tokens']:,}</td>"
@@ -1272,7 +1350,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             f"<span class='grade grade-{grade}'>{grade}</span></td>"
             f"<td>{warn_chips}</td></tr>"
         )
-    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='11' class='muted'>No sessions.</td></tr>"
+    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='12' class='muted'>No sessions.</td></tr>"
 
     # Warnings list (deduped by code)
     seen_codes: set[str] = set()
@@ -1332,6 +1410,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         cost_gate_banner=cost_gate_banner,
         repo_rows=repo_rows_html,
         branch_rows=branch_rows_html,
+        worktree_rows=worktree_rows_html,
         tool_rows=tool_rows_html,
         read_warning_html=read_warning_html,
         model_rows=model_rows_html,
@@ -1376,6 +1455,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Optional JSON file overriding the PRICING dict (see PRICING docstring for shape).")
     parser.add_argument("--branch", default="",
                         help="Filter to a single branch (case-insensitive substring match on gitBranch). Default: all branches.")
+    parser.add_argument("--worktree", default="",
+                        help="Filter to a single worktree (case-insensitive substring on derived worktree name). Default: all worktrees.")
     parser.add_argument("--json", action="store_true",
                         help="Emit a machine-readable JSON summary to stdout (skips HTML write). Exit 3 on cost_gate==bad.")
     args = parser.parse_args(argv)
@@ -1399,12 +1480,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # Time-window only (no repo filter) — feeds the per-repo panel so it
     # shows the full distribution, not a single self-row.
-    windowed = filter_sessions(sessions, "", args.days)
-    selected = filter_sessions(sessions, args.repo, args.days, args.branch)
+    windowed = filter_sessions(sessions, "", args.days, worktree=args.worktree)
+    selected = filter_sessions(sessions, args.repo, args.days, args.branch, args.worktree)
     if not selected:
         warn_target = f"repo='{args.repo}'"
         if args.branch:
             warn_target += f" branch='{args.branch}'"
+        if args.worktree:
+            warn_target += f" worktree='{args.worktree}'"
         print(f"[warn] No sessions matched {warn_target} within {args.days} days.", file=sys.stderr)
 
     scored: list[tuple[dict, dict]] = [(s, score_session(s)) for s in selected]
@@ -1449,6 +1532,8 @@ def main(argv: list[str] | None = None) -> int:
             "repo": args.repo,
             "branch": args.branch,
             "branch_filter_active": bool(args.branch),
+            "worktree": args.worktree,
+            "worktree_filter_active": bool(args.worktree),
             "days": args.days,
             "files_scanned": len(files),
             "sessions": len(selected),
@@ -1472,6 +1557,7 @@ def main(argv: list[str] | None = None) -> int:
                     "priority": w.priority,
                     "session_id": s["session_id"],
                     "branch": s.get("branch", ""),
+                    "worktree": s.get("worktree", ""),
                 }
                 for (s, _), warns in zip(scored, warnings_per_session)
                 for w in warns

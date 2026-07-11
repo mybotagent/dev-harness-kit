@@ -49,6 +49,7 @@ from token_efficiency_analyzer import (  # noqa: E402
     render_dashboard,
     score_cache_utilization,
     score_session,
+    worktree_from_cwd,
 )
 
 FIXTURE_LOGS = PROJECT_ROOT / "fixtures" / "logs" / "claude-code"
@@ -60,6 +61,8 @@ def _make_session(**overrides) -> dict:
         "session_id": overrides.get("session_id", "test-session-id"),
         "source": "claude-code",
         "repo": overrides.get("repo", "test-repo"),
+        "branch": overrides.get("branch", "main"),
+        "worktree": overrides.get("worktree", "(main)"),
         "model": overrides.get("model", "claude-sonnet-5"),
         "first_ts": None,
         "last_ts": None,
@@ -682,6 +685,216 @@ class TestBranchAwareness(unittest.TestCase):
             ])
         # rc == 0 (legacy flat yields branch="main" which still matches).
         self.assertIn(rc, (0, 2))
+
+
+class TestWorktreeAwareness(unittest.TestCase):
+    """Per-worktree derivation, extraction, aggregation, and filtering."""
+
+    def test_worktree_from_cwd_main_checkout(self):
+        self.assertEqual(worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit"), "(main)")
+        self.assertEqual(worktree_from_cwd("/tmp/random/path"), "(main)")
+
+    def test_worktree_from_cwd_worktree_checkout(self):
+        self.assertEqual(
+            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/fix-x"),
+            "fix-x",
+        )
+        self.assertEqual(
+            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/feat-per-branch-log"),
+            "feat-per-branch-log",
+        )
+
+    def test_worktree_from_cwd_nested_subdir_inside_worktree(self):
+        # cwd may point anywhere inside the worktree, not just at its root.
+        self.assertEqual(
+            worktree_from_cwd(
+                "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/fix-x/tools/sub/dir"
+            ),
+            "fix-x",
+        )
+
+    def test_worktree_from_cwd_missing_returns_unknown(self):
+        self.assertEqual(worktree_from_cwd(""), "(unknown)")
+        self.assertEqual(worktree_from_cwd(None), "(unknown)")
+
+    def test_worktree_from_cwd_does_not_match_unrelated_claude_dir(self):
+        # A non-worktree '.claude' segment elsewhere in the path must not
+        # trigger the worktrees branch.
+        self.assertEqual(
+            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.claude/settings.json"),
+            "(main)",
+        )
+
+    def test_aggregate_session_extracts_worktree_from_cwd(self):
+        with tempfile.TemporaryDirectory(prefix="wt-agg-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            rec = {
+                "type": "assistant",
+                "sessionId": "s-wt",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/feat-per-branch-log",
+                "gitBranch": "feat/per-branch-log",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 10,
+                              "cache_read_input_tokens": 50,
+                              "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                 "ephemeral_1h_input_tokens": 0}},
+                },
+            }
+            p = d / "s-wt.jsonl"
+            p.write_text(json.dumps(rec) + "\n")
+            s = aggregate_session(p)
+            self.assertEqual(s["worktree"], "feat-per-branch-log")
+            self.assertEqual(s["branch"], "feat/per-branch-log")
+
+    def test_aggregate_session_main_checkout_buckets_as_main(self):
+        with tempfile.TemporaryDirectory(prefix="wt-main-") as td:
+            d = Path(td) / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            rec = {
+                "type": "assistant",
+                "sessionId": "s-main",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                "gitBranch": "main",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {"role": "assistant", "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "ok"}],
+                            "usage": {"input_tokens": 100, "output_tokens": 10,
+                                      "cache_read_input_tokens": 50}},
+            }
+            p = d / "s-main.jsonl"
+            p.write_text(json.dumps(rec) + "\n")
+            s = aggregate_session(p)
+            self.assertEqual(s["worktree"], "(main)")
+
+    def test_filter_sessions_worktree_substring_match(self):
+        from datetime import datetime, timezone
+        sessions = [
+            _make_session(session_id="s-m", worktree="(main)", repo="repo",
+                          last_ts=datetime.now(timezone.utc)),
+            _make_session(session_id="s-w", worktree="fix-x", repo="repo",
+                          last_ts=datetime.now(timezone.utc)),
+        ]
+        kept = filter_sessions(sessions, repo="", days=30, worktree="fix")
+        self.assertEqual([s["session_id"] for s in kept], ["s-w"])
+
+    def test_filter_sessions_empty_worktree_disables_filter(self):
+        from datetime import datetime, timezone
+        sessions = [
+            _make_session(session_id="s-m", worktree="(main)"),
+            _make_session(session_id="s-w", worktree="fix-x"),
+        ]
+        now = datetime.now(timezone.utc)
+        for s in sessions:
+            s["first_ts"] = now
+            s["last_ts"] = now
+        kept = filter_sessions(sessions, repo="", days=30)
+        self.assertEqual(len(kept), 2)
+
+    def test_filter_sessions_worktree_and_branch_compose(self):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        sessions = [
+            _make_session(session_id="s-1", branch="main", worktree="(main)", last_ts=now),
+            _make_session(session_id="s-2", branch="feat", worktree="(main)", last_ts=now),
+            _make_session(session_id="s-3", branch="feat", worktree="feat-per-branch-log", last_ts=now),
+        ]
+        kept = filter_sessions(sessions, repo="", days=30, branch="feat", worktree="feat")
+        self.assertEqual([s["session_id"] for s in kept], ["s-3"])
+
+    def test_main_worktree_filter_json(self):
+        from io import StringIO
+        import contextlib
+        with tempfile.TemporaryDirectory(prefix="wt-main-json-") as td:
+            td_path = Path(td)
+            # Two sessions: one in main checkout, one in a worktree.
+            # Use --repo="" (no repo filter) because a worktree session's
+            # ``cwd`` basename IS the worktree dir, not the project root.
+            for sid, cwd in (
+                ("s-main", "/Users/sanghee/dev/dev-harness-kit"),
+                ("s-wt",   "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/feat-x"),
+            ):
+                d = td_path / "logs" / "claude-code" / "main"
+                d.mkdir(parents=True, exist_ok=True)
+                rec = {
+                    "type": "assistant",
+                    "sessionId": sid,
+                    "cwd": cwd,
+                    "gitBranch": "main",
+                    "timestamp": "2026-07-09T10:00:00.000Z",
+                    "message": {"role": "assistant", "model": "claude-sonnet-5",
+                                "content": [{"type": "text", "text": "ok"}],
+                                "usage": {"input_tokens": 100, "output_tokens": 10,
+                                          "cache_read_input_tokens": 50,
+                                          "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                             "ephemeral_1h_input_tokens": 0}}},
+                }
+                (d / f"{sid}.jsonl").write_text(json.dumps(rec) + "\n")
+            buf = StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([
+                    "--repo", "",
+                    "--days", "30",
+                    "--logs-dir", str(td_path / "logs"),
+                    "--worktree", "feat",
+                    "--json",
+                ])
+            self.assertEqual(rc, 0)
+            data = json.loads(buf.getvalue())
+            self.assertEqual(data["worktree"], "feat")
+            self.assertTrue(data["worktree_filter_active"])
+            self.assertEqual(data["sessions"], 1)
+            self.assertEqual(data["files_scanned"], 2)
+            # And the kept session must carry the worktree field on its warning.
+            if data["warnings"]:
+                self.assertEqual(data["warnings"][0]["worktree"], "feat-x")
+
+    def test_render_dashboard_contains_worktree_panel_and_column(self):
+        from io import StringIO
+        import contextlib
+        with tempfile.TemporaryDirectory(prefix="wt-render-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            rec = {
+                "type": "assistant",
+                "sessionId": "s-r",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                "gitBranch": "main",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {"role": "assistant", "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "ok"}],
+                            "usage": {"input_tokens": 100, "output_tokens": 10,
+                                      "cache_read_input_tokens": 50}},
+            }
+            (d / "s-r.jsonl").write_text(json.dumps(rec) + "\n")
+            buf = StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([
+                    "--repo", "dev-harness-kit",
+                    "--days", "30",
+                    "--logs-dir", str(td_path / "logs"),
+                ])
+            self.assertEqual(rc, 0)
+            html_path = Path("token-dashboard-dev-harness-kit-30d.html")
+            try:
+                src = html_path.read_text()
+                self.assertIn("Cost by Worktree", src)
+                self.assertIn("<th>Worktree</th>", src)
+                # Scope the column count to the Sessions table only.
+                sessions_thead = src.split('<div class="section-title">Sessions', 1)[1].split("</thead>", 1)[0]
+                # 12 columns: Session, Branch, Worktree, Model, Started,
+                # Input, Output, Tools, Cache Hit, Cost, Score, Warnings.
+                # Count open <th...> tags (not <thead>) to skip the wrapper element.
+                import re
+                self.assertEqual(len(re.findall(r"<th[\s>]", sessions_thead)), 12)
+            finally:
+                html_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
