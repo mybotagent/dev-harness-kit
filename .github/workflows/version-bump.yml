@@ -113,6 +113,15 @@ jobs:
         if: steps.bump.outputs.should_publish_pr == 'true'
         id: create-pr
         env:
+          # gh CLI does NOT auto-pick up GITHUB_TOKEN in GitHub Actions
+          # context — it requires GH_TOKEN to be set explicitly. Without
+          # this mapping, `gh pr create` and `gh pr list` exit 4 with
+          # "To use GitHub CLI in a GitHub Actions workflow, set the
+          # GH_TOKEN environment variable" — leaving the branch tip
+          # pushed but no PR opened (which is exactly how the v0.3.2
+          # bump at `fe3c80f` and v0.3.3 bump at `74881a5` became
+          # orphans on 2026-07-10 / 2026-07-11).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
           # GitHub Actions expressions hoisted out of the shell `run:` block
           # so they cannot be subject to shell-quoting hazards if upstream
