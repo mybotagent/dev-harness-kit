@@ -8,11 +8,68 @@ You do not need to run or edit this file.
 import argparse
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 
 _CODEX_CONV_EVENTS = ("user_message", "agent_message")
 _CODEX_SYSTEM_PREFIXES = ("<permissions", "<environment_context", "<user_instructions")
+
+_INVALID_BRANCH_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _sanitize_branch(name: str) -> str:
+    """Map a git ref name to a filesystem-safe single-segment directory label.
+
+    - empty / ``.`` / ``..`` / ``/`` → ``"detached"`` (caller didn't get a usable ref).
+    - any char outside ``[A-Za-z0-9._/-]`` → ``-`` (so ``feature/foo`` → ``feature-foo``).
+    - leading/trailing ``-`` stripped.
+    - length capped at 120 chars (path-length safety).
+    """
+    if not name or name in (".", "..", "/"):
+        return "detached"
+    cleaned = _INVALID_BRANCH_CHARS.sub("-", name).strip("-")
+    if not cleaned:
+        return "detached"
+    return cleaned[:120]
+
+
+def detect_branch(cwd: str) -> str:
+    """Return a filesystem-safe branch label for ``cwd``, or ``"no-git"``.
+
+    Order of preference:
+      1. ``git -C <cwd> symbolic-ref --short -q HEAD``  (attached HEAD → real branch name)
+      2. ``git -C <cwd> rev-parse --abbrev-ref HEAD``   (returns ``"HEAD"`` if detached)
+         → fall back to ``f"detached-<short-sha>"`` via ``rev-parse --short HEAD``
+      3. any failure (``git`` missing, not a repo, timeout) → ``"no-git"``
+
+    Never raises — a logging failure must never block the participant's session.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "symbolic-ref", "--short", "-q", "HEAD"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return _sanitize_branch(out.stdout.strip())
+
+        out = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        if out.returncode == 0:
+            ref = out.stdout.strip()
+            if ref == "HEAD":
+                sha = subprocess.run(
+                    ["git", "-C", cwd, "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=2, check=False,
+                ).stdout.strip()
+                return _sanitize_branch(f"detached-{sha}" if sha else "detached")
+            return _sanitize_branch(ref)
+        return "no-git"
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return "no-git"
 
 
 def _content_text(content) -> str:
@@ -128,7 +185,8 @@ def main() -> int:
     safe_session = os.path.basename(str(session_id))
     if safe_session in ("", ".", ".."):
         safe_session = "session"
-    dest_dir = os.path.join(cwd, "logs", args.tool)
+    branch = detect_branch(cwd)
+    dest_dir = os.path.join(cwd, "logs", args.tool, branch)
     dest = os.path.join(dest_dir, f"{safe_session}.jsonl")
 
     # Save only conversation lines; fall back to a verbatim copy on any doubt.

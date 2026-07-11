@@ -17,7 +17,7 @@
 - **Human-on-the-Loop auto + user approves last**: zero response fatigue.
 - **Worktree enforcement (NEW in 0.1.1)**: `worktree-guard` blocks Edit/Write in the main checkout; `task-detector` nudges new tasks to a worktree; `session-start-check` reminds at session start. See `.claude/rules/git-workflow.md`.
 - **Consumer-install (NEW in 0.1.1)**: `/dev-kit:ci-setup` ships a self-aware `review.yml` that works in both the dev-harness-kit repo itself (self-install) and consumer repos (clones from public source).
-- **Token efficiency analyzer (`tools/token_efficiency_analyzer.py`)**: stdlib-only CLI that turns `logs/{claude-code,codex}/*.jsonl` into a single self-contained HTML dashboard — 4-dim session scoring (cache utilization · output density · read redundancy · tool economy), 6 anti-pattern warnings (prefix misalignment, Read-heavy cartography failure, heavy context, model overspec, cache write-not-reused, repeated user-message injection), and a USD savings estimate. See [Token efficiency analyzer](#token-efficiency-analyzer-toolstoken_efficiency_analyzerpy).
+- **Token efficiency analyzer (`tools/token_efficiency_analyzer.py`)**: stdlib-only CLI that turns `logs/{claude-code,codex}/**/*.jsonl` (per-branch layout: `<tool>/<branch>/<session>.jsonl`) into a single self-contained HTML dashboard — 4-dim session scoring (cache utilization · output density · read redundancy · tool economy), 6 anti-pattern warnings (prefix misalignment, Read-heavy cartography failure, heavy context, model overspec, cache write-not-reused, repeated user-message injection), a USD savings estimate, and a "Cost by Branch" panel. See [Token efficiency analyzer](#token-efficiency-analyzer-toolstoken_efficiency_analyzerpy).
 
 ## Install (plugin-only)
 
@@ -141,7 +141,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:inspect                 # 8-dim code health audit (read-only, project-wide)
 /dev-kit:eval                    # agent-behavior eval (review/security/plan + code-sanity rubric)
 /dev-kit:report                  # HTML viewer for eval + inspect markdown reports
-/dev-kit:token-analyzer           # token-efficiency dashboard from logs/{claude-code,codex}/*.jsonl
+/dev-kit:token-analyzer           # token-efficiency dashboard from logs/{claude-code,codex}/**/*.jsonl
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
@@ -233,7 +233,7 @@ Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo
 /dev-kit:log off     # strip sentinel-tagged entries; scaffold left in place
 ```
 
-Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<sid>.jsonl` and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
+Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<branch>/<sid>.jsonl` (grouped by `gitBranch`) and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
 
 ## Token efficiency analyzer (`/dev-kit:token-analyzer` → `tools/token_efficiency_analyzer.py`)
 
@@ -255,7 +255,7 @@ The dashboard answers three questions for any given repository over the last N d
 
 ```bash
 # 1. Make sure loghooks are running (see Loghooks section above)
-#    -> produces logs/claude-code/<session-id>.jsonl
+#    -> produces logs/claude-code/<branch>/<session-id>.jsonl
 # 2. Generate the dashboard for one repository, last 30 days
 python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
 # 3. Open the output file
