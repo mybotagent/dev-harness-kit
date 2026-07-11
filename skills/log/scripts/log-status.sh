@@ -65,15 +65,13 @@ else
     printf '  setup:    %-44s  MISSING — run /dev-kit:log setup\n' "$SETUP_PY"
 fi
 
-# captured transcripts (shell loop, no fork to find; tolerates any filename)
+# captured transcripts — count nested per-branch files only (mindepth 2
+# excludes any legacy flat shims at the top level). `find` is POSIX and
+# avoids depending on bash globstar.
 for sub in claude-code codex; do
     D="$TARGET_DIR/logs/$sub"
     if [[ -d "$D" ]]; then
-        n=0
-        for f in "$D"/*.jsonl; do
-            [[ -f "$f" ]] || continue
-            n=$((n + 1))
-        done
-        printf '  logs:     %-44s  captured=%d\n' "$D/" "$n"
+        n="$(find "$D" -mindepth 2 -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+        printf '  logs:     %-44s  captured=%d\n' "$D/" "${n:-0}"
     fi
 done

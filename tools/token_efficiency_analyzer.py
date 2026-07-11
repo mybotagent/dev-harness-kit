@@ -190,15 +190,37 @@ def cost_usd(model_id: str, *, input_tokens: int, output_tokens: int,
 # ---------------------------------------------------------------------------
 
 def discover_logs(logs_dir: Path) -> list[Path]:
-    """Return every .jsonl under ``<logs_dir>/<source>/*``."""
+    """Return every .jsonl under ``<logs_dir>/<source>/**``.
+
+    Walked recursively so per-branch subdirs (``logs/<tool>/<branch>/<sid>.jsonl``)
+    are picked up alongside any legacy flat files left over from before the
+    branch layout existed.
+    """
     if not logs_dir.exists():
         return []
     out: list[Path] = []
     for sub in ("claude-code", "codex"):
         d = logs_dir / sub
         if d.exists():
-            out.extend(sorted(d.glob("*.jsonl")))
+            out.extend(sorted(d.rglob("*.jsonl")))
     return out
+
+
+_KNOWN_SOURCES = ("claude-code", "codex")
+
+
+def _source_for(path: Path) -> str:
+    """Identify the source tool subdir for ``path``.
+
+    Walks the path's parts looking for a known source name (``claude-code`` or
+    ``codex``). Falls back to ``path.parent.name`` for legacy flat-layout
+    files where the immediate parent IS the tool subdir.
+    """
+    parts = path.parts
+    for sub in _KNOWN_SOURCES:
+        if sub in parts:
+            return sub
+    return path.parent.name
 
 
 def parse_iso(ts: str) -> datetime | None:
@@ -222,7 +244,7 @@ def aggregate_session(path: Path) -> dict | None:
     """Walk one JSONL file once and return per-session aggregates, or None."""
     session_id: str | None = None
     repo = ""
-    source = path.parent.name
+    source = _source_for(path)
     models: Counter[str] = Counter()
     input_tokens = 0
     output_tokens = 0
@@ -233,6 +255,7 @@ def aggregate_session(path: Path) -> dict | None:
     tool_counts: Counter[str] = Counter()
     read_files: Counter[str] = Counter()
     user_texts: list[str] = []
+    branch_counts: Counter[str] = Counter()
     first_ts: datetime | None = None
     last_ts: datetime | None = None
 
@@ -258,6 +281,9 @@ def aggregate_session(path: Path) -> dict | None:
                     session_id = rec.get("sessionId") or rec.get("session_id") or path.stem
                 if not repo:
                     repo = repo_from_cwd(rec.get("cwd"))
+                gb = rec.get("gitBranch")
+                if isinstance(gb, str) and gb.strip():
+                    branch_counts[gb.strip()] += 1
 
                 msg = rec.get("message") or {}
                 rec_type = rec.get("type")
@@ -310,10 +336,23 @@ def aggregate_session(path: Path) -> dict | None:
     if session_id is None:
         return None
 
+    # Branch: prefer wire-format ``gitBranch`` (the most-common value across
+    # all lines, since users can switch branches mid-session in theory).
+    # Fall back to the immediate parent dir name. Legacy flat files have
+    # ``path.parent.name == "claude-code"`` or ``"codex"`` (the tool subdir
+    # itself) — those bucket under ``"main"`` so they aren't mis-attributed
+    # to a tool dir.
+    if branch_counts:
+        branch = branch_counts.most_common(1)[0][0]
+    else:
+        parent = path.parent.name
+        branch = "main" if parent in _KNOWN_SOURCES else (parent or "main")
+
     return {
         "session_id": session_id,
         "source": source,
         "repo": repo or path.stem.split("__")[0],
+        "branch": branch,
         "model": models.most_common(1)[0][0] if models else "",
         "first_ts": first_ts,
         "last_ts": last_ts,
@@ -749,12 +788,21 @@ def cost_gate_stderr_lines(violations: list[dict]) -> list[str]:
 # Filtering
 # ---------------------------------------------------------------------------
 
-def filter_sessions(sessions: list[dict], repo: str, days: int) -> list[dict]:
-    """Keep sessions whose derived repo matches ``repo`` AND last_ts within ``days``."""
+def filter_sessions(sessions: list[dict], repo: str, days: int,
+                    branch: str = "") -> list[dict]:
+    """Keep sessions whose derived repo matches ``repo`` AND branch matches
+    ``branch`` (case-insensitive substring) AND last_ts within ``days``.
+
+    Empty ``repo`` or ``branch`` disables that filter.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    repo = repo or ""
+    branch_lc = branch.lower() if branch else ""
     out: list[dict] = []
     for s in sessions:
         if repo and repo not in (s["repo"] or ""):
+            continue
+        if branch_lc and branch_lc not in (s.get("branch") or "").lower():
             continue
         last = s["last_ts"]
         if last is None:
@@ -936,6 +984,14 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
+  <div class="section-title">Cost by Branch <span class="muted" style="font-weight:400;font-size:11px">(all branches in window, derived from gitBranch wire field)</span></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>Branch</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:40%">Share</th></tr></thead>
+      <tbody>{branch_rows}</tbody>
+    </table>
+  </div>
+
   <div class="section-title">Cost by Model &amp; Cache TTL Mix</div>
   <div class="grid cols-2">
     <div class="panel">
@@ -968,7 +1024,7 @@ HTML_TEMPLATE = """<!doctype html>
   <div class="panel" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>Session</th><th>Model</th><th>Started</th>
+        <th>Session</th><th>Branch</th><th>Model</th><th>Started</th>
         <th style="text-align:right">Input</th><th style="text-align:right">Output</th>
         <th style="text-align:right">Tools</th>
         <th style="text-align:right">Cache Hit</th><th style="text-align:right">Cost</th>
@@ -1072,6 +1128,30 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         f"<td style='text-align:right'>${repo_costs[rr][1]:.2f}</td>"
         f"<td><div class='bar'><span style='width:{(repo_costs[rr][1] / repo_total_for_share * 100):.1f}%'></span></div></td></tr>"
         for rr in sorted(repo_costs, key=lambda k: -repo_costs[k][1])
+    )
+
+    # Cost by branch — mirrors the repo panel, sourced from the unfiltered-by-repo
+    # window so a --branch filter doesn't collapse this to one self-row.
+    branch_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in repo_pool:
+        c = cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        bkey = s.get("branch") or "(unknown)"
+        branch_costs[bkey][0] += 1
+        branch_costs[bkey][1] += c
+    branch_total_for_share = sum(bc[1] for bc in branch_costs.values()) or 1.0
+    branch_rows_html = "".join(
+        f"<tr><td>{html.escape(b)}</td><td style='text-align:right'>{int(branch_costs[b][0])}</td>"
+        f"<td style='text-align:right'>${branch_costs[b][1]:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{(branch_costs[b][1] / branch_total_for_share * 100):.1f}%'></span></div></td></tr>"
+        for b in sorted(branch_costs, key=lambda k: -branch_costs[k][1])
     )
 
     # Cost by tool (imputed — see evaluate_warnings comment for the heuristic)
@@ -1180,6 +1260,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         ) or "<span class='muted'>—</span>"
         session_rows_parts.append(
             f"<tr><td><code>{html.escape(s['session_id'][:8])}</code></td>"
+            f"<td>{html.escape(s.get('branch') or '—')}</td>"
             f"<td>{html.escape(s['model'] or '?')}</td>"
             f"<td class='muted'>{html.escape(started)}</td>"
             f"<td style='text-align:right'>{s['input_tokens']:,}</td>"
@@ -1191,7 +1272,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             f"<span class='grade grade-{grade}'>{grade}</span></td>"
             f"<td>{warn_chips}</td></tr>"
         )
-    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='10' class='muted'>No sessions.</td></tr>"
+    session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='11' class='muted'>No sessions.</td></tr>"
 
     # Warnings list (deduped by code)
     seen_codes: set[str] = set()
@@ -1250,6 +1331,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         avg_cache_hit=avg_cache_hit,
         cost_gate_banner=cost_gate_banner,
         repo_rows=repo_rows_html,
+        branch_rows=branch_rows_html,
         tool_rows=tool_rows_html,
         read_warning_html=read_warning_html,
         model_rows=model_rows_html,
@@ -1292,6 +1374,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Per-session USD gate (default ${DEFAULT_COST_GATE_USD:.2f}).")
     parser.add_argument("--pricing-override", default=None,
                         help="Optional JSON file overriding the PRICING dict (see PRICING docstring for shape).")
+    parser.add_argument("--branch", default="",
+                        help="Filter to a single branch (case-insensitive substring match on gitBranch). Default: all branches.")
     parser.add_argument("--json", action="store_true",
                         help="Emit a machine-readable JSON summary to stdout (skips HTML write). Exit 3 on cost_gate==bad.")
     args = parser.parse_args(argv)
@@ -1316,9 +1400,12 @@ def main(argv: list[str] | None = None) -> int:
     # Time-window only (no repo filter) — feeds the per-repo panel so it
     # shows the full distribution, not a single self-row.
     windowed = filter_sessions(sessions, "", args.days)
-    selected = filter_sessions(sessions, args.repo, args.days)
+    selected = filter_sessions(sessions, args.repo, args.days, args.branch)
     if not selected:
-        print(f"[warn] No sessions matched repo='{args.repo}' within {args.days} days.", file=sys.stderr)
+        warn_target = f"repo='{args.repo}'"
+        if args.branch:
+            warn_target += f" branch='{args.branch}'"
+        print(f"[warn] No sessions matched {warn_target} within {args.days} days.", file=sys.stderr)
 
     scored: list[tuple[dict, dict]] = [(s, score_session(s)) for s in selected]
     reclaim_cache = cache_miss_reclaim(scored)
@@ -1360,6 +1447,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         out = {
             "repo": args.repo,
+            "branch": args.branch,
+            "branch_filter_active": bool(args.branch),
             "days": args.days,
             "files_scanned": len(files),
             "sessions": len(selected),
@@ -1382,6 +1471,7 @@ def main(argv: list[str] | None = None) -> int:
                     "reclaim_axis": w.reclaim_axis,
                     "priority": w.priority,
                     "session_id": s["session_id"],
+                    "branch": s.get("branch", ""),
                 }
                 for (s, _), warns in zip(scored, warnings_per_session)
                 for w in warns

@@ -67,10 +67,15 @@ Default subcommand when none given: `status`.
 ```
 1. /dev-kit:log setup     # creates tools/save_log.py + logs/{claude-code,codex}/
 2. /dev-kit:log on        # merges Stop + SessionEnd hooks into .claude/settings.json
-3.  ... run Claude Code ... transcripts appear in logs/claude-code/<sid>.jsonl
-4. /dev-kit:log status    # managed=N captured=N
+3.  ... run Claude Code ... transcripts appear in logs/claude-code/<branch>/<sid>.jsonl
+4. /dev-kit:log status    # managed=N captured=N (recursive, per-branch)
 5. /dev-kit:log off       # strips managed entries; scaffold left in place
 ```
+
+Transcripts are grouped by `gitBranch` — one subdir per branch (`main`,
+`feature-x`, …), with `detached-<sha>` for commits checked out by SHA and
+`no-git` for non-git cwd. The token analyzer reads branch from the
+`gitBranch` wire field and renders a "Cost by Branch" panel.
 
 `off` deliberately leaves `tools/save_log.py` + `logs/` in place — they
 cost nothing and a future `on` skips the setup step. Remove them

@@ -30,9 +30,11 @@ slash commands.
 
 ## What it does
 
-1. Confirm transcripts exist under `logs/claude-code/` and/or
-   `logs/codex/`. If neither exists, point the user at
-   `/dev-kit:log setup` + `/dev-kit:log on` to enable capture first.
+1. Confirm transcripts exist under `logs/claude-code/<branch>/` and/or
+   `logs/codex/<branch>/` (recursive walk — legacy flat files at the
+   top level are also picked up and bucketed as branch `main`).
+   If neither exists, point the user at `/dev-kit:log setup` +
+   `/dev-kit:log on` to enable capture first.
 2. Detect the repo name from the most common `cwd` basename in the
    captured sessions (or accept `--repo <name>` to override).
 3. Invoke `tools/token_efficiency_analyzer.py --repo <name> --days 30`
@@ -54,7 +56,8 @@ The CLI accepts:
 |---|---|---|
 | `--repo <name>` | (required unless auto-detected from cwd) | Matches `Path(cwd).name` |
 | `--days <n>` | `30` | Look-back window |
-| `--logs-dir <path>` | `./logs` | Root for `claude-code/` + `codex/` subdirs |
+| `--logs-dir <path>` | `./logs` | Root for `claude-code/` + `codex/` subdirs (recursively walked) |
+| `--branch <name>` | _(all)_ | Filter to a single branch (case-insensitive substring on `gitBranch`). Empty = no filter. |
 | `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
 | `--cost-gate-tokens <int>` | `200000` | Per-session `input + cache_read` gate; sessions over this trigger stderr WARN |
 | `--cost-gate-usd <float>` | `5.00` | Per-session USD gate; sessions over this trigger stderr WARN |
@@ -81,10 +84,14 @@ Sections (rendered by `tools/token_efficiency_analyzer.py:render_dashboard`):
 - **Cost & Token Distribution**: cost by repo (share bar, all repos in
   window -- not just the filtered one) + cost by tool (share bar, with
   yellow banner if `Read` is #1).
+- **Cost by Branch**: per-branch share bar across every branch present in
+  the window -- sourced from the `gitBranch` wire field with a path
+  fallback for legacy flat files. Use `--branch <name>` to focus the rest
+  of the report on a single branch.
 - **Cost by Model & Cache TTL Mix**: per-model spend table + four-bar
   Cache TTL Mix showing `cache_read` / `write 5m` / `write 1h` / `pure miss`
   token share with a TTL pricing caveat.
-- **Sessions**: per-session row -- model, start time, input/output/
+- **Sessions**: per-session row -- branch, model, start time, input/output/
   tools/cache-hit/cost, score pill **+ letter grade**, warning chips.
 - **ROI Actions (ranked by estimated savings)**: deduplicated
   warnings sorted descending by `estimated_save_usd` with priority tag.

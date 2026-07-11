@@ -29,14 +29,18 @@ from token_efficiency_analyzer import (  # noqa: E402
     DEFAULT_COST_GATE_USD,
     PRICING,
     WARNING_RECOMMENDATIONS,
+    _KNOWN_SOURCES,
+    _source_for,
     aggregate_session,
     cache_miss_reclaim,
     cost_gate_stderr_lines,
     cost_usd,
+    discover_logs,
     dup_read_reclaim,
     enforce_cost_gate,
     estimated_savings,
     evaluate_warnings,
+    filter_sessions,
     grade_for,
     load_pricing_override,
     main,
@@ -467,6 +471,8 @@ class TestJsonOutput(unittest.TestCase):
         self.assertEqual(data["repo"], "fixture-repo")
         self.assertEqual(data["days"], 30)
         self.assertEqual(data["sessions"], 6)
+        self.assertEqual(data["branch"], "")
+        self.assertFalse(data["branch_filter_active"])
         self.assertEqual(set(data["estimated_savings_usd"].keys()),
                          {"cache_miss", "dup_read", "model_downgrade", "total"})
         self.assertIn("cost_gate", data)
@@ -512,6 +518,170 @@ class TestWeightInvariants(unittest.TestCase):
         expected = round(0.40 * sc["cache"] + 0.20 * sc["density"]
                          + 0.20 * sc["redundancy"] + 0.20 * sc["economy"], 1)
         self.assertEqual(sc["total"], expected)
+
+
+class TestBranchAwareness(unittest.TestCase):
+    """Per-branch discovery, extraction, and filtering."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="token-analyzer-branch-"))
+        self._now = None  # filled per-test if needed
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_session(self, subdir: str, sid: str, *,
+                       branch: str | None = "main",
+                       cwd: str = "/tmp/fixture-repo") -> Path:
+        """Write one minimal session record under logs/claude-code/<subdir>/."""
+        d = self.tmpdir / "logs" / "claude-code" / subdir
+        d.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "type": "assistant",
+            "sessionId": sid,
+            "cwd": cwd,
+            "timestamp": "2026-07-09T10:00:00.000Z",
+            "gitBranch": branch,
+            "message": {
+                "role": "assistant",
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 100,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 500,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                    },
+                },
+            },
+        }
+        # If branch is None, drop the field entirely (simulates wire-format omission).
+        if branch is None:
+            del rec["gitBranch"]
+        p = d / f"{sid}.jsonl"
+        p.write_text(json.dumps(rec) + "\n")
+        return p
+
+    def test_source_for_walks_up_for_nested(self):
+        nested = Path("/tmp/foo/logs/claude-code/main/sid.jsonl")
+        self.assertEqual(_source_for(nested), "claude-code")
+        flat = Path("/tmp/foo/logs/claude-code/sid.jsonl")
+        self.assertEqual(_source_for(flat), "claude-code")
+        self.assertEqual(set(_KNOWN_SOURCES), {"claude-code", "codex"})
+
+    def test_discover_logs_walks_recursively(self):
+        self._write_session("main", "s1", branch="main")
+        self._write_session("feature-x", "s2", branch="feature-x")
+        # Legacy flat file alongside the nested ones.
+        flat = self.tmpdir / "logs" / "claude-code" / "legacy.jsonl"
+        flat.parent.mkdir(parents=True, exist_ok=True)
+        flat.write_text("{}\n")
+        names = {p.name for p in discover_logs(self.tmpdir / "logs")}
+        self.assertEqual(names, {"s1.jsonl", "s2.jsonl", "legacy.jsonl"})
+
+    def test_aggregate_session_extracts_branch_from_wire_format(self):
+        p = self._write_session("main", "sid-w", branch="main")
+        s = aggregate_session(p)
+        self.assertEqual(s["branch"], "main")
+        self.assertEqual(s["source"], "claude-code")
+
+    def test_aggregate_session_source_from_top_level_subdir(self):
+        # Path .../logs/claude-code/main/sid.jsonl — parent.name is "main"
+        # but source must remain "claude-code" (not the branch dir).
+        p = self._write_session("main", "sid-src", branch="main")
+        s = aggregate_session(p)
+        self.assertEqual(s["source"], "claude-code")
+        self.assertEqual(s["branch"], "main")
+
+    def test_aggregate_session_branch_fallback_to_path_when_no_wire(self):
+        p = self._write_session("release-1.0", "sid-no-wire", branch=None)
+        s = aggregate_session(p)
+        self.assertEqual(s["branch"], "release-1.0")
+        self.assertEqual(s["source"], "claude-code")
+
+    def test_aggregate_session_flat_legacy_buckets_as_main(self):
+        flat = self.tmpdir / "logs" / "claude-code" / "legacy.jsonl"
+        flat.parent.mkdir(parents=True, exist_ok=True)
+        flat.write_text(json.dumps({
+            "type": "assistant",
+            "sessionId": "x",
+            "cwd": "/tmp/fixture-repo",
+            "timestamp": "2026-07-09T10:00:00.000Z",
+            "message": {"role": "assistant", "model": "claude-sonnet-5",
+                        "content": [{"type": "text", "text": "ok"}],
+                        "usage": {"input_tokens": 1000, "output_tokens": 100,
+                                  "cache_read_input_tokens": 500}},
+        }) + "\n")
+        s = aggregate_session(flat)
+        # Flat layout: parent.name == source tool subdir → branch buckets to "main".
+        self.assertEqual(s["branch"], "main")
+        self.assertEqual(s["source"], "claude-code")
+
+    def test_filter_sessions_branch_substring_match(self):
+        from datetime import datetime, timezone, timedelta
+        p1 = self._write_session("main", "s-main", branch="main")
+        p2 = self._write_session("feature-x", "s-feat", branch="feature-x")
+        sessions = [aggregate_session(p) for p in (p1, p2)]
+        # Force last_ts to now so the days filter doesn't drop them.
+        now = datetime.now(timezone.utc)
+        for s in sessions:
+            s["first_ts"] = now
+            s["last_ts"] = now
+        kept = filter_sessions(sessions, repo="", days=30, branch="feature")
+        self.assertEqual([s["session_id"] for s in kept], ["s-feat"])
+
+    def test_filter_sessions_empty_branch_disables_filter(self):
+        from datetime import datetime, timezone
+        p1 = self._write_session("main", "s-main", branch="main")
+        p2 = self._write_session("feature-x", "s-feat", branch="feature-x")
+        sessions = [aggregate_session(p) for p in (p1, p2)]
+        now = datetime.now(timezone.utc)
+        for s in sessions:
+            s["first_ts"] = now
+            s["last_ts"] = now
+        kept = filter_sessions(sessions, repo="", days=30)
+        self.assertEqual(len(kept), 2)
+
+    def test_main_branch_filter_json(self):
+        from io import StringIO
+        import contextlib
+        self._write_session("main", "s-main", branch="main")
+        self._write_session("feature-x", "s-feat", branch="feature-x")
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main([
+                "--repo", "fixture-repo",
+                "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--branch", "feature",
+                "--json",
+            ])
+        self.assertEqual(rc, 0)
+        data = json.loads(buf.getvalue())
+        self.assertEqual(data["branch"], "feature")
+        self.assertTrue(data["branch_filter_active"])
+        self.assertEqual(data["sessions"], 1)
+
+    def test_main_mixed_flat_and_nested_does_not_crash(self):
+        from io import StringIO
+        import contextlib
+        self._write_session("main", "s-main", branch="main")
+        flat = self.tmpdir / "logs" / "claude-code" / "legacy.jsonl"
+        flat.parent.mkdir(parents=True, exist_ok=True)
+        flat.write_text("{}\n")
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main([
+                "--repo", "fixture-repo",
+                "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--json",
+            ])
+        # rc == 0 (legacy flat yields branch="main" which still matches).
+        self.assertIn(rc, (0, 2))
 
 
 if __name__ == "__main__":
