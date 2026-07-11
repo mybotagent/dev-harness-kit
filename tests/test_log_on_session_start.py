@@ -72,6 +72,49 @@ def _touch_save_log(target: Path) -> Path:
     return p
 
 
+def _make_loghooks_template_dir() -> tuple:
+    """Build a hermetic LOGHOOKS_DIR for log-on.sh consumption.
+
+    log-on.sh's lib.sh:resolve_loghooks_dir() looks first at $LOGHOOKS_DIR
+    and falls back to $HOME/dev/loghooks. CI runners don't carry the
+    user's loghooks source repo, so the test must inject a tempdir that
+    mirrors the canonical template shape (so A08 command-shape validation
+    in lib.sh passes as well).
+
+    Returns (TemporaryDirectory, path). Caller is responsible for `.cleanup()`
+    on the TemporaryDirectory — wrap in try/finally.
+    """
+    td = tempfile.TemporaryDirectory()
+    root = Path(td.name)
+    (root / ".claude").mkdir(parents=True, exist_ok=True)
+    (root / ".codex").mkdir(parents=True, exist_ok=True)
+    cmd_claude = (
+        "for i in python3 python py; do "
+        "if \"$i\" -c \"\" </dev/null >/dev/null 2>&1; then "
+        "exec \"$i\" \"${CLAUDE_PROJECT_DIR}/tools/save_log.py\" --tool claude-code; "
+        "fi; done"
+    )
+    cmd_codex = cmd_claude.replace("--tool claude-code", "--tool codex")
+    (root / ".claude" / "settings.json").write_text(
+        json.dumps({
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": cmd_claude}]}],
+                "SessionEnd": [{"hooks": [{"type": "command", "command": cmd_claude}]}],
+            },
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (root / ".codex" / "hooks.json").write_text(
+        json.dumps({
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": cmd_codex}]}],
+            },
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return td, root
+
+
 def _init_main_with_worktree() -> tuple:
     """Build a throwaway main repo + linked worktree.
 
@@ -113,12 +156,14 @@ class TestLogOnSessionStartWorktree(unittest.TestCase):
 
     def test_fires_log_on_in_worktree(self):
         _, wt_parent, wt_path = _init_main_with_worktree()
+        template_td, template_dir = _make_loghooks_template_dir()
         try:
             _touch_save_log(wt_path)
             r = _run_hook(
                 "log-on-session-start.sh",
                 _session_payload(cwd=str(wt_path)),
                 cwd=wt_path,
+                env={"LOGHOOKS_DIR": str(template_dir)},
             )
             self.assertEqual(
                 r.returncode, 0,
@@ -130,6 +175,7 @@ class TestLogOnSessionStartWorktree(unittest.TestCase):
             self.assertIn("loghooks:", ctx,
                           f"additionalContext missing loghooks marker: {ctx!r}")
         finally:
+            template_td.cleanup()
             wt_parent.cleanup()
 
 
