@@ -398,6 +398,55 @@ class TestFixtures(unittest.TestCase):
                 model_downgrade_reclaim([(s, sc)])
 
 
+class TestDiscoverLogsWorktree(unittest.TestCase):
+    """Regression: discover_logs must include sibling worktree logs when
+    given a repo_root; otherwise worktree-isolated sessions stay
+    invisible to /dev-kit:token-analyzer run from the main checkout.
+
+    Pre-fix bug: ``--logs-dir ./logs`` only scanned the cwd's own
+    ``logs/``. Every worktree sits at ``.claude/worktrees/<slug>/``
+    with its own ``logs/`` (gitignored, separate files), so sessions
+    run in any worktree silently missed the dashboard.
+    """
+
+    @staticmethod
+    def _touch(p: Path) -> Path:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}\n", encoding="utf-8")
+        return p
+
+    def test_sibling_worktree_logs_included_when_repo_root_given(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            main_file = self._touch(root / "logs" / "claude-code" / "m.jsonl")
+            wt1_file  = self._touch(root / ".claude" / "worktrees" / "wt1"
+                                    / "logs" / "claude-code" / "a.jsonl")
+            wt2_file  = self._touch(root / ".claude" / "worktrees" / "wt2"
+                                    / "logs" / "claude-code" / "b.jsonl")
+            files = discover_logs(root / "logs", repo_root=root)
+            self.assertIn(main_file, files)
+            self.assertIn(wt1_file, files)
+            self.assertIn(wt2_file, files)
+
+    def test_no_repo_root_does_not_walk_worktrees(self):
+        # Backward compat: positional single-dir contract stays pristine.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            main_file = self._touch(root / "logs" / "claude-code" / "m.jsonl")
+            wt_file   = self._touch(root / ".claude" / "worktrees" / "wt"
+                                    / "logs" / "claude-code" / "w.jsonl")
+            files = discover_logs(root / "logs")
+            self.assertIn(main_file, files)
+            self.assertNotIn(wt_file, files)
+
+    def test_missing_repo_root_worktrees_dir_is_silent(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            main_file = self._touch(root / "logs" / "claude-code" / "m.jsonl")
+            files = discover_logs(root / "logs", repo_root=root)
+            self.assertEqual(files, [main_file])
+
+
 class TestEndToEndDashboard(unittest.TestCase):
     """Run main() against a tmp logs dir, assert HTML + summary."""
 

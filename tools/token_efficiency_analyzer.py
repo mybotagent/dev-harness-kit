@@ -189,12 +189,12 @@ def cost_usd(model_id: str, *, input_tokens: int, output_tokens: int,
 # Log discovery + session aggregation
 # ---------------------------------------------------------------------------
 
-def discover_logs(logs_dir: Path) -> list[Path]:
-    """Return every .jsonl under ``<logs_dir>/<source>/**``.
+def _discover_one_logs_dir(logs_dir: Path) -> list[Path]:
+    """Walk ``<logs_dir>/(claude-code|codex)/**`` and return every .jsonl.
 
-    Walked recursively so per-branch subdirs (``logs/<tool>/<branch>/<sid>.jsonl``)
-    are picked up alongside any legacy flat files left over from before the
-    branch layout existed.
+    Recurses so per-branch subdirs (``logs/<tool>/<branch>/<sid>.jsonl``) are
+    picked up alongside legacy flat files left over from before the branch
+    layout existed. Returns [] when ``logs_dir`` does not exist.
     """
     if not logs_dir.exists():
         return []
@@ -203,6 +203,27 @@ def discover_logs(logs_dir: Path) -> list[Path]:
         d = logs_dir / sub
         if d.exists():
             out.extend(sorted(d.rglob("*.jsonl")))
+    return out
+
+
+def discover_logs(logs_dir: Path, *, repo_root: Path | None = None) -> list[Path]:
+    """Return every .jsonl under ``<logs_dir>/<source>/**``.
+
+    Walked recursively so per-branch subdirs (``logs/<tool>/<branch>/<sid>.jsonl``)
+    are picked up alongside any legacy flat files left over from before the
+    branch layout existed.
+
+    When ``repo_root`` is provided, also walk every sibling worktree at
+    ``<repo_root>/.claude/worktrees/*/logs/`` so sessions run in any worktree
+    are visible from a single ``/dev-kit:token-analyzer`` invocation in the
+    main checkout (worktree logs are gitignored and live in separate dirs).
+    """
+    out = _discover_one_logs_dir(logs_dir)
+    if repo_root is not None:
+        wt_root = repo_root / ".claude" / "worktrees"
+        if wt_root.exists():
+            for sub_wt in sorted(wt_root.iterdir()):
+                out.extend(_discover_one_logs_dir(sub_wt / "logs"))
     return out
 
 
@@ -1446,6 +1467,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", required=True, help="Repository name to filter (matches basename of cwd).")
     parser.add_argument("--days", type=int, default=30, help="Look-back window in days (default 30).")
     parser.add_argument("--logs-dir", default="logs", help="Logs root directory (default: ./logs).")
+    parser.add_argument("--include-worktree-logs", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Auto-discover logs from .claude/worktrees/*/logs/ (default: True). "
+                             "Pass --no-include-worktree-logs to disable.")
     parser.add_argument("--out", default=None, help="Output HTML path (default: token-dashboard-<repo>-<days>d.html).")
     parser.add_argument("--cost-gate-tokens", type=int, default=DEFAULT_COST_GATE_TOKENS,
                         help=f"Per-session input+cache_read gate (default {DEFAULT_COST_GATE_TOKENS:,}).")
@@ -1465,7 +1490,8 @@ def main(argv: list[str] | None = None) -> int:
     load_pricing_override(Path(args.pricing_override) if args.pricing_override else None)
 
     logs_dir = Path(args.logs_dir).resolve()
-    files = discover_logs(logs_dir)
+    repo_root = Path.cwd().resolve() if args.include_worktree_logs else None
+    files = discover_logs(logs_dir, repo_root=repo_root)
     if not files:
         print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/", file=sys.stderr)
         return 2
