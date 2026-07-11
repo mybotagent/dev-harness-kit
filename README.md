@@ -262,6 +262,12 @@ python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
 open token-dashboard-my-project-30d.html
 ```
 
+### Preview
+
+![Token efficiency dashboard — dev-harness-kit, last 30 days, 7 active sessions](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+
+*The dashboard above was generated against this repo's own `logs/claude-code/` transcripts — Cost Gate banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost distribution, model + cache TTL mix, session table with letter-grade scores + warning chips, and a reclaim-axis savings breakdown.*
+
 Common flags:
 
 | Flag | Default | Purpose |
