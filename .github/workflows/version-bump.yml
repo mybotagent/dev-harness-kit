@@ -155,6 +155,12 @@ jobs:
             # C1 finding on the first iteration of this fix.
             echo "remote ${BRANCH} already has tip ${REMOTE_TIP}; rebasing bump on top via cherry-pick"
             git fetch origin "$BRANCH"
+            # Discard the uncommitted plugin.json edit the previous step
+            # left in the working tree — it survives `git checkout -B`
+            # across a branch switch and collides with the cherry-pick
+            # below ("Your local changes... would be overwritten by
+            # merge"), aborting every recovery run since v0.3.3.
+            git checkout -- .claude-plugin/plugin.json
             git checkout -B "$BRANCH" origin/main
             if ! git cherry-pick "$REMOTE_TIP"; then
               echo "::error::cherry-pick of remote tip ${REMOTE_TIP} onto origin/main failed; resolve manually"
