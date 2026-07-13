@@ -61,7 +61,7 @@ This is the same set of checks GitHub Actions runs in `ci.yml`, but without requ
 === validate ===
 validate.py — repo_root=/path/to/repo
   - installation complete OK (15 files)
-  - ci-config marker OK (v0.1.2, schema 1.2.0)
+  - ci-config marker OK (schema=1.0.0)
   - bash syntax OK (5 scripts clean)
   - test runner OK (bash -n clean)
 OK: CI installation valid
@@ -74,7 +74,7 @@ Optional: `act -l` lists the discovered workflows if `nektos/act` is installed; 
 
 ## Hand-off to build
 
-The skill writes `.dev-kit/ci-config.json` as a marker. `/dev-kit:build` will refuse to start unless this marker exists and `ci_setup_version` is current. If you see the gate message:
+The skill writes `.dev-kit/ci-config.json` as a marker. `/dev-kit:build` will refuse to start unless this marker exists — no version comparison. If you see the gate message:
 
 ```
 Pre-flight gate: refuse to start if `.dev-kit/ci-config.json` is absent.

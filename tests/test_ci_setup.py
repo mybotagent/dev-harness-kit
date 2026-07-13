@@ -128,7 +128,7 @@ class TestCiSetup(unittest.TestCase):
             marker = target / ".dev-kit" / "ci-config.json"
             data = json.loads(marker.read_text())
             for key in (
-                "schema_version", "ci_setup_version", "installed_at",
+                "schema_version", "installed_at",
                 "installed_by", "runners", "scripts", "githooks",
             ):
                 self.assertIn(key, data, f"missing key: {key}")
@@ -255,80 +255,10 @@ class TestCiSetup(unittest.TestCase):
                 self.assertTrue(p.stat().st_mode & stat.S_IXUSR, f"not +x: {rel}")
 
     def test_marker_schema_version_current(self):
-        """Schema is content-only (1.0.0). The ci_setup_version gate is separate."""
+        """Schema is content-only (1.0.0) — no version-gate field."""
         self.assertEqual(self.ci_setup.MARKER_SCHEMA_VERSION, "1.0.0")
-        # ci_setup_version is derived at runtime from plugin.json — there is
-        # no hardcoded constant for it. Pin the API surface + the floor
-        # contract, but not the value itself.
         self.assertTrue(hasattr(self.ci_setup, "plugin_version"),
                         "ci_setup must expose a runtime `plugin_version()` reader")
-        live = self.ci_setup.plugin_version()
-        # Lexicographic gate threshold (skills/build/SKILL.md reads >= "0.1.0").
-        self.assertGreaterEqual(
-            tuple(int(x) for x in live.split(".")),
-            (0, 1, 0),
-            f"plugin_version()={live!r} fails the build gate (>= 0.1.0)",
-        )
-
-    def test_marker_writes_ci_setup_version(self):
-        """Marker JSON carries `ci_setup_version` (regression for issue #61).
-
-        skills/build/SKILL.md reads `ci_setup_version` as a pre-flight gate.
-        Before the fix, the field was absent so `data.get('ci_setup_version',
-        '0.0.0') < '0.1.0'` was True and the build refused to start. The
-        marker must now mirror the contract declared in
-        templates/ci/ci-config.example.json.
-        """
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            self.ci_setup.install_ci_config(target)
-            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
-            self.assertIn("ci_setup_version", marker, "marker missing ci_setup_version")
-            self.assertEqual(
-                marker["ci_setup_version"],
-                self.ci_setup.plugin_version(),
-                "marker ci_setup_version must mirror .claude-plugin/plugin.json:version",
-            )
-            # The gate evaluates lexicographically; the value must clear 0.1.0.
-            self.assertGreaterEqual(
-                marker["ci_setup_version"], "0.1.0",
-                f"ci_setup_version {marker['ci_setup_version']!r} fails the build gate",
-            )
-
-    def test_marker_ci_setup_version_matches_template_contract(self):
-        """The template carries a `"TEMPLATE"` placeholder for
-        `ci_setup_version`; the install substitutes the live plugin
-        version from `.claude-plugin/plugin.json`. This pins the contract:
-        no hardcoded version strings drift apart from each other over time.
-        """
-        import tempfile
-        template_marker = json.loads(
-            (PROJECT_ROOT / "templates" / "ci" / "ci-config.example.json").read_text()
-        )
-        self.assertIn(
-            "ci_setup_version", template_marker,
-            "template contract lost the ci_setup_version field",
-        )
-        # Template value is the sentinel; install must overwrite.
-        self.assertEqual(template_marker["ci_setup_version"], "TEMPLATE",
-                         "template must use 'TEMPLATE' placeholder, not a hardcoded version")
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            self.ci_setup.install_ci_config(target)
-            installed_marker = json.loads(
-                (target / ".dev-kit" / "ci-config.json").read_text()
-            )
-            # Installed value is the live plugin version (NOT the sentinel).
-            self.assertNotEqual(
-                installed_marker["ci_setup_version"], "TEMPLATE",
-                "install did not substitute the live plugin version into the marker",
-            )
-            self.assertEqual(
-                installed_marker["ci_setup_version"],
-                self.ci_setup.plugin_version(),
-                "installed marker ci_setup_version must match plugin_version()",
-            )
 
     def test_marker_records_hooks_rules_tests(self):
         """Marker JSON lists the new categories (hooks / rules / tests)."""
@@ -343,62 +273,6 @@ class TestCiSetup(unittest.TestCase):
             self.assertIn("hooks/worktree-guard.sh", marker["hooks"])
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
-
-    def test_marker_writes_ci_setup_version_from_manifest(self):
-        """feat/skill-versions: marker `ci_setup_version` mirrors plugin.json:version."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            self.ci_setup.install_ci_config(target)
-            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
-            self.assertIn("ci_setup_version", marker, "marker missing ci_setup_version")
-            # Mirror must equal the canonical plugin version (single source
-            # of truth at .claude-plugin/plugin.json).
-            from importlib.util import spec_from_file_location, module_from_spec
-            spec = spec_from_file_location(
-                "_cs_min_version",
-                Path(__file__).parent.parent / "lib" / "ci_setup.py",
-            )
-            cs = module_from_spec(spec)
-            sys.modules["_cs_min_version"] = cs  # @dataclass needs sys.modules (Py3.14)
-            spec.loader.exec_module(cs)
-            self.assertEqual(
-                marker["ci_setup_version"], cs.plugin_version(Path(__file__).parent.parent),
-                "marker ci_setup_version must mirror .claude-plugin/plugin.json:version",
-            )
-
-    def test_marker_min_version_default_zero(self):
-        """feat/skill-versions: first install writes min_version='0.0.0' (permissive)."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            self.ci_setup.install_ci_config(target)
-            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
-            self.assertEqual(marker["min_version"], "0.0.0",
-                             "fresh install must default to '0.0.0' (permissive)")
-
-    def test_ci_setup_force_preserves_consumer_min_version(self):
-        """feat/skill-versions: `--force` rewrites the mirror but PRESERVES the
-        consumer's opt-in `min_version` declaration."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            self.ci_setup.install_ci_config(target)
-            marker_path = target / ".dev-kit" / "ci-config.json"
-            data = json.loads(marker_path.read_text())
-            data["min_version"] = "0.5.0"
-            marker_path.write_text(json.dumps(data))
-            self.ci_setup.install_ci_config(target, force=True)
-            reread = json.loads(marker_path.read_text())
-            self.assertEqual(
-                reread["min_version"], "0.5.0",
-                "--force clobbered the consumer's min_version",
-            )
-            # ci_setup_version was still (re)written from the new plugin checkout.
-            self.assertIn("ci_setup_version", reread)
-            self.assertRegex(
-                reread["ci_setup_version"], r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
-            )
 
     def test_post_install_checklist_is_complete(self):
         """5 numbered items; each is a gh secret set, a gh/git config, or a

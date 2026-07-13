@@ -37,10 +37,9 @@ the SKILL.md file-content level is:
   marker. No audit-of-the-audit to catch missing bumps.
 - **Cheap to run**: diff is two stat calls + content compare per skill.
 
-The PR-build floor (the only enforcement surface) is **plugin-level**,
-not per-skill — see `templates/ci/scripts/validate.py:validate_min_version`.
-Consumers opt in once with `"min_version": "0.2.0"`; per-skill bookkeeping
-for both author and consumer is gone.
+There is no PR-build version floor either — dev-kit does not gate consumer
+builds on a plugin-version comparison, plugin- or skill-level. Per-skill
+bookkeeping for both author and consumer is gone.
 
 ## Walk
 

@@ -453,7 +453,7 @@ Whole-pipeline **refactor** in 3 gated phases — read-only baseline (`/dev-kit:
                  ↓ quoted: per-dim finding count + overall verdict
 ```
 
-Refuses to start without `.dev-kit/ci-config.json` (`ci_setup_version` >= 0.2.0 — run `/dev-kit:ci-setup` first). Optional `--phase N` (1|2|3) re-runs only that phase. Full contract: [`skills/refactor/SKILL.md`](skills/refactor/SKILL.md).
+No version-gated precondition — dev-harness-kit is itself the provider of `/dev-kit:ci-setup`, so requiring a consumer-side marker here would be self-referential. Optional `--phase N` (1|2|3) re-runs only that phase. Full contract: [`skills/refactor/SKILL.md`](skills/refactor/SKILL.md).
 
 > **This skill rewrites code, it does not delete it.** For project-wide deletion of AI slop, dead code, and unused features, use `/dev-kit:prune` instead. For removing one named feature end-to-end, use `/dev-kit:feat-remove <feature>`.
 
