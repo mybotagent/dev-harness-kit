@@ -4,6 +4,15 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Removed — CI-side plugin-version gate (refactor/drop-ci-version-gate)
+
+`ci_setup_version` + `min_version` (the `.dev-kit/ci-config.json` marker fields introduced in PR #61/#69) added a version-floor comparison consumers could opt into via `validate.py:validate_min_version`. Decision: dev-kit does not gate consumer CI on a plugin-version comparison — presence of the marker (and its content) is the only precondition. Removes duplicated/hardcoded version bookkeeping outside the single source of truth (`.claude-plugin/plugin.json`, read at runtime via `lib/ci_setup.py:plugin_version()`).
+
+- **fix(ci-setup)**: `lib/ci_setup.py` — `_build_marker()` no longer writes `ci_setup_version`/`min_version`; `install_ci_config()` drops the min_version-preservation branch. `semver_lt()` removed (its only caller was the min_version comparison); `SEMVER_RE` kept (still used for general plugin-version format validation).
+- **fix(validate)**: `templates/ci/scripts/validate.py` — `validate_min_version()` + `_semver_lt()` removed; `main()` runs 3 checks instead of 4. `templates/ci/ci-config.example.json` drops both fields.
+- **docs**: `skills/build/SKILL.md`, `skills/ci-setup/SKILL.md`, `skills/audit-outdated/SKILL.md`, `README.md`, `docs/ci-setup.md` updated — pre-flight gates now read "marker absent" only, no version comparison language.
+- **test**: `tests/test_validate_min_version.py` and `tests/test_semver_lt.py` deleted (dedicated to the removed feature; `SEMVER_RE` format coverage folded into `tests/test_smoke.py`). `tests/test_ci_setup.py` drops the 5 tests tied to `ci_setup_version`/`min_version`.
+
 ### Changed — rename `simplify` → `refactor`; add `/dev-kit:prune` (feat/refactor-rename-and-prune)
 
 The `/dev-kit:simplify` skill was misnamed: it *refactors* (rewrites/extracts/renames) but does not delete code, so running it never reduced LOC. This release splits the verb along its real axis.

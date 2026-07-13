@@ -46,6 +46,20 @@ class TestSmoke(unittest.TestCase):
         v = mod.plugin_version(PROJECT_ROOT)
         self.assertRegex(v, mod.SEMVER_RE, f"plugin.json:version={v!r} is not valid semver")
 
+    def test_semver_re_accepts_and_rejects(self):
+        """`lib/ci_setup.py:SEMVER_RE` matches semver 2.0.0 shape (X.Y.Z + optional -pre/+build)."""
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location(
+            "ci_setup_semver_smoke", PROJECT_ROOT / "lib" / "ci_setup.py"
+        )
+        mod = module_from_spec(spec)
+        sys.modules["ci_setup_semver_smoke"] = mod
+        spec.loader.exec_module(mod)
+        for v in ("0.1.0", "1.10.0", "0.1.0-rc.1", "0.1.0+build.7", "1.0.0-alpha.1"):
+            self.assertRegex(v, mod.SEMVER_RE, f"{v} should match SEMVER_RE")
+        for v in ("1.0", "v1.0.0", "1.0.0.0", "", "1.0.0 ", " 1.0.0"):
+            self.assertNotRegex(v, mod.SEMVER_RE, f"{v!r} should NOT match SEMVER_RE")
+
     def test_hook_scripts_exist_and_executable(self):
         hooks_dir = PROJECT_ROOT / "hooks"
         for h in HOOK_SCRIPTS:

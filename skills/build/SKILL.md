@@ -5,7 +5,7 @@ description: 0-arg. Per-step sub-agent delegation + self-fix loop (MUST-36~38). 
 when_to_use: |
   - User types /dev-kit:build
   - After plan+design (PRD.md + phases/<name>/ exist)
-  - After /dev-kit:ci-setup has written .dev-kit/ci-config.json (REQUIRED — refuse if marker missing or ci_setup_version < "0.1.0")
+  - After /dev-kit:ci-setup has written .dev-kit/ci-config.json (REQUIRED — refuse if marker missing)
 allowed-tools: Read Write Bash Glob Grep Agent
 disallowed-tools: WebFetch
 model: opus
@@ -18,7 +18,7 @@ Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one `claude -p` su
 
 ## Pre-flight gate
 
-Refuses to start if `.dev-kit/ci-config.json` is absent OR `ci_setup_version` < `0.2.0` OR `min_version` > `ci_setup_version`. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. See `templates/ci/scripts/validate.py:validate_min_version()` for the single-version gate; plugin-level only — no per-skill bookkeeping required.
+Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. No version comparison — presence of the marker is the only precondition; dev-kit does not gate consumer builds on a plugin-version floor.
 
 ## Behavior
 

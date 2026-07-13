@@ -81,10 +81,8 @@ MARKER_SCHEMA_VERSION = "1.0.0"
 # of a version-drift bug (see PR #111): every plugin bump had to chase
 # a Python constant and a template literal. Derive at runtime instead.
 
-# Per-skill semver (semver 2.0.0: X.Y.Z with optional `-prerelease`/`+build`).
-# Used by templates/ci/scripts/validate.py:validate_min_version to compare the
-# marker's `ci_setup_version` (mirror of plugin.json:version) against the
-# consumer's opt-in `min_version` floor. Self-contained — no `packaging` dep.
+# Semver 2.0.0 format (X.Y.Z with optional `-prerelease`/`+build`). Used to
+# validate `.claude-plugin/plugin.json:version` shape (see plugin_version()).
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 # Post-install checklist: rendered (opt-in via install_ci_config(print_checklist=True))
@@ -206,60 +204,6 @@ def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
             p.chmod(mode | 0o111)  # set +x for owner/group/other
 
 
-def semver_lt(a: str, b: str) -> bool:
-    """Return True iff semver string `a` is strictly less than `b`.
-
-    Public API: single canonical semver 2.0.0 comparator used by
-    templates/ci/scripts/validate.py (via importlib.util when lib/ is
-    reachable in dev workflows, fallback self-contained otherwise)
-    for the PR-build plugin-version floor check. Self-contained — no
-    `packaging` import — because lib/ci_setup.py runs on consumer CI
-    runners whose Python may not have it.
-
-    Semver 2.0.0 precedence:
-      - Numeric (major, minor, patch) compare first.
-      - A version with a pre-release identifier has LOWER precedence
-        than the same version without one (`0.1.0-rc.1 < 0.1.0`).
-      - Pre-release identifiers are compared dot-separated; numeric
-        segments compare as integers, alphanumeric as strings.
-      - Build metadata (`+...`) is IGNORED in precedence.
-
-    Returns False when either input fails `SEMVER_RE`; callers should
-    treat that as a data-shape failure, not a comparison outcome.
-    """
-    if not (SEMVER_RE.match(a) and SEMVER_RE.match(b)):
-        return False
-    a_main, _, a_pre = a.partition("-")
-    if "+" in a_pre:
-        a_pre = a_pre.split("+", 1)[0]
-    b_main, _, b_pre = b.partition("-")
-    if "+" in b_pre:
-        b_pre = b_pre.split("+", 1)[0]
-    if "+" in a_main:
-        a_main = a_main.split("+", 1)[0]
-    if "+" in b_main:
-        b_main = b_main.split("+", 1)[0]
-    a_nums = tuple(int(x) for x in a_main.split("."))
-    b_nums = tuple(int(x) for x in b_main.split("."))
-    if a_nums != b_nums:
-        return a_nums < b_nums
-    if a_pre and not b_pre:
-        return True   # 0.1.0-rc.1 < 0.1.0
-    if b_pre and not a_pre:
-        return False  # 0.1.0 > 0.1.0-rc.1
-    if not a_pre and not b_pre:
-        return False
-    def _id_tuple(s: str) -> tuple:
-        out = []
-        for part in s.split("."):
-            try:
-                out.append((0, int(part)))
-            except ValueError:
-                out.append((1, part))
-        return tuple(out)
-    return _id_tuple(a_pre) < _id_tuple(b_pre)
-
-
 def plugin_version(plugin_root: Path | None = None) -> str:
     """Read the canonical plugin version from `.claude-plugin/plugin.json`.
 
@@ -365,23 +309,15 @@ def per_skill_drift(plugin_root: Path) -> dict:
     return result
 
 
-def _build_marker(min_version: str | None = None) -> dict:
+def _build_marker() -> dict:
     """Build the `.dev-kit/ci-config.json` payload.
 
-    Args:
-        min_version: consumer's opt-in plugin-version floor. `None` →
-            the field is written as `"0.0.0"` (permissive default: every
-            released plugin satisfies a no-constraint floor). The explicit
-            argument prevents callers from accidentally clobbering a
-            consumer's declaration by omitting it.
+    Content-only marker — no version field. The plugin's version lives
+    solely in `.claude-plugin/plugin.json` (see `plugin_version()`); dev-kit
+    does not gate consumer builds on a version comparison.
     """
     return {
         "schema_version": MARKER_SCHEMA_VERSION,
-        # Mirror of the canonical plugin version. Single source of truth
-        # is `.claude-plugin/plugin.json:version` (see `plugin_version()`).
-        # The legacy field name `ci_setup_version` is preserved so older
-        # scripts that print it (validate_marker) keep working.
-        "ci_setup_version": plugin_version(_PLUGIN_ROOT),
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
@@ -401,11 +337,6 @@ def _build_marker(min_version: str | None = None) -> dict:
         ],
         "rules": [".claude/rules/git-workflow.md"],
         "tests": ["tests/test_worktree_guard.py"],
-        # Consumer's opt-in plugin-version floor. `"0.0.0"` = any released
-        # plugin satisfies (permissive default; no behavior change for
-        # consumers who never edit the field). PR-gate comparison lives
-        # in templates/ci/scripts/validate.py:validate_min_version.
-        "min_version": min_version or "0.0.0",
     }
 
 
@@ -483,23 +414,8 @@ def install_ci_config(
     _chmod_executable(EXECUTABLE_PATHS, target)
 
     # Write marker (overwrites on force, always succeeds idempotently).
-    # Preserve the consumer's opt-in `min_version` floor so a
-    # `ci-setup --force` does NOT clobber a deliberate declaration. Read
-    # the existing marker (if any) just before the write; absent or
-    # unparseable → default to "0.0.0" (permissive — every released
-    # plugin satisfies it).
     marker = target / MARKER_REL
-    preserved_min_version: str | None = None
-    if existing_marker.exists():
-        try:
-            existing_data = json.loads(existing_marker.read_text(encoding="utf-8"))
-            if isinstance(existing_data, dict):
-                raw = existing_data.get("min_version")
-                if isinstance(raw, str) and raw:
-                    preserved_min_version = raw
-        except (OSError, json.JSONDecodeError):
-            preserved_min_version = None
-    _atomic_write_json(marker, _build_marker(min_version=preserved_min_version))
+    _atomic_write_json(marker, _build_marker())
     report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and

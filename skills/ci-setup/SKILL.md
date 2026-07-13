@@ -1,7 +1,7 @@
 ---
 name: ci-setup
 category: bootstrap
-description: Install dev-kit's reusable CI workflow templates into a target project. Idempotent + version-gated via `.dev-kit/ci-config.json`. Hand-off to /dev-kit:build.
+description: Install dev-kit's reusable CI workflow templates into a target project. Idempotent via `.dev-kit/ci-config.json` presence, no version gate. Hand-off to /dev-kit:build.
 when_to_use: |
   - User types `/dev-kit:ci-setup` after `/dev-kit:bootstrap`
   - User wants the same CI shape (branch-policy + validate + test + auto-fix) in a new repo
@@ -27,7 +27,7 @@ The skill surfaces **lint warnings** (non-fatal) via `lib/ci_setup.py:lint_insta
 
 1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--skip-verify` skips Phase 3.
 1.2. Check `python3 ≥ 3.10` (dev-kit requirement).
-1.3. **Delegate version short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when `ci_setup_version` matches the current plugin's version AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0.
+1.3. **Delegate presence short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when the marker AND every `EXPECTED_PATHS` file already exist AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0. No version comparison — content presence is the only check.
 1.4. Probe target prerequisites: `.git/` (warn if absent — CI is git-themed), `.github/` (create if absent).
 
 ### Phase 2 — Install (via `lib/ci_setup.py`)
@@ -117,7 +117,7 @@ edit it. The checklist NEVER blocks -- it is guidance only.
 ## Hand-off
 
 - On success, `.dev-kit/ci-config.json` is written. This is the **contract** with `/dev-kit:build`.
-- `/dev-kit:build` refuses to start if this marker is absent or `ci_setup_version < "0.1.0"` — see `skills/build/SKILL.md` pre-flight gate.
+- `/dev-kit:build` refuses to start if this marker is absent — see `skills/build/SKILL.md` pre-flight gate.
 - For full usage docs: see `docs/ci-setup.md`.
 
 ## Files Installed (15 expected paths)
