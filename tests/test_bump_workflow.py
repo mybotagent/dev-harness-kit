@@ -252,6 +252,27 @@ class TestVersionFreshnessCheck(unittest.TestCase):
                       "freshness step must use version-aware sort to compare "
                       "versions (not lexicographic -- 0.3.10 < 0.3.9 lex)")
 
+    def test_freshness_step_enforces_strict_greater_than(self):
+        """The check must reject HEAD <= BASE. The pre-push hook is the
+        source of truth (auto-bumps to BASE+1); a HEAD == BASE here
+        means the user pushed with --no-verify and bypassed it."""
+        doc = self._doc()
+        step = [s for s in doc["jobs"]["validate"]["steps"]
+                if "freshness" in s.get("name", "").lower()][0]
+        run = step.get("run", "")
+        self.assertIn("strict", step.get("name", "").lower(),
+                      "freshness step name must declare STRICT semantics")
+        # STRICT check: HIGHER == BASE_VERSION catches both HEAD < BASE
+        # and HEAD == BASE; only HEAD > BASE passes (HIGHER == HEAD != BASE).
+        self.assertIn("HIGHER=", run,
+                      "freshness step must compute a HIGHER variable")
+        self.assertIn("sort -V", run,
+                      "freshness step must use version-aware sort")
+        self.assertIn("tail -1", run,
+                      "freshness step must take the tail of sort -V output")
+        self.assertIn('"$BASE_VERSION"', run,
+                      "freshness step must reference BASE_VERSION in the rejection check")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

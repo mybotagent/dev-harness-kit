@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# .githooks/pre-push — Block direct push to main (enforce PR-only workflow).
+# .githooks/pre-push — Block direct push to main + auto-bump plugin version.
 #
-# Why: this repo's policy requires PR review before merge to main.
-# Direct push to main bypasses review → automatic blocker.
+# Two responsibilities, run in order:
+#   1. Block direct push to `main` (PR-only workflow policy).
+#   2. Auto-bump .claude-plugin/plugin.json:version (PATCH++) before pushing
+#      a non-main branch, by comparing the LOCAL version against origin/main.
+#      - LOCAL == MAIN: bump PATCH (BASE + 1), commit, push.
+#      - LOCAL >  MAIN: skip (user already bumped — respect their value).
+#      - LOCAL <  MAIN: refuse with a clear error (user must rebase first;
+#        another PR merged and advanced main past this branch's tip).
+#
+# Why pre-push (not pre-commit): the bump is only meaningful when the
+# branch is actually going to origin. Pre-commit bumps on every commit
+# (including amend/rebase/SQUASH-amend dry-runs), which is noise.
+# Pre-push fires once per push, comparing against origin/main which is the
+# correct reference for a release-gated branch.
 #
 # Activation:
 #   git config core.hooksPath .githooks       # local-only
@@ -15,6 +27,16 @@
 # This hook is the client-side enforcement + CI will additionally gate.
 
 set -eo pipefail
+
+# jq is required for the version auto-bump (and is already a hard dep
+# elsewhere: lib/ci_setup.py and version-bump.yml both call jq). Check
+# upfront so a missing jq fails the hook with an actionable message
+# instead of an opaque jq exit at the wrong layer.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[pre-push] ::error:: jq is required for plugin-version auto-bump." >&2
+  echo "[pre-push] ::error:: Install:  brew install jq   |   apt install jq" >&2
+  exit 1
+fi
 
 # Read push lines: <local_ref> <local_sha> <remote_ref> <remote_sha>
 while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
@@ -38,7 +60,54 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
             exit 1
             ;;
         *)
-            # Allow non-main branches
+            # === Auto-bump plugin version against origin/main ===
+            # Fetch origin/main so we can read its plugin.json:version as
+            # the baseline. If the fetch fails (offline / no remote), skip
+            # the bump silently — CI freshness check is the backstop.
+            if ! git fetch origin main 2>/dev/null; then
+              echo "[pre-push] WARN: could not fetch origin/main; skipping version bump (CI freshness is the backstop)"
+            else
+              MAIN_VERSION="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")"
+              LOCAL_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
+
+              if [ -z "$MAIN_VERSION" ]; then
+                echo "[pre-push] WARN: origin/main has no plugin.json:version; skipping bump"
+              elif ! [[ "$MAIN_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                echo "[pre-push] WARN: origin/main version=$MAIN_VERSION is not MAJOR.MINOR.PATCH; skipping bump"
+              elif ! [[ "$LOCAL_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                # LOCAL matched LAST, so BASH_REMATCH holds LOCAL's
+                # captures (not MAIN's). Print error with LOCAL's value.
+                echo "[pre-push] ::error:: local plugin.json:version=$LOCAL_VERSION is not MAJOR.MINOR.PATCH" >&2
+                exit 1
+              else
+                # Compare using `sort -V` for version-aware ordering.
+                HIGHER="$(printf '%s\n%s\n' "$MAIN_VERSION" "$LOCAL_VERSION" | sort -V | tail -1)"
+
+                if [ "$HIGHER" = "$LOCAL_VERSION" ] && [ "$LOCAL_VERSION" != "$MAIN_VERSION" ]; then
+                  # LOCAL > MAIN — user already bumped. Leave alone.
+                  echo "[pre-push] version $LOCAL_VERSION > main $MAIN_VERSION; OK"
+                elif [ "$LOCAL_VERSION" = "$MAIN_VERSION" ]; then
+                  # LOCAL == MAIN — auto-bump PATCH and stage.
+                  MAJOR="${BASH_REMATCH[1]}"
+                  MINOR="${BASH_REMATCH[2]}"
+                  PATCH="${BASH_REMATCH[3]}"
+                  NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+
+                  jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json > .tmp
+                  mv .tmp .claude-plugin/plugin.json
+                  git add .claude-plugin/plugin.json
+                  git commit -m "chore(release): bump dev-kit to v${NEW_VERSION}" >/dev/null
+                  echo "[pre-push] auto-bumped plugin.json: $LOCAL_VERSION -> $NEW_VERSION (matches origin/main)"
+                else
+                  # LOCAL < MAIN — stale; refuse.
+                  echo "[pre-push] ::error:: local version $LOCAL_VERSION is OLDER than origin/main $MAIN_VERSION" >&2
+                  echo "[pre-push] ::error:: Another PR merged first and advanced main past this branch." >&2
+                  echo "[pre-push] ::error:: Rebase onto origin/main (or fetch + rebase) and re-push." >&2
+                  echo "[pre-push] ::error:: After rebase, this hook will auto-bump the next PATCH." >&2
+                  exit 1
+                fi
+              fi
+            fi
             ;;
     esac
 done

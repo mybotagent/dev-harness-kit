@@ -1,38 +1,25 @@
 #!/usr/bin/env bash
-# .githooks/pre-commit — sync .github/ci-review-provider.txt + auto-bump plugin version.
+# .githooks/pre-commit — sync .github/ci-review-provider.txt from local .env.
 #
-# Two responsibilities, run in order:
-#   1. Sync .github/ci-review-provider.txt from local .env (CI_REVIEW_PROVIDER)
-#      so .env stays the single source of truth.
-#   2. Auto-bump .claude-plugin/plugin.json:version (PATCH++) when this commit
-#      touches a skills/* SKILL.md. The PR then carries the bumped version
-#      naturally; no separate bump-PR is needed. A CI "version-freshness"
-#      check in .github/workflows/ci.yml enforces that PR head version > base
-#      version, so stale PRs (whose base advanced after they were opened)
-#      must re-commit before they can merge.
+# Why: CI (GitHub-hosted runners) can never read your local .env directly —
+# it only ever sees what's checked out on the branch being pushed. This
+# hook makes .env the single source of truth anyway: it reads
+# CI_REVIEW_PROVIDER from the *main checkout's* .env (resolved via
+# --git-common-dir so it works from any worktree) and, if it differs from
+# the committed .github/ci-review-provider.txt, rewrites and stages that
+# file into the commit you're about to make. You only ever edit .env;
+# the tracked file follows automatically on your next commit.
 #
-# Skip rules for the auto-bump:
-#   - If the commit already touches .claude-plugin/plugin.json or
-#     marketplace.json, the user is doing their own version edit; respect
-#     their value (do not overwrite).
-#   - If only files outside the plugin/skill universe changed (workflows,
-#     docs, tests), no version bump — those don't ship to consumers.
+# Version auto-bump lives in .githooks/pre-push, not here — pre-commit
+# fires on every commit (incl. amend / rebase), and bumping on each
+# would generate noise. Pre-push fires once per push and compares the
+# local version against origin/main, which is the correct reference for
+# a release-gated branch.
 #
 # Activation: git config core.hooksPath .githooks (same as pre-push).
 
 set -eo pipefail
 
-# jq is required for the version auto-bump (and is already a hard dep
-# elsewhere: lib/ci_setup.py and version-bump.yml both call jq). Check
-# upfront so a missing jq fails the hook with an actionable message
-# instead of an opaque jq exit at the wrong layer.
-if ! command -v jq >/dev/null 2>&1; then
-  echo "[pre-commit] ::error:: jq is required for plugin-version auto-bump." >&2
-  echo "[pre-commit] ::error:: Install:  brew install jq   |   apt install jq" >&2
-  exit 1
-fi
-
-# === 1. .env → ci-review-provider.txt sync ===
 MAIN_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
 ENV_FILE="$MAIN_ROOT/.env"
 PROVIDER_FILE=".github/ci-review-provider.txt"
@@ -56,40 +43,6 @@ if [ -f "$ENV_FILE" ] && [ -f "$PROVIDER_FILE" ]; then
           echo "[pre-commit] WARN: .env CI_REVIEW_PROVIDER='$desired' is not minimax/anthropic/deepseek; ignoring" >&2
           ;;
   esac
-fi
-
-# === 2. Plugin version auto-bump ===
-STAGED="$(git diff --cached --name-only)"
-NEEDS_BUMP=false
-
-# If the user is editing the manifest directly, respect their version value.
-# They might be hand-rolling a MINOR or MAJOR bump, or setting a tag like
-# 1.0.0-rc.1 — we don't second-guess them.
-if echo "$STAGED" | grep -qE '^\.claude-plugin/(plugin|marketplace)\.json$'; then
-  :
-else
-  # Skill change → auto-bump PATCH. (A hook change or workflow tweak without
-  # any skill edit is non-consumer-facing; do not bump on those.)
-  if echo "$STAGED" | grep -qE '^skills/.*SKILL\.md$'; then
-    NEEDS_BUMP=true
-  fi
-fi
-
-if [ "$NEEDS_BUMP" = "true" ]; then
-  CURRENT="$(jq -r .version .claude-plugin/plugin.json)"
-  if ! [[ "$CURRENT" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-    echo "[pre-commit] ::error:: plugin.json:version=$CURRENT is not MAJOR.MINOR.PATCH" >&2
-    exit 1
-  fi
-  MAJOR="${BASH_REMATCH[1]}"
-  MINOR="${BASH_REMATCH[2]}"
-  PATCH="${BASH_REMATCH[3]}"
-  NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-
-  jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json > .tmp
-  mv .tmp .claude-plugin/plugin.json
-  git add .claude-plugin/plugin.json
-  echo "[pre-commit] auto-bumped plugin.json: $CURRENT -> $NEW_VERSION (skill change detected)"
 fi
 
 exit 0

@@ -62,6 +62,11 @@ jobs:
           #       be filtered out at PR time, so reaching this step
           #       implies the version genuinely advanced.
 
-          git tag "$TAG" origin/main
+          # Annotated tag (not lightweight) so downstream tooling gets
+          # tagger identity, creation date, and message. Lightweight tags
+          # are just ref pointers; many release consumers (changelog
+          # generators, marketplace pin logic, version-bump workflow's
+          # own idempotency check) expect the metadata.
+          git tag -a -m "dev-kit v${VERSION}" "$TAG" origin/main
           git push origin "$TAG"
-          echo "tagged ${TAG} at origin/main@${VERSION}"
+          echo "tagged ${TAG} (annotated) at origin/main@${VERSION}"
