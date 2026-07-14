@@ -524,23 +524,34 @@ class TestHookFailClosed(unittest.TestCase):
     def setUp(self):
         if not (HOOKS / "cost-gate.sh").exists():
             self.skipTest("cost-gate.sh not found")
+        self._bash = shutil.which("bash")
         self._jq = shutil.which("jq")
+        if not self._bash:
+            self.skipTest("bash not on PATH")
         if not self._jq:
             self.skipTest("jq not on host — cannot simulate missing-jq")
 
     def test_pretooluse_denies_when_jq_missing(self):
+        # Build a minimal PATH that includes the dirs of utilities we need
+        # EXCEPT jq's dir. On macOS dev boxes, jq is in /opt/homebrew/bin and
+        # bash is in /bin/bash — different dirs, the test trivially strips jq.
+        # On Linux CI (Ubuntu) both live in /usr/bin, so we must capture
+        # bash's absolute path BEFORE stripping and pass it explicitly.
         util_dirs = set()
-        for util in ("bash", "cat", "echo", "printf", "command", "python3"):
+        for util in ("cat", "echo", "printf", "command", "python3"):
             p = shutil.which(util)
             if p:
                 util_dirs.add(os.path.dirname(p))
+        # Ensure bash's dir survives the strip (it always should — bash is
+        # resolved via self._bash, not via PATH, so this is defensive).
+        util_dirs.add(os.path.dirname(self._bash))
         util_dirs.discard(os.path.dirname(self._jq))
         minimal_path = os.pathsep.join(sorted(util_dirs)) or "/nonexistent"
         with tempfile.TemporaryDirectory() as td:
             td_p = Path(td)
             payload = _pre_tool_use_payload(cwd=str(td_p))
             r = subprocess.run(
-                ["bash", str(HOOKS / "cost-gate.sh")],
+                [self._bash, str(HOOKS / "cost-gate.sh")],
                 input=json.dumps(payload), capture_output=True, text=True,
                 timeout=5, cwd=str(td_p),
                 env={**os.environ, "PATH": minimal_path},
