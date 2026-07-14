@@ -19,6 +19,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -1078,6 +1080,299 @@ class TestCacheTtlMixEmpty(unittest.TestCase):
             # Empty annotation must NOT appear.
             self.assertNotIn("no cache-write activity", html)
             self.assertNotIn("TTL unspecified", html)
+
+
+class TestWorktreeStaleness(unittest.TestCase):
+    """classify_worktree_dir() + dashboard surface (State column, stale chips,
+    stale_cost tile, stdout field, JSON keys)."""
+
+    def _git_runner(self, *, porcelain="", tip="abc1234", merged=False):
+        """Build a fake ``git_runner`` that responds based on the command argv.
+
+        Matches three subcommand shapes:
+          - ``git -C <root> worktree list --porcelain`` → ``porcelain``
+          - ``git -C <wt> rev-parse --short HEAD``   → ``tip``
+          - ``git -C <wt> merge-base --is-ancestor HEAD origin/main`` → returncode 0 if merged
+        Anything else returns a CompletedProcess with rc=0 and empty output.
+        """
+        import subprocess
+
+        def fake_run(args, **_kwargs):
+            cmd = " ".join(str(a) for a in args)
+            if "worktree list --porcelain" in cmd:
+                return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+            if "rev-parse --short HEAD" in cmd:
+                return subprocess.CompletedProcess(args, 0, stdout=tip, stderr="")
+            if "merge-base --is-ancestor" in cmd:
+                return subprocess.CompletedProcess(args, 0 if merged else 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        return fake_run
+
+    def test_classify_worktree_dir_live_branch_with_unique_commits(self):
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-live-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "feat-x"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD def5678\nbranch refs/heads/feat/x\n\n"
+            )
+            runner = self._git_runner(porcelain=porcelain, tip="def5678", merged=False)
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "live")
+            self.assertTrue(meta["worktree_listed"])
+            self.assertFalse(meta["branch_merged_into_main"])
+            self.assertEqual(meta["branch_tip"], "def5678")
+
+    def test_classify_worktree_dir_merged_into_main(self):
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-merged-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "feature-and-adapt-skills"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD abc1234\nbranch refs/heads/feature/and-adapt-skills\n\n"
+            )
+            runner = self._git_runner(porcelain=porcelain, tip="abc1234", merged=True)
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "merged")
+            self.assertTrue(meta["worktree_listed"])
+            self.assertTrue(meta["branch_merged_into_main"])
+
+    def test_classify_worktree_dir_gone_from_git_worktree_list(self):
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-gone-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "prune-baseline"
+            wt.mkdir(parents=True)
+            # porcelain lists ONLY the main checkout — the worktree was `git worktree remove`'d
+            porcelain = f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
+            runner = self._git_runner(porcelain=porcelain)
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "gone")
+            self.assertFalse(meta["worktree_listed"])
+            self.assertFalse(meta["branch_merged_into_main"])
+
+    def test_classify_worktree_dir_unknown_when_no_origin_main(self):
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-unknown-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "broken-ref"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD abc1234\nbranch refs/heads/broken\n\n"
+            )
+            # merge-base returns rc=128 (fatal: bad revision 'origin/main')
+            import subprocess
+            porcelain_runner = self._git_runner(porcelain=porcelain, tip="abc1234", merged=False)
+
+            def runner(args, **_k):
+                cmd = " ".join(str(a) for a in args)
+                if "merge-base --is-ancestor" in cmd:
+                    return subprocess.CompletedProcess(args, 128, stdout="", stderr="fatal: bad revision")
+                return porcelain_runner(args, **_k)
+
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "unknown")
+            self.assertTrue(meta["worktree_listed"])
+
+    def test_cost_by_worktree_panel_renders_state_column(self):
+        from io import StringIO
+        import contextlib
+        from token_efficiency_analyzer import main
+        from collections import Counter
+        now = datetime.now(timezone.utc)
+
+        def _s(sid, worktree, state, model="claude-sonnet-5", tokens=100):
+            return {
+                "session_id": sid, "source": "claude-code", "repo": "test-repo",
+                "branch": "main", "worktree": worktree, "worktree_state": state,
+                "model": model,
+                "first_ts": now, "last_ts": now,
+                "input_tokens": tokens, "output_tokens": 10,
+                "cache_write_tokens": 0, "cache_read_tokens": 50,
+                "ephemeral_5m": 0, "ephemeral_1h": 0,
+                "tool_counts": Counter(), "read_files": Counter(), "user_texts": [],
+                "log_path": "/tmp/fake.jsonl",
+            }
+
+        # three worktrees with three different states
+        sessions = [
+            _s("main-s",  "(main)",                  "main"),
+            _s("live-s",  "feat-still-alive",        "live",  tokens=200),
+            _s("gone-s",  "prune-baseline",          "gone",  tokens=50),
+            _s("merge-s", "feature-and-adapt-skills","merged",tokens=80),
+        ]
+        from token_efficiency_analyzer import score_session
+        scored = [(s, score_session(s)) for s in sessions]
+        empty_warns: list[list] = [[] for _ in scored]
+
+        html = render_dashboard(
+            repo="test-repo", days=30, sessions=sessions, scored=scored,
+            warnings_per_session=empty_warns,
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+        )
+
+        # Worktree panel must have a State header (scoped to the worktree panel).
+        panel = html.split("Cost by Worktree", 1)[1].split("Cost by Model", 1)[0]
+        self.assertIn(">State<", panel)
+        # Each state label must render at least once.
+        for state_label in ("live", "merged", "gone", "main"):
+            self.assertIn(f">{state_label}<", panel)
+
+    def test_sessions_table_marks_stale_rows(self):
+        from collections import Counter
+        from datetime import datetime, timezone
+        from token_efficiency_analyzer import score_session
+        now = datetime.now(timezone.utc)
+
+        def _s(sid, worktree, state):
+            return {
+                "session_id": sid, "source": "claude-code", "repo": "test-repo",
+                "branch": "main", "worktree": worktree, "worktree_state": state,
+                "model": "claude-sonnet-5",
+                "first_ts": now, "last_ts": now,
+                "input_tokens": 100, "output_tokens": 10,
+                "cache_write_tokens": 0, "cache_read_tokens": 50,
+                "ephemeral_5m": 0, "ephemeral_1h": 0,
+                "tool_counts": Counter(), "read_files": Counter(), "user_texts": [],
+                "log_path": "/tmp/fake.jsonl",
+            }
+
+        stale_sessions = [
+            _s("stale-1", "prune-baseline",   "gone"),
+            _s("stale-2", "merged-feat",      "merged"),
+            _s("fresh-1", "feat-still-alive", "live"),     # NOT stale → no chip
+            _s("main-1",  "(main)",           "main"),     # NOT stale → no chip
+        ]
+        scored = [(s, score_session(s)) for s in stale_sessions]
+        empty_warns: list[list] = [[] for _ in scored]
+
+        html = render_dashboard(
+            repo="test-repo", days=30, sessions=stale_sessions, scored=scored,
+            warnings_per_session=empty_warns,
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+        )
+
+        # Two stale rows → exactly two stale chips. Live + main rows → zero chips.
+        sessions_block = html.split('<div class="section-title">Sessions', 1)[1].split("</table>", 1)[0]
+        chip_count = sessions_block.count("pill-stale")
+        self.assertEqual(chip_count, 2,
+                         f"expected exactly 2 stale chips, got {chip_count}")
+
+    def test_stdout_summary_includes_stale_cost(self):
+        """Drive main() with --no-include-worktree-logs to skip real git, then
+        patch classify_all_worktrees to return a fake map. Assert the [ok]
+        line carries stale_cost=."""
+        from io import StringIO
+        import contextlib
+        from unittest import mock
+        from token_efficiency_analyzer import main
+
+        with tempfile.TemporaryDirectory(prefix="wt-stdout-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            # one main-checkout session, cost ~$0.001
+            rec = {
+                "type": "assistant", "sessionId": "s-stale",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                "gitBranch": "main",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {
+                    "role": "assistant", "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 10,
+                              "cache_read_input_tokens": 50,
+                              "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                 "ephemeral_1h_input_tokens": 0}},
+                },
+            }
+            (d / "s-stale.jsonl").write_text(json.dumps(rec) + "\n")
+
+            fake_meta = {
+                "(main)": {"state": "main", "branch_merged_into_main": False,
+                           "branch_tip": "", "worktree_listed": True},
+                "stale-x": {"state": "merged", "branch_merged_into_main": True,
+                            "branch_tip": "abc1234", "worktree_listed": True},
+            }
+            buf = StringIO()
+            with mock.patch("token_efficiency_analyzer.classify_all_worktrees",
+                            return_value=fake_meta):
+                with contextlib.redirect_stdout(buf):
+                    rc = main([
+                        "--repo", "dev-harness-kit",
+                        "--days", "30",
+                        "--logs-dir", str(td_path / "logs"),
+                        "--no-include-worktree-logs",
+                        "--out", str(td_path / "dash.html"),
+                    ])
+            self.assertEqual(rc, 0)
+            stdout = buf.getvalue()
+            self.assertIn("[ok]", stdout)
+            self.assertIn("stale_cost=", stdout)
+            # Main session only → stale_cost equals $0.00
+            self.assertIn("stale_cost=$0.00", stdout)
+
+    def test_json_payload_includes_worktrees_and_stale_cost(self):
+        """Drive main() with --json + mock classify_all_worktrees. Assert the
+        JSON payload carries ``worktrees``, ``stale_cost_usd``, ``stale_pct``."""
+        from io import StringIO
+        import contextlib
+        from unittest import mock
+        from token_efficiency_analyzer import main
+
+        with tempfile.TemporaryDirectory(prefix="wt-json-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            rec = {
+                "type": "assistant", "sessionId": "s-j",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                "gitBranch": "main",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {
+                    "role": "assistant", "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 10,
+                              "cache_read_input_tokens": 50,
+                              "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                 "ephemeral_1h_input_tokens": 0}},
+                },
+            }
+            (d / "s-j.jsonl").write_text(json.dumps(rec) + "\n")
+
+            fake_meta = {
+                "(main)": {"state": "main", "branch_merged_into_main": False,
+                           "branch_tip": "", "worktree_listed": True},
+            }
+            buf = StringIO()
+            with mock.patch("token_efficiency_analyzer.classify_all_worktrees",
+                            return_value=fake_meta):
+                with contextlib.redirect_stdout(buf):
+                    rc = main([
+                        "--repo", "dev-harness-kit",
+                        "--days", "30",
+                        "--logs-dir", str(td_path / "logs"),
+                        "--no-include-worktree-logs",
+                        "--json",
+                    ])
+            self.assertEqual(rc, 0)
+            data = json.loads(buf.getvalue())
+            self.assertIn("stale_cost_usd", data)
+            self.assertIn("stale_pct", data)
+            self.assertIn("worktrees", data)
+            self.assertIsInstance(data["worktrees"], list)
+            self.assertEqual(data["stale_cost_usd"], 0.0)
+            # worktree row for "(main)" present with state="main"
+            main_row = next(w for w in data["worktrees"] if w["name"] == "(main)")
+            self.assertEqual(main_row["state"], "main")
 
 
 if __name__ == "__main__":
