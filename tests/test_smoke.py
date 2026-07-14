@@ -2,7 +2,7 @@
 """test_smoke.py — End-to-end smoke test for dev-kit.
 
 Validates the plugin-only structure:
-- All 43 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
+- All 44 skills present (flat: skills/<name>/SKILL.md; former commands merged in)
 - All 5 hook bash scripts executable + syntactically valid (hooks/)
 - 7 stage→hook mapping in active_hooks_codec
 - Iron Laws are SSOT in CLAUDE.md
@@ -17,8 +17,10 @@ import sys
 import unittest
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).parent.parent
-SKILL_COUNT = 43
+SKILL_COUNT = 44
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
@@ -33,6 +35,22 @@ class TestSmoke(unittest.TestCase):
         skills_dir = PROJECT_ROOT / "skills"
         found = list(skills_dir.rglob("SKILL.md"))
         self.assertEqual(len(found), SKILL_COUNT, f"Expected {SKILL_COUNT} skills, got {len(found)}")
+
+    def test_skill_bump_exists(self):
+        """`/dev-kit:bump` must exist and its SKILL.md must parse + declare a valid frontmatter.
+
+        Catches directory/name mismatch (skills/bump/ vs `name: bump` vs `category: ship`)
+        which the SKILL_COUNT check alone misses when a skill is renamed in place.
+        """
+        bump = PROJECT_ROOT / "skills" / "bump" / "SKILL.md"
+        self.assertTrue(bump.exists(), f"missing skill file: {bump}")
+        text = bump.read_text(encoding="utf-8")
+        m = re.match(r"^---\n(.+?)\n---", text, re.DOTALL)
+        self.assertIsNotNone(m, f"{bump} frontmatter missing or malformed")
+        fm = yaml.safe_load(m.group(1))
+        self.assertEqual(fm.get("name"), "bump")
+        self.assertEqual(fm.get("category"), "ship")
+        self.assertTrue(fm.get("user-invocable"))
 
     def test_plugin_manifest_has_version(self):
         """feat/skill-versions: `.claude-plugin/plugin.json` MUST declare `version:`."""

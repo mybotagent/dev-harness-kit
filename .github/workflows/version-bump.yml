@@ -138,48 +138,69 @@ jobs:
           BRANCH="chore/bump-v${NEW_VERSION}"
           # Race recovery: if origin/${BRANCH} already has a tip from an
           # earlier run (push succeeded but PR never auto-merged, or got
-          # force-closed), reanchor onto current main via cherry-pick
-          # instead of discarding the prior work. Falling back to
-          # `git checkout -B ... origin/main` here is exactly the
-          # non-fast-forward push error this branch was meant to avoid
-          # — and was the root cause of the v0.3.2 bump orphan at
-          # `fe3c80f` on 2026-07-10.
+          # force-closed), the recovery shape depends on whether the
+          # orphan's plugin.json:version is already NEW_VERSION (Path 2)
+          # or stale (Path 3). Falling back to `git checkout -B ... origin/main`
+          # plus a fresh commit was exactly the non-fast-forward push
+          # error that broke every auto-bump from v0.3.3 onwards — the
+          # orphan tip carries a SHA whose parent is an OLDER origin/main,
+          # so any new commit layered on top of NEW origin/main is
+          # rejected as non-fast-forward on push.
           REMOTE_TIP="$(git ls-remote origin "$BRANCH" 2>/dev/null | awk '{print $1}')"
-          if [ -n "$REMOTE_TIP" ]; then
-            # Race recovery: cherry-pick the orphan tip onto current main.
-            # The orphan was previously cut from origin/main via this same
-            # workflow, so its plugin.json:version is already NEW_VERSION.
-            # The later `jq`+`git add`+`git commit` block must therefore be
-            # gated on a real diff — otherwise `set -euo pipefail` aborts
-            # with "nothing to commit, working tree clean". This was the
-            # C1 finding on the first iteration of this fix.
-            echo "remote ${BRANCH} already has tip ${REMOTE_TIP}; rebasing bump on top via cherry-pick"
-            git fetch origin "$BRANCH"
-            # Discard the uncommitted plugin.json edit the previous step
-            # left in the working tree — it survives `git checkout -B`
-            # across a branch switch and collides with the cherry-pick
-            # below ("Your local changes... would be overwritten by
-            # merge"), aborting every recovery run since v0.3.3.
-            git checkout -- .claude-plugin/plugin.json
-            git checkout -B "$BRANCH" origin/main
-            if ! git cherry-pick "$REMOTE_TIP"; then
-              echo "::error::cherry-pick of remote tip ${REMOTE_TIP} onto origin/main failed; resolve manually"
-              exit 1
-            fi
-            CURRENT_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
-            if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
-              # Orphan tip carries a *different* version than what we'd write
-              # today (e.g. concurrent re-bumps while the orphan sat).
-              # Re-bump and commit normally.
-              jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json \
-                > .claude-plugin/plugin.json.tmp
-              mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
-            fi
-          else
+          if [ -z "$REMOTE_TIP" ]; then
+            # Path 1 — no orphan: standard fresh bump on origin/main.
+            echo "no remote ${BRANCH}; cutting fresh bump branch"
             git checkout -B "$BRANCH" origin/main
             jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json \
               > .claude-plugin/plugin.json.tmp
             mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
+            git add .claude-plugin/plugin.json
+            git commit -m "chore(release): bump dev-kit to v${NEW_VERSION}"
+            git push -u origin "$BRANCH"
+          else
+            git fetch origin "$BRANCH"
+            ORPHAN_VERSION="$(git show "FETCH_HEAD:.claude-plugin/plugin.json" 2>/dev/null | jq -r .version 2>/dev/null || echo "0.0.0")"
+            if [ "$ORPHAN_VERSION" = "$NEW_VERSION" ]; then
+              # Path 2 — orphan already carries NEW_VERSION. Fast-forward
+              # no-op: push REMOTE_TIP directly so origin/${BRANCH} ==
+              # REMOTE_TIP. No local commit, no cherry-pick, no new SHA —
+              # the original race closes because the stale orphan becomes
+              # the canonical bump. `gh pr create` after this block still
+              # runs because the orphan's PR was never created in the
+              # prior run (that's how the orphan formed in the first
+              # place).
+              echo "remote ${BRANCH} already at v${NEW_VERSION} (tip=${REMOTE_TIP}); fast-forward no-op"
+              git push origin "${REMOTE_TIP}:${BRANCH}"
+            else
+              # Path 3 — orphan at OLDER version (concurrent re-bump
+              # during orphan wait, or an orphan from a previous release
+              # cycle that was never cleaned up). Close the orphan's open
+              # PR first so peter-evans/enable-pull-request-automerge
+              # does not race-merge the stale-version commit onto main
+              # (which would re-fire this workflow forever). Then
+              # --force-with-lease to overwrite — force-with-lease
+              # (not --force) aborts if the remote moved between our
+              # fetch and our push, guarding against a third concurrent
+              # racer.
+              echo "remote ${BRANCH} carries stale v${ORPHAN_VERSION} (tip=${REMOTE_TIP}); closing PR + force-pushing v${NEW_VERSION}"
+              ORPHAN_PR="$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number // empty' 2>/dev/null || true)"
+              if [ -n "$ORPHAN_PR" ]; then
+                gh pr close "$ORPHAN_PR" --delete-branch=false 2>/dev/null || true
+              fi
+              # Discard the uncommitted plugin.json edit the previous
+              # step left in the working tree — it survives
+              # `git checkout -B` across a branch switch and collides
+              # with the checkout below ("Your local changes would be
+              # overwritten by checkout").
+              git checkout -- .claude-plugin/plugin.json 2>/dev/null || true
+              git checkout -B "$BRANCH" origin/main
+              jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json \
+                > .claude-plugin/plugin.json.tmp
+              mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
+              git add .claude-plugin/plugin.json
+              git commit -m "chore(release): bump dev-kit to v${NEW_VERSION}"
+              git push --force-with-lease origin "$BRANCH"
+            fi
           fi
           # The bump commit message intentionally does NOT carry a [skip ci]
           # (or any [skip ci] variant) literal — GitHub Actions globally
@@ -189,17 +210,6 @@ jobs:
           # the post-merge tag push). The per-workflow skip on this commit
           # is enforced by `if:` filters on ci.yml + review.yml +
           # auto-fix-pr.yml, not by the global SKIP_CI convention.
-          git add .claude-plugin/plugin.json
-          if git diff --cached --quiet; then
-            # Cherry-pick recovery path: the orphan's commit IS the bump;
-            # staging is empty, so commit-and-push-as-is is the right
-            # shape (the new HEAD on the local branch is a fast-forward
-            # ancestor of what we want on origin).
-            echo "no staged changes (recovered tip already at v${NEW_VERSION}); push as-is"
-          else
-            git commit -m "chore(release): bump dev-kit to v${NEW_VERSION}"
-          fi
-          git push -u origin "$BRANCH"
 
           BODY=$'Auto-generated by version-bump.yml.\n\n'
           if [ "${EVENT_NAME}" = 'pull_request' ]; then

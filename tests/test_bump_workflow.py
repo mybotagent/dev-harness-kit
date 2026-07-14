@@ -137,27 +137,31 @@ class TestBumpWorkflow(unittest.TestCase):
         Note: the file as a whole may still mention `[skip ci]` inside the
         idempotency regex (T10's tolerance for backward-compat with old
         format bump commits). What matters is the *bump commit MESSAGE*
-        — the `git commit -m "..."` invocation — does NOT carry it.
+        — every `git commit -m "..."` invocation — does NOT carry it.
+
+        The 3-path race-recovery block (Path 1 + Path 3) introduces two
+        distinct bump-commit invocations instead of the original single
+        one. Both must carry the same message format and neither must
+        carry `[skip ci]` — this is the structural invariant we pin here.
         """
         text = _yaml_text()
-        # Locate the bump-commit `git commit -m ...` line. It's the only
-        # `git commit -m` invocation in this workflow file (T10 will catch
-        # future re-introductions; here we only assert the commit message).
+        # Locate every `git commit -m ...` line that produces a bump
+        # commit (each path in the race-recovery block has one).
         bump_lines = [
             l for l in text.splitlines()
             if "git commit -m" in l and "bump dev-kit to v" in l
         ]
-        self.assertEqual(
+        self.assertGreaterEqual(
             len(bump_lines), 1,
-            "expected exactly one `git commit -m` line containing "
-            "'bump dev-kit to v'; ensure T10 hasn't been bypassed.")
-        bump_line = bump_lines[0]
-        for forbidden in ("[skip ci]", "[no ci]", "[ci skip]", "[actions skip]"):
-            self.assertNotIn(
-                forbidden, bump_line,
-                f"bump commit message must NOT contain {forbidden!r} — "
-                "GitHub Actions globally suppresses ALL workflows on such "
-                f"commits (and would break version-bump.yml's auto-tag step). Offending line: {bump_line!r}")
+            "expected at least one `git commit -m` line containing "
+            "'bump dev-kit to v'; ensure the race-recovery block hasn't been removed")
+        for bump_line in bump_lines:
+            for forbidden in ("[skip ci]", "[no ci]", "[ci skip]", "[actions skip]"):
+                self.assertNotIn(
+                    forbidden, bump_line,
+                    f"bump commit message must NOT contain {forbidden!r} — "
+                    "GitHub Actions globally suppresses ALL workflows on such "
+                    f"commits (and would break version-bump.yml's auto-tag step). Offending line: {bump_line!r}")
         # Sanity check: the idempotency regex (further down) still mentions
         # `[skip ci]` as an OPTIONAL suffix. That is intentional — it lets
         # old-format bump commits (which DID carry `[skip ci]`) still match
@@ -284,6 +288,44 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertIn("#[0-9]+", run,
                       "idempotency regex must allow GitHub's optional "
                       "` (#PR-number)` suffix on squash-merge commits")
+
+    def test_23_race_recovery_paths_present(self):
+        """The PR-open step's bash must implement the 3-path race-recovery
+        block (Path 1 / Path 2 / Path 3). Path 2 must use the colon-refspec
+        `git push origin "${REMOTE_TIP}:${BRANCH}"` so the orphan tip is
+        preserved as-is (no new SHA → no non-fast-forward). Path 3 must
+        close the orphan's open PR before `force-with-lease` so
+        peter-evans/enable-pull-request-automerge does not race-merge a
+        stale-version commit.
+
+        Regression: the original `git cherry-pick` recovery produced a fresh
+        SHA `f86f059` on top of NEW origin/main, which was rejected as
+        non-fast-forward because the remote tip was the OLDER orphan SHA.
+        See `gh run view 29327530942 --log-failed` for the failing trace.
+        """
+        doc = _yaml_doc()
+        open_step = _find_step(doc, "open auto-merge")
+        self.assertIsNotNone(open_step, "expected an 'Open auto-merge PR' step")
+        run = open_step.get("run", "")
+        # Pin the 3-path structure
+        for marker in ("Path 1", "Path 2", "Path 3"):
+            self.assertIn(marker, run,
+                          f"race-recovery block must declare {marker!r} "
+                          "(prevents silent regression to the broken cherry-pick path)")
+        # Pin Path 2's colon-refspec (the actual fix)
+        self.assertRegex(run, r'git push origin "\$\{REMOTE_TIP\}:\$\{BRANCH\}"',
+                         "Path 2 must push REMOTE_TIP directly via colon-refspec "
+                         "so origin/${BRANCH} == REMOTE_TIP without producing a new SHA")
+        # Pin Path 3's close-then-force-with-lease (defends against auto-merge race)
+        self.assertIn("gh pr close", run,
+                      "Path 3 must close the orphan's open PR before force-pushing "
+                      "(peter-evans/enable-pull-request-automerge would race-merge otherwise)")
+        self.assertIn("force-with-lease", run,
+                      "Path 3 must use --force-with-lease (not --force) so the "
+                      "push aborts if a concurrent racer advanced the remote")
+        self.assertNotIn("git cherry-pick", run,
+                         "the broken cherry-pick path must be removed; Path 2 is "
+                         "the replacement (preserves orphan SHA via colon-refspec)")
 
     def test_13_tag_step_runs_on_idempotent_skip(self):
         """Tag step must run on the idempotent-skip path (new_version != '')
