@@ -125,6 +125,31 @@ jobs:
           print(f'all {len(skills)} skills flat + name==dir OK')
           "
 
+      - name: Version freshness (PR head > PR base)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          BASE_VERSION="$(git show "$BASE_SHA:.claude-plugin/plugin.json" | jq -r .version)"
+          HEAD_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
+
+          # HEAD == BASE is fine — the PR did not touch any plugin or
+          # skill file, so there is nothing to bump. Head-bumped-by-user
+          # is detected by HEAD > BASE. The only failing case is when
+          # another PR merged first and advanced BASE_VERSION past this
+          # PR's HEAD_VERSION: rebase / re-commit so the pre-commit hook
+          # auto-bumps the new PATCH.
+          HIGHER="$(printf '%s\n%s\n' "$BASE_VERSION" "$HEAD_VERSION" | sort -V | tail -1)"
+          if [ "$HIGHER" != "$HEAD_VERSION" ]; then
+            echo "::error::PR head version $HEAD_VERSION is NOT greater than base version $BASE_VERSION"
+            echo "::error::Another PR was merged after this one opened, advancing .claude-plugin/plugin.json on main."
+            echo "::error::To fix: rebase / re-commit on this branch — the pre-commit hook will auto-bump the next PATCH."
+            echo "::error::Or, if this PR does not touch skills/, this check should not have failed; investigate."
+            exit 1
+          fi
+          echo "version-freshness OK (head=$HEAD_VERSION > base=$BASE_VERSION)"
+
       - name: Bash hook syntax
         run: |
           for h in hooks/*.sh; do
