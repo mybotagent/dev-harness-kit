@@ -4,8 +4,8 @@
 
 [![Tests](https://img.shields.io/badge/tests-422%20total-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-42-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)](.claude-plugin/plugin.json)
+[![Skills](https://img.shields.io/badge/skills-44-blueviolet)](skills/)
+[![Version](https://img.shields.io/badge/version-0.3.16-blue)](.claude-plugin/plugin.json)
 
 ## What
 
@@ -147,20 +147,22 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
 /dev-kit:refactor               # 3-phase refactor: inspect -> 4-pass cleanup -> review (rewrites code)
 /dev-kit:prune                  # 3-phase deletion sweep: inspect -> 3-pass deletion -> review (deletes slop/dead features)
+/dev-kit:cost-gate               # live cost gate (current spend + threshold distance + commit footer)
+/dev-kit:bump [major|minor|patch] # explicit version bump + push of chore/bump-vX.Y.Z (race recovery / pre-PR)
 
 # Shortcuts (urgent hotfix)
 /dev-kit:tdd-fast                # skip Bootstrap+Plan → straight to Build
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 42 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 44 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 43 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 44 skills, flat: skills/<skill-name>/SKILL.md
 ├── .codex-plugin/         # plugin.json pointing Codex CLI at the same ./skills/ (no copy)
 ├── hooks/                 # 10 hook scripts (6 original + 3 worktree-rule + 1 cost-gate) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup / cost_gate
@@ -204,7 +206,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 | `eval` | `eval` |
 | `onboard` | `onboard` |
 | `repair` | `repair` |
-| `ship` | `ship`, `babysit-pr` |
+| `ship` | `ship`, `babysit-pr`, `bump` |
 | `config` | `config` |
 | `status` | `status` |
 | `shortcuts` | `log`, `shortcut-quick-fix`, `shortcut-tdd-fast` |
@@ -452,13 +454,13 @@ $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","t
 
 ## ## Codex CLI compatibility (`.codex-plugin/plugin.json`)
 
-Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory — no per-skill copying. dev-kit's manifest points `"skills"` straight at the existing `./skills/`, so all 42 canonical `skills/<name>/SKILL.md` files are exposed to Codex unchanged, with zero new files per skill and zero drift risk (there is nothing to keep in sync — it's the same directory, not a copy).
+Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory — no per-skill copying. dev-kit's manifest points `"skills"` straight at the existing `./skills/`, so all 44 canonical `skills/<name>/SKILL.md` files are exposed to Codex unchanged, with zero new files per skill and zero drift risk (there is nothing to keep in sync — it's the same directory, not a copy).
 
 Claude Code keeps reading `skills/` directly via `.claude-plugin/`, unaffected. MiniMax needs no generated artifact at all — it's a model backend, not a harness, reached by pointing either harness's existing model config at MiniMax's Anthropic-/OpenAI-compatible endpoint.
 
 ## Skills by audience
 
-The kit ships **42 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
+The kit ships **44 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
 
 - **`user-invocable: true`** (or unset) — surfaces in `/dev-kit:` autocomplete. *You* type it.
 - **`user-invocable: false`** — hidden from autocomplete. *Claude* auto-invokes it as a sub-step when its parent skill runs.
@@ -493,6 +495,9 @@ These appear in slash autocomplete. Run them when you have a job to do.
 | `/dev-kit:tdd-fast` | Shortcut: skip Bootstrap+Plan → straight to Build. |
 | `/dev-kit:quick-fix` | Shortcut: verify + debug, no code changes. |
 | `/dev-kit:babysit-pr` | 0-arg PR babysitter loop. |
+| `/dev-kit:cost-gate` | Live cost gate status (current spend, threshold distance, and the commit-trailer block the PR aggregator needs). |
+| `/dev-kit:bump` | Explicit local version bump + push of `chore/bump-vX.Y.Z`. Mirrors the auto-bump workflow but user-triggered for race recovery or pre-PR cuts. |
+| `/dev-kit:token-analyzer` | Token-efficiency dashboard from `logs/{claude-code,codex}/**/*.jsonl` — 4-dim session scoring + 6 anti-pattern warnings + USD savings estimate. |
 
 ### For Claude — internal sub-skills, hidden from slash autocomplete
 
@@ -739,6 +744,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.0 — 42 skills shipped across 14 categories, 422 pytest collected (420 passed + 2 skipped), 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **v0.3.16 — 44 skills shipped across 14 categories, 422 pytest collected (420 passed + 2 skipped), 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
