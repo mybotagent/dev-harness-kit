@@ -233,14 +233,24 @@ class TestSaveLogBranch(unittest.TestCase):
     def test_main_checkout_capture_does_not_dual_write(self):
         # A session in the main checkout has no worktree to write to —
         # only the main logs/ gets a copy.
+        # Force the initial branch to "main" — `git init`'s default
+        # (init.defaultBranch) varies by host (macOS: main, ubuntu CI:
+        # master), and we want a deterministic test, not a host-flaky one.
         from save_log import find_worktree_for_cwd
         main = self.tmpdir / "mainonly"
         main.mkdir()
-        _git(main, "init", "-q")
+        _git(main, "init", "-q", "-b", "main")
         (main / "f").write_text("x")
         _git(main, "add", ".")
         _git(main, "-c", "user.email=t@t", "-c", "user.name=t",
                   "commit", "-q", "-m", "init")
+        # Sanity: confirm the actual branch is what we asked for.
+        # Without the explicit `-b main` init flag, CI ubuntu defaults
+        # to master and the assertion below fails because the JSONL
+        # lands under master/, not main/.
+        actual_branch = _git(main, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.assertEqual(actual_branch, "main",
+                         f"setup failed to force main branch: {actual_branch!r}")
         rc = _run_save_log(main, transcript=self.transcript)
         self.assertEqual(rc.returncode, 0, f"save_log failed: {rc.stderr}")
         self.assertTrue(
