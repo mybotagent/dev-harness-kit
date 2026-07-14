@@ -111,7 +111,10 @@ jobs:
           python3 -c "
           import pathlib
           skills = sorted(pathlib.Path('skills').glob('*/SKILL.md'))
-          assert len(skills) == 44, f'expected 44 skills, got {len(skills)}'
+          # Skill COUNT is asserted by tests/test_smoke.py:test_skills_count
+          # (SKILL_COUNT constant + 44 check); duplicating it here would
+          # create a second mirror that drifts on every skill add. The two
+          # unique invariants this job owns are below.
           # flat: no nested SKILL.md
           nested = list(pathlib.Path('skills').glob('*/*/SKILL.md'))
           assert not nested, f'nested SKILL.md found: {nested}'
@@ -119,7 +122,7 @@ jobs:
           for s in skills:
               assert s.parent.name == s.read_text().split('\n', 5)[1].split(':',1)[1].strip(), \
                   f'name mismatch in {s}'
-          print(f'all 44 skills flat + name==dir OK')
+          print(f'all {len(skills)} skills flat + name==dir OK')
           "
 
       - name: Bash hook syntax
