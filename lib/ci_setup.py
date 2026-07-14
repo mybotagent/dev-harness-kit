@@ -534,6 +534,7 @@ def preflight_probe(repo: str = "") -> List[ProbeResult]:
     results.append(repo_view)
 
     secrets_json = ""
+    secrets_degraded = ""
     try:
         cp = subprocess.run(
             [gh, "secret", "list", "--repo", repo, "--json", "name"],
@@ -541,8 +542,15 @@ def preflight_probe(repo: str = "") -> List[ProbeResult]:
         )
         if cp.returncode == 0:
             secrets_json = cp.stdout
-    except Exception:
-        pass
+    except (
+        subprocess.SubprocessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        OSError,
+    ) as e:
+        # Surface the failure mode so the user can distinguish "secret
+        # not configured" from "probe could not run" (issue #92).
+        secrets_degraded = f"degraded: {type(e).__name__}: {e}"
 
     secret_names = set()
     if secrets_json:
@@ -550,7 +558,7 @@ def preflight_probe(repo: str = "") -> List[ProbeResult]:
             secret_names = {
                 row.get("name", "") for row in _json.loads(secrets_json)
             }
-        except Exception:
+        except (_json.JSONDecodeError, ValueError, TypeError):
             secret_names = set()
 
     for secret, state_when_missing in (
@@ -562,30 +570,43 @@ def preflight_probe(repo: str = "") -> List[ProbeResult]:
         results.append(ProbeResult(
             label=f"{secret} set",
             state="OK" if present else state_when_missing,
-            detail="" if present else "absent",
+            detail="" if present else secrets_degraded or "absent",
         ))
 
     return results
 
 
 def _detect_owner_repo(target_dir: Path) -> str:
-    """Best-effort `<OWNER>/<REPO>` from git remote, else empty string."""
+    """Best-effort `<OWNER>/<REPO>` from git remote.
+
+    Returns `<OWNER>/<REPO>` on success. On failure (no git, no remote,
+    non-GitHub remote, timeout), returns the literal `<OWNER>/<REPO>`
+    placeholder with a `(auto-detect failed: <ExceptionType>)` suffix
+    so the post-install checklist still renders usefully AND the user
+    sees WHY auto-detection failed (issue #92 bug 2). Never raises.
+    """
+    placeholder = "<OWNER>/<REPO>"
     try:
         cp = subprocess.run(
             ["git", "-C", str(target_dir), "remote", "get-url", "origin"],
             capture_output=True, text=True, timeout=5,
         )
         if cp.returncode != 0 or not cp.stdout.strip():
-            return ""
+            return f"{placeholder} (auto-detect failed: no remote)"
         url = cp.stdout.strip()
         # SSH: git@github.com:OWNER/REPO(.git)
         # HTTPS: https://github.com/OWNER/REPO(.git)
         m = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?/?$", url)
         if m:
             return f"{m.group(1)}/{m.group(2)}"
-    except Exception:
-        pass
-    return ""
+        return f"{placeholder} (auto-detect failed: remote is not GitHub)"
+    except (
+        subprocess.SubprocessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        OSError,
+    ) as e:
+        return f"{placeholder} (auto-detect failed: {type(e).__name__})"
 
 
 def _print_post_install_checklist(target_dir: Path) -> None:
