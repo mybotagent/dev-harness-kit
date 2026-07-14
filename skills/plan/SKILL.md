@@ -19,6 +19,26 @@ safety:
   user_interrupt: true
 ---
 
+## Worktree precondition (REQUIRED — fail-closed)
+
+Before answering Gate 1, verify the cwd is inside a worktree, not the main repo
+checkout. `hooks/worktree-guard.sh` hard-blocks every `Write` from the main
+checkout; if you proceed without checking, gate answers are captured but
+`PRD.md` is never emitted and the failure surfaces only when `/dev-kit:build`
+later fails on missing phase.
+
+Detect via `Read` on `./.git`:
+
+| Result | Meaning | Action |
+|---|---|---|
+| file content starts with `gitdir:` | inside a worktree | proceed to Gate 1 |
+| `Read` fails because `./.git` is a directory | main checkout | **STOP**. Do NOT ask Gate 1. Tell the user: "Worktree required. Per `.claude/rules/git-workflow.md`, every task = new worktree + new session + new branch. Run: `git fetch origin main && git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main` — then open a new Claude Code session inside that worktree path and re-invoke `/dev-kit:plan`." |
+| `Read` fails for any other reason (no repo, file missing) | outside any git repo | proceed (no worktree rule applies) |
+
+This mirrors the discriminator in `hooks/lib/worktree-detect.sh`
+(`--git-dir == --git-common-dir`) but uses `Read` instead of `Bash` because
+plan's `disallowed-tools: Bash` blocks the shell form.
+
 # /dev-kit:plan — Idea → PRD.md + phases (5 gates, 1 Ralph loop)
 
 Self-contained. The earlier `plan-ralph` dispatch was absorbed (issue #58). No
@@ -167,6 +187,12 @@ Emit `phases/<name>/index.json` using the schema below. One step = one
 shippable layer / module. Order: dependency-first (e.g. data model before API
 before UI).
 
+The top-level `worktree` field carries the branch base from which every per-step
+worktree is derived (`<branch-base>-step<N>`). Emit it as `<prefix>-<phase>`,
+where `<prefix>` follows the worktree-cut convention (typically `plan/<slug>`,
+e.g. `plan/plugin-harness-v3`). The build runner reads it; if absent it falls
+back to `feat/<phase>`, which is a defense-in-depth default, not the contract.
+
 For each step in order:
 1. Call `lib/execute.py:register_step(root, phase, step=N, name=<slug>)` —
    this creates the index.json entry with `status="unimplemented"`.
@@ -187,6 +213,7 @@ For each step in order:
   "phase": "0-mvp",
   "project": "<repo-name>",
   "created_at": "<iso8601>",
+  "worktree": "<branch-base>",
   "ambiguity_score": 3,
   "value_score": 4.7,
   "evidence_count": 3,

@@ -25,9 +25,10 @@ Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup`
 1. `lib/execute.py:main` parses args; branches on `--parallel N`:
    - `--parallel 0` → `_run_sequential` (default).
    - `--parallel N` → `_run_parallel` (N concurrent slots, each with its own worktree).
-2. Read `phases/<name>/index.json` (must contain `worktree: "<branch-base>"`); derive per-step branch = `<branch-base>-step<N>` and worktree path = `<root>/.claude/worktrees/<phase>-step<N>`.
+2. Read `phases/<name>/index.json` (must contain `worktree: "<branch-base>"`; emitted by `/dev-kit:plan` as `<prefix>-<phase>`, e.g. `plan/plugin-harness-v3-0-mvp`); derive per-step branch = `<branch-base>-step<N>` and worktree path = `<root>/.claude/worktrees/<phase>-step<N>`. Falls back to `feat/<phase>` when the field is absent (defense-in-depth, not the contract).
 3. Skip entries where `status` ∈ `SKIPPABLE_STATUSES` (`completed`, `unimplemented`).
 4. Bail with exit 2 if any step has `status == "blocked"` (no implicit resume).
+   Override: `--skip-blocked` lets the runner continue past `blocked` steps, running only `pending | error | in_progress`. Skipped blocked steps are listed in `.dev-kit/hand-off/build→review.md` after the run.
 5. For each RESUMABLE step:
    - `git worktree add -B <branch> <wt> origin/main` (MUST-38).
    - Read `step<N>.md` as preamble; append AC guard + `3-cycle self-fix max`.
@@ -39,7 +40,7 @@ Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup`
 
 ## Status state machine (lib/execute.py)
 
-`unimplemented → pending → in_progress → completed`, with two resume paths: `error → pending` (retry) and `blocked → pending` (human unblock). `SKIPPABLE_STATUSES = ("completed", "unimplemented")`. `RESUMABLE_STATUSES = ("pending", "error", "in_progress")`.
+`unimplemented → pending → in_progress → completed`, with two resume paths: `error → pending` (retry) and `blocked → pending` (human unblock). `SKIPPABLE_STATUSES = ("completed", "unimplemented")`. `--skip-blocked` extends this with `"blocked"` at runtime (the schema constant is unchanged; the flag bypasses the bailing rule). `RESUMABLE_STATUSES = ("pending", "error", "in_progress")`.
 
 ## Hook integration (Stage B)
 

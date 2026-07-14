@@ -354,6 +354,20 @@ class TestRunSequential(unittest.TestCase):
             claude_calls = [c for c in mr.call_args_list if "claude" in c.args[0]]
             self.assertEqual(len(claude_calls), 1, "only the pending step may run; blocked bails the rest")
 
+    def test_skip_blocked_continues_past_blocked_step(self):
+        root = self._make_blocked_root()
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            rc = execute._run_sequential(root, "0-mvp", push=False, skip_blocked=True)
+            self.assertEqual(rc, 0, "skip_blocked must not bail; rc should be 0 after step 1 runs")
+            claude_calls = [c for c in mr.call_args_list if "claude" in c.args[0]]
+            self.assertEqual(len(claude_calls), 1, "only step 1 (pending) may run; step 2 (blocked) skipped")
+        handoff = root / ".dev-kit" / "hand-off" / "build→review.md"
+        self.assertTrue(handoff.exists(), "skip_blocked must write a hand-off note")
+        body = handoff.read_text(encoding="utf-8")
+        self.assertIn("step 2 skipped", body)
+        self.assertIn("user paused", body)
+
     def test_pending_step_creates_worktree_and_invokes_claude(self):
         with patch.object(execute.subprocess, "run") as mr:
             mr.return_value = self._fake_proc(stdout="all green", stderr="")
