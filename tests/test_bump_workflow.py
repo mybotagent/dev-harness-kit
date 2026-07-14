@@ -144,6 +144,27 @@ class TestBumpWorkflow(unittest.TestCase):
                       "already on origin; otherwise re-runs will fail with "
                       "'tag already exists' from git push")
 
+    def test_07b_tag_step_configures_git_identity(self):
+        """`git tag -a` requires a configured user.name + user.email on
+        the runner. Without it, the next release push fails with
+        `fatal: unable to auto-detect email address`. Pin the identity
+        setup so a future refactor can't silently drop it."""
+        doc = _yaml_doc()
+        tag_step = None
+        for step in _resolve_steps(doc):
+            name = step.get("name", "").lower()
+            if "tag" in name or "read version" in name:
+                tag_step = step
+                break
+        self.assertIsNotNone(tag_step)
+        run = tag_step.get("run", "")
+        self.assertIn("git config user.name", run,
+                      "tag step must configure git user.name (annotated "
+                      "tags require a tagger identity)")
+        self.assertIn("git config user.email", run,
+                      "tag step must configure git user.email (annotated "
+                      "tags require a tagger identity)")
+
     def test_08_no_head_commit_msg_predicate(self):
         """The tag-emission step must NOT predicate on the head commit's
         message. Under the pre-commit auto-bump design, the head commit
