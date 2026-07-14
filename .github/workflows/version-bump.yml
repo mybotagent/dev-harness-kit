@@ -38,6 +38,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `git tag -a` requires a configured user.name + user.email on
+          # the runner. `actions/checkout` configures safe.directory but
+          # not user identity, and ubuntu-latest ships no usable global
+          # config — without this, the tag step fails with
+          # `fatal: unable to auto-detect email address` on the next
+          # release push after this workflow lands.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           VERSION="$(jq -r .version .claude-plugin/plugin.json)"
           if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             echo "::error::plugin.json:version=$VERSION is not MAJOR.MINOR.PATCH; aborting"
@@ -62,6 +71,11 @@ jobs:
           #       be filtered out at PR time, so reaching this step
           #       implies the version genuinely advanced.
 
-          git tag "$TAG" origin/main
+          # Annotated tag (not lightweight) so downstream tooling gets
+          # tagger identity, creation date, and message. Lightweight tags
+          # are just ref pointers; many release consumers (changelog
+          # generators, marketplace pin logic, version-bump workflow's
+          # own idempotency check) expect the metadata.
+          git tag -a -m "dev-kit v${VERSION}" "$TAG" origin/main
           git push origin "$TAG"
-          echo "tagged ${TAG} at origin/main@${VERSION}"
+          echo "tagged ${TAG} (annotated) at origin/main@${VERSION}"

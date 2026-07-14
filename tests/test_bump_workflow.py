@@ -144,6 +144,27 @@ class TestBumpWorkflow(unittest.TestCase):
                       "already on origin; otherwise re-runs will fail with "
                       "'tag already exists' from git push")
 
+    def test_07b_tag_step_configures_git_identity(self):
+        """`git tag -a` requires a configured user.name + user.email on
+        the runner. Without it, the next release push fails with
+        `fatal: unable to auto-detect email address`. Pin the identity
+        setup so a future refactor can't silently drop it."""
+        doc = _yaml_doc()
+        tag_step = None
+        for step in _resolve_steps(doc):
+            name = step.get("name", "").lower()
+            if "tag" in name or "read version" in name:
+                tag_step = step
+                break
+        self.assertIsNotNone(tag_step)
+        run = tag_step.get("run", "")
+        self.assertIn("git config user.name", run,
+                      "tag step must configure git user.name (annotated "
+                      "tags require a tagger identity)")
+        self.assertIn("git config user.email", run,
+                      "tag step must configure git user.email (annotated "
+                      "tags require a tagger identity)")
+
     def test_08_no_head_commit_msg_predicate(self):
         """The tag-emission step must NOT predicate on the head commit's
         message. Under the pre-commit auto-bump design, the head commit
@@ -251,6 +272,27 @@ class TestVersionFreshnessCheck(unittest.TestCase):
         self.assertIn("sort -V", run,
                       "freshness step must use version-aware sort to compare "
                       "versions (not lexicographic -- 0.3.10 < 0.3.9 lex)")
+
+    def test_freshness_step_enforces_strict_greater_than(self):
+        """The check must reject HEAD <= BASE. The pre-push hook is the
+        source of truth (auto-bumps to BASE+1); a HEAD == BASE here
+        means the user pushed with --no-verify and bypassed it."""
+        doc = self._doc()
+        step = [s for s in doc["jobs"]["validate"]["steps"]
+                if "freshness" in s.get("name", "").lower()][0]
+        run = step.get("run", "")
+        self.assertIn("strict", step.get("name", "").lower(),
+                      "freshness step name must declare STRICT semantics")
+        # STRICT check: HIGHER == BASE_VERSION catches both HEAD < BASE
+        # and HEAD == BASE; only HEAD > BASE passes (HIGHER == HEAD != BASE).
+        self.assertIn("HIGHER=", run,
+                      "freshness step must compute a HIGHER variable")
+        self.assertIn("sort -V", run,
+                      "freshness step must use version-aware sort")
+        self.assertIn("tail -1", run,
+                      "freshness step must take the tail of sort -V output")
+        self.assertIn('"$BASE_VERSION"', run,
+                      "freshness step must reference BASE_VERSION in the rejection check")
 
 
 if __name__ == "__main__":
