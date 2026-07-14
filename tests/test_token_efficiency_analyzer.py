@@ -906,6 +906,47 @@ class TestWorktreeAwareness(unittest.TestCase):
             found = discover_logs(td_path / "logs", repo_root=td_path)
             self.assertTrue(any(p.name == "x.jsonl" for p in found))
 
+    def test_render_panel_surfaces_classified_worktrees_with_zero_sessions(self):
+        # Regression: Cost by Worktree panel must show every classified
+        # worktree (live / merged / gone), not just ones with sessions.
+        # Otherwise a developer with 90+ stale dirs cannot see coverage
+        # gaps — the panel's whole point.
+        from datetime import datetime, timezone
+        from token_efficiency_analyzer import render_dashboard
+        now = datetime.now(timezone.utc)
+        sessions = [_make_session(session_id="s-onerow", worktree="cost-gate",
+                                  repo="dev-harness-kit", branch="fix/x",
+                                  last_ts=now, first_ts=now,
+                                  input_tokens=1000, output_tokens=200,
+                                  cache_read_tokens=500)]
+        wt_meta = {
+            "cost-gate":  {"state": "live"},
+            "old-feature": {"state": "merged"},
+            "ghost-dir":  {"state": "gone"},
+        }
+        html = render_dashboard(
+            repo="dev-harness-kit", days=30, sessions=sessions,
+            scored=[(s, {"total": 50.0, "cache": 80.0, "density": 30.0,
+                         "redundancy": 90.0, "economy": 80.0, "grade": "B",
+                          "cache_hit_ratio": 0.5, "warnings": []})
+                    for s in sessions],
+            warnings_per_session=[[] for _ in sessions],
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+            cost_gate=("ok", []),
+            all_sessions_in_window=sessions,
+            wt_meta=wt_meta, stale_cost=0.0, stale_pct=0.0,
+        )
+        # Panel header must indicate "all worktrees on disk" semantics.
+        self.assertIn("all worktrees on disk", html)
+        # Every classified worktree name must appear in the panel.
+        for wt_name in ("cost-gate", "old-feature", "ghost-dir"):
+            self.assertIn(wt_name, html,
+                          f"{wt_name} missing from Cost by Worktree panel")
+        # State pills for merged/gone must surface.
+        self.assertIn(">merged<", html)
+        self.assertIn(">gone<", html)
+
     def test_aggregate_session_extracts_worktree_from_cwd(self):
         with tempfile.TemporaryDirectory(prefix="wt-agg-") as td:
             td_path = Path(td)

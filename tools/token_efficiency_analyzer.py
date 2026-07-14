@@ -1327,7 +1327,7 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
-  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout; State = live / merged / gone)</span></div>
+  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees on disk: main checkout + every .claude/worktrees/*/, including those with 0 sessions so dead/stale dirs surface)</span></div>
   <div class="panel">
     <table>
       <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:36%">Share</th><th>State</th></tr></thead>
@@ -1523,6 +1523,16 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         wkey = s.get("worktree") or "(unknown)"
         worktree_costs[wkey][0] += 1
         worktree_costs[wkey][1] += c
+    # Union with every classified worktree dir on disk so dead worktrees
+    # (live / merged / gone) surface even when they contributed 0 sessions.
+    # Without this the panel only shows worktrees that captured JSONL, which
+    # hides the 90+ sibling dirs a developer actually has open and the stale
+    # coverage gap the dashboard is supposed to flag.
+    for wt_name in (wt_meta or {}).keys():
+        worktree_costs.setdefault(wt_name, [0, 0.0])
+    # Always show (main) even if no main-checkout session landed in the window
+    # (e.g. user ran only from worktrees in the last 30 days).
+    worktree_costs.setdefault("(main)", [0, 0.0])
     worktree_total_for_share = sum(wc[1] for wc in worktree_costs.values()) or 1.0
 
     # Per-worktree state — derived from the per-session stamp first
@@ -1552,8 +1562,23 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             or "unknown"
         )
 
-    # (main) pinned to the top; remainder sorted by cost desc.
-    sorted_wts = sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+    # (main) pinned to the top; remainder sorted by cost desc; then dead
+    # worktrees (merged/gone) pinned to the bottom so the user sees coverage
+    # state without scrolling past 90+ zero-cost rows.
+    def _sort_key(k):
+        cost = worktree_costs[k][1]
+        # Sort bucket: 0 = main, 1 = live-with-sessions, 2 = empty-live,
+        # 3 = merged, 4 = gone, 5 = unknown. Lower = earlier.
+        state = _state_for(k)
+        bucket = {
+            "main": 0,
+            "live": 1 if cost > 0 else 2,
+            "merged": 3,
+            "gone": 4,
+        }.get(state, 5)
+        return (bucket, -cost, k)
+
+    sorted_wts = sorted(worktree_costs, key=_sort_key)
     if "(main)" in sorted_wts:
         sorted_wts.remove("(main)")
         sorted_wts = ["(main)"] + sorted_wts
