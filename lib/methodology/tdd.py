@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """tdd.py — TDD methodology adapter (default, MUST-48)."""
 from __future__ import annotations
-from pathlib import Path
 from typing import Dict, List
 from .abc import Methodology  # relative import
 
@@ -11,7 +10,7 @@ class TddMethodology(Methodology):
     description = "Red-Green-Refactor. Failing unit test first, then minimal impl."
     default_for_projects = ["python", "typescript", "javascript"]
 
-    def pre_check(self, worktree_path: Path, step: Dict) -> Dict:
+    def pre_check(self, step: Dict) -> Dict:
         n = step.get("name", "feature")
         return {
             "artifact_path": f"tests/test_{n}.py",
@@ -19,7 +18,7 @@ class TddMethodology(Methodology):
             "verification_cmd": f"pytest -xvs tests/test_{n}.py",
         }
 
-    def verification_command(self, worktree_path: Path, step: Dict) -> List[str]:
+    def verification_command(self, step: Dict) -> List[str]:
         n = step.get("name", "feature")
         return [
             f"pytest tests/test_{n}.py -x --tb=short",
@@ -30,7 +29,7 @@ class TddMethodology(Methodology):
     def cycle_steps(self) -> List[str]:
         return ["red", "green", "refactor"]
 
-    def report_status(self, worktree_path: Path, step: Dict) -> Dict:
+    def report_status(self, step: Dict) -> Dict:
         return {"status": "pass", "score": 10, "issues": []}
 
 
