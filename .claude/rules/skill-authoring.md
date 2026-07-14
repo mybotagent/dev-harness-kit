@@ -66,7 +66,7 @@ safety:
 | **Human-use** (stage commands, utilities, shortcuts) | `true` | `false` (default) or `true` | ✅ Yes |
 | **Model-use** (internal building blocks) | **`false`** | `false` (default) | ❌ No |
 
-**Current human-use skills** (25): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `token-analyzer`, `adapt`.
+**Current human-use skills** (26): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `token-analyzer`, `adapt`, `cost-gate`.
 
 **Current model-use skills** (14): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`.
 
@@ -95,4 +95,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (42 as of #feat/refactor-rename-and-prune ⨯ #feat/token-analyzer-skill; bump both test_smoke.py and this rule together when adding a new skill).
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (43 as of #feat/refactor-rename-and-prune ⨯ #feat/token-analyzer-skill ⨯ #feat/cost-gate; bump both test_smoke.py and this rule together when adding a new skill).

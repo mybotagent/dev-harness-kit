@@ -111,7 +111,7 @@ jobs:
           python3 -c "
           import pathlib
           skills = sorted(pathlib.Path('skills').glob('*/SKILL.md'))
-          assert len(skills) == 42, f'expected 42 skills, got {len(skills)}'
+          assert len(skills) == 43, f'expected 43 skills, got {len(skills)}'
           # flat: no nested SKILL.md
           nested = list(pathlib.Path('skills').glob('*/*/SKILL.md'))
           assert not nested, f'nested SKILL.md found: {nested}'
@@ -119,7 +119,7 @@ jobs:
           for s in skills:
               assert s.parent.name == s.read_text().split('\n', 5)[1].split(':',1)[1].strip(), \
                   f'name mismatch in {s}'
-          print(f'all 42 skills flat + name==dir OK')
+          print(f'all 43 skills flat + name==dir OK')
           "
 
       - name: Bash hook syntax
