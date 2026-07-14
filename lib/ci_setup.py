@@ -20,7 +20,6 @@ import json
 import re
 import subprocess
 import os
-import re
 import shutil
 import sys
 import time
@@ -28,6 +27,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
+
+# Atomic write helper. We import from `atomic` (the canonical lib module)
+# rather than redefining it inline: `lib/install.sh` ships `atomic.py` to
+# `target/lib/` alongside `ci_setup.py` (see `lib/install.sh:53` for the
+# copy loop and `:94` for the install-verification assertion). Using a
+# single canonical implementation ensures future improvements to
+# `lib/atomic.atomic_write_json` (fsync-on-replace, mode preservation,
+# locale-safe tmp prefix, fallback `default=str`) automatically land in
+# the marker-write path here. See issue #90.
+from atomic import atomic_write_json
 
 # Plugin root (resolved via __file__ so the module is location-independent).
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -155,27 +164,6 @@ class ProbeResult:
 def _now_utc_iso() -> str:
     """ISO-8601 UTC timestamp, second precision."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _atomic_write_json(path: Path, data: dict) -> None:
-    """POSIX-atomic JSON write (mirrors `lib/atomic.atomic_write_json`).
-
-    Inline copy to avoid an import dependency on the plugin's own lib
-    (target projects install ONLY what's inside templates/ci/, not lib/*.py).
-    """
-    import json
-    import tempfile
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
 
 
 def _resolve_template_source(rel_path: str) -> Path:
@@ -444,7 +432,7 @@ def install_ci_config(
 
     # Write marker (overwrites on force, always succeeds idempotently).
     marker = target / MARKER_REL
-    _atomic_write_json(marker, _build_marker())
+    atomic_write_json(marker, _build_marker())
     report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and
