@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,13 +13,6 @@ from methodology import tdd, get_methodology, list_methodologies  # noqa: E402
 
 
 class TestTddMethodology(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
     def test_tdd_name(self):
         self.assertEqual(tdd.INSTANCE.name, "tdd")
 
@@ -29,20 +21,20 @@ class TestTddMethodology(unittest.TestCase):
 
     def test_pre_check_returns_failing_test_path(self):
         step = {"name": "auth_login"}
-        result = tdd.INSTANCE.pre_check(self.root, step)
+        result = tdd.INSTANCE.pre_check(step)
         self.assertEqual(result["artifact_path"], "tests/test_auth_login.py")
         self.assertIn("RED", result["expected_content"])
         self.assertIn("pytest", result["verification_cmd"])
 
     def test_verification_command_includes_pytest(self):
         step = {"name": "feature"}
-        cmds = tdd.INSTANCE.verification_command(self.root, step)
+        cmds = tdd.INSTANCE.verification_command(step)
         self.assertEqual(len(cmds), 3)
         self.assertTrue(any("pytest" in c for c in cmds))
         self.assertTrue(any("ruff" in c for c in cmds))
 
     def test_report_status_pass(self):
-        status = tdd.INSTANCE.report_status(self.root, {})
+        status = tdd.INSTANCE.report_status({})
         self.assertEqual(status["status"], "pass")
 
 
