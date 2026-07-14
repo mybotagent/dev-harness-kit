@@ -97,34 +97,37 @@ def _run_gate(r: str, s: str, event: str = "pull_request") -> subprocess.Complet
 
 
 class TestSeverityGateTolerance(unittest.TestCase):
-    """The new contract: empty R or S HARD-FAILS (block merge if LLM didn't run).
+    """The contract: empty R or S defaults to Approve + ::warning:: in both
+    event modes. Pre-#44 the gate hard-failed on missing verdicts, which
+    broke any PR whose agent skipped (workflow-validation skip on the very
+    PR that ADDS .github/workflows/review.yml, action rate-limit, transient
+    network error). The fix mirrors the project's own .github/workflows/review.yml
+    (5d6c53e): the human gate (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR)
+    is what actually blocks merge, not a single missing agent verdict.
 
-    Pre-#44 the gate defaulted missing verdicts to Approve + warning silently,
-    which hid workflow-validation skips from PR authors. The new gate exits 1
-    on any missing/unparseable verdict so the PR author sees a red check
-    immediately and re-runs CI. Real review feedback (Changes Requested /
-    Blocked) still exits 1.
+    Real review feedback (Changes Requested / Blocked) still exits 1.
+    Unparseable verdicts (e.g. "Requested" truncation) exit 0 + ::warning::.
     """
 
-    def test_pull_request_empty_R_empty_S_exits_one(self):
-        """Empty R AND empty S: HARD FAIL — LLM didn't run at all. Gate exits
-        on the first missing verdict (review), so only that error is checked."""
+    def test_pull_request_empty_R_empty_S_defaults_to_approve(self):
+        """Empty R AND empty S: default both to Approve + ::warning::, exit 0."""
         cp = _run_gate(r="", s="", event="pull_request")
         self.assertEqual(
-            cp.returncode, 1,
-            f"empty R/S in pull_request mode MUST hard-fail (block silent-Approve).\nstdout={cp.stdout}\nstderr={cp.stderr}",
+            cp.returncode, 0,
+            f"empty R/S in pull_request mode MUST default to Approve + ::warning:: (was hard-fail).\nstdout={cp.stdout}\nstderr={cp.stderr}",
         )
-        self.assertIn("::error::review verdict missing", cp.stdout)
+        self.assertIn("::warning::review verdict missing", cp.stdout)
+        self.assertIn("::warning::security verdict missing", cp.stdout)
 
-    def test_pull_request_empty_R_nonempty_S_exits_one(self):
+    def test_pull_request_empty_R_nonempty_S_exits_zero(self):
         cp = _run_gate(r="", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
-        self.assertIn("::error::review verdict missing", cp.stdout)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("::warning::review verdict missing", cp.stdout)
 
-    def test_pull_request_nonempty_R_empty_S_exits_one(self):
+    def test_pull_request_nonempty_R_empty_S_exits_zero(self):
         cp = _run_gate(r="Approve", s="", event="pull_request")
-        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
-        self.assertIn("::error::security verdict missing", cp.stdout)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("::warning::security verdict missing", cp.stdout)
 
     def test_pull_request_both_approve_exits_zero(self):
         cp = _run_gate(r="Approve", s="Approve", event="pull_request")
@@ -142,16 +145,23 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("::error::Blocked", cp.stdout)
 
-    def test_pull_request_unparseable_verdict_blocks(self):
-        """The 'Requested' truncation case: now HARD-FAIL (was previously tolerated)."""
+    def test_pull_request_unparseable_verdict_exits_zero(self):
+        """Unparseable verdicts (e.g. 'Requested' truncation) are non-blocking.
+
+        The strict-gate contract previously hard-failed on unparseable verdicts,
+        which broke consumer repos whose agents emitted a non-standard verdict
+        string. Treat as non-blocking + ::warning::, mirroring the
+        workflow_dispatch tolerance in project's own .github/workflows/review.yml.
+        """
         cp = _run_gate(r="Requested", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         self.assertIn("Unparseable verdict", cp.stdout)
 
-    def test_workflow_dispatch_empty_R_blocks(self):
-        """Even workflow_dispatch: empty R HARD-FAILS (no silent Approve)."""
+    def test_workflow_dispatch_empty_R_exits_zero(self):
+        """workflow_dispatch mode: empty R defaults to Approve + ::warning::."""
         cp = _run_gate(r="", s="Approve", event="workflow_dispatch")
-        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("::warning::review verdict missing", cp.stdout)
 
     def test_extracted_bash_is_nonempty(self):
         """Sanity: the extractor actually returns bash, not a header."""
