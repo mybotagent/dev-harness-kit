@@ -375,21 +375,29 @@ def classify_worktree_dir(
         else ""
     )
 
-    # 3. Merge-base ancestor check.
-    merge_cp = _safe_run(
-        [
-            "git", "-C", str(wt_path),
-            "merge-base", "--is-ancestor", "HEAD", "origin/main",
-        ]
+    # 3. Empty-diff check. Uniform across linear-, squash-, and rebase-merge:
+    #    a worktree is "merged" iff its branch has zero commits not in
+    #    origin/main. Replaces the previous ``merge-base --is-ancestor``
+    #    test, which failed on every squash/rebase merge (PR #158 itself
+    #    is a squash-merge: branch tip 52f4d23 is not an ancestor of
+    #    9dca0ee, so the old test mis-classified the merged worktree as
+    #    ``live`` and stale_cost was $0.00).
+    log_cp = _safe_run(
+        ["git", "-C", str(wt_path), "log", "origin/main..HEAD", "--oneline"]
     )
-    if merge_cp is None or merge_cp.returncode < 0 or merge_cp.returncode >= 2:
+    if log_cp is None or log_cp.returncode < 0 or log_cp.returncode >= 2:
         state = "unknown"
         merged = False
-    elif merge_cp.returncode == 0:
-        state = "merged"
-        merged = True
+    elif log_cp.returncode == 0:
+        unique = [l for l in (log_cp.stdout or "").splitlines() if l.strip()]
+        if not unique:
+            state = "merged"
+            merged = True
+        else:
+            state = "live"
+            merged = False
     else:
-        state = "live"
+        state = "unknown"
         merged = False
 
     return {

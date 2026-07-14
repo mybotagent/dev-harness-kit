@@ -1086,13 +1086,15 @@ class TestWorktreeStaleness(unittest.TestCase):
     """classify_worktree_dir() + dashboard surface (State column, stale chips,
     stale_cost tile, stdout field, JSON keys)."""
 
-    def _git_runner(self, *, porcelain="", tip="abc1234", merged=False):
+    def _git_runner(self, *, porcelain="", tip="abc1234", merged=False, unique_commits=""):
         """Build a fake ``git_runner`` that responds based on the command argv.
 
-        Matches three subcommand shapes:
-          - ``git -C <root> worktree list --porcelain`` → ``porcelain``
-          - ``git -C <wt> rev-parse --short HEAD``   → ``tip``
-          - ``git -C <wt> merge-base --is-ancestor HEAD origin/main`` → returncode 0 if merged
+        Matches four subcommand shapes:
+          - ``git -C <root> worktree list --porcelain``              → ``porcelain``
+          - ``git -C <wt> rev-parse --short HEAD``                   → ``tip``
+          - ``git -C <wt> log origin/main..HEAD --oneline``          → ``unique_commits``
+            (empty stdout ⇒ ``state="merged"``; non-empty ⇒ ``state="live"``)
+          - ``git -C <wt> merge-base --is-ancestor …``               → ``merged`` flag (legacy)
         Anything else returns a CompletedProcess with rc=0 and empty output.
         """
         import subprocess
@@ -1103,6 +1105,8 @@ class TestWorktreeStaleness(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
             if "rev-parse --short HEAD" in cmd:
                 return subprocess.CompletedProcess(args, 0, stdout=tip, stderr="")
+            if "log origin/main..HEAD" in cmd:
+                return subprocess.CompletedProcess(args, 0, stdout=unique_commits, stderr="")
             if "merge-base --is-ancestor" in cmd:
                 return subprocess.CompletedProcess(args, 0 if merged else 1, stdout="", stderr="")
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
@@ -1119,7 +1123,11 @@ class TestWorktreeStaleness(unittest.TestCase):
                 f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
                 f"worktree {wt}\nHEAD def5678\nbranch refs/heads/feat/x\n\n"
             )
-            runner = self._git_runner(porcelain=porcelain, tip="def5678", merged=False)
+            runner = self._git_runner(
+                porcelain=porcelain,
+                tip="def5678",
+                unique_commits="def5678 feat: live branch with unique commit\n",
+            )
             meta = classify_worktree_dir(wt, root, git_runner=runner)
             self.assertEqual(meta["state"], "live")
             self.assertTrue(meta["worktree_listed"])
@@ -1136,10 +1144,51 @@ class TestWorktreeStaleness(unittest.TestCase):
                 f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
                 f"worktree {wt}\nHEAD abc1234\nbranch refs/heads/feature/and-adapt-skills\n\n"
             )
-            runner = self._git_runner(porcelain=porcelain, tip="abc1234", merged=True)
+            runner = self._git_runner(porcelain=porcelain, tip="abc1234", unique_commits="")
             meta = classify_worktree_dir(wt, root, git_runner=runner)
             self.assertEqual(meta["state"], "merged")
             self.assertTrue(meta["worktree_listed"])
+            self.assertTrue(meta["branch_merged_into_main"])
+
+    def test_classify_worktree_dir_squash_merge_branch_tip_not_ancestor(self):
+        """Squash-merged branch: branch tip (52f4d23) is NOT an ancestor of
+        origin/main (9dca0ee) under the old merge-base test → false ``live``.
+        Under the new empty-diff test, ``log origin/main..HEAD`` is empty
+        ⇒ correctly classified as ``merged``. Regression for #158 case.
+        """
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-squash-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "token-analyzer-stale"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 9dca0ee\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD 52f4d23\nbranch refs/heads/feat/token-analyzer-stale\n\n"
+            )
+            # empty log = squash-merged into main, no unique commits left on the branch
+            runner = self._git_runner(porcelain=porcelain, tip="52f4d23", unique_commits="")
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "merged")
+            self.assertTrue(meta["worktree_listed"])
+            self.assertTrue(meta["branch_merged_into_main"])
+            self.assertEqual(meta["branch_tip"], "52f4d23")
+
+    def test_classify_worktree_dir_rebase_merge_with_no_unique_commits(self):
+        """Rebase-merged branch: branch tip is a fast-forward of origin/main
+        after the rebase. ``log origin/main..HEAD`` is empty ⇒ ``merged``.
+        """
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-rebase-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "rebase-target"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD aaa1111\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD aaa1111\nbranch refs/heads/feat/rebase-target\n\n"
+            )
+            runner = self._git_runner(porcelain=porcelain, tip="aaa1111", unique_commits="")
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "merged")
             self.assertTrue(meta["branch_merged_into_main"])
 
     def test_classify_worktree_dir_gone_from_git_worktree_list(self):
@@ -1166,13 +1215,13 @@ class TestWorktreeStaleness(unittest.TestCase):
                 f"worktree {root}\nHEAD 1111111\nbranch refs/heads/main\n\n"
                 f"worktree {wt}\nHEAD abc1234\nbranch refs/heads/broken\n\n"
             )
-            # merge-base returns rc=128 (fatal: bad revision 'origin/main')
+            # log origin/main..HEAD returns rc=128 (fatal: bad revision 'origin/main')
             import subprocess
             porcelain_runner = self._git_runner(porcelain=porcelain, tip="abc1234", merged=False)
 
             def runner(args, **_k):
                 cmd = " ".join(str(a) for a in args)
-                if "merge-base --is-ancestor" in cmd:
+                if "log origin/main..HEAD" in cmd:
                     return subprocess.CompletedProcess(args, 128, stdout="", stderr="fatal: bad revision")
                 return porcelain_runner(args, **_k)
 

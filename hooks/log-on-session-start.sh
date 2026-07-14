@@ -44,11 +44,23 @@ case "$WORKTREE_DETECT" in
   *) exit 0 ;;
 esac
 
-# Guard: log-on.sh refuses to run if `tools/save_log.py` is missing.
-# No-op silently here — the user runs `/dev-kit:log setup` to create
-# it (a heavier operation not appropriate for every session start).
+# Bootstrap: if the worktree is missing `tools/save_log.py`, try to
+# copy it from the main checkout (the worktree's git-common-dir parent
+# holds it; same content because both checkouts share a single git
+# tree). Without this auto-copy, every fresh worktree stays invisible
+# to /dev-kit:token-analyzer until the user runs `/dev-kit:log setup`
+# by hand. If main also lacks the file, stay silent — the project has
+# no logging setup at all and we won't fabricate one.
 if [ ! -f "tools/save_log.py" ]; then
-  exit 0
+  MAIN_CKOUT="$(git rev-parse --git-common-dir 2>/dev/null)/.."
+  MAIN_CKOUT="$(cd "$MAIN_CKOUT" 2>/dev/null && pwd || true)"
+  if [ -n "$MAIN_CKOUT" ] && [ -f "$MAIN_CKOUT/tools/save_log.py" ]; then
+    mkdir -p tools
+    cp "$MAIN_CKOUT/tools/save_log.py" tools/save_log.py
+    chmod +x tools/save_log.py
+  else
+    exit 0
+  fi
 fi
 
 # Resolve plugin root. Prefer the runtime env var; fall back to a
