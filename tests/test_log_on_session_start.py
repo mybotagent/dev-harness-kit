@@ -207,7 +207,9 @@ class TestLogOnSessionStartMain(unittest.TestCase):
 
 
 class TestLogOnSessionStartMissingSaveLog(unittest.TestCase):
-    """Worktree without tools/save_log.py: silent refuse-and-skip."""
+    """Worktree without tools/save_log.py AND main also missing it:
+    silent refuse-and-skip (graceful fallback — the project has no
+    logging setup at all)."""
 
     def setUp(self):
         if not (HOOKS / "log-on-session-start.sh").exists():
@@ -215,13 +217,13 @@ class TestLogOnSessionStartMissingSaveLog(unittest.TestCase):
         if not shutil.which("jq"):
             self.skipTest("jq not installed; hook fails open")
 
-    def test_silent_when_save_log_missing(self):
-        _, wt_parent, wt_path = _init_main_with_worktree()
+    def test_silent_when_save_log_missing_everywhere(self):
+        main_tmp, wt_parent, wt_path = _init_main_with_worktree()
         try:
-            # Intentionally do NOT touch tools/save_log.py. log-on.sh
-            # would refuse this; the hook should silently no-op before
-            # ever invoking it.
+            # Neither main nor worktree has tools/save_log.py. Hook
+            # must not crash, must stay silent.
             self.assertFalse((wt_path / "tools" / "save_log.py").exists())
+            self.assertFalse((Path(main_tmp.name) / "tools" / "save_log.py").exists())
             r = _run_hook(
                 "log-on-session-start.sh",
                 _session_payload(cwd=str(wt_path)),
@@ -234,6 +236,66 @@ class TestLogOnSessionStartMissingSaveLog(unittest.TestCase):
             self.assertNotIn("loghooks:", r.stdout)
         finally:
             wt_parent.cleanup()
+            main_tmp.cleanup()
+
+
+class TestLogOnSessionStartAutoCopyFromMain(unittest.TestCase):
+    """Worktree without tools/save_log.py BUT main has it: hook must
+    copy from main and fire log-on. This is the auto-bootstrap path
+    that fixes the silent-no-op bug for fresh worktrees."""
+
+    def setUp(self):
+        if not (HOOKS / "log-on-session-start.sh").exists():
+            self.skipTest("log-on-session-start.sh not found")
+        if not shutil.which("jq"):
+            self.skipTest("jq not installed; hook fails open")
+
+    def test_copies_save_log_from_main_then_fires(self):
+        main_tmp, wt_parent, wt_path = _init_main_with_worktree()
+        template_td, template_dir = _make_loghooks_template_dir()
+        try:
+            # Main has save_log.py; worktree does NOT (typical fresh
+            # worktree state).
+            main_save_log = _touch_save_log(Path(main_tmp.name))
+            self.assertFalse((wt_path / "tools" / "save_log.py").exists())
+
+            r = _run_hook(
+                "log-on-session-start.sh",
+                _session_payload(cwd=str(wt_path)),
+                cwd=wt_path,
+                env={"LOGHOOKS_DIR": str(template_dir)},
+            )
+            self.assertEqual(
+                r.returncode, 0,
+                f"got rc={r.returncode}, stderr={r.stderr}, stdout={r.stdout!r}",
+            )
+            # Hook must have fired — additionalContext should carry
+            # the loghooks marker.
+            doc = json.loads(r.stdout)
+            ctx = doc.get("hookSpecificOutput", {}).get("additionalContext", "")
+            self.assertIn(
+                "loghooks:", ctx,
+                f"expected auto-bootstrap fire; got: {ctx!r}",
+            )
+            # The copy must have landed in the worktree's tools/ dir.
+            wt_save_log = wt_path / "tools" / "save_log.py"
+            self.assertTrue(
+                wt_save_log.exists(),
+                f"worktree tools/save_log.py not auto-copied: {wt_save_log}",
+            )
+            self.assertTrue(
+                os.access(wt_save_log, os.X_OK),
+                f"copied save_log.py is not executable: {wt_save_log}",
+            )
+            # Content must match the main checkout's.
+            self.assertEqual(
+                wt_save_log.read_bytes(),
+                main_save_log.read_bytes(),
+            )
+        finally:
+            template_td.cleanup()
+            wt_parent.cleanup()
+            main_tmp.cleanup()
 
 
 class TestLogOnSessionStartOutsideGit(unittest.TestCase):
