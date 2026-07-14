@@ -40,9 +40,20 @@ slash commands.
 3. Invoke `tools/token_efficiency_analyzer.py --repo <name> --days 30`
    and capture its `[ok] sessions=N  files_scanned=M  total_cost=$
    ...  estimated_savings=$...` summary line.
-4. Echo the summary + the output HTML path to the user. Do not try
-   to read the HTML back into the conversation -- it is a binary-ish
-   artifact best opened in a browser.
+4. Echo the summary + the **relative** output HTML path to the user.
+   **Path form contract**: resolve the absolute path actually written
+   (`Path(out).resolve()`) against the user's CWD and emit a `./`-prefixed
+   relative path. **Never** print an absolute path (`/Users/...`) -- the
+   user is on a different machine, in a different worktree, or behind a
+   symlinked mount. Example emitted lines:
+
+   ```
+   [ok] sessions=14  files_scanned=14  total_cost=$1.23  estimated_savings=$0.01  stale_cost=$0.00
+   Open: ./token-dashboard-dev-harness-kit-30d.html
+   ```
+
+   Do not try to read the HTML back into the conversation -- it is a
+   binary-ish artifact best opened in a browser.
 
 The skill is read-only (`disallowed-tools: Write Edit`); the Python
 CLI writes the file directly, mirroring how `/dev-kit:report` keeps
@@ -218,5 +229,5 @@ PR pipeline can block on it.
   outputs
 - `/dev-kit:log` -- captures the input this skill consumes
 
-Next: open the output HTML in a browser, or share the file path
-with the user.
+Next: open the output HTML in a browser, or share the relative file path
+(e.g. `./token-dashboard-<repo>-30d.html`, never absolute) with the user.
