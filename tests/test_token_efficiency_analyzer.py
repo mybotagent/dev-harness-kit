@@ -32,6 +32,7 @@ from token_efficiency_analyzer import (  # noqa: E402
     PRICING,
     WARNING_RECOMMENDATIONS,
     _KNOWN_SOURCES,
+    _aggregate_worktree_rows,
     _source_for,
     aggregate_session,
     cache_miss_reclaim,
@@ -1076,6 +1077,78 @@ class TestWorktreeAwareness(unittest.TestCase):
                 self.assertEqual(len(re.findall(r"<th[\s>]", sessions_thead)), 12)
             finally:
                 html_path.unlink(missing_ok=True)
+
+
+class TestWorktreePanelFullCoverage(unittest.TestCase):
+    """Cost-by-Worktree panel must list every disk worktree dir, not only
+    those that ran a session inside the current --days window.
+
+    Pre-fix bug: the panel iterated only ``worktree_costs`` (built from
+    scored sessions). A repo with 99 worktree dirs on disk but sessions
+    in only ``(main)`` rendered exactly one row, hiding every other
+    worktree's state (live / merged / gone). Users had no way to spot
+    stale worktrees that consumed past token spend.
+    """
+
+    def test_aggregate_rows_include_disk_only_worktrees(self):
+        # One session lives in (main); wt_meta carries two more dirs that
+        # did not run a session in the window. Both must appear in the JSON
+        # payload as zero-cost rows with state from wt_meta.
+        session = {
+            "worktree": "(main)",
+            "worktree_state": "main",
+            "model": "sonnet",
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "cache_write_tokens": 0,
+            "cache_read_tokens": 0,
+            "ephemeral_5m": 0,
+            "ephemeral_1h": 0,
+            "repo": "dev-harness-kit",
+            "branch": "main",
+            "tool_counts": {},
+        }
+        wt_meta = {
+            "(main)": {"state": "main", "branch_name": "main",
+                        "branch_tip": "abc123",
+                        "branch_merged_into_main": False},
+            "stale-feature-branch": {"state": "merged", "branch_name": "feat/stale",
+                                      "branch_tip": "def456",
+                                      "branch_merged_into_main": True},
+            "orphan-dir": {"state": "gone", "branch_name": "feat/orphan",
+                            "branch_tip": "789abc",
+                            "branch_merged_into_main": True},
+        }
+        rows = _aggregate_worktree_rows([session], wt_meta)
+        names = {r["name"] for r in rows}
+        self.assertEqual(names, {"(main)", "stale-feature-branch", "orphan-dir"})
+        # The two disk-only rows must carry zero cost and authoritative state
+        # straight from wt_meta (no session override possible).
+        orphan = next(r for r in rows if r["name"] == "orphan-dir")
+        self.assertEqual(orphan["state"], "gone")
+        self.assertEqual(orphan["sessions"], 0)
+        self.assertEqual(orphan["cost_usd"], 0.0)
+        self.assertEqual(orphan["branch_name"], "feat/orphan")
+        merged = next(r for r in rows if r["name"] == "stale-feature-branch")
+        self.assertEqual(merged["state"], "merged")
+        self.assertEqual(merged["sessions"], 0)
+        self.assertTrue(merged["branch_merged_into_main"])
+
+    def test_aggregate_rows_unaffected_when_wt_meta_empty(self):
+        # Existing behavior preserved: when --no-include-worktree-logs or a
+        # non-git worktree leaves wt_meta empty, the panel still shows
+        # session-derived rows without zero-cost backfill.
+        session = {
+            "worktree": "(main)",
+            "worktree_state": "main",
+            "model": "sonnet",
+            "input_tokens": 1000, "output_tokens": 200,
+            "cache_write_tokens": 0, "cache_read_tokens": 0,
+            "ephemeral_5m": 0, "ephemeral_1h": 0,
+            "repo": "r", "branch": "main", "tool_counts": {},
+        }
+        rows = _aggregate_worktree_rows([session], None)
+        self.assertEqual([r["name"] for r in rows], ["(main)"])
 
 
 class TestCacheTtlMixEmpty(unittest.TestCase):
