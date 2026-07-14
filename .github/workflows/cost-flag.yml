@@ -1,0 +1,191 @@
+name: cost-flag
+
+# PR-level cost gate. Aggregates session cost from commit trailers
+# (Cost-gate: $X.XX + Cost-gate-Session: <id>) across base..head and
+# applies the `cost-flag` label when total >= $20 (configurable via
+# DEV_KIT_PR_COST_FLAG_USD env, default 20).
+#
+# Trigger: pull_request (opened / synchronize / reopened).
+# State lives in $GITHUB_WORKSPACE/.dev-kit/.cost-gate/state.json after
+# the aggregator step runs; the label/comment job reads it.
+#
+# Idempotent: applies or removes the label based on current threshold;
+# updates a single PR comment identified by `<!-- dev-kit:cost-gate -->`.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: cost-flag-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  aggregate:
+    name: aggregate Cost-gate trailers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve base SHA
+        id: base
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Aggregate commit trailers
+        id: agg
+        env:
+          PR_FLAG_USD: ${{ vars.COST_FLAG_USD || '20' }}
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.base.outputs.base_sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            # First push of the branch: walk every commit.
+            RANGE="$HEAD"
+          else
+            RANGE="$BASE..$HEAD"
+          fi
+          # One commit body per line.
+          git log --format='%B' "$RANGE" > /tmp/bodies.txt
+          echo "bodies: $(wc -l < /tmp/bodies.txt) lines from $RANGE"
+          DECISION=$(DEV_KIT_PR_COST_FLAG_USD="$PR_FLAG_USD" \
+            python3 tools/cost_gate_status.py --aggregate-pr --bodies-file /tmp/bodies.txt)
+          echo "$DECISION" > /tmp/cost-flag-decision.json
+          echo "decision: $DECISION"
+
+      - name: Persist decision to .dev-kit/.cost-gate/state.json
+        run: |
+          mkdir -p .dev-kit/.cost-gate
+          # Wrap the aggregator output in the standard state schema.
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          sys_path = "/tmp/cost-flag-decision.json"
+          with open(sys_path) as f:
+              d = json.load(f)
+          state = {
+              "schema_version": 1,
+              "scope": "pr",
+              "scope_id": f"pr-{os.environ.get('PR_NUMBER', '0')}",
+              "repository": os.environ.get("REPO", ""),
+              "branch": os.environ.get("BRANCH", ""),
+              "thresholds_usd": {"session_warn": 5.0, "session_kill": 10.0, "pr_flag": float(d.get("threshold_usd", 20.0))},
+              "totals": {
+                  "input_tokens": 0, "output_tokens": 0,
+                  "cache_creation_input_tokens": 0,
+                  "cache_creation_5m_input_tokens": 0,
+                  "cache_creation_1h_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "estimated_tokens": 0,
+                  "cost_usd": float(d.get("total_usd", 0.0)),
+              },
+              "sessions": [{"session_id": s, "model": "", "started_at": "", "updated_at": "",
+                            "usage": {}, "cost_usd": 0.0, "provenance": "actual"} for s in d.get("sessions", [])],
+              "status": "warn" if d.get("apply_cost_flag") else "ok",
+              "warn_emitted": False,
+              "cursor": {"transcript_path": "", "byte_offset": 0, "seen_ids": []},
+              "warnings": ["missing telemetry — no Cost-gate trailers in commit range"] if d.get("missing_telemetry") else [],
+          }
+          out = Path(".dev-kit/.cost-gate/state.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+          print(f"wrote {out}")
+          PY
+
+      - name: Upload state artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-gate-state
+          path: .dev-kit/.cost-gate/state.json
+
+  label:
+    name: apply / remove cost-flag label
+    runs-on: ubuntu-latest
+    needs: aggregate
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Download state artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cost-gate-state
+          path: .dev-kit/.cost-gate
+
+      - name: Ensure cost-flag label exists
+        run: |
+          gh label create cost-flag --color "FBCA04" --description "Cumulative session cost >= $20 — review for cost optimization" --repo "${{ github.repository }}" 2>/dev/null || true
+
+      - name: Read decision
+        id: decision
+        run: |
+          python3 -c "
+          import json
+          s = json.load(open('.dev-kit/.cost-gate/state.json'))
+          apply = s['status'] == 'warn' and s['totals']['cost_usd'] >= s['thresholds_usd']['pr_flag']
+          missing = bool(s['warnings']) and 'missing telemetry' in s['warnings'][0]
+          print(f\"apply={apply}  missing_telemetry={missing}  total=\\${s['totals']['cost_usd']:.2f}\")
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f\"apply={'true' if apply else 'false'}\n\")
+              f.write(f\"missing={'true' if missing else 'false'}\n\")
+              f.write(f\"total={s['totals']['cost_usd']:.2f}\n\")
+          "
+
+      - name: Apply label when over threshold
+        if: steps.decision.outputs.apply == 'true'
+        run: |
+          gh issue edit "$PR_NUMBER" --repo "${{ github.repository }}" --add-label "cost-flag"
+
+      - name: Remove label when under threshold
+        if: steps.decision.outputs.apply != 'true'
+        run: |
+          # Only remove if the label is currently present.
+          if gh issue view "$PR_NUMBER" --repo "${{ github.repository }}" --json labels \
+             --jq '.labels[].name' | grep -q '^cost-flag$'; then
+            gh issue edit "$PR_NUMBER" --repo "${{ github.repository }}" --remove-label "cost-flag"
+          fi
+
+      - name: Upsert single PR comment
+        env:
+          TOTAL: ${{ steps.decision.outputs.total }}
+          MISSING: ${{ steps.decision.outputs.missing }}
+        run: |
+          if [ "$MISSING" = "true" ]; then
+            BODY="<!-- dev-kit:cost-gate -->
+### cost-gate: telemetry missing
+
+No \`Cost-gate:\` trailers found in the PR's commit range. Run
+\`/dev-kit:cost-gate --footer\` in each contributing session and append
+the two-line block to your commit messages so this gate can aggregate.
+"
+          else
+            BODY="<!-- dev-kit:cost-gate -->
+### cost-gate: cumulative session cost \$$TOTAL
+
+Threshold: \$20.00. When total >= \$20.00 the \`cost-flag\` label is applied.
+"
+          fi
+          # Upsert: edit existing comment if present, else create.
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.body // "") | startswith("<!-- dev-kit:cost-gate -->")) | .id' \
+            | head -1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${EXISTING}" \
+              -X PATCH -f body="$BODY" >/dev/null
+            echo "updated existing cost-gate comment id=$EXISTING"
+          else
+            gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body "$BODY"
+            echo "created new cost-gate comment"
+          fi
