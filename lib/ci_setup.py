@@ -32,11 +32,13 @@ from typing import List
 # Plugin root (resolved via __file__ so the module is location-independent).
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES_ROOT = _PLUGIN_ROOT / "templates" / "ci"
+_HOOKS_ROOT = _PLUGIN_ROOT / "hooks"  # single source of truth for hook files
 
 # Files installed into the target repo, relative to `target_dir`.
 # Order is preserved in reports (workflows first, then scripts, then
-# worktree-rule files). Adding a path here also requires adding the
-# corresponding template under templates/ci/.
+# worktree-rule files). Adding a path here also requires the corresponding
+# source under templates/ci/ OR hooks/ (worktree-rule files live in the
+# latter — see `_resolve_template_source`).
 EXPECTED_PATHS: tuple[str, ...] = (
     # CI workflows + scripts
     ".github/workflows/ci.yml",
@@ -176,15 +178,42 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
+def _resolve_template_source(rel_path: str) -> Path:
+    """Resolve an EXPECTED_PATHS entry to its on-disk source path.
+
+    Most templates live under `templates/ci/`. Worktree-rule files (hooks,
+    rules, tests) live at the plugin root (`hooks/`, `.claude/rules/`,
+    `tests/`) because that is where they are developed and tested by the
+    dev-harness-kit repo itself — keeping a parallel copy under
+    `templates/ci/` historically caused silent byte drift across consumer
+    installs. See issue #89.
+
+    Returns the absolute source path; raises FileNotFoundError if the
+    resolved source does not exist.
+    """
+    # Hook files: read from the plugin-root hooks/ tree (single source of
+    # truth, shared with the project's own .claude/settings.json).
+    if rel_path.startswith("hooks/"):
+        candidate = _HOOKS_ROOT / rel_path[len("hooks/"):]
+        if not candidate.exists():
+            raise FileNotFoundError(f"hook source missing: {candidate}")
+        return candidate
+    # Default: read from the templates/ci/ tree.
+    candidate = _TEMPLATES_ROOT / rel_path
+    if not candidate.exists():
+        raise FileNotFoundError(f"template source missing: {candidate}")
+    return candidate
+
+
 def _copy_template(rel_path: str, target_dir: Path, *, force: bool) -> str:
     """Copy one template file. Returns 'created' | 'overwritten' | 'skipped'.
 
     Raises FileNotFoundError if the template source is missing (treated as
     a programmer/install error, not a runtime idem-key collision).
+
+    Source resolution: see `_resolve_template_source` (issue #89 split).
     """
-    src = _TEMPLATES_ROOT / rel_path
-    if not src.exists():
-        raise FileNotFoundError(f"template source missing: {src}")
+    src = _resolve_template_source(rel_path)
     dst = target_dir / rel_path
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
