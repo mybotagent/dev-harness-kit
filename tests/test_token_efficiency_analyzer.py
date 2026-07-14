@@ -52,6 +52,7 @@ from token_efficiency_analyzer import (  # noqa: E402
     score_cache_utilization,
     score_session,
     worktree_from_cwd,
+    worktree_from_path,
 )
 
 FIXTURE_LOGS = PROJECT_ROOT / "fixtures" / "logs" / "claude-code"
@@ -775,6 +776,135 @@ class TestWorktreeAwareness(unittest.TestCase):
             worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.claude/settings.json"),
             "(main)",
         )
+
+    def test_worktree_from_path_main_checkout_logs(self):
+        # File under <repo>/logs/... — main checkout, not a worktree.
+        self.assertEqual(
+            worktree_from_path("/Users/sanghee/dev/dev-harness-kit/logs/claude-code/main/foo.jsonl"),
+            "(main)",
+        )
+        self.assertEqual(
+            worktree_from_path("/Users/sanghee/dev/dev-harness-kit/logs/claude-code/foo.jsonl"),
+            "(main)",
+        )
+
+    def test_worktree_from_path_sibling_worktree_logs(self):
+        # File under <repo>/.claude/worktrees/<name>/logs/... must resolve
+        # to <name>, even if cwd in the session transcript says main.
+        self.assertEqual(
+            worktree_from_path(
+                "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/cost-gate"
+                "/logs/claude-code/feat-cost-gate/foo.jsonl"
+            ),
+            "cost-gate",
+        )
+        self.assertEqual(
+            worktree_from_path(
+                "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/fix-x"
+                "/logs/claude-code/main/x.jsonl"
+            ),
+            "fix-x",
+        )
+
+    def test_worktree_from_path_empty_or_unrelated_returns_main(self):
+        self.assertEqual(worktree_from_path(""), "(main)")
+        self.assertEqual(worktree_from_path(None), "(main)")
+        self.assertEqual(worktree_from_path("/tmp/random/foo.jsonl"), "(main)")
+        # A '.claude' segment not followed by 'worktrees/<name>' stays main.
+        self.assertEqual(
+            worktree_from_path("/Users/sanghee/dev/dev-harness-kit/.claude/settings.json"),
+            "(main)",
+        )
+
+    def test_aggregate_session_resolves_worktree_from_file_path(self):
+        # Regression: when cwd points at the main checkout but the JSONL
+        # file physically lives under .claude/worktrees/<name>/logs/, the
+        # worktree bucket must come from the file path (authoritative),
+        # not the cwd field (which can be the parent checkout).
+        with tempfile.TemporaryDirectory(prefix="wt-path-") as td:
+            td_path = Path(td)
+            wt_logs = td_path / ".claude" / "worktrees" / "cost-gate" / "logs" / "claude-code" / "feat-cost-gate"
+            wt_logs.mkdir(parents=True)
+            rec = {
+                "type": "assistant",
+                "sessionId": "s-wt-path",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",  # wrong: main checkout
+                "gitBranch": "feat/cost-gate",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {"role": "assistant", "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "ok"}],
+                            "usage": {"input_tokens": 100, "output_tokens": 10,
+                                      "cache_read_input_tokens": 50,
+                                      "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                         "ephemeral_1h_input_tokens": 0}}},
+            }
+            p = wt_logs / "s-wt.jsonl"
+            p.write_text(json.dumps(rec) + "\n")
+            s = aggregate_session(p)
+            self.assertEqual(s["worktree"], "cost-gate")
+            self.assertEqual(s["branch"], "feat/cost-gate")
+
+    def test_aggregate_session_main_path_uses_cwd_fallback(self):
+        # When the file is under the main logs/ dir, fall back to the
+        # cwd-derived bucket so the existing main-checkout path keeps working.
+        with tempfile.TemporaryDirectory(prefix="wt-path-main-") as td:
+            d = Path(td) / "logs" / "claude-code" / "main"
+            d.mkdir(parents=True)
+            rec = {
+                "type": "assistant",
+                "sessionId": "s-main-path",
+                "cwd": "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/fix-x",
+                "gitBranch": "fix/x",
+                "timestamp": "2026-07-09T10:00:00.000Z",
+                "message": {"role": "assistant", "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "ok"}],
+                            "usage": {"input_tokens": 100, "output_tokens": 10,
+                                      "cache_read_input_tokens": 50}},
+            }
+            p = d / "s-main.jsonl"
+            p.write_text(json.dumps(rec) + "\n")
+            s = aggregate_session(p)
+            self.assertEqual(s["worktree"], "fix-x")
+
+    def test_discover_logs_walks_nested_worktree_dirs(self):
+        # Regression: a nested worktree like
+        # <root>/.claude/worktrees/A/.claude/worktrees/B/logs/... must be
+        # reachable through discover_logs(repo_root=root). Previously only
+        # the first level was walked, silently dropping nested captures.
+        with tempfile.TemporaryDirectory(prefix="wt-nested-") as td:
+            td_path = Path(td)
+            a = td_path / ".claude" / "worktrees" / "A"
+            b = a / ".claude" / "worktrees" / "B" / "logs" / "claude-code" / "feat-b"
+            b.mkdir(parents=True)
+            top_level = td_path / "logs" / "claude-code" / "main"
+            top_level.mkdir(parents=True)
+            nested_jsonl = b / "nested.jsonl"
+            top_jsonl = top_level / "top.jsonl"
+            nested_jsonl.write_text("{}\n")
+            top_jsonl.write_text("{}\n")
+            found = discover_logs(td_path / "logs", repo_root=td_path)
+            found_str = {str(p) for p in found}
+            self.assertIn(str(nested_jsonl), found_str)
+            self.assertIn(str(top_jsonl), found_str)
+
+    def test_discover_logs_handles_nested_symlink_cycle(self):
+        # A nested .claude/worktrees/ that loops back to itself via symlink
+        # must not infinite-recurse; the _seen set caps the walk.
+        with tempfile.TemporaryDirectory(prefix="wt-cycle-") as td:
+            td_path = Path(td)
+            cycle = td_path / ".claude" / "worktrees" / "loop"
+            cycle.mkdir(parents=True)
+            (cycle / "logs" / "claude-code" / "main").mkdir(parents=True)
+            (cycle / "logs" / "claude-code" / "main" / "x.jsonl").write_text("{}\n")
+            # Create a symlink inside that points back at the worktrees dir.
+            try:
+                (cycle / "loop_link").symlink_to(td_path / ".claude" / "worktrees",
+                                                 target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this fs")
+            # Must terminate (no infinite recursion).
+            found = discover_logs(td_path / "logs", repo_root=td_path)
+            self.assertTrue(any(p.name == "x.jsonl" for p in found))
 
     def test_aggregate_session_extracts_worktree_from_cwd(self):
         with tempfile.TemporaryDirectory(prefix="wt-agg-") as td:

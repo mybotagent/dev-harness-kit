@@ -224,7 +224,28 @@ def discover_logs(logs_dir: Path, *, repo_root: Path | None = None) -> list[Path
         wt_root = repo_root / ".claude" / "worktrees"
         if wt_root.exists():
             for sub_wt in sorted(wt_root.iterdir()):
-                out.extend(_discover_one_logs_dir(sub_wt / "logs"))
+                out.extend(_walk_all_worktree_logs(sub_wt))
+    return out
+
+
+def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
+    """Walk <wt_root>/logs/ and recurse into any nested .claude/worktrees/.
+
+    Sessions captured from inside a worktree-created-from-a-worktree (nested
+    layout like .claude/worktrees/A/.claude/worktrees/B/) are still real
+    sessions and must reach the dashboard. Symlink cycles are bounded by a
+    _seen set of resolved paths; the walk stops there instead of looping.
+    """
+    seen = _seen if _seen is not None else set()
+    real = wt_root.resolve()
+    if real in seen or not wt_root.exists():
+        return []
+    seen.add(real)
+    out: list = _discover_one_logs_dir(wt_root / "logs")
+    nested = wt_root / ".claude" / "worktrees"
+    if nested.exists():
+        for sub in sorted(nested.iterdir()):
+            out.extend(_walk_all_worktree_logs(sub, seen))
     return out
 
 
@@ -288,6 +309,27 @@ def worktree_from_cwd(cwd: str | None) -> str:
     if not cwd:
         return "(unknown)"
     parts = Path(cwd).parts
+    for i, part in enumerate(parts):
+        if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
+            return parts[i + 2]
+    return "(main)"
+
+
+def worktree_from_path(path: Path | str | None) -> str:
+    """Derive the git worktree dir name from a JSONL file path.
+
+    Returns the basename of the worktree when ``path`` sits under
+    ``<repo>/.claude/worktrees/<name>/logs/``; otherwise ``(main)``.
+
+    Path-based resolution is authoritative because the ``cwd`` recorded
+    in a session transcript often points at the parent checkout, not the
+    worktree the session actually ran in. When the JSONL is captured from
+    inside a worktree dir but ``cwd`` says main, only the file path knows
+    the truth — the session belongs to that worktree's bucket.
+    """
+    if not path:
+        return "(main)"
+    parts = Path(path).parts
     for i, part in enumerate(parts):
         if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
             return parts[i + 2]
@@ -615,9 +657,13 @@ def aggregate_session(path: Path) -> dict | None:
         parent = path.parent.name
         branch = "main" if parent in _KNOWN_SOURCES else (parent or "main")
 
-    # Worktree: most-common value across the session (mirrors branch logic —
-    # users can technically switch worktrees mid-session, though rare).
-    worktree = worktree_counts.most_common(1)[0][0] if worktree_counts else "(unknown)"
+    # Worktree: prefer the file path (authoritative — cwd can misattribute
+    # when the JSONL was captured from a parent checkout but lives under a
+    # sibling worktree's logs dir). Fall back to the cwd-derived Counter so
+    # legacy flat-layout files (no worktree segment in the path) keep working.
+    worktree = worktree_from_path(path)
+    if worktree == "(main)":
+        worktree = worktree_counts.most_common(1)[0][0] if worktree_counts else "(unknown)"
 
     return {
         "session_id": session_id,
