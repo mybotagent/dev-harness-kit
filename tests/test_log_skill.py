@@ -418,6 +418,64 @@ class TestOnOffRoundTrip(unittest.TestCase):
                       f"setup --force should overwrite even when sha matches:\n{r.stdout}")
 
 
+class TestSetupAllWorktrees(unittest.TestCase):
+    """`--all-worktrees` bulk-installs setup + hooks into every
+    `<target>/.claude/worktrees/*/` that doesn't already have them.
+    Idempotent and skips worktrees that already have loghooks."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="log-test-all-wt-"))
+        self.src = _make_fake_loghooks(self.tmp)
+        self.tgt = _make_fake_target(self.tmp)
+        # Two fresh worktrees, no settings.json, no logs/.
+        (self.tgt / ".claude" / "worktrees" / "wt-a").mkdir(parents=True)
+        (self.tgt / ".claude" / "worktrees" / "wt-b").mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_all_worktrees_installs_into_each(self):
+        r = _run("log-setup.sh", "--target", str(self.tgt), "--all-worktrees",
+                 env_extra={"LOGHOOKS_DIR": str(self.src)})
+        self.assertEqual(r.returncode, 0,
+                         f"setup --all-worktrees failed:\nstdout={r.stdout}\nstderr={r.stderr}")
+        for wt_name in ("wt-a", "wt-b"):
+            wt = self.tgt / ".claude" / "worktrees" / wt_name
+            self.assertTrue((wt / "tools" / "save_log.py").exists(),
+                            f"save_log.py missing in {wt}")
+            self.assertTrue((wt / "logs" / "claude-code").is_dir(),
+                            f"logs/claude-code/ missing in {wt}")
+            settings = wt / ".claude" / "settings.json"
+            self.assertTrue(settings.exists(),
+                            f"settings.json missing in {wt}")
+            data = json.loads(settings.read_text())
+            managed = [h for ev in (data.get("hooks") or {}).values()
+                       for h in ev if h.get("_loghooks_managed")]
+            self.assertGreater(len(managed), 0,
+                               f"no managed hooks installed in {wt}")
+
+    def test_all_worktrees_idempotent_on_second_run(self):
+        first = _run("log-setup.sh", "--target", str(self.tgt), "--all-worktrees",
+                     env_extra={"LOGHOOKS_DIR": str(self.src)})
+        self.assertEqual(first.returncode, 0, f"first run failed: {first.stderr}")
+        second = _run("log-setup.sh", "--target", str(self.tgt), "--all-worktrees",
+                      env_extra={"LOGHOOKS_DIR": str(self.src)})
+        self.assertEqual(second.returncode, 0,
+                         f"second run (idempotency) failed:\nstdout={second.stdout}\nstderr={second.stderr}")
+        # Should still have hooks after second run, and should NOT have duplicated them.
+        for wt_name in ("wt-a", "wt-b"):
+            data = json.loads(
+                (self.tgt / ".claude" / "worktrees" / wt_name / ".claude" / "settings.json").read_text()
+            )
+            managed_count = sum(
+                1 for ev in (data.get("hooks") or {}).values()
+                for h in ev if h.get("_loghooks_managed")
+            )
+            # Expect exactly 2 events (SessionEnd, Stop) — same as a fresh install.
+            self.assertEqual(managed_count, 2,
+                             f"{wt_name}: expected 2 managed entries, got {managed_count}")
+
+
 class TestStatus(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="log-test-"))

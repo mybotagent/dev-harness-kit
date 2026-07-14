@@ -35,6 +35,37 @@ def _sanitize_branch(name: str) -> str:
     return cleaned[:120]
 
 
+def find_main_repo_root(cwd: str) -> str | None:
+    """Return the canonical main-checkout path for cwd, or None.
+
+    A session started inside a worktree has its .git lives at
+    <main>/.git/worktrees/<name>/ while the **shared** .git stays
+    in the main checkout. git rev-parse --git-common-dir returns that
+    shared path; its parent is the main repo root where we want every
+    session transcript to land — regardless of which checkout the user is
+    running in. Falls back to None when cwd is not inside a git
+    repo or git itself is unavailable; the caller then writes to cwd
+    (preserving the legacy behavior of test fixtures and bare repos).
+
+    Never raises — a logging helper must not break the participant's session.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        if out.returncode != 0:
+            return None
+        common = out.stdout.strip()
+        if not common:
+            return None
+        common_path = common if os.path.isabs(common) else os.path.normpath(os.path.join(cwd, common))
+        parent = os.path.dirname(common_path)
+        return parent if parent and os.path.isdir(parent) else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def detect_branch(cwd: str) -> str:
     """Return a filesystem-safe branch label for ``cwd``, or ``"no-git"``.
 
@@ -186,7 +217,11 @@ def main() -> int:
     if safe_session in ("", ".", ".."):
         safe_session = "session"
     branch = detect_branch(cwd)
-    dest_dir = os.path.join(cwd, "logs", args.tool, branch)
+    # Capture to the main checkout's logs/ so sessions from any worktree
+    # converge on one location. Falls back to cwd when the session is not
+    # inside a git repo (test fixtures, /tmp scratch dirs).
+    capture_root = find_main_repo_root(cwd) or cwd
+    dest_dir = os.path.join(capture_root, "logs", args.tool, branch)
     dest = os.path.join(dest_dir, f"{safe_session}.jsonl")
 
     # Save only conversation lines; fall back to a verbatim copy on any doubt.

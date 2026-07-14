@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--target DIR] [--force]
+Usage: $(basename "$0") [--target DIR] [--force] [--all-worktrees]
 
 Creates the target project's logging scaffold:
   <target>/tools/save_log.py     — copied from \$LOGHOOKS_DIR (or ~/dev/loghooks)
@@ -26,6 +26,10 @@ Creates the target project's logging scaffold:
 
 Idempotent: re-running refreshes save_log.py to the current source version.
 --force overwrites even if the local copy SHA matches.
+--all-worktrees also runs setup + hook install for every existing
+                     sibling worktree under <target>/.claude/worktrees/*/.
+                     Use this once after --target on the main checkout to
+                     close the per-worktree capture gap.
 
 Env:
   LOGHOOKS_DIR   source repo (default: \$HOME/dev/loghooks)
@@ -34,10 +38,12 @@ EOF
 }
 
 FORCE=0
+ALL_WORKTREES=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target) TARGET_DIR="$2"; shift 2 ;;
         --force)  FORCE=1; shift ;;
+        --all-worktrees) ALL_WORKTREES=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "ERROR: unknown arg: $1" >&2; usage; exit 1 ;;
     esac
@@ -120,3 +126,33 @@ echo "  scripts: tools/save_log.py"
 echo "  logs:    logs/{claude-code,codex}/"
 echo
 echo "Next: run /dev-kit:log on   to enable the hooks."
+
+if [[ "$ALL_WORKTREES" -eq 1 ]]; then
+    WT_ROOT="$TARGET_DIR/.claude/worktrees"
+    if [[ ! -d "$WT_ROOT" ]]; then
+        echo
+        echo "--all-worktrees: no $WT_ROOT; nothing to backfill."
+        exit 0
+    fi
+    ok=0
+    failed=0
+    for wt in "$WT_ROOT"/*/; do
+        [[ -d "$wt" ]] || continue
+        name="$(basename "$wt")"
+        echo
+        echo "==> backfilling worktree: $name"
+        if ! TARGET_DIR="$wt" FORCE="$FORCE" "$SCRIPT_DIR/log-setup.sh" --target "$wt" >/dev/null; then
+            echo "WARN: setup failed for $wt" >&2
+            failed=$((failed + 1))
+            continue
+        fi
+        if TARGET_DIR="$wt" "$SCRIPT_DIR/log-on.sh" --target "$wt" --claude-only; then
+            ok=$((ok + 1))
+        else
+            echo "WARN: hook install failed for $wt" >&2
+            failed=$((failed + 1))
+        fi
+    done
+    echo
+    echo "--all-worktrees summary: ok=$ok failed=$failed (target: $WT_ROOT)"
+fi

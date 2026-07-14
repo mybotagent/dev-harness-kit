@@ -16,6 +16,7 @@ under the correct branch bucket. Covers:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -153,6 +154,56 @@ class TestSaveLogBranch(unittest.TestCase):
             (repo / "logs" / "claude-code" / "no-git" / "sid.jsonl").exists(),
             "expected no-git fallback when git is not on PATH",
         )
+
+    # ---- worktree session capture lands in MAIN checkout logs ------------
+
+    def test_worktree_session_writes_to_main_repo_logs(self):
+        # Regression: a session started inside a worktree must capture to
+        # the main checkout's logs/, not the worktree's own logs/. Otherwise
+        # the analyzer has to walk 90+ worktree dirs to find any session.
+        main = self.tmpdir / "main"
+        main.mkdir()
+        _git(main, "init", "-q")
+        (main / "f").write_text("x")
+        _git(main, "add", ".")
+        _git(main, "-c", "user.email=t@t", "-c", "user.name=t",
+                  "commit", "-q", "-m", "init")
+        wt = main / "wt"
+        _git(main, "worktree", "add", "-q", "-b", "fix-x", str(wt))
+        rc = _run_save_log(wt, transcript=self.transcript)
+        self.assertEqual(rc.returncode, 0, msg=rc.stderr)
+        # The worktree itself should NOT have grown a logs/ dir.
+        self.assertFalse(
+            (wt / "logs").exists(),
+            f"worktree captured to its own logs/ instead of main: {wt / 'logs'}",
+        )
+        # Main checkout got the capture.
+        self.assertTrue(
+            (main / "logs" / "claude-code" / "fix-x" / "sid.jsonl").exists(),
+            f"main repo logs/ missing the captured transcript",
+        )
+
+    def test_find_main_repo_root_walks_to_shared_git(self):
+        from save_log import find_main_repo_root
+        main = self.tmpdir / "r2"
+        main.mkdir()
+        _git(main, "init", "-q")
+        self.assertEqual(
+            os.path.realpath(find_main_repo_root(str(main)) or ""),
+            os.path.realpath(str(main)),
+        )
+        wt = main / "wt2"
+        _git(main, "worktree", "add", "-q", "-b", "feat-y", str(wt))
+        self.assertEqual(
+            os.path.realpath(find_main_repo_root(str(wt)) or ""),
+            os.path.realpath(str(main)),
+        )
+
+    def test_find_main_repo_root_returns_none_for_non_git(self):
+        from save_log import find_main_repo_root
+        nonrepo = self.tmpdir / "n2"
+        nonrepo.mkdir()
+        self.assertIsNone(find_main_repo_root(str(nonrepo)))
 
     # ---- detect_branch unit-level (no subprocess) -------------------------
 
