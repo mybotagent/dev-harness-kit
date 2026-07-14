@@ -133,12 +133,31 @@ jobs:
           print(f'all {len(skills)} skills flat + name==dir OK')
           "
 
-      - name: Version freshness (PR head > PR base, strict)
+      - name: Version freshness (PR head > PR base, strict; skip if no version-relevant files changed)
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+
+          # Skip exemption: a PR that does NOT touch .claude-plugin/plugin.json
+          # or any skills/* SKILL.md has nothing to bump — the version is
+          # invariant under such changes. Without this exemption, every
+          # non-version-relevant refactor (e.g. CI / hook / test changes)
+          # would falsely trip the strict check. Pre-push will still bump
+          # if it sees a plugin/skill change in the diff at push time; the
+          # exemption only fires for diffs that don't touch either path.
+          PR_FILES="$(git diff "$BASE_SHA"...HEAD --name-only)"
+          NEEDS_BUMP_TOUCHED=false
+          if echo "$PR_FILES" | grep -qE '^\.claude-plugin/plugin\.json$|^skills/.*SKILL\.md$'; then
+            NEEDS_BUMP_TOUCHED=true
+          fi
+          if [ "$NEEDS_BUMP_TOUCHED" = "false" ]; then
+            echo "version-freshness SKIPPED: PR doesn't touch plugin.json or skills/* SKILL.md"
+            echo "  changed files: $(echo "$PR_FILES" | tr '\n' ' ')"
+            exit 0
+          fi
+
           BASE_VERSION="$(git show "$BASE_SHA:.claude-plugin/plugin.json" | jq -r .version)"
           HEAD_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
 
