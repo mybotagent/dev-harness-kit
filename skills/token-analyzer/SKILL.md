@@ -88,6 +88,18 @@ Sections (rendered by `tools/token_efficiency_analyzer.py:render_dashboard`):
   the window -- sourced from the `gitBranch` wire field with a path
   fallback for legacy flat files. Use `--branch <name>` to focus the rest
   of the report on a single branch.
+- **Cost by Worktree (with State column)**: same shape as the Branch panel
+  plus a `State` column (`live` / `merged` / `gone` / `main`) for every
+  worktree dir on disk under `.claude/worktrees/*/`. `live` = still in
+  `git worktree list` and has unique commits vs `origin/main`. `merged`
+  = still listed but the branch tip is an ancestor of `origin/main` (safe
+  to delete). `gone` = dir exists on disk but is no longer in
+  `git worktree list` (worktree was `git worktree remove`'d, dir survived).
+  An amber `stale` chip prefixes any Sessions row whose worktree is
+  `merged` or `gone`. Use `--worktree <name>` to focus on a single one.
+- **Overview, 5th tile (Stale Cost)**: dollar value of every `merged` /
+  `gone` session, with the percentage of total in the delta line. Lets
+  you gauge the spend left behind by stale worktrees at a glance.
 - **Cost by Model & Cache TTL Mix**: per-model spend table + four-bar
   Cache TTL Mix showing `cache_read` / `write 5m` / `write 1h` / `pure miss`
   token share with a TTL pricing caveat.
@@ -168,13 +180,16 @@ input_price` (heuristic, not a billing-API call).
 
 **Quote the summary line in your reply, not a paraphrase.** The CLI
 prints `[ok] sessions=N files_scanned=M total_cost=$X.XX
-estimated_savings=$Y.YY` on success; copy that line verbatim into
-the conversation so the user can audit the numbers without opening
-the HTML. Do not claim "done" or "passed" without that line.
+estimated_savings=$Y.YY stale_cost=$Z.ZZ` on success; copy that line
+verbatim into the conversation so the user can audit the numbers
+without opening the HTML. Do not claim "done" or "passed" without that
+line.
 
 **Stdout vs stderr contract.** The `[ok]` summary line goes to **stdout**.
-Cost Gate WARN lines (`WARN: session ... input=N > N gate ...`) and
-unknown-model WARN lines go to **stderr**. A consumer that parses stdout
+Cost Gate WARN lines (`WARN: session ... input=N > N gate ...`),
+unknown-model WARN lines, and worktree-classification WARN lines
+(`WARN: worktree '<name>' classification failed ...`) go to **stderr**.
+A consumer that parses stdout
 must never see a WARN line in it. Exit code 3 means `cost_gate=bad` under
 `--json` only; HTML mode always exits 0 unless the log dir is empty (2).
 

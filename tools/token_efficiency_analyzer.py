@@ -21,6 +21,7 @@ import argparse
 import html
 import json
 import os
+import subprocess
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -291,6 +292,207 @@ def worktree_from_cwd(cwd: str | None) -> str:
         if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
             return parts[i + 2]
     return "(main)"
+
+
+def classify_worktree_dir(
+    wt_path: Path,
+    repo_root: Path,
+    *,
+    git_runner=subprocess.run,
+    timeout: int = 5,
+) -> dict:
+    """Classify one worktree dir as live / merged / gone / unknown.
+
+    Three git calls (all wrapped in try/except — never raises):
+
+    1. ``git -C <repo_root> worktree list --porcelain`` — determines whether
+       the dir is still registered (``is_listed=True``). Listed path is
+       resolved before comparison so symlinked wts still match.
+    2. ``git -C <wt_path> rev-parse --short HEAD`` — captures the branch tip.
+    3. ``git -C <wt_path> merge-base --is-ancestor HEAD origin/main`` —
+       ``returncode`` mapping:
+         - 0 → ``state="merged"`` (branch tip is an ancestor of ``origin/main``)
+         - 1 → ``state="live"``   (branch tip has unique commits vs ``origin/main``)
+         - any other (>= 2, timeout, OSError) → ``state="unknown"``
+
+    Returned dict keys:
+
+    - ``state``               ∈ ``{"live", "merged", "gone", "unknown"}``
+    - ``worktree_listed``     bool — was the dir in ``git worktree list``
+    - ``branch_merged_into_main`` bool — only meaningful when ``state=="merged"``
+    - ``branch_tip``          str — short SHA, empty on failure
+    - ``branch_name``         str — branch refs/heads/<name>, or empty
+    """
+    def _safe_run(argv: list[str]) -> subprocess.CompletedProcess | None:
+        try:
+            return git_runner(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except Exception:
+            return None
+
+    # 1. Is the dir in `git worktree list`?
+    porcelain_cp = _safe_run(
+        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"]
+    )
+    is_listed = False
+    listed_branch_ref = ""
+    porcelain = porcelain_cp.stdout if porcelain_cp and porcelain_cp.stdout else ""
+    cur_path_str: str | None = None
+    wt_resolved = wt_path.resolve()
+    for line in porcelain.splitlines():
+        if line.startswith("worktree "):
+            cur_path_str = line.split(" ", 1)[1].strip()
+        elif line.startswith("branch ") and cur_path_str:
+            try:
+                if Path(cur_path_str).resolve() == wt_resolved:
+                    is_listed = True
+                    listed_branch_ref = line.split(" ", 1)[1].strip()
+            except OSError:
+                pass
+        elif not line.strip():
+            cur_path_str = None
+
+    if not is_listed:
+        return {
+            "state": "gone",
+            "worktree_listed": False,
+            "branch_merged_into_main": False,
+            "branch_tip": "",
+            "branch_name": "",
+        }
+
+    # 2. Branch tip (best-effort).
+    tip_cp = _safe_run(
+        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"]
+    )
+    tip = (
+        (tip_cp.stdout or "").strip()
+        if tip_cp and tip_cp.returncode == 0
+        else ""
+    )
+
+    # 3. Merge-base ancestor check.
+    merge_cp = _safe_run(
+        [
+            "git", "-C", str(wt_path),
+            "merge-base", "--is-ancestor", "HEAD", "origin/main",
+        ]
+    )
+    if merge_cp is None or merge_cp.returncode < 0 or merge_cp.returncode >= 2:
+        state = "unknown"
+        merged = False
+    elif merge_cp.returncode == 0:
+        state = "merged"
+        merged = True
+    else:
+        state = "live"
+        merged = False
+
+    return {
+        "state": state,
+        "worktree_listed": True,
+        "branch_merged_into_main": merged,
+        "branch_tip": tip,
+        "branch_name": listed_branch_ref.removeprefix("refs/heads/"),
+    }
+
+
+def classify_all_worktrees(
+    repo_root: Path,
+    *,
+    git_runner=subprocess.run,
+    timeout: int = 5,
+) -> dict[str, dict]:
+    """Classify every ``<repo_root>/.claude/worktrees/*`` dir.
+
+    Always includes the sentinel key ``"(main)"`` mapped to
+    ``{"state": "main", ...}`` so consumers can dereference it without a
+    separate branch.
+
+    Returns ``{dirname: meta}`` where ``dirname`` matches ``worktree_from_cwd``
+    output (basename of the worktree dir, or ``"(main)"``).
+    Silently skips any worktree dir whose classification comes back ``unknown``
+    via the exception path (it is still included in the result with
+    ``state="unknown"``).
+    """
+    meta: dict[str, dict] = {
+        "(main)": {
+            "state": "main",
+            "worktree_listed": True,
+            "branch_merged_into_main": False,
+            "branch_tip": "",
+            "branch_name": "",
+        },
+    }
+    wt_root = Path(repo_root) / ".claude" / "worktrees"
+    if not wt_root.exists() or not wt_root.is_dir():
+        return meta
+    for child in sorted(wt_root.iterdir()):
+        if not child.is_dir():
+            continue
+        meta[child.name] = classify_worktree_dir(
+            child, Path(repo_root), git_runner=git_runner, timeout=timeout
+        )
+    return meta
+
+
+def _aggregate_worktree_rows(
+    selected: list[dict],
+    wt_meta: dict[str, dict] | None,
+) -> list[dict]:
+    """Build the JSON ``worktrees`` payload from selected sessions.
+
+    Authoritative source is each session's ``worktree_state`` stamp (set in
+    ``main()`` after ``classify_all_worktrees``). ``wt_meta`` is consulted as
+    a fallback for branch-tip / branch-name metadata. Works correctly even
+    when ``wt_meta`` is empty (e.g. ``--no-include-worktree-logs`` mode):
+    ``(main)`` and any per-session worktree labels still appear.
+    """
+    wt_meta = wt_meta or {}
+    by_label: dict[str, dict] = {}
+    for s in selected:
+        wt = s.get("worktree") or "(unknown)"
+        meta = by_label.setdefault(wt, {
+            "name": wt,
+            "state": s.get("worktree_state", "unknown"),
+            "sessions": 0,
+            "cost_usd": 0.0,
+            "branch_merged_into_main": False,
+            "branch_tip": "",
+            "branch_name": "",
+        })
+        meta["sessions"] += 1
+        meta["cost_usd"] += cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+    # Backfill cross-check info from wt_meta (only updates fields the
+    # session-derived state didn't authoritatively set).
+    for label, meta in by_label.items():
+        wt = wt_meta.get(label)
+        if wt:
+            meta["branch_merged_into_main"] = bool(
+                wt.get("branch_merged_into_main", meta["branch_merged_into_main"])
+            )
+            if not meta["branch_tip"]:
+                meta["branch_tip"] = wt.get("branch_tip", "")
+            if not meta["branch_name"]:
+                meta["branch_name"] = wt.get("branch_name", "")
+    # Sort: (main) first, then by cost desc.
+    rows = sorted(
+        by_label.values(),
+        key=lambda r: (r["name"] != "(main)", -r["cost_usd"]),
+    )
+    return [{**r, "cost_usd": round(r["cost_usd"], 4)} for r in rows]
 
 
 def aggregate_session(path: Path) -> dict | None:
@@ -909,9 +1111,14 @@ h1 { margin: 0 0 8px 0; font-size: 28px; letter-spacing: -0.02em; }
 .subtitle { color: var(--muted); margin-bottom: 28px; }
 .grid { display: grid; gap: 16px; }
 .cols-4 { grid-template-columns: repeat(4, 1fr); }
+.cols-5 { grid-template-columns: repeat(5, 1fr); }
 .cols-2 { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1100px) {
+  .cols-5 { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 900px) {
   .cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .cols-5 { grid-template-columns: repeat(2, 1fr); }
   .cols-2 { grid-template-columns: 1fr; }
 }
 .panel {
@@ -932,6 +1139,13 @@ tr:last-child td { border-bottom: none; }
 .pill-good { background: rgba(63,185,80,0.15); color: var(--good); }
 .pill-warn { background: rgba(210,153,34,0.15); color: var(--warn); }
 .pill-bad  { background: rgba(248,81,73,0.15); color: var(--bad); }
+.pill-stale {
+  background: rgba(210,153,34,0.08);
+  color: var(--warn);
+  outline: 1px solid rgba(210,153,34,0.55);
+  outline-offset: -1px;
+  font-weight: 600;
+}
 .bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .warning {
@@ -1019,16 +1233,17 @@ HTML_TEMPLATE = """<!doctype html>
 <body>
 <div class="wrap">
   <h1>Token Efficiency Dashboard</h1>
-  <div class="subtitle">{repo} · last {days} days · {session_count} active sessions · generated {generated_at}</div>
+  <div class="subtitle">{subtitle}</div>
 
   {cost_gate_banner}
 
   <div class="section-title">Overview</div>
-  <div class="grid cols-4">
+  <div class="grid cols-5">
     <div class="panel metric"><div class="label">Active Sessions</div><div class="value">{session_count}</div><div class="delta">{repos_named} distinct repo labels</div></div>
     <div class="panel metric"><div class="label">Total Cost</div><div class="value">${total_cost:.2f}</div><div class="delta">{total_tokens:,} tokens processed</div></div>
     <div class="panel metric"><div class="label">Avg Score</div><div class="value">{avg_score:.1f}<span class="muted" style="font-size:14px">/100</span><span class="grade grade-{avg_grade}">{avg_grade}</span></div><div class="delta">cache {avg_cache:.0f} · density {avg_density:.0f} · redundancy {avg_redundancy:.0f} · economy {avg_economy:.0f}</div></div>
     <div class="panel metric"><div class="label">Cache Hit Ratio</div><div class="value">{avg_cache_hit:.0%}</div><div class="delta">cache_read / total_input</div></div>
+    <div class="panel metric"><div class="label">Stale Cost</div><div class="value">${stale_cost:.2f}</div><div class="delta">{stale_pct:.0%} of total · merged-or-gone worktrees</div></div>
   </div>
 
   <div class="section-title">Cost &amp; Token Distribution</div>
@@ -1058,10 +1273,10 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
-  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout)</span></div>
+  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout; State = live / merged / gone)</span></div>
   <div class="panel">
     <table>
-      <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:40%">Share</th></tr></thead>
+      <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:36%">Share</th><th>State</th></tr></thead>
       <tbody>{worktree_rows}</tbody>
     </table>
   </div>
@@ -1138,7 +1353,11 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
                      estimated: dict[str, float] | float,
                      cost_gate: tuple[str, list[dict]] = ("ok", []),
                      all_sessions_in_window: list[dict] | None = None,
-                     unknown_models: set[str] | None = None) -> str:
+                     unknown_models: set[str] | None = None,
+                     wt_meta: dict[str, dict] | None = None,
+                     stale_cost: float = 0.0,
+                     stale_pct: float = 0.0,
+                     worktree_filter: str = "") -> str:
     """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``.
 
     ``estimated`` may be a legacy single float (sum) or a dict from the new
@@ -1146,7 +1365,14 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
     ``cost_gate`` is ``(status, violations)`` from ``enforce_cost_gate()``.
     ``all_sessions_in_window`` is the unfiltered-by-repo set used for the
     per-repo panel — fixes the collapse-to-one-row bug.
+
+    ``wt_meta`` is the per-worktree classification map (dirname → {state, ...})
+    used to populate the State column on the worktree panel and to drive the
+    stale-chip prefix on Sessions rows. ``stale_cost`` + ``stale_pct`` are
+    pre-computed in ``main()`` and feed the 5th Overview tile.
+    ``worktree_filter`` is echoed onto the subtitle when non-empty.
     """
+    wt_meta = wt_meta or {}
     if isinstance(estimated, (int, float)):
         estimated = {
             "cache_miss": float(estimated), "dup_read": 0.0,
@@ -1244,11 +1470,46 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         worktree_costs[wkey][0] += 1
         worktree_costs[wkey][1] += c
     worktree_total_for_share = sum(wc[1] for wc in worktree_costs.values()) or 1.0
+
+    # Per-worktree state — derived from the per-session stamp first
+    # (authoritative: each session carries its own worktree_state), with the
+    # wt_meta map as a fallback for worktrees seen via cost but not in the
+    # scored window (rare; defensive).
+    per_wt_state: dict[str, str] = {}
+    for s, _ in scored:
+        wt = s.get("worktree") or "(unknown)"
+        per_wt_state.setdefault(wt, s.get("worktree_state", "unknown"))
+
+    def _worktree_state_pill(state: str) -> str:
+        """State column pill — visually distinct from the warning chips."""
+        cls = {
+            "main": "pill-good",
+            "live": "pill-good",
+            "merged": "pill-warn",
+            "gone": "pill-bad",
+            "unknown": "pill-bad",
+        }.get(state, "pill-bad")
+        return f"<span class='pill {cls}'>{html.escape(state)}</span>"
+
+    def _state_for(wkey: str) -> str:
+        return (
+            per_wt_state.get(wkey)
+            or (wt_meta.get(wkey) or {}).get("state", "unknown")
+            or "unknown"
+        )
+
+    # (main) pinned to the top; remainder sorted by cost desc.
+    sorted_wts = sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+    if "(main)" in sorted_wts:
+        sorted_wts.remove("(main)")
+        sorted_wts = ["(main)"] + sorted_wts
     worktree_rows_html = "".join(
-        f"<tr><td>{html.escape(w)}</td><td style='text-align:right'>{int(worktree_costs[w][0])}</td>"
+        f"<tr><td>{html.escape(w)}</td>"
+        f"<td style='text-align:right'>{int(worktree_costs[w][0])}</td>"
         f"<td style='text-align:right'>${worktree_costs[w][1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(worktree_costs[w][1] / worktree_total_for_share * 100):.1f}%'></span></div></td></tr>"
-        for w in sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+        f"<td><div class='bar'><span style='width:{(worktree_costs[w][1] / worktree_total_for_share * 100):.1f}%'></span></div></td>"
+        f"<td>{_worktree_state_pill(_state_for(w))}</td></tr>"
+        for w in sorted_wts
     )
 
     # Cost by tool (imputed — see evaluate_warnings comment for the heuristic)
@@ -1393,10 +1654,21 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             f"<span class='pill {'pill-bad' if w.level=='critical' else 'pill-warn'}'>{html.escape(w.code)}</span>"
             for w in warns
         ) or "<span class='muted'>—</span>"
+        # Stale chip on the Worktree cell — surfaces worktree-pipeline rot
+        # directly on each affected session row.
+        wt_state = s.get("worktree_state", "")
+        stale_chip = (
+            "<span class='pill pill-stale'>stale</span>" if wt_state in ("merged", "gone") else ""
+        )
+        wt_cell = (
+            f"{stale_chip}{html.escape(s.get('worktree') or '—')}"
+            if stale_chip
+            else html.escape(s.get("worktree") or "—")
+        )
         session_rows_parts.append(
             f"<tr><td><code>{html.escape(s['session_id'][:8])}</code></td>"
             f"<td>{html.escape(s.get('branch') or '—')}</td>"
-            f"<td>{html.escape(s.get('worktree') or '—')}</td>"
+            f"<td>{wt_cell}</td>"
             f"<td>{html.escape(s['model'] or '?')}</td>"
             f"<td class='muted'>{html.escape(started)}</td>"
             f"<td style='text-align:right'>{s['input_tokens']:,}</td>"
@@ -1451,6 +1723,17 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             opt_items.append(f'<li class="dont muted-item">{html.escape(WARNING_DONT.get(code, ""))}</li>')
     optimize_items = "\n".join(opt_items)
 
+    # Subtitle: existing fields plus optional worktree filter echo.
+    subtitle_parts = [
+        html.escape(repo),
+        f"last {days} days",
+        f"{len(scored)} active sessions",
+        f"generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+    ]
+    if worktree_filter:
+        subtitle_parts.insert(1, f"worktree={html.escape(worktree_filter)}")
+    subtitle = " · ".join(subtitle_parts)
+
     return HTML_TEMPLATE.format(
         repo=html.escape(repo),
         days=days,
@@ -1465,6 +1748,8 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         avg_redundancy=avg_redundancy,
         avg_economy=avg_economy,
         avg_cache_hit=avg_cache_hit,
+        stale_cost=stale_cost,
+        stale_pct=stale_pct,
         cost_gate_banner=cost_gate_banner,
         repo_rows=repo_rows_html,
         branch_rows=branch_rows_html,
@@ -1492,7 +1777,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         roi_items=roi_items,
         optimize_items=optimize_items,
         css=CSS,
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        subtitle=subtitle,
     )
 
 
@@ -1536,11 +1821,31 @@ def main(argv: list[str] | None = None) -> int:
 
     unknown_models: set[str] = set()
 
+    # Worktree classification (per project `.claude/worktrees/*/` dir, vs
+    # `git worktree list` + ancestor-of-origin/main check). Skipped when
+    # --no-include-worktree-logs is in effect to avoid surprising git walks.
+    wt_meta: dict[str, dict] = (
+        classify_all_worktrees(repo_root) if repo_root is not None else {}
+    )
+
     sessions: list[dict] = []
     for p in files:
         s = aggregate_session(p)
         if s is not None:
             sessions.append(s)
+
+    # Stamp worktree_state on each session so the dashboard can mark stale
+    # rows and the summary line can quote the stale-cost total. Always safe
+    # — falls back to "(main)" / "(unknown)" sentinels.
+    for s in sessions:
+        wt = s.get("worktree") or ""
+        if wt == "(main)":
+            s["worktree_state"] = "main"
+        elif wt == "(unknown)":
+            s["worktree_state"] = "unknown"
+        else:
+            entry = wt_meta.get(wt)
+            s["worktree_state"] = entry["state"] if entry else "unknown"
 
     # Time-window only (no repo filter) — feeds the per-repo panel so it
     # shows the full distribution, not a single self-row.
@@ -1574,6 +1879,17 @@ def main(argv: list[str] | None = None) -> int:
     for m in sorted(unknown_models):
         print(f"WARN: unknown model '{m}' — using sonnet fallback pricing", file=sys.stderr)
 
+    # Warn about worktrees whose classification fell back to "unknown"
+    # (typically: no `origin/main` ref, or porcelain git call timed out).
+    for wt_name, meta in sorted(wt_meta.items()):
+        if meta.get("state") == "unknown" and wt_name != "(main)":
+            print(
+                f"WARN: worktree '{wt_name}' classification failed "
+                f"(branch tip={meta.get('branch_tip','') or '?'}); "
+                f"check that origin/main is fetchable from this repo.",
+                file=sys.stderr,
+            )
+
     # Cost Gate WARN lines (stderr only, after HTML is written so stdout order is stable).
     for line in cost_gate_stderr_lines(gate_violations):
         print(line, file=sys.stderr)
@@ -1591,6 +1907,25 @@ def main(argv: list[str] | None = None) -> int:
         for s in selected
     )
 
+    # Stale-cost aggregate — sessions whose worktree was merged into
+    # origin/main or whose dir was already removed (gauge the spend left
+    # behind by stale-but-still-on-disk worktrees).
+    stale_states = {"merged", "gone"}
+    stale_cost = sum(
+        cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+        for s in selected
+        if s.get("worktree_state") in stale_states
+    )
+    stale_pct = (stale_cost / total_cost) if total_cost > 0 else 0.0
+
     if args.json:
         out = {
             "repo": args.repo,
@@ -1602,6 +1937,8 @@ def main(argv: list[str] | None = None) -> int:
             "files_scanned": len(files),
             "sessions": len(selected),
             "total_cost_usd": round(total_cost, 4),
+            "stale_cost_usd": round(stale_cost, 4),
+            "stale_pct": round(stale_pct, 4),
             "estimated_savings_usd": estimated,
             "cost_gate": {
                 "status": gate_status,
@@ -1622,11 +1959,13 @@ def main(argv: list[str] | None = None) -> int:
                     "session_id": s["session_id"],
                     "branch": s.get("branch", ""),
                     "worktree": s.get("worktree", ""),
+                    "worktree_state": s.get("worktree_state", ""),
                 }
                 for (s, _), warns in zip(scored, warnings_per_session)
                 for w in warns
             ],
             "unknown_models": sorted(unknown_models),
+            "worktrees": _aggregate_worktree_rows(selected, wt_meta),
         }
         print(json.dumps(out, indent=2, ensure_ascii=False))
         if gate_status == "bad":
@@ -1643,6 +1982,10 @@ def main(argv: list[str] | None = None) -> int:
         cost_gate=(gate_status, gate_violations),
         all_sessions_in_window=windowed,
         unknown_models=unknown_models,
+        wt_meta=wt_meta,
+        stale_cost=stale_cost,
+        stale_pct=stale_pct,
+        worktree_filter=args.worktree,
     )
 
     out_path = Path(args.out) if args.out else Path(f"token-dashboard-{args.repo}-{args.days}d.html")
@@ -1650,7 +1993,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Console summary (stdout — Iron Law contract).
     print(f"[ok] sessions={len(selected)}  files_scanned={len(files)}  "
-          f"total_cost=${total_cost:.2f}  estimated_savings=${estimated['total']:.2f}")
+          f"total_cost=${total_cost:.2f}  estimated_savings=${estimated['total']:.2f}  "
+          f"stale_cost=${stale_cost:.2f}")
     print(f"[ok] dashboard -> {out_path}")
     return 0
 
