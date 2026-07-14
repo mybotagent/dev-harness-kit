@@ -494,13 +494,15 @@ def _aggregate_worktree_rows(
     selected: list[dict],
     wt_meta: dict[str, dict] | None,
 ) -> list[dict]:
-    """Build the JSON ``worktrees`` payload from selected sessions.
+    """Build the JSON ``worktrees`` payload.
 
-    Authoritative source is each session's ``worktree_state`` stamp (set in
-    ``main()`` after ``classify_all_worktrees``). ``wt_meta`` is consulted as
-    a fallback for branch-tip / branch-name metadata. Works correctly even
-    when ``wt_meta`` is empty (e.g. ``--no-include-worktree-logs`` mode):
-    ``(main)`` and any per-session worktree labels still appear.
+    Each session's ``worktree_state`` stamp is authoritative for that
+    worktree. ``wt_meta`` backfills branch-tip metadata into session rows
+    AND seeds zero-cost rows for any disk worktree that did not run a
+    session inside the window — otherwise those dirs disappear from the
+    dashboard and stale worktrees with past spend go unnoticed. Works
+    correctly when ``wt_meta`` is empty / ``None`` (e.g. a non-worktree
+    cwd): session-derived rows still appear.
     """
     wt_meta = wt_meta or {}
     by_label: dict[str, dict] = {}
@@ -537,6 +539,23 @@ def _aggregate_worktree_rows(
                 meta["branch_tip"] = wt.get("branch_tip", "")
             if not meta["branch_name"]:
                 meta["branch_name"] = wt.get("branch_name", "")
+    # Seed zero-cost rows for disk-only worktrees so the panel surfaces
+    # every worktree dir (live / merged / gone). State comes straight
+    # from wt_meta — no session can override it for these rows. Without
+    # this loop, a repo whose sessions all ran in (main) shows a one-row
+    # panel and hides every stale / orphan worktree on disk.
+    for label, wt in wt_meta.items():
+        if label in by_label:
+            continue
+        by_label[label] = {
+            "name": label,
+            "state": wt.get("state", "unknown"),
+            "sessions": 0,
+            "cost_usd": 0.0,
+            "branch_merged_into_main": bool(wt.get("branch_merged_into_main", False)),
+            "branch_tip": wt.get("branch_tip", ""),
+            "branch_name": wt.get("branch_name", ""),
+        }
     # Sort: (main) first, then by cost desc.
     rows = sorted(
         by_label.values(),
@@ -1552,16 +1571,23 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
             or "unknown"
         )
 
-    # (main) pinned to the top; remainder sorted by cost desc.
-    sorted_wts = sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+    # Union of session-seen worktrees + every disk worktree (from wt_meta)
+    # so no worktree dir is hidden just because no session landed in it
+    # during the window. Zero-cost rows are how live/merged/gone worktrees
+    # the user forgot about show up. (main) pinned to the top.
+    all_wts = set(worktree_costs) | set(wt_meta)
+    sorted_wts = sorted(
+        all_wts,
+        key=lambda k: -worktree_costs.get(k, [0, 0.0])[1],
+    )
     if "(main)" in sorted_wts:
         sorted_wts.remove("(main)")
         sorted_wts = ["(main)"] + sorted_wts
     worktree_rows_html = "".join(
         f"<tr><td>{html.escape(w)}</td>"
-        f"<td style='text-align:right'>{int(worktree_costs[w][0])}</td>"
-        f"<td style='text-align:right'>${worktree_costs[w][1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(worktree_costs[w][1] / worktree_total_for_share * 100):.1f}%'></span></div></td>"
+        f"<td style='text-align:right'>{int(worktree_costs.get(w, [0, 0.0])[0])}</td>"
+        f"<td style='text-align:right'>${worktree_costs.get(w, [0, 0.0])[1]:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{(worktree_costs.get(w, [0, 0.0])[1] / worktree_total_for_share * 100):.1f}%'></span></div></td>"
         f"<td>{_worktree_state_pill(_state_for(w))}</td></tr>"
         for w in sorted_wts
     )
