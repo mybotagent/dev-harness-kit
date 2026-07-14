@@ -42,6 +42,7 @@ Default subcommand when none given: `status`.
 |---|---|---|
 | Source repo | `~/dev/loghooks` | `LOGHOOKS_DIR` |
 | Target project | `$PWD` | `TARGET_DIR` |
+| Global target (`--global`) | `$HOME/.claude/` | `HOME` |
 
 `jq` is required (the worktree rule-hooks already depend on it).
 
@@ -58,6 +59,8 @@ Default subcommand when none given: `status`.
 | Flag | Subcommands | Effect |
 |---|---|---|
 | `--target DIR` | all | Override target project |
+| `--global` | setup, on, off | Install to `$HOME/.claude/` (settings + save_log.py) so a SINGLE install captures every project / worktree on the machine. Mutually exclusive with `--target` and `--all-worktrees`. See [Global install](#global-install-recommended) below. |
+| `--all-worktrees` | setup | Run `setup` + `on` recursively for every `.claude/worktrees/*/` dir under `--target`. Use after `--target` on the main checkout to backfill sibling worktrees. Mutually exclusive with `--global`. |
 | `--force` | setup | Overwrite `tools/save_log.py` even when local sha matches |
 | `--claude-only` | on, off | Touch only `.claude/settings.json` |
 | `--codex-only` | on, off | Touch only `.codex/hooks.json` (no-op if source has no codex config) |
@@ -80,6 +83,39 @@ Transcripts are grouped by `gitBranch` — one subdir per branch (`main`,
 `off` deliberately leaves `tools/save_log.py` + `logs/` in place — they
 cost nothing and a future `on` skips the setup step. Remove them
 manually if you really want a clean slate.
+
+## Global install (recommended)
+
+```
+1. /dev-kit:log setup --global   # writes $HOME/.claude/save_log.py
+2. /dev-kit:log on   --global    # writes $HOME/.claude/settings.json hooks
+3.  ... run Claude Code ANYWHERE ... transcripts land in <main_repo>/logs/...
+4. /dev-kit:log off  --global    # strips managed entries from $HOME/.claude/settings.json
+```
+
+**Why `--global` exists.** Per-project install places hooks at
+`<project>/.claude/settings.json` — which only fires for sessions that
+start inside that one checkout. A developer with 30 sibling worktrees
+sees 1 worktree capture per `git worktree add`. `--global` writes to
+`$HOME/.claude/settings.json` instead, so Claude Code picks up the
+hooks regardless of cwd. The hook command is rewritten at install time
+to `${HOME}/.claude/save_log.py` so the install is self-contained — no
+per-project copy required. `save_log.py` (already unified via
+`find_main_repo_root` → `git rev-parse --git-common-dir`) routes every
+captured transcript to the main repo's `logs/` regardless of which
+worktree the session ran in.
+
+**When to use which.**
+- `--global`: recommended default. One install covers every project /
+  worktree / machine login. Sessions are captured the first time you
+  start Claude Code, no `git worktree add` ritual.
+- `--target <dir>` + `--all-worktrees`: legacy per-project install,
+  useful when you want one project explicitly opted in and others
+  untouched (e.g. shared CI machines, restricted sandboxes).
+
+**Coexistence.** `--global` and per-project installs are independent
+hooks trees. `log-off --global` strips only the global managed entries;
+per-project `log-off --target <dir>` is unaffected.
 
 ## Hand-off
 

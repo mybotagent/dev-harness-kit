@@ -476,6 +476,140 @@ class TestSetupAllWorktrees(unittest.TestCase):
                              f"{wt_name}: expected 2 managed entries, got {managed_count}")
 
 
+class TestGlobalInstall(unittest.TestCase):
+    """`--global` flag installs save_log.py + hooks into $HOME/.claude/
+    so ANY project (or any worktree) gets captured. This is the root-cause
+    fix for the per-checkout capture gap: hooks used to live in
+    <project>/.claude/settings.json, which only fires when the session
+    happens to start inside that one checkout.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="log-test-global-"))
+        self.src = _make_fake_loghooks(self.tmp)
+        # Fake HOME so --global writes into a throwaway dir, not the real
+        # user's $HOME. The script reads $HOME directly.
+        self.fake_home = self.tmp / "home"
+        self.fake_home.mkdir()
+        (self.fake_home / ".claude").mkdir()
+        # A fake target project whose existence is irrelevant to --global.
+        self.tgt = self.tmp / "target"
+        (self.tgt / ".claude").mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_global_setup_copies_save_log_to_home(self):
+        r = _run("log-setup.sh", "--global",
+                 env_extra={"LOGHOOKS_DIR": str(self.src),
+                            "HOME": str(self.fake_home)})
+        self.assertEqual(r.returncode, 0,
+                         f"setup --global failed:\nstdout={r.stdout}\nstderr={r.stderr}")
+        home_save_log = self.fake_home / ".claude" / "save_log.py"
+        self.assertTrue(home_save_log.exists(),
+                        f"global save_log.py missing at {home_save_log}")
+        self.assertTrue(os.access(home_save_log, os.X_OK),
+                        f"global save_log.py not executable: {home_save_log}")
+        # Original per-project target must NOT have grown a save_log.py.
+        self.assertFalse((self.tgt / "tools" / "save_log.py").exists(),
+                         "--global must not write to the project tree")
+
+    def test_global_on_writes_to_home_settings(self):
+        _run("log-setup.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        r = _run("log-on.sh", "--global",
+                 env_extra={"LOGHOOKS_DIR": str(self.src),
+                            "HOME": str(self.fake_home)})
+        self.assertEqual(r.returncode, 0,
+                         f"on --global failed:\nstdout={r.stdout}\nstderr={r.stderr}")
+        global_settings = self.fake_home / ".claude" / "settings.json"
+        self.assertTrue(global_settings.exists(),
+                        f"global settings.json missing at {global_settings}")
+        data = json.loads(global_settings.read_text())
+        managed = [h for ev in (data.get("hooks") or {}).values()
+                   for h in ev if h.get("_loghooks_managed")]
+        self.assertGreater(len(managed), 0,
+                           "no managed hooks installed at global settings.json")
+
+    def test_global_on_rewrites_command_to_home_save_log(self):
+        # The hook command must point at $HOME/.claude/save_log.py, not
+        # at the per-project ${CLAUDE_PROJECT_DIR}/tools/save_log.py —
+        # otherwise the global hook still depends on a project-local copy.
+        _run("log-setup.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        _run("log-on.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        global_settings = self.fake_home / ".claude" / "settings.json"
+        data = json.loads(global_settings.read_text())
+        for ev_name, ev_list in (data.get("hooks") or {}).items():
+            for entry in ev_list:
+                cmd = entry["hooks"][0].get("command", "")
+                self.assertIn("${HOME}/.claude/save_log.py", cmd,
+                              f"global hook command did not rewrite to "
+                              f"$HOME/.claude/save_log.py: {cmd}")
+                self.assertNotIn("CLAUDE_PROJECT_DIR", cmd,
+                                 f"global hook must not depend on "
+                                 f"$CLAUDE_PROJECT_DIR: {cmd}")
+
+    def test_global_off_strips_only_managed_entries(self):
+        # Seed an unrelated user-authored entry alongside the managed one;
+        # log-off --global must keep the user entry, strip the managed one.
+        user_entry = {"hooks": [{"type": "command", "command": "echo user"}]}
+        global_settings = self.fake_home / ".claude" / "settings.json"
+        global_settings.write_text(json.dumps({
+            "hooks": {"UserPromptSubmit": [user_entry]}
+        }))
+        _run("log-setup.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        _run("log-on.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        r = _run("log-off.sh", "--global",
+                 env_extra={"HOME": str(self.fake_home)})
+        self.assertEqual(r.returncode, 0,
+                         f"off --global failed: {r.stderr}")
+        data = json.loads(global_settings.read_text())
+        # User-authored entry survives.
+        ups = (data.get("hooks") or {}).get("UserPromptSubmit", [])
+        self.assertEqual(len(ups), 1, f"user entry lost: {data}")
+        self.assertEqual(ups[0]["hooks"][0]["command"], "echo user")
+        # No managed entries left.
+        managed_left = [h for ev in (data.get("hooks") or {}).values()
+                        for h in ev if h.get("_loghooks_managed")]
+        self.assertEqual(managed_left, [],
+                         f"managed entries still present: {managed_left}")
+
+    def test_global_and_per_checkout_coexist(self):
+        # --global install + per-checkout install should both succeed and
+        # not stomp on each other. Per-checkout off() must leave the
+        # global hook untouched.
+        _run("log-setup.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        _run("log-on.sh", "--global",
+             env_extra={"LOGHOOKS_DIR": str(self.src),
+                        "HOME": str(self.fake_home)})
+        # Per-checkout setup + on for self.tgt.
+        _run("log-setup.sh", "--target", str(self.tgt),
+             env_extra={"LOGHOOKS_DIR": str(self.src)})
+        _run("log-on.sh", "--target", str(self.tgt), "--claude-only",
+             env_extra={"LOGHOOKS_DIR": str(self.src)})
+        # Per-checkout off — must NOT touch the global settings.
+        r = _run("log-off.sh", "--target", str(self.tgt), "--claude-only",
+                 env_extra={"LOGHOOKS_DIR": str(self.src)})
+        self.assertEqual(r.returncode, 0, f"per-checkout off failed: {r.stderr}")
+        global_settings = self.fake_home / ".claude" / "settings.json"
+        global_data = json.loads(global_settings.read_text())
+        managed_global = [h for ev in (global_data.get("hooks") or {}).values()
+                          for h in ev if h.get("_loghooks_managed")]
+        self.assertGreater(len(managed_global), 0,
+                           "per-checkout off() must not affect global hooks")
+
+
 class TestStatus(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="log-test-"))
