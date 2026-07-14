@@ -209,9 +209,11 @@ class TestBumpWorkflowOmissions(unittest.TestCase):
 
 class TestVersionFreshnessCheck(unittest.TestCase):
     """The cross-PR freshness check lives in .github/workflows/ci.yml.
-    It must (a) read PR base's plugin.json:version, (b) read PR head's
-    plugin.json:version, (c) fail if HEAD < BASE (stale), (d) be skipped
-    for bump-PRs (those are the user's own bump -- always equal or higher).
+    It enforces STRICT inequality: PR head version > PR base version
+    (NOT >=). The auto-bump source of truth is .githooks/pre-push,
+    which advances PATCH to (BASE + 1) right before pushing. If the
+    check fires with HEAD == BASE, the user bypassed pre-push
+    (`--no-verify`).
     """
 
     @staticmethod
@@ -251,6 +253,32 @@ class TestVersionFreshnessCheck(unittest.TestCase):
         self.assertIn("sort -V", run,
                       "freshness step must use version-aware sort to compare "
                       "versions (not lexicographic -- 0.3.10 < 0.3.9 lex)")
+
+    def test_freshness_step_enforces_strict_greater_than(self):
+        """The check must reject HEAD <= BASE. The pre-push hook is the
+        source of truth (auto-bumps to BASE+1); a HEAD == BASE here
+        means the user pushed with --no-verify and bypassed it."""
+        doc = self._doc()
+        step = [s for s in doc["jobs"]["validate"]["steps"]
+                if "freshness" in s.get("name", "").lower()][0]
+        run = step.get("run", "")
+        self.assertIn("strict", step.get("name", "").lower(),
+                      "freshness step name must declare STRICT semantics")
+        # Pin the check shape: HIGHER == BASE_VERSION catches both
+        # HEAD < BASE and HEAD == BASE (rejects the second case too).
+        self.assertIn("HIGHER=", run,
+                      "freshness step must compute a HIGHER variable")
+        self.assertIn("sort -V", run,
+                      "freshness step must use version-aware sort")
+        self.assertIn("tail -1", run,
+                      "freshness step must take the tail of sort -V output")
+        self.assertIn('"$BASE_VERSION"', run,
+                      "freshness step must reference BASE_VERSION in the rejection check")
+        # The STRICT predicate is `if [ "$HIGHER" = "$BASE_VERSION" ]`.
+        # This catches both HEAD < BASE and HEAD == BASE; only HEAD > BASE
+        # passes (because then HIGHER == HEAD != BASE).
+        self.assertRegex(run, r'\[\s*"\$\{?HIGHER\}?"\s*=\s*"\$\{?BASE_VERSION\}?"\s*\]',
+                         "freshness step must check HIGHER == BASE_VERSION (rejects HEAD <= BASE)")
 
 
 if __name__ == "__main__":
