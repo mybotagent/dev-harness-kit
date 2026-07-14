@@ -155,12 +155,14 @@ class TestSaveLogBranch(unittest.TestCase):
             "expected no-git fallback when git is not on PATH",
         )
 
-    # ---- worktree session capture lands in MAIN checkout logs ------------
+    # ---- worktree session capture: dual-write for analyzer attribution ----
 
-    def test_worktree_session_writes_to_main_repo_logs(self):
+    def test_worktree_session_dual_writes_main_and_worktree_logs(self):
         # Regression: a session started inside a worktree must capture to
-        # the main checkout's logs/, not the worktree's own logs/. Otherwise
-        # the analyzer has to walk 90+ worktree dirs to find any session.
+        # both the main checkout's logs/ (so the analyzer finds it under
+        # a single canonical location) AND the worktree's own logs/ (so
+        # the analyzer's worktree_from_path() can bucket the session
+        # under the right worktree name, not (main)).
         main = self.tmpdir / "main"
         main.mkdir()
         _git(main, "init", "-q")
@@ -172,15 +174,15 @@ class TestSaveLogBranch(unittest.TestCase):
         _git(main, "worktree", "add", "-q", "-b", "fix-x", str(wt))
         rc = _run_save_log(wt, transcript=self.transcript)
         self.assertEqual(rc.returncode, 0, msg=rc.stderr)
-        # The worktree itself should NOT have grown a logs/ dir.
-        self.assertFalse(
-            (wt / "logs").exists(),
-            f"worktree captured to its own logs/ instead of main: {wt / 'logs'}",
-        )
-        # Main checkout got the capture.
+        # Primary: main checkout (canonical scan location).
         self.assertTrue(
             (main / "logs" / "claude-code" / "fix-x" / "sid.jsonl").exists(),
             f"main repo logs/ missing the captured transcript",
+        )
+        # Secondary: worktree's own logs/ (analyzer attribution).
+        self.assertTrue(
+            (wt / "logs" / "claude-code" / "fix-x" / "sid.jsonl").exists(),
+            f"worktree logs/ missing the dual-write copy: {wt / 'logs' / 'claude-code' / 'fix-x' / 'sid.jsonl'}",
         )
 
     def test_find_main_repo_root_walks_to_shared_git(self):
@@ -198,6 +200,80 @@ class TestSaveLogBranch(unittest.TestCase):
             os.path.realpath(find_main_repo_root(str(wt)) or ""),
             os.path.realpath(str(main)),
         )
+
+    def test_worktree_capture_dual_writes_main_and_worktree(self):
+        # Regression: per-worktree cost attribution depends on the JSONL
+        # living under <main>/.claude/worktrees/<name>/logs/... — the
+        # analyzer's worktree_from_path() reads the worktree name from the
+        # file path. With single-write to <main>/logs/<branch>/, the path
+        # has no worktree segment and the session is bucketed as (main).
+        # save_log.py must dual-write: main logs + worktree logs.
+        from save_log import find_worktree_for_cwd
+        main = self.tmpdir / "dual"
+        main.mkdir()
+        _git(main, "init", "-q")
+        (main / "f").write_text("init")
+        _git(main, "add", ".")
+        _git(main, "-c", "user.email=t@t", "-c", "user.name=t",
+                  "commit", "-q", "-m", "init")
+        wt = main / ".claude" / "worktrees" / "wt-x"
+        _git(main, "worktree", "add", "-q", "-b", "fix-x", str(wt))
+        rc = _run_save_log(wt, transcript=self.transcript)
+        self.assertEqual(rc.returncode, 0, f"save_log failed: {rc.stderr}")
+        # Main checkout capture (existing behavior preserved).
+        self.assertTrue(
+            (main / "logs" / "claude-code" / "fix-x" / "sid.jsonl").exists(),
+            "main logs/ missing the dual-write copy",
+        )
+        # NEW: worktree-local copy for analyzer attribution.
+        wt_capture = wt / "logs" / "claude-code" / "fix-x" / "sid.jsonl"
+        self.assertTrue(wt_capture.exists(),
+                        f"worktree logs/ missing the dual-write copy: {wt_capture}")
+
+    def test_main_checkout_capture_does_not_dual_write(self):
+        # A session in the main checkout has no worktree to write to —
+        # only the main logs/ gets a copy.
+        from save_log import find_worktree_for_cwd
+        main = self.tmpdir / "mainonly"
+        main.mkdir()
+        _git(main, "init", "-q")
+        (main / "f").write_text("x")
+        _git(main, "add", ".")
+        _git(main, "-c", "user.email=t@t", "-c", "user.name=t",
+                  "commit", "-q", "-m", "init")
+        rc = _run_save_log(main, transcript=self.transcript)
+        self.assertEqual(rc.returncode, 0, f"save_log failed: {rc.stderr}")
+        self.assertTrue(
+            (main / "logs" / "claude-code" / "main" / "sid.jsonl").exists(),
+        )
+
+    def test_find_worktree_for_cwd_returns_wt_dir(self):
+        from save_log import find_worktree_for_cwd
+        main = self.tmpdir / "fw"
+        main.mkdir()
+        _git(main, "init", "-q")
+        wt = main / ".claude" / "worktrees" / "wt-y"
+        _git(main, "worktree", "add", "-q", "-b", "feat-y", str(wt))
+        self.assertEqual(
+            os.path.realpath(find_worktree_for_cwd(str(wt), str(main)) or ""),
+            os.path.realpath(str(wt)),
+        )
+
+    def test_find_worktree_for_cwd_returns_none_for_main(self):
+        from save_log import find_worktree_for_cwd
+        main = self.tmpdir / "fwmain"
+        main.mkdir()
+        _git(main, "init", "-q")
+        self.assertIsNone(find_worktree_for_cwd(str(main), str(main)))
+
+    def test_find_worktree_for_cwd_returns_none_for_unrelated(self):
+        from save_log import find_worktree_for_cwd
+        main = self.tmpdir / "fwu_main"
+        main.mkdir()
+        _git(main, "init", "-q")
+        other = self.tmpdir / "fwu_other"
+        other.mkdir()
+        self.assertIsNone(find_worktree_for_cwd(str(other), str(main)))
 
     def test_find_main_repo_root_returns_none_for_non_git(self):
         from save_log import find_main_repo_root
