@@ -144,11 +144,18 @@ class TestBumpWorkflow(unittest.TestCase):
                       "already on origin; otherwise re-runs will fail with "
                       "'tag already exists' from git push")
 
-    def test_08_tag_skipped_if_head_not_bump_commit(self):
-        """Tag emission must be a no-op when the head commit on main is
-        NOT the bump commit matching plugin.json:version. This guards
-        against spurious tag pushes from unrelated force-pushes or
-        manual edits to plugin.json."""
+    def test_08_no_head_commit_msg_predicate(self):
+        """The tag-emission step must NOT predicate on the head commit's
+        message. Under the pre-commit auto-bump design, the head commit
+        on main is the squash-merge of the user's PR (title = PR title
+        like "fix(x): ..."), NOT a "chore(release): bump dev-kit to
+        v..." commit. Tag-emission is gated by (a) tag-already-exists
+        and (b) ci.yml:validate Version freshness. A head-msg predicate
+        here would silently drop every release.
+
+        This is the inverse of the previous T8 — pin the absence of the
+        predicate so it cannot regress.
+        """
         doc = _yaml_doc()
         tag_step = None
         for step in _resolve_steps(doc):
@@ -158,19 +165,10 @@ class TestBumpWorkflow(unittest.TestCase):
                 break
         self.assertIsNotNone(tag_step)
         run = tag_step.get("run", "")
-        # The bash regex pattern contains literal `\(`, `\)`, `\$`, `\{`, `\}`
-        # backslash-escapes for the bash regex. Use substring checks rather
-        # than a Python regex (which would need its own double-escaping) to
-        # avoid the meta-meta escape spiral.
-        for needle in (
-            r"chore\(release\):\ bump\ dev-kit\ to\ v",  # the bump-commit prefix
-            "${VERSION}",                                # the runtime variable
-            r"(\ \(#[0-9]+\))?",                         # optional (#PR) suffix
-        ):
-            self.assertIn(needle, run,
-                          f"tag step must verify head commit message matches "
-                          f"the bump-commit regex for the current version "
-                          f"before pushing the tag (missing {needle!r})")
+        self.assertNotIn(r"chore\(release\):\ bump", run,
+                         "tag step must NOT predicate on the head-commit "
+                         "message; under squash-merge, the head title is "
+                         "the PR title, not a bump-commit")
 
 
 class TestBumpWorkflowOmissions(unittest.TestCase):

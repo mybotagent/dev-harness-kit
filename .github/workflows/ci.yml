@@ -70,6 +70,14 @@ jobs:
       && !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history needed for the Version freshness step (git show
+          # $BASE_SHA:.claude-plugin/plugin.json); the default
+          # fetch-depth: 1 would leave BASE_SHA unreachable on the local
+          # clone and break that step with
+          #   "fatal: path '.claude-plugin/plugin.json' exists on disk,
+          #    but not in '<BASE_SHA>'"
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5

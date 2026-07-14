@@ -22,6 +22,16 @@
 
 set -eo pipefail
 
+# jq is required for the version auto-bump (and is already a hard dep
+# elsewhere: lib/ci_setup.py and version-bump.yml both call jq). Check
+# upfront so a missing jq fails the hook with an actionable message
+# instead of an opaque jq exit at the wrong layer.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[pre-commit] ::error:: jq is required for plugin-version auto-bump." >&2
+  echo "[pre-commit] ::error:: Install:  brew install jq   |   apt install jq" >&2
+  exit 1
+fi
+
 # === 1. .env → ci-review-provider.txt sync ===
 MAIN_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
 ENV_FILE="$MAIN_ROOT/.env"

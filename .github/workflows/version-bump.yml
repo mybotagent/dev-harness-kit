@@ -50,16 +50,17 @@ jobs:
             exit 0
           fi
 
-          # Idempotency / sanity guard: only tag if the head commit on
-          # main is the bump commit for THIS version. A push-to-main that
-          # is NOT a bump (e.g. a force-push, a manual edit) should not
-          # produce a spurious tag.
-          HEAD_MSG="$(git log -1 --format=%s origin/main)"
-          NORMALISED_HEAD_MSG="$(echo "$HEAD_MSG" | tr -d '\r' | tr '\n' ' ' | head -c 200)"
-          if ! [[ "$NORMALISED_HEAD_MSG" =~ ^chore\(release\):\ bump\ dev-kit\ to\ v${VERSION}(\ \(#[0-9]+\))?$ ]]; then
-            echo "::warning::head commit msg=$HEAD_MSG is not a bump commit for v${VERSION}; tag emit skipped"
-            exit 0
-          fi
+          # No head-commit-message predicate here. Under the pre-commit
+          # auto-bump design, the head commit on main is the squash-merge
+          # of the user's PR (title = PR title like "fix(x): ..."), NOT
+          # a "chore(release): bump dev-kit to v..." commit. Tag-emission
+          # is gated by:
+          #   (a) tag-already-exists check above (idempotency)
+          #   (b) ci.yml:validate Version freshness check, which fails the
+          #       PR if HEAD version <= BASE version. A push-to-main whose
+          #       plugin.json:version is unchanged from the last tag will
+          #       be filtered out at PR time, so reaching this step
+          #       implies the version genuinely advanced.
 
           git tag "$TAG" origin/main
           git push origin "$TAG"
