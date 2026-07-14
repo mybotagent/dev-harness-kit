@@ -3,6 +3,7 @@
 #
 # Run once per project before /log on so that the installed hook command
 # (`python3 ${CLAUDE_PROJECT_DIR}/tools/save_log.py`) has its script to call.
+# Or run with --global once to capture every project on the machine.
 #
 # Idempotent: re-running updates save_log.py to the current source version
 # (use --force to overwrite an existing copy if the SHA differs) and creates
@@ -16,7 +17,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--target DIR] [--force] [--all-worktrees]
+Usage: $(basename "$0") [--target DIR | --global] [--force] [--all-worktrees]
 
 Creates the target project's logging scaffold:
   <target>/tools/save_log.py     — copied from \$LOGHOOKS_DIR (or ~/dev/loghooks)
@@ -30,6 +31,12 @@ Idempotent: re-running refreshes save_log.py to the current source version.
                      sibling worktree under <target>/.claude/worktrees/*/.
                      Use this once after --target on the main checkout to
                      close the per-worktree capture gap.
+--global          install to \$HOME/.claude/ instead of a per-project
+                  target. Recommended for multi-project / multi-worktree
+                  users — a single setup captures every session anywhere
+                  on the machine. Use this with `log-on.sh --global` and
+                  `log-off.sh --global`. Mutually exclusive with --target
+                  and --all-worktrees.
 
 Env:
   LOGHOOKS_DIR   source repo (default: \$HOME/dev/loghooks)
@@ -39,15 +46,29 @@ EOF
 
 FORCE=0
 ALL_WORKTREES=0
+GLOBAL=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target) TARGET_DIR="$2"; shift 2 ;;
         --force)  FORCE=1; shift ;;
         --all-worktrees) ALL_WORKTREES=1; shift ;;
+        --global) GLOBAL=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "ERROR: unknown arg: $1" >&2; usage; exit 1 ;;
     esac
 done
+
+if [[ "$GLOBAL" -eq 1 ]]; then
+    if [[ -n "${TARGET_DIR:-}" || "$ALL_WORKTREES" -eq 1 ]]; then
+        echo "ERROR: --global is mutually exclusive with --target and --all-worktrees" >&2
+        exit 1
+    fi
+    TARGET_DIR="$(resolve_global_dir)"
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        mkdir -p "$TARGET_DIR"
+    fi
+    echo "Global install: $TARGET_DIR"
+fi
 
 require_jq
 LOGHOOKS_DIR="$(resolve_loghooks_dir)"
@@ -59,14 +80,23 @@ if [[ ! -d "$TARGET_DIR" ]]; then
 fi
 
 SRC_PY="$LOGHOOKS_DIR/tools/save_log.py"
-DST_PY="$TARGET_DIR/tools/save_log.py"
+# --global install: save_log.py lives directly at $HOME/.claude/save_log.py
+# (no tools/ subdir) so the global hook can reference a single canonical
+# path that is stable across projects and machines.
+if [[ "$GLOBAL" -eq 1 ]]; then
+    DST_PY="$TARGET_DIR/save_log.py"
+else
+    DST_PY="$TARGET_DIR/tools/save_log.py"
+fi
 
 if [[ ! -f "$SRC_PY" ]]; then
     echo "ERROR: source script missing: $SRC_PY" >&2
     exit 2
 fi
 
-mkdir -p "$TARGET_DIR/tools"
+if [[ "$GLOBAL" -ne 1 ]]; then
+    mkdir -p "$TARGET_DIR/tools"
+fi
 
 # Portable SHA-256: prefer coreutils sha256sum, fall back to BSD shasum.
 # Alpine / distroless / many debian-slim images ship only sha256sum;
@@ -96,7 +126,9 @@ else
     chmod 0755 "$DST_PY"
 fi
 
-# Scaffold logs/ tree.
+# Scaffold logs/ tree (only meaningful for per-project installs; global
+# install still creates a logs/ in $HOME/.claude/ for symmetry but it's
+# a no-op for capture since save_log.py redirects to <main_repo>/logs/).
 mkdir -p "$TARGET_DIR/logs/claude-code" "$TARGET_DIR/logs/codex"
 
 # Write a .gitkeep so the empty subdirs survive `git status`.
@@ -122,10 +154,17 @@ fi
 
 echo
 echo "Setup complete for: $TARGET_DIR"
-echo "  scripts: tools/save_log.py"
-echo "  logs:    logs/{claude-code,codex}/"
-echo
-echo "Next: run /dev-kit:log on   to enable the hooks."
+if [[ "$GLOBAL" -eq 1 ]]; then
+    echo "  scripts: save_log.py"
+    echo
+    echo "Next: run /dev-kit:log on --global   to enable the global hooks."
+    echo "      (or /dev-kit:log on --target <dir> for a per-project install)"
+else
+    echo "  scripts: tools/save_log.py"
+    echo "  logs:    logs/{claude-code,codex}/"
+    echo
+    echo "Next: run /dev-kit:log on   to enable the hooks."
+fi
 
 if [[ "$ALL_WORKTREES" -eq 1 ]]; then
     WT_ROOT="$TARGET_DIR/.claude/worktrees"

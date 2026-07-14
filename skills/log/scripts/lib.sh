@@ -40,6 +40,73 @@ resolve_target_dir() {
     printf '%s\n' "${TARGET_DIR:-$PWD}"
 }
 
+# Resolve the global target = $HOME/.claude/ for `--global` install.
+# Used by `log-setup.sh --global`, `log-on.sh --global`, `log-off.sh --global`
+# so capture fires for ANY project (or any worktree of any project) the
+# user starts a session in. Overrides $HOME to make tests hermetic.
+resolve_global_dir() {
+    local home="${HOME:-}"
+    if [[ -z "$home" ]]; then
+        echo "ERROR: \$HOME is empty; cannot resolve global target." >&2
+        return 4
+    fi
+    printf '%s/.claude\n' "$home"
+}
+
+# Rewrite a per-project hook command so the save_log.py path is global.
+# Strips the per-project ${CLAUDE_PROJECT_DIR}/tools/ prefix and replaces
+# it with ${HOME}/.claude/ so the merged command is self-contained —
+# works regardless of which checkout the session actually starts in.
+#   $1 = original command (string)
+# echoes the rewritten command on stdout
+rewrite_command_for_global() {
+    local cmd="$1"
+    # Replace both forms seen in the loghooks source repo:
+    #   ${CLAUDE_PROJECT_DIR}/tools/save_log.py
+    #   tools/save_log.py
+    # with a single ${HOME}/.claude/save_log.py.
+    cmd="${cmd//\$\{CLAUDE_PROJECT_DIR\}\/tools\/save_log\.py/\$\{HOME\}\/.claude\/save_log\.py}"
+    cmd="${cmd//tools\/save_log\.py/\$\{HOME\}\/.claude\/save_log\.py}"
+    printf '%s\n' "$cmd"
+}
+
+# Build a temp file with the source settings.json rewritten for global
+# install. Every `command` field has its `save_log.py` path rewritten to
+# ${HOME}/.claude/save_log.py so the merged command is self-contained.
+# Returns the temp path on stdout. Caller is responsible for cleanup.
+#   $1 = source settings.json path
+prepare_global_source() {
+    local src="$1"
+    local tmp
+    # macOS mktemp -t treats the template's suffix literally: it only
+    # replaces X's followed by end-of-string, so `XXXXXX.json` produces
+    # `XXXXXX.json.<random>` with no X-replacement. Put the X's at the
+    # end and append the .json extension after.
+    tmp="$(mktemp -t loghooks-global-src-XXXXXX).json"
+    # shellcheck disable=SC2064  # we WANT $tmp expanded now, not at signal time
+    trap "rm -f '$tmp'" ERR
+    # The replacement text is a LITERAL string — the runtime shell expands
+    # ${HOME} when the hook actually fires, not at install time. That way
+    # a single installed hook works for every user account on the machine
+    # (e.g. a per-user install via sudo stays portable across logins).
+    # We pass it as --arg so jq's own `${...}` interpolation does not eat
+    # our literal `${HOME}`.
+    local repl='${HOME}/.claude/save_log.py'
+    jq --arg HOME_REPL "$repl" '
+        .hooks |= with_entries(
+            .value |= map(
+                .hooks |= map(
+                    select(.command) |
+                    (.command |= gsub("[$][{]CLAUDE_PROJECT_DIR[}][/]tools/save_log[.]py"; $HOME_REPL))
+                    | (.command |= gsub("tools/save_log[.]py"; $HOME_REPL))
+                )
+            )
+        )
+    ' "$src" > "$tmp"
+    trap - ERR
+    printf '%s\n' "$tmp"
+}
+
 # Fail with a clear stderr message and non-zero exit if jq is missing.
 require_jq() {
     if ! command -v jq >/dev/null 2>&1; then
