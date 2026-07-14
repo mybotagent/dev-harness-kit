@@ -946,5 +946,139 @@ class TestWorktreeAwareness(unittest.TestCase):
                 html_path.unlink(missing_ok=True)
 
 
+class TestCacheTtlMixEmpty(unittest.TestCase):
+    """Cache TTL Mix panel — collapse behavior when no Anthropic-style
+    5m/1h cache_creation split is published (e.g. MiniMax sessions).
+
+    Three states:
+      (a) no cache-write activity at all            -> single annotation row
+      (b) cache_write_tokens > 0 but no 5m/1h split -> single "TTL unspecified" bar
+      (c) full 5m + 1h split                        -> existing 4-bar layout
+
+    The existing render test (above) covers state (a) implicitly via the
+    fixture repo (every fixture has cache_creation_input_tokens == 0).
+    These tests cover all three states explicitly with synthetic sessions.
+    """
+
+    def _run_main_and_read_html(self, td_path, out_html, *, repo="dev-harness-kit"):
+        from io import StringIO
+        import contextlib
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main([
+                "--repo", repo,
+                "--days", "30",
+                "--logs-dir", str(td_path / "logs"),
+                "--out", str(out_html),
+            ])
+        self.assertEqual(rc, 0, msg=f"main() failed: {buf.getvalue()}")
+        return out_html.read_text()
+
+    def _write_session(self, d, sid, *, git_branch, cwd,
+                       cache_creation_input_tokens=0,
+                       ephemeral_5m=0, ephemeral_1h=0):
+        d.mkdir(parents=True, exist_ok=True)
+        cc = {"ephemeral_5m_input_tokens": ephemeral_5m,
+              "ephemeral_1h_input_tokens": ephemeral_1h}
+        rec = {
+            "type": "assistant",
+            "sessionId": sid,
+            "cwd": cwd,
+            "gitBranch": git_branch,
+            "timestamp": "2026-07-09T10:00:00.000Z",
+            "message": {
+                "role": "assistant",
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 10,
+                    "cache_read_input_tokens": 50,
+                    "cache_creation_input_tokens": cache_creation_input_tokens,
+                    "cache_creation": cc,
+                },
+            },
+        }
+        (d / f"{sid}.jsonl").write_text(json.dumps(rec) + "\n")
+
+    def test_state_a_no_cache_write_at_all_renders_annotation(self):
+        """cache_creation_input_tokens == 0 across the whole window.
+
+        Expected: a single annotation row replacing the two TTL bars.
+        NOT expected: any element with class="bar write5m" or "bar write1h".
+        """
+        with tempfile.TemporaryDirectory(prefix="ttl-empty-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            self._write_session(d, "empty-1", git_branch="main",
+                                cwd="/Users/sanghee/dev/dev-harness-kit")
+            out = td_path / "dashboard.html"
+            html = self._run_main_and_read_html(td_path, out)
+
+            # Must show the annotation row telling the user there is
+            # nothing to attribute, not two empty bars.
+            self.assertIn("no cache-write activity", html)
+            # The two legacy bars must not appear in their pre-change form.
+            self.assertNotIn('class="bar write5m"', html)
+            self.assertNotIn('class="bar write1h"', html)
+            # cache_read and pure miss are still rendered.
+            self.assertIn('class="bar read"', html)
+            self.assertIn('class="bar miss"', html)
+
+    def test_state_b_legacy_writes_only_renders_single_combined_bar(self):
+        """cache_creation_input_tokens > 0 but no ephemeral 5m/1h split.
+
+        Expected: one combined bar labelled "TTL unspecified" carrying the
+        legacy write total. NOT expected: separate 5m/1h bars or the
+        empty-state annotation.
+        """
+        with tempfile.TemporaryDirectory(prefix="ttl-legacy-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            self._write_session(d, "legacy-1", git_branch="main",
+                                cwd="/Users/sanghee/dev/dev-harness-kit",
+                                cache_creation_input_tokens=4000,
+                                ephemeral_5m=0, ephemeral_1h=0)
+            out = td_path / "dashboard.html"
+            html = self._run_main_and_read_html(td_path, out)
+
+            # Single combined bar shows the legacy total, labeled as TTL
+            # unspecified (since neither 5m nor 1h buckets were reported).
+            self.assertIn("TTL unspecified", html)
+            self.assertIn("4,000", html)  # the legacy token total
+            # Two-bar layout must NOT appear, empty annotation must NOT appear.
+            self.assertNotIn('class="bar write5m"', html)
+            self.assertNotIn('class="bar write1h"', html)
+            self.assertNotIn("no cache-write activity", html)
+
+    def test_state_c_full_5m_and_1h_split_keeps_two_rows(self):
+        """Both ephemeral_5m and ephemeral_1h buckets populated.
+
+        Expected: the pre-change 4-bar layout — separate write5m +
+        write1h rows. NOT expected: collapse or empty-state annotation.
+        """
+        with tempfile.TemporaryDirectory(prefix="ttl-full-") as td:
+            td_path = Path(td)
+            d = td_path / "logs" / "claude-code" / "main"
+            # Two sessions to cover both 5m and 1h paths.
+            self._write_session(d, "full-5m", git_branch="main",
+                                cwd="/Users/sanghee/dev/dev-harness-kit",
+                                cache_creation_input_tokens=3000,
+                                ephemeral_5m=3000, ephemeral_1h=0)
+            self._write_session(d, "full-1h", git_branch="main",
+                                cwd="/Users/sanghee/dev/dev-harness-kit",
+                                cache_creation_input_tokens=2000,
+                                ephemeral_5m=0, ephemeral_1h=2000)
+            out = td_path / "dashboard.html"
+            html = self._run_main_and_read_html(td_path, out)
+
+            # Two distinct rows, no collapse.
+            self.assertIn('class="bar write5m"', html)
+            self.assertIn('class="bar write1h"', html)
+            # Empty annotation must NOT appear.
+            self.assertNotIn("no cache-write activity", html)
+            self.assertNotIn("TTL unspecified", html)
+
+
 if __name__ == "__main__":
     unittest.main()

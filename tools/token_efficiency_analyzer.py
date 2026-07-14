@@ -1080,8 +1080,7 @@ HTML_TEMPLATE = """<!doctype html>
       <div style="font-weight:600;margin-bottom:10px">Cache TTL Mix</div>
       <div class="ttl-mix">
         <div class="ttl-name">cache_read</div><div class="bar read"><span style="width:{ttl_read_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_read_tokens:,}</div>
-        <div class="ttl-name">write 5m TTL</div><div class="bar write5m"><span style="width:{ttl_5m_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_5m_tokens:,}</div>
-        <div class="ttl-name">write 1h TTL</div><div class="bar write1h"><span style="width:{ttl_1h_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_1h_tokens:,}</div>
+        {ttl_middle_html}
         <div class="ttl-name">pure miss</div><div class="bar miss"><span style="width:{ttl_miss_pct:.1f}%"></span></div><div class="ttl-pct">{ttl_miss_tokens:,}</div>
       </div>
       <div class="bar-legend">
@@ -1313,12 +1312,50 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
     ttl_read  = sum(s["cache_read_tokens"] for s, _ in scored)
     ttl_5m    = sum(s.get("ephemeral_5m", 0) for s, _ in scored)
     ttl_1h    = sum(s.get("ephemeral_1h", 0) for s, _ in scored)
+    # Legacy bucket = cache_write tokens that the upstream provider did not
+    # break down into 5m vs 1h. Priced at the 5m rate by cost_usd; shown
+    # here so the dashboard doesn't silently swallow it.
+    ttl_legacy = max(0, sum(
+        s["cache_write_tokens"] - s.get("ephemeral_5m", 0) - s.get("ephemeral_1h", 0)
+        for s, _ in scored
+    ))
     ttl_miss  = sum(s["input_tokens"] for s, _ in scored)
-    ttl_total = (ttl_read + ttl_5m + ttl_1h + ttl_miss) or 1
+    ttl_writes_total = ttl_5m + ttl_1h + ttl_legacy
+    ttl_total = (ttl_read + ttl_writes_total + ttl_miss) or 1
     ttl_read_pct = ttl_read / ttl_total * 100
     ttl_5m_pct   = ttl_5m   / ttl_total * 100
     ttl_1h_pct   = ttl_1h   / ttl_total * 100
+    ttl_legacy_pct = ttl_legacy / ttl_total * 100
     ttl_miss_pct = ttl_miss / ttl_total * 100
+
+    # Three render states for the write-rows of the TTL mix panel:
+    #   a) ttl_writes_total == 0             -> single annotation row
+    #   b) ttl_5m == ttl_1h == 0, legacy > 0 -> single combined "TTL unspecified" bar
+    #   c) any 5m/1h bucket populated        -> existing 4-bar layout
+    if ttl_writes_total == 0:
+        ttl_middle_html = (
+            '<div class="ttl-name">cache_write</div>'
+            '<div class="ttl-empty" '
+            'style="background:var(--panel-2);border-radius:4px;'
+            'padding:6px 10px;color:var(--muted);font-size:11px">'
+            'no cache-write activity captured this period'
+            '</div><div class="ttl-pct">—</div>'
+        )
+    elif ttl_5m == 0 and ttl_1h == 0:
+        ttl_middle_html = (
+            '<div class="ttl-name">cache_write (TTL unspecified, priced at 5m)</div>'
+            f'<div class="bar writelegacy"><span style="width:{ttl_legacy_pct:.1f}%"></span></div>'
+            f'<div class="ttl-pct">{ttl_legacy:,}</div>'
+        )
+    else:
+        ttl_middle_html = (
+            '<div class="ttl-name">write 5m TTL</div>'
+            f'<div class="bar write5m"><span style="width:{ttl_5m_pct:.1f}%"></span></div>'
+            f'<div class="ttl-pct">{ttl_5m:,}</div>'
+            '<div class="ttl-name">write 1h TTL</div>'
+            f'<div class="bar write1h"><span style="width:{ttl_1h_pct:.1f}%"></span></div>'
+            f'<div class="ttl-pct">{ttl_1h:,}</div>'
+        )
 
     # Cost Gate banner
     gate_status, gate_violations = cost_gate
@@ -1444,6 +1481,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         ttl_5m_pct=ttl_5m_pct,
         ttl_1h_pct=ttl_1h_pct,
         ttl_miss_pct=ttl_miss_pct,
+        ttl_middle_html=ttl_middle_html,
         ttl_caveat=html.escape(CACHE_TTL_CAVEAT),
         session_rows=session_rows_html,
         warnings_html=warnings_html,
