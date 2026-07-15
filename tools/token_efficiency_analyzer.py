@@ -66,6 +66,12 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
 #
+# PRICING MUST be sourced from official provider docs every update — see
+# rules/token-pricing.md for the source-of-truth URLs, the re-verify
+# cadence, and the lessons-learned on matcher-order and substring
+# surprises (gpt-5 vs gpt-5.6-*). Adding a row without a TestPricingFor
+# case is forbidden by L1 (no prod code without verification artifact).
+#
 # Two providers are tracked:
 #   * Anthropic Claude (opus / sonnet / haiku) — rates match
 #     https://platform.claude.com/docs/en/docs/about-claude/pricing
@@ -98,16 +104,19 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 # typical Anthropic-recommended 80% to leave a margin.
 #
 # Substring matcher in ``pricing_for()`` resolves any variant:
-#   "minimax"     → PRICING["minimax"]
-#   "gpt-5-codex" → PRICING["gpt-5-codex"]  (matched BEFORE "gpt-5")
-#   "gpt-5"       → PRICING["gpt-5"]
-#   "gpt-4.1"     → PRICING["gpt-4.1"]
-#   "gpt-4o"      → PRICING["gpt-4o"]
-#   "o3"          → PRICING["o3"]
-#   "o4-mini"     → PRICING["o4-mini"]
-#   "opus"        → PRICING["opus"]
-#   "sonnet"      → PRICING["sonnet"]
-#   "haiku"       → PRICING["haiku"]
+#   "minimax"        → PRICING["minimax"]
+#   "gpt-5-codex"    → PRICING["gpt-5-codex"]
+#   "gpt-5.6-sol"    → PRICING["gpt-5.6-sol"]    (matched BEFORE "gpt-5" — "gpt-5" is a substring)
+#   "gpt-5.6-terra"  → PRICING["gpt-5.6-terra"]
+#   "gpt-5.6-luna"   → PRICING["gpt-5.6-luna"]
+#   "gpt-5"          → PRICING["gpt-5"]
+#   "gpt-4.1"        → PRICING["gpt-4.1"]
+#   "gpt-4o"         → PRICING["gpt-4o"]
+#   "o3"             → PRICING["o3"]
+#   "o4-mini"        → PRICING["o4-mini"]
+#   "opus"           → PRICING["opus"]
+#   "sonnet"         → PRICING["sonnet"]
+#   "haiku"          → PRICING["haiku"]
 # ---------------------------------------------------------------------------
 PRICING: dict[str, dict[str, float]] = {
     "opus":   {"in":  5.00, "out": 25.00, "cache_write_5m":  6.25, "cache_write_1h": 10.00, "cache_read": 0.50},
@@ -117,8 +126,18 @@ PRICING: dict[str, dict[str, float]] = {
     # "Permanent 50% off" price (the strike-through $0.60/$2.40 is the list rate).
     "minimax": {"in": 0.30, "out": 1.20, "cache_write_5m": 0.375, "cache_write_1h": 0.375, "cache_read": 0.06},
     # OpenAI — one cached-input discount, no separate cache-write TTL pricing.
-    # Rates sourced as of 2026-07-16; cache writes mirror base input pricing.
+    # Rates sourced as of 2026-07-16 (consolidated from
+    # https://developers.openai.com/api/docs/pricing and
+    # https://developers.openai.com/api/docs/models/gpt-5.6).
+    # Cache writes mirror base input pricing (1.25x in the GPT-5.6 family).
     "gpt-5-codex": {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
+    # GPT-5.6 family (Sol/Terra/Luna, released 2026-07-09). Each variant has
+    # its own rate — do NOT roll into a single "gpt-5.6" row, because sol
+    # input is 5x luna input. Listed BEFORE "gpt-5" in the matcher order
+    # below so the substring "gpt-5" never silently steals 5.6-* ids.
+    "gpt-5.6-sol":   {"in": 5.0000, "out": 30.0000, "cache_write_5m": 6.2500,  "cache_write_1h": 6.2500,  "cache_read": 0.5000},
+    "gpt-5.6-terra": {"in": 2.5000, "out": 15.0000, "cache_write_5m": 3.1250,  "cache_write_1h": 3.1250,  "cache_read": 0.2500},
+    "gpt-5.6-luna":  {"in": 1.0000, "out":  6.0000, "cache_write_5m": 1.2500,  "cache_write_1h": 1.2500,  "cache_read": 0.1000},
     "gpt-5":       {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
     "gpt-4.1":     {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
     "gpt-4o":      {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
@@ -198,9 +217,11 @@ def pricing_for(model_id: str, *,
                 _unknown_models: set[str] | None = None) -> dict[str, float]:
     """Pick the pricing row whose key appears in the model id (case-insensitive).
 
-    Order matters: ``minimax`` is checked before the Claude tiers, and
-    ``gpt-5-codex`` is checked before ``gpt-5`` so overlapping model ids route
-    to the more specific pricing tier.
+    Order matters: ``minimax`` is checked before the Claude tiers,
+    ``gpt-5-codex`` before ``gpt-5``, and the ``gpt-5.6-*`` family
+    before ``gpt-5`` so overlapping model ids route to the more specific
+    pricing tier (substring match gives first-hit-wins — putting a shorter
+    key first silently steals 5.6-* ids at the 4x cheaper legacy rate).
 
     If ``_unknown_models`` is provided, ids that match no tier are added to
     the set so the caller can warn on stderr (instead of silently falling
@@ -209,7 +230,10 @@ def pricing_for(model_id: str, *,
     if not model_id:
         return PRICING[DEFAULT_PRICING_KEY]
     mid = model_id.lower()
-    for key in ("minimax", "gpt-5-codex", "gpt-5", "gpt-4.1", "gpt-4o", "o3", "o4-mini", "opus", "sonnet", "haiku"):
+    # Order matters: longer keys with shared prefixes (gpt-5.6-*) MUST come
+    # before shorter ones (gpt-5) so "gpt-5" never silently steals 5.6-*
+    # ids via substring match — sol input is 4x the gpt-5 rate.
+    for key in ("minimax", "gpt-5-codex", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5", "gpt-4.1", "gpt-4o", "o3", "o4-mini", "opus", "sonnet", "haiku"):
         if key in mid:
             return PRICING[key]
     if _unknown_models is not None:
@@ -2474,9 +2498,12 @@ def main(argv: list[str] | None = None) -> int:
             entry = wt_meta.get(wt)
             s["worktree_state"] = entry["state"] if entry else "unknown"
 
-    # Time-window only (no repo filter) — feeds the per-repo panel so it
-    # shows the full distribution, not a single self-row.
-    windowed = filter_sessions(sessions, "", args.days, worktree=args.worktree)
+    # --repo scopes ALL aggregate panels (Cost by Repository / Branch /
+    # Worktree / Tool / Model + sessions tables) to the focused project —
+    # not just the per-session total. Pass ``args.repo`` so the window
+    # matches the selection; an empty string here would let other repos'
+    # sessions bleed into the per-repo / per-branch / per-worktree rows.
+    windowed = filter_sessions(sessions, args.repo, args.days, worktree=args.worktree)
     selected = filter_sessions(sessions, args.repo, args.days, args.branch, args.worktree)
     if not selected:
         warn_target = f"repo='{args.repo}'"
