@@ -88,7 +88,7 @@ def render_agents_md(project_root: Path | None = None) -> str:
     contains the shared `rules/*.md` index, so this remains one short pointer
     instead of a second instruction document.
     """
-    return "CLAUDE.md\n"
+    return "Read and follow [CLAUDE.md](CLAUDE.md) before working in this repository.\n"
 
 
 def write_agents_md(project_root: Path) -> Path:
