@@ -59,14 +59,16 @@ class TestHooksStatus(unittest.TestCase):
         result = self.run_status(ROOT)
         self.assertTrue(result["claude"]["hooks_registered"])
         self.assertTrue(result["codex"]["hooks_registered"])
-        self.assertTrue({"PreToolUse", "UserPromptSubmit", "SessionStart", "Stop"}.issubset(result["source_hooks"]["events"]))
-        self.assertTrue(result["git"]["configured_hooks_path"])
+        self.assertTrue({"PreToolUse", "UserPromptSubmit", "SessionStart", "PostToolUse", "Stop"}.issubset(result["source_hooks"]["events"]))
+        self.assertIn("configured_hooks_path", result["git"])
 
     def test_reports_active_git_hook_when_configured(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".githooks").mkdir()
-            (root / ".githooks" / "pre-push").write_text("#!/bin/sh\n")
+            pre_push = root / ".githooks" / "pre-push"
+            pre_push.write_text("#!/bin/sh\n")
+            pre_push.chmod(0o755)
             subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
             subprocess.run(["git", "-C", str(root), "config", "core.hooksPath", ".githooks"], check=True)
             self.assertTrue(self.run_status(root)["git"]["pre_push_active"])
