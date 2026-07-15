@@ -221,7 +221,7 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
     def tearDown(self):
         # Clean up any worktree the hook may have created.
         root = Path(self._main.name)
-        wt_root = root / ".claude" / "worktrees"
+        wt_root = root / ".worktrees"
         if wt_root.exists():
             for child in wt_root.iterdir():
                 subprocess.run(
@@ -267,6 +267,11 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         self.assertTrue(
             Path(wt_path).exists(),
             f"worktree path does not exist: {wt_path}",
+        )
+        self.assertIn(
+            f"{os.sep}.worktrees{os.sep}",
+            wt_path,
+            f"new worktree must use the client-neutral .worktrees root: {wt_path}",
         )
         # Worktree must be a real git worktree (HEAD on a branch).
         branch_ref = subprocess.run(

@@ -114,7 +114,7 @@ Sections (rendered by `tools/token_efficiency_analyzer.py:render_dashboard`):
   of the report on a single branch.
 - **Cost by Worktree (with State column)**: same shape as the Branch panel
   plus a `State` column (`live` / `merged` / `gone` / `main`) for every
-  worktree dir on disk under `.claude/worktrees/*/`. `live` = still in
+  worktree dir on disk under `.worktrees/*/`. `live` = still in
   `git worktree list` and has unique commits vs `origin/main`. `merged`
   = still listed but the branch tip is an ancestor of `origin/main` (safe
   to delete). `gone` = dir exists on disk but is no longer in

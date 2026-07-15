@@ -221,6 +221,12 @@ Enforced by 3 hooks:
 - `task-detector.sh` — early warning on new-task prompts ("implement X", "add Y", etc.)
 - `session-start-check.sh` — gentle reminder at session start
 
+The canonical worktree location is the client-neutral repository-root path
+`.worktrees/<slug>/`. Claude Code and Codex therefore open the same checkout
+for a branch. Existing `.claude/worktrees/` and `.codex/worktrees/` checkouts
+remain discoverable for log analysis during migration, but new automatic cuts
+must use `.worktrees/`.
+
 Plus `bin/devkit-refresh.sh` for the consumer side (refresh cache after PR merge via `git pull` + `rsync`).
 
 ## Loghooks (`/dev-kit:log`)

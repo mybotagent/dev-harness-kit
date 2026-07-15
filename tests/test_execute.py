@@ -389,7 +389,7 @@ class TestRunSequential(unittest.TestCase):
             cmd = claude.args[0]
             self.assertEqual(cmd[0], "claude")
             self.assertEqual(cmd[1], "-p")
-            workdir = claude.kwargs.get("cwd") or next((a for a in cmd if ".claude/worktrees" in a), None)
+            workdir = claude.kwargs.get("cwd") or next((a for a in cmd if ".worktrees" in a), None)
             self.assertIsNotNone(workdir, f"claude -p missing workdir; cmd={cmd}")
             # The preamble (from step1.md) is in the trailing prompt arg
             joined = " ".join(cmd)
