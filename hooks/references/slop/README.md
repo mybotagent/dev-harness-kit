@@ -1,6 +1,6 @@
 # slop-detector v2 — references/ loader contract
 
-This directory is the **SSOT** for the slop-detector v2 scanner. The hook (`hooks/slop-detector.sh`) and the `audit-slop` skill both load from here; nothing inside `hooks/slop-detector.sh` is duplicated.
+This directory is the **SSOT** for the slop-detector v2 scanner. The hook (`hooks/slop-detector.sh`) and the `audit --slop-only` mode (inlined into `skills/audit/SKILL.md`) both load from here; nothing inside `hooks/slop-detector.sh` is duplicated.
 
 ## File roles
 
@@ -28,7 +28,7 @@ The bank file then flows into `grep -oE -f` (or is grouped by `---` section mark
 | Any EN phrase | MEDIUM |
 | EN structure only | LOW (consider noise) |
 
-The hook reports a `severity:` line in stderr; the audit-slop skill escalates by `scoring.md` weights.
+The hook reports a `severity:` line in stderr; the `audit --slop-only` mode (inlined into `skills/audit/SKILL.md`) escalates by `scoring.md` weights.
 
 ## Environment
 

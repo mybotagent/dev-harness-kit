@@ -47,7 +47,7 @@ user-invocable: false
 After 4 phases:
 - Quote root cause in 1 line + regression test GREEN
 - `state_codec.append_hand_off(root, "build", "build", "..")`
-- Loop back to build-engine
+- Loop back to the per-step harness runner (lib/execute.py)
 
 ## Red Flags
 
