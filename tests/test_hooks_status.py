@@ -25,6 +25,36 @@ class TestHooksStatus(unittest.TestCase):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
 
+    def test_shared_definition_keeps_the_complete_claude_hook_inventory(self):
+        config = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+        expected = {
+            "PreToolUse": {
+                "tdd-guard.sh", "worktree-guard.sh", "bash-guard.sh",
+                "git-guard.sh", "cost-gate.sh",
+            },
+            "UserPromptSubmit": {"task-detector.sh", "worktree-auto-cut.sh"},
+            "SessionStart": {
+                "session-start-check.sh", "log-on-session-start.sh", "cost-gate.sh",
+            },
+            "PostToolUse": {
+                "secret-scan.sh", "slop-detector.sh",
+                "worktree-log-auto-install.sh", "cost-gate.sh",
+            },
+            "Stop": {"stop-verify.sh"},
+        }
+        actual = {
+            event: {
+                command.rsplit("/", 1)[-1]
+                for group in config["hooks"].get(event, [])
+                for hook in group.get("hooks", [])
+                for command in [hook.get("command", "")]
+            }
+            for event in expected
+        }
+        for event, scripts in expected.items():
+            for script in scripts:
+                self.assertIn(script, actual[event], f"Claude hook removed from {event}: {script}")
+
     def test_reports_shared_events_and_git_configuration(self):
         result = self.run_status(ROOT)
         self.assertTrue(result["claude"]["hooks_registered"])
