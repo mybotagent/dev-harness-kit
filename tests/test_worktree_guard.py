@@ -443,6 +443,18 @@ class TestHooksJsonWiring(unittest.TestCase):
             f"session-start-check.sh not wired into SessionStart. Got: {cmds}",
         )
 
+    def test_worktree_log_auto_install_in_posttooluse_bash(self):
+        # Regression: `git worktree add` must trigger the auto-install
+        # hook so the new worktree has loghooks from the start. Without
+        # this wiring, every new worktree silently loses capture until
+        # the user runs /dev-kit:log setup --target <new> manually.
+        cmds = self._hooks_under("PostToolUse")
+        self.assertTrue(
+            any("worktree-log-auto-install.sh" in c for c in cmds),
+            f"worktree-log-auto-install.sh not wired into PostToolUse. "
+            f"Got commands: {cmds}",
+        )
+
 
 class TestWorktreeDetectLib(unittest.TestCase):
     """hooks/lib/worktree-detect.sh — shared discriminator (Major 3)."""

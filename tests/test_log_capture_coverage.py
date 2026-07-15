@@ -122,12 +122,14 @@ class TestWorktreeCapturePipeline(unittest.TestCase):
         rc = self._run_save_log(self.wt, "sess-fix-x")
         self.assertEqual(rc.returncode, 0,
                          f"save_log failed in worktree:\n{rc.stderr}")
-        # Pipeline assertion 1: capture lands in MAIN, not worktree.
-        captured = self.main / "logs" / "claude-code" / "fix-x" / "sess-fix-x.jsonl"
-        self.assertTrue(captured.exists(),
-                        f"capture missing from MAIN logs at {captured}")
-        self.assertFalse((self.wt / "logs").exists(),
-                         f"worktree grew its own logs/ dir: {self.wt / 'logs'}")
+        # Pipeline assertion 1: capture lands in MAIN (canonical) AND in
+        # the worktree (analyzer attribution via worktree_from_path).
+        main_capture = self.main / "logs" / "claude-code" / "fix-x" / "sess-fix-x.jsonl"
+        wt_capture = self.wt / "logs" / "claude-code" / "fix-x" / "sess-fix-x.jsonl"
+        self.assertTrue(main_capture.exists(),
+                        f"capture missing from MAIN logs at {main_capture}")
+        self.assertTrue(wt_capture.exists(),
+                        f"worktree logs/ missing dual-write copy at {wt_capture}")
 
     def test_worktree_session_shows_in_cost_by_worktree_panel(self):
         rc = self._run_save_log(self.wt, "sess-fix-x")
