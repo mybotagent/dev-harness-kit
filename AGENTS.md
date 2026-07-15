@@ -6,7 +6,7 @@ substitute or ignore the rules listed below.
 
 ## Shared rules
 
-- Read `.claude/rules/git-workflow.md` before planning or editing.
-- Read `.claude/rules/session-hygiene.md` before planning or editing.
-- Read `.claude/rules/skill-authoring.md` before planning or editing.
-- Read `.claude/rules/test-files.md` before planning or editing.
+- Read `rules/git-workflow.md` before planning or editing.
+- Read `rules/session-hygiene.md` before planning or editing.
+- Read `rules/skill-authoring.md` before planning or editing.
+- Read `rules/test-files.md` before planning or editing.

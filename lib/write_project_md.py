@@ -10,7 +10,7 @@ CLAUDE.md sections:
   §5 Hand-off Pointer
 
 AGENTS.md: universal entry point that points to CLAUDE.md and enumerates the
-shared `.claude/rules/*.md` files for CLIs that read AGENTS.md instead of
+shared `rules/*.md` files for CLIs that read AGENTS.md instead of
 Claude's automatic rule discovery.
 """
 from __future__ import annotations
@@ -85,12 +85,14 @@ def render_agents_md(project_root: Path | None = None) -> str:
     """Render the universal AGENTS.md entry point.
 
     AGENTS.md is the universal entry point that Codex / other CLIs read;
-    Claude Code reads CLAUDE.md and `.claude/rules/` directly. Enumerating the
+    Claude Code reads CLAUDE.md and `.claude/rules/` directly. The repository
+    keeps that directory as a compatibility link to canonical `rules/`.
+    Enumerating the
     rule files here makes the same rule set explicit to Codex without copying
     the rule contents into a second, drift-prone file.
     """
     root = (project_root or Path.cwd()).resolve()
-    rules_dir = root / ".claude" / "rules"
+    rules_dir = root / "rules"
     rules = sorted(
         path.relative_to(root).as_posix()
         for path in rules_dir.glob("*.md")
@@ -108,7 +110,7 @@ def render_agents_md(project_root: Path | None = None) -> str:
     if rules:
         lines.extend(f"- Read `{rule}` before planning or editing." for rule in rules)
     else:
-        lines.append("- Read every Markdown file under `.claude/rules/` when present.")
+        lines.append("- Read every Markdown file under `rules/` when present.")
     lines.append("")
     return "\n".join(lines)
 
