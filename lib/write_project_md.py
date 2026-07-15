@@ -240,7 +240,7 @@ def render_claude_md(
     section_3 = render_stub_section_3(project_root)
     section_4 = hook_matrix if hook_matrix is not None else render_hook_matrix_table()
     section_5 = hand_off_chain if hand_off_chain is not None else (
-        "next_stage_trigger: /dev-kit:ci-setup --force\n"
+        "next_stage_trigger: /dev-kit:plan\n"
         "shortcut_trigger: /dev-kit:tdd-fast"
     )
 
