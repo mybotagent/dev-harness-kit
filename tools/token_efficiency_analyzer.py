@@ -78,6 +78,10 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 #     rate (1.25x base input) — same multiplier Anthropic uses for 5m TTL.
 #     We mirror that as cache_write_5m; cache_write_1h is set equal since
 #     no separate 1h rate is published for MiniMax.
+#   * OpenAI (gpt-5-codex / gpt-5 / gpt-4.1 / gpt-4o / o3 / o4-mini) —
+#     rates from https://openai.com/api/pricing/ current as of 2026-07-16.
+#     OpenAI has a single cached-input discount (~50% of base input) and no
+#     separate TTL pricing, so both cache-write buckets equal base input.
 #
 # Cache *write* TTL split (Anthropic): prompt-cache TTL is either 5 minutes
 # or 1 hour. The 5-minute write costs 1.25x base input (a one-time priming
@@ -88,16 +92,22 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 # session that pins long-lived context (CLAUDE.md, architecture maps)
 # is priced correctly.
 #
-# Cache *read* is ~10% of base input (Anthropic) or $0.06/M (MiniMax) and
-# recovers the miss on subsequent turns. The 0.85 cache-hit threshold in
-# the scoring rubric is set just above the typical Anthropic-recommended
-# 80% to leave a margin.
+# Cache *read* is ~10% of base input (Anthropic), $0.06/M (MiniMax), or
+# ~50% of base input (OpenAI), and recovers the miss on subsequent turns.
+# The 0.85 cache-hit threshold in the scoring rubric is set just above the
+# typical Anthropic-recommended 80% to leave a margin.
 #
 # Substring matcher in ``pricing_for()`` resolves any variant:
-#   "minimax"  → PRICING["minimax"]  (matched BEFORE claude tiers)
-#   "opus"     → PRICING["opus"]
-#   "sonnet"   → PRICING["sonnet"]
-#   "haiku"    → PRICING["haiku"]
+#   "minimax"     → PRICING["minimax"]
+#   "gpt-5-codex" → PRICING["gpt-5-codex"]  (matched BEFORE "gpt-5")
+#   "gpt-5"       → PRICING["gpt-5"]
+#   "gpt-4.1"     → PRICING["gpt-4.1"]
+#   "gpt-4o"      → PRICING["gpt-4o"]
+#   "o3"          → PRICING["o3"]
+#   "o4-mini"     → PRICING["o4-mini"]
+#   "opus"        → PRICING["opus"]
+#   "sonnet"      → PRICING["sonnet"]
+#   "haiku"       → PRICING["haiku"]
 # ---------------------------------------------------------------------------
 PRICING: dict[str, dict[str, float]] = {
     "opus":   {"in":  5.00, "out": 25.00, "cache_write_5m":  6.25, "cache_write_1h": 10.00, "cache_read": 0.50},
@@ -106,6 +116,14 @@ PRICING: dict[str, dict[str, float]] = {
     # MiniMax — M3 standard tier (≤512k input) and M2.7.
     # "Permanent 50% off" price (the strike-through $0.60/$2.40 is the list rate).
     "minimax": {"in": 0.30, "out": 1.20, "cache_write_5m": 0.375, "cache_write_1h": 0.375, "cache_read": 0.06},
+    # OpenAI — one cached-input discount, no separate cache-write TTL pricing.
+    # Rates sourced as of 2026-07-16; cache writes mirror base input pricing.
+    "gpt-5-codex": {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
+    "gpt-5":       {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
+    "gpt-4.1":     {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
+    "gpt-4o":      {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
+    "o3":          {"in": 10.0000, "out": 40.0000, "cache_write_5m": 10.0000, "cache_write_1h": 10.0000, "cache_read": 5.0000},
+    "o4-mini":     {"in": 1.1000, "out": 4.4000, "cache_write_5m": 1.1000, "cache_write_1h": 1.1000, "cache_read": 0.5500},
 }
 DEFAULT_PRICING_KEY = "sonnet"
 DEFAULT_CACHE_HIT_TARGET = 0.85   # score = 100 at this ratio; below 0.50 = critical warning
@@ -180,19 +198,18 @@ def pricing_for(model_id: str, *,
                 _unknown_models: set[str] | None = None) -> dict[str, float]:
     """Pick the pricing row whose key appears in the model id (case-insensitive).
 
-    Order matters: ``minimax`` is checked before the Claude tiers so a
-    hypothetical ``minimax-sonnet`` variant does not get misrouted to Sonnet
-    pricing (Sonnet input is 10x more expensive than MiniMax-M3 input).
+    Order matters: ``minimax`` is checked before the Claude tiers, and
+    ``gpt-5-codex`` is checked before ``gpt-5`` so overlapping model ids route
+    to the more specific pricing tier.
 
     If ``_unknown_models`` is provided, ids that match no tier are added to
     the set so the caller can warn on stderr (instead of silently falling
-    back to sonnet pricing — which under-counts Opus sessions and over-
-    counts Haiku/MiniMax ones).
+    back to sonnet pricing — which can misprice Anthropic and OpenAI sessions).
     """
     if not model_id:
         return PRICING[DEFAULT_PRICING_KEY]
     mid = model_id.lower()
-    for key in ("minimax", "opus", "sonnet", "haiku"):
+    for key in ("minimax", "gpt-5-codex", "gpt-5", "gpt-4.1", "gpt-4o", "o3", "o4-mini", "opus", "sonnet", "haiku"):
         if key in mid:
             return PRICING[key]
     if _unknown_models is not None:
