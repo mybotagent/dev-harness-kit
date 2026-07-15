@@ -41,6 +41,20 @@ INPUT="$(cat)"
 # shellcheck source=lib/worktree-detect.sh
 source "$(dirname "$0")/lib/worktree-detect.sh"
 
+# Hooks are advisory, but a silent fallback makes the next edit look like an
+# unrelated hard failure from worktree-guard.sh. Always return a handoff
+# envelope when a task was detected but auto-cut could not proceed.
+fallback_context() {
+  local reason="$1"
+  local ctx="worktree auto-cut unavailable
+  reason:  $reason
+  action:  do not edit the main checkout; resolve the reason, then run:
+           git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main
+  Codex:   after the worktree exists, spawn a subagent with that path as cwd and pass the original task prompt"
+  jq -nc --arg ctx "$ctx" \
+    '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
+}
+
 # Fail open with a stderr warning if jq is missing — this hook is
 # advisory; worktree-guard.sh is the hard block.
 if ! command -v jq >/dev/null 2>&1; then
@@ -82,17 +96,27 @@ fi
 if [ "$task_intent" = "0" ] && printf '%s' "$LOWER" | grep -qE "(new (feature|task|endpoint|function|module|hook|skill)|feature request|bug report)"; then
   task_intent=1
 fi
+# Korean task prompts need the same worktree protection. Keep the signal
+# narrow: require both an action word and a code/repository noun.
+if [ "$task_intent" = "0" ] \
+  && printf '%s' "$LOWER" | grep -qE '(수정|해결|구현|추가|변경|만들|작업)' \
+  && printf '%s' "$LOWER" | grep -qE '(hook|브랜치|worktree|레포|repo|코드|파일|에러|오류|기능)'; then
+  task_intent=1
+fi
 # Require a code-edit verb to be present anywhere in the prompt
 # (Q2: safer than the leading-verb check alone). This filters out
 # "investigate this error", "explain X", "what does Y do?".
-if [ "$task_intent" = "1" ] && ! printf '%s' "$LOWER" | grep -qE '(implement|add|build|create|fix|refactor|rename|delete|remove|update|change|introduce)[[:space:]]+(file|function|method|class|module|hook|skill|test|feature|column|field|variable|api|endpoint|route|handler|component|import|export|line|lines)'; then
+if [ "$task_intent" = "1" ] \
+  && ! printf '%s' "$LOWER" | grep -qE '(implement|add|build|create|fix|refactor|rename|delete|remove|update|change|introduce)[[:space:]]+(file|function|method|class|module|hook|skill|test|feature|column|field|variable|api|endpoint|route|handler|component|import|export|line|lines)' \
+  && ! printf '%s' "$LOWER" | grep -qE '((수정|해결|구현|추가|변경|만들|작업).*(hook|브랜치|worktree|레포|repo|코드|파일|에러|오류|기능)|(hook|브랜치|worktree|레포|repo|코드|파일|에러|오류|기능).*(수정|해결|구현|추가|변경|만들|작업))'; then
   task_intent=0
 fi
 [ "$task_intent" = "1" ] || exit 0
 
 # Precondition 1: main is clean.
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-  exit 0   # dirty main → fall back to manual nudge (task-detector.sh)
+  fallback_context "main checkout is dirty; stash or commit its changes before cutting a clean worktree"
+  exit 0
 fi
 
 # Derive slug from the prompt. Strategy:
@@ -126,6 +150,11 @@ derive_slug() {
   slug="${slug:0:24}"
   # Strip trailing dash from the truncation.
   slug="${slug%-}"
+  # Non-Latin prompts may not produce an ASCII noun. Keep the branch name
+  # valid instead of silently abandoning the automatic handoff.
+  if ! printf '%s' "$slug" | grep -qE '^[a-z0-9-]+$'; then
+    slug="task"
+  fi
   # Type prefix — default to "fix" because the user can rename before
   # commit; the verb mapping is intentionally not used.
   type="fix"
@@ -154,6 +183,7 @@ SLUG="$(derive_slug "$LOWER")"
 # Slug must match the project branch-naming regex (kebab-case, length
 # 2-40, type prefix, no forbidden words). Reject and fall back if not.
 if ! printf '%s' "$SLUG" | grep -qE '^(fix|feat|refactor|docs|test|chore|perf|hotfix)/[a-z0-9-]{2,40}$'; then
+  fallback_context "the task could not be converted to a valid branch name"
   exit 0
 fi
 # Reject forbidden slugs (per .claude/rules/git-workflow.md).
@@ -170,12 +200,18 @@ MAIN_REF=""
 if git remote get-url origin >/dev/null 2>&1; then
   if git fetch origin main >/dev/null 2>&1; then
     MAIN_REF="origin/main"
+  else
+    fallback_context "fetching origin/main failed; the worktree must start from the latest remote main"
+    exit 0
   fi
 fi
 if [ -z "$MAIN_REF" ] && git rev-parse --verify main >/dev/null 2>&1; then
   MAIN_REF="main"
 fi
-[ -n "$MAIN_REF" ] || exit 0
+[ -n "$MAIN_REF" ] || {
+  fallback_context "no main branch is available as a worktree base"
+  exit 0
+}
 
 # Hooks run in the session's current directory. Resolve the repository root
 # first so a session started from a subdirectory still shares the canonical
@@ -187,6 +223,7 @@ WT_PATH="$WT_PARENT/$DIRNAME"
 
 # Precondition 4: worktree doesn't already exist on disk.
 if [ -d "$WT_PATH" ]; then
+  fallback_context "the target worktree path already exists: $WT_PATH"
   exit 0
 fi
 
@@ -199,6 +236,7 @@ if ! git worktree add -b "$BRANCH" "$WT_PATH" "$MAIN_REF" >/dev/null 2>&1; then
   # Clean up partial state on failure.
   git worktree remove --force "$WT_PATH" 2>/dev/null || true
   git branch -D "$BRANCH" 2>/dev/null || true
+  fallback_context "git worktree add failed for branch $BRANCH"
   exit 0
 fi
 

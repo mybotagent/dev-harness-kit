@@ -24,17 +24,29 @@ class TestHooksStatus(unittest.TestCase):
     def test_codex_manifest_registers_shared_hook_definition(self):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
-        codex_hooks = ROOT / ".codex-plugin" / "hooks" / "hooks.json"
+        codex_hooks = ROOT / ".codex-plugin" / manifest["hooks"]
         self.assertTrue(codex_hooks.is_file(), f"missing Codex plugin hooks: {codex_hooks}")
         claude_text = (ROOT / "hooks" / "hooks.json").read_text()
         codex_text = codex_hooks.read_text()
+        codex_config = json.loads(codex_text)
+        claude_config = json.loads(claude_text)
+
+        # Codex parses plugin hook definitions with its own narrow schema.
+        # Claude settings metadata such as `$schema` and `_comment` must not
+        # leak into the bundled Codex definition.
+        self.assertEqual(
+            set(codex_config),
+            {"description", "hooks"},
+            "Codex hook definitions must contain only Codex schema fields",
+        )
+        self.assertIsInstance(codex_config["description"], str)
         self.assertIn("${PLUGIN_ROOT}", codex_text)
         self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", codex_text)
         self.assertIn("${CLAUDE_PLUGIN_ROOT}", claude_text)
         self.assertNotIn("${PLUGIN_ROOT}", claude_text)
         self.assertEqual(
-            json.loads(codex_text)["hooks"].keys(),
-            json.loads(claude_text)["hooks"].keys(),
+            codex_config["hooks"].keys(),
+            claude_config["hooks"].keys(),
             "Codex and Claude hook events must stay synchronized",
         )
 
