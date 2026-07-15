@@ -193,6 +193,44 @@ class TestPricingFor(unittest.TestCase):
             with self.subTest(model_id=model_id):
                 self.assertEqual(pricing_for(model_id), PRICING[model_id])
 
+    def test_gpt_5_6_family_routes_before_gpt_5(self):
+        # gpt-5 is a substring of gpt-5.6, so the matcher MUST check the
+        # longer gpt-5.6-* keys first — otherwise every gpt-5.6 session
+        # silently under-bills at the 4x cheaper legacy gpt-5 rate.
+        for model_id, tier in (
+            ("gpt-5.6-sol",   "gpt-5.6-sol"),
+            ("gpt-5.6-terra", "gpt-5.6-terra"),
+            ("gpt-5.6-luna",  "gpt-5.6-luna"),
+        ):
+            with self.subTest(model_id=model_id):
+                self.assertIn(
+                    tier, PRICING,
+                    f"PRICING must have a dedicated row for {tier!r} "
+                    f"(see developers.openai.com/api/docs/pricing)"
+                )
+                self.assertEqual(
+                    pricing_for(model_id), PRICING[tier],
+                    f"{model_id!r} must resolve to {tier!r}, not to the "
+                    f"legacy gpt-5 tier (which is 4x cheaper and would "
+                    f"silently under-bill codex gpt-5.6 sessions).",
+                )
+                self.assertNotEqual(
+                    pricing_for(model_id), PRICING["gpt-5"],
+                    f"{model_id!r} must NOT fall through to gpt-5",
+                )
+
+    def test_gpt_5_6_not_collected_as_unknown(self):
+        # Code path that bug-reporters hit: an analyzer WARN line should
+        # never claim gpt-5.6-* are unknown. They must be silently routed.
+        unknown: set[str] = set()
+        for model_id in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+            with self.subTest(model_id=model_id):
+                pricing_for(model_id, _unknown_models=unknown)
+        self.assertEqual(
+            unknown, set(),
+            f"gpt-5.6-* ids must NOT be collected as unknown: {unknown!r}",
+        )
+
     def test_unknown_openai_model_collects_and_falls_back(self):
         unknown: set[str] = set()
         model_id = "gpt-99-totally-fake"
@@ -552,6 +590,93 @@ class TestEndToEndDashboard(unittest.TestCase):
                        "ROI Actions", "Recommended Optimizations",
                        "class=\"grade grade-", "Tools</th>"):
             self.assertIn(needle, html_text, f"missing section: {needle}")
+
+    def test_other_repo_sessions_excluded_when_repo_flag_set(self):
+        """--repo must scope EVERY aggregate panel — Cost by Repository,
+        Cost by Branch, Cost by Worktree, Cost by Model, the sessions
+        tables — to sessions whose cwd basename matches ``--repo``.
+        Sessions from any other project must never appear in the HTML.
+
+        Regression: ``main()`` used to build ``windowed`` (the
+        ``all_sessions_in_window`` pool feeding all panels) with an empty
+        repo filter, so a multi-repo logs root leaked other-repo rows
+        into the per-repo panel even when ``--repo this-project`` was set.
+        """
+        target = self.tmpdir / "logs" / "claude-code"
+        other_dir = self.tmpdir / "logs-other" / "claude-code"
+        other_dir.mkdir(parents=True)
+        # Reuse the aaaa-low-cache fixture as the "this-project" session
+        # (its cwd = /tmp/fixture-repo). Add a NEW fixture for
+        # "other-project" — one minimal session under a different cwd
+        # basename. This makes the "other-project" string trivial to grep
+        # for in the rendered HTML.
+        other_session_id = "gggg-other-project-session"
+        sample = (
+            '{"timestamp":"2026-07-09T10:00:00.000Z",'
+            '"message":{"role":"user","content":"echo"},'
+            '"type":"user","sessionId":"' + other_session_id + '",'
+            '"cwd":"/tmp/other-project","gitBranch":"main",'
+            '"userType":"external","version":"test"}\n'
+            '{"timestamp":"2026-07-09T10:00:01.000Z",'
+            '"message":{"id":"m1","type":"message","role":"assistant",'
+            '"content":[{"type":"text","text":"hi"}],"model":"claude-haiku-4-5",'
+            '"stop_reason":"end_turn","usage":{"input_tokens":100,'
+            '"cache_creation_input_tokens":0,"cache_read_input_tokens":0,'
+            '"output_tokens":10}},'
+            '"type":"assistant","sessionId":"' + other_session_id + '",'
+            '"cwd":"/tmp/other-project","gitBranch":"main",'
+            '"userType":"external","version":"test"}\n'
+        )
+        (other_dir / "other-project.jsonl").write_text(sample)
+        # Also drop the same other-project file into the main logs dir so
+        # aggregate_session() can pick it up in the same scan run.
+        (target / "other-project.jsonl").write_text(sample)
+
+        rc = main([
+            "--repo", "fixture-repo",
+            "--days", "30",
+            "--logs-dir", str(self.tmpdir / "logs"),
+            "--no-include-worktree-logs",
+            "--out", str(self.out_html),
+        ])
+        self.assertEqual(rc, 0)
+        html_text = self.out_html.read_text()
+        # "other-project" must not appear ANYWHERE in the rendered
+        # dashboard — not in the Cost by Repository row, not in any
+        # worktree label, not in any session branch/cwd cell.
+        # (We grep the rendered HTML because aggregate scoping is a
+        # presentation concern; if a session never reaches the panels,
+        # its branch/worktree label never gets rendered either.)
+        self.assertNotIn(
+            "other-project", html_text,
+            "Other-project sessions leaked into the dashboard despite "
+            "--repo fixture-repo being set. The Cost-by-Repository/Branch/"
+            "Worktree pool must be repo-scoped, not time-window-only.",
+        )
+        # And the in-scope session count from JSON output must also be
+        # scoped to fixture-repo only (no double-count).
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+            rc = main([
+                "--repo", "fixture-repo",
+                "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--no-include-worktree-logs",
+                "--json",
+            ])
+        self.assertEqual(rc, 0)
+        data = json.loads(stdout_buf.getvalue())
+        # fixture-repo fixtures = 6 sessions (FIXTURE_LOGS copy).
+        # The other-project file adds 1 session to the directory but must
+        # be excluded by --repo fixture-repo, so total stays at 6.
+        self.assertEqual(
+            data["sessions"], 6,
+            f"--repo must scope sessions to 6 (fixture-repo only); got "
+            f"{data['sessions']} which means other-project sessions leaked "
+            f"into the total cost / savings aggregation.",
+        )
 
     def test_stderr_warn_does_not_leak_into_stdout(self):
         import io
