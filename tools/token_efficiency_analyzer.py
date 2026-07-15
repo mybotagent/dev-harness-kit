@@ -31,12 +31,23 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Iterable
+
+#: Worktrees newer than this many seconds with HEAD == origin/main SHA and
+#: zero unique commits classify as ``state="fresh"`` instead of ``"merged"``.
+#: Without this branch, a freshly-cut worktree (no commits yet) is
+#: indistinguishable from a rebase-merged branch (also HEAD == origin/main),
+#: so the dashboard marks it ``merged`` + ``stale`` and the user thinks their
+#: brand-new worktree is dead weight. 1 hour covers "open dashboard right
+#: after `git worktree add`" without overstaying — a forgotten worktree
+#: degrades to ``merged`` the next day.
+FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
 
 
 # ---------------------------------------------------------------------------
@@ -437,25 +448,34 @@ def classify_worktree_dir(
     git_runner=subprocess.run,
     timeout: int = 5,
 ) -> dict:
-    """Classify one worktree dir as live / merged / gone / unknown.
+    """Classify one worktree dir as live / fresh / merged / gone / unknown.
 
-    Three git calls (all wrapped in try/except — never raises):
+    State set:
+      - ``"fresh"``   fresh worktree (HEAD == origin/main SHA, log empty,
+                      worktree dir mtime within ``FRESH_WORKTREE_MAX_AGE_SECONDS``)
+      - ``"merged"``  branch's commits are all in ``origin/main`` and the
+                      worktree is not fresh (rebase-merge, squash-merge with
+                      empty log, or stale fresh worktree past the age threshold)
+      - ``"live"``    branch has unique commits not in ``origin/main``
+      - ``"gone"``    dir exists on disk but not in ``git worktree list``
+      - ``"unknown"`` git call failed (timeout, no origin/main, OS error)
 
-    1. ``git -C <repo_root> worktree list --porcelain`` — determines whether
-       the dir is still registered (``is_listed=True``). Listed path is
-       resolved before comparison so symlinked wts still match.
-    2. ``git -C <wt_path> rev-parse --short HEAD`` — captures the branch tip.
-    3. ``git -C <wt_path> merge-base --is-ancestor HEAD origin/main`` —
-       ``returncode`` mapping:
-         - 0 → ``state="merged"`` (branch tip is an ancestor of ``origin/main``)
-         - 1 → ``state="live"``   (branch tip has unique commits vs ``origin/main``)
-         - any other (>= 2, timeout, OSError) → ``state="unknown"``
+    Git calls (all wrapped in try/except — never raises):
+
+    1. ``git -C <repo_root> worktree list --porcelain`` — whether the dir is
+       still registered (``is_listed=True``).
+    2. ``git -C <wt_path> rev-parse --short HEAD`` — branch tip short SHA.
+    3. ``git -C <wt_path> rev-parse HEAD`` — full HEAD SHA (for fresh detect).
+    4. ``git -C <repo_root> rev-parse origin/main`` — full origin/main SHA.
+    5. ``git -C <wt_path> log origin/main..HEAD --oneline`` — empty iff every
+       commit on the branch is reachable from ``origin/main``.
 
     Returned dict keys:
 
-    - ``state``               ∈ ``{"live", "merged", "gone", "unknown"}``
+    - ``state``               ∈ ``{"live","fresh","merged","gone","unknown"}``
     - ``worktree_listed``     bool — was the dir in ``git worktree list``
     - ``branch_merged_into_main`` bool — only meaningful when ``state=="merged"``
+    - ``is_fresh``            bool — True iff ``state=="fresh"`` (mirrors state)
     - ``branch_tip``          str — short SHA, empty on failure
     - ``branch_name``         str — branch refs/heads/<name>, or empty
     """
@@ -497,6 +517,7 @@ def classify_worktree_dir(
             "state": "gone",
             "worktree_listed": False,
             "branch_merged_into_main": False,
+            "is_fresh": False,
             "branch_tip": "",
             "branch_name": "",
         }
@@ -511,6 +532,16 @@ def classify_worktree_dir(
         else ""
     )
 
+    # 2b. Full HEAD SHA + origin/main SHA. Used to tell "fresh worktree"
+    #     apart from "rebase-merged branch" — both have an empty
+    #     ``log origin/main..HEAD``, but only the fresh case has
+    #     HEAD == origin/main. (We additionally gate on worktree mtime
+    #     because HEAD can also equal origin/main after a fast-forward merge.)
+    head_full_cp = _safe_run(["git", "-C", str(wt_path), "rev-parse", "HEAD"])
+    head_full = (head_full_cp.stdout or "").strip() if head_full_cp and head_full_cp.returncode == 0 else ""
+    main_full_cp = _safe_run(["git", "-C", str(repo_root), "rev-parse", "origin/main"])
+    main_full = (main_full_cp.stdout or "").strip() if main_full_cp and main_full_cp.returncode == 0 else ""
+
     # 3. Empty-diff check. Uniform across linear-, squash-, and rebase-merge:
     #    a worktree is "merged" iff its branch has zero commits not in
     #    origin/main. Replaces the previous ``merge-base --is-ancestor``
@@ -521,14 +552,29 @@ def classify_worktree_dir(
     log_cp = _safe_run(
         ["git", "-C", str(wt_path), "log", "origin/main..HEAD", "--oneline"]
     )
+    is_fresh = False
     if log_cp is None or log_cp.returncode < 0 or log_cp.returncode >= 2:
         state = "unknown"
         merged = False
     elif log_cp.returncode == 0:
         unique = [l for l in (log_cp.stdout or "").splitlines() if l.strip()]
         if not unique:
-            state = "merged"
-            merged = True
+            # Distinguish fresh vs rebase-merged: HEAD == origin/main SHA AND
+            # the worktree dir is recent. Otherwise (rebase-merge, fast-forward
+            # merge, or stale forgotten fresh worktree) it's "merged".
+            recent = False
+            try:
+                wt_mtime = wt_path.stat().st_mtime
+                recent = (time.time() - wt_mtime) < FRESH_WORKTREE_MAX_AGE_SECONDS
+            except OSError:
+                recent = False
+            if head_full and main_full and head_full == main_full and recent:
+                state = "fresh"
+                merged = False
+                is_fresh = True
+            else:
+                state = "merged"
+                merged = True
         else:
             state = "live"
             merged = False
@@ -540,6 +586,7 @@ def classify_worktree_dir(
         "state": state,
         "worktree_listed": True,
         "branch_merged_into_main": merged,
+        "is_fresh": is_fresh,
         "branch_tip": tip,
         "branch_name": listed_branch_ref.removeprefix("refs/heads/"),
     }
@@ -568,6 +615,7 @@ def classify_all_worktrees(
             "state": "main",
             "worktree_listed": True,
             "branch_merged_into_main": False,
+            "is_fresh": False,
             "branch_tip": "",
             "branch_name": "",
         },
@@ -1440,7 +1488,7 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
-  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout; State = live / merged / gone)</span></div>
+  <div class="section-title">Cost by Worktree <span class="muted" style="font-weight:400;font-size:11px">(all worktrees in window, derived from cwd path; ``(main)`` = main checkout; State = live / fresh / merged / gone)</span></div>
   <div class="panel">
     <table>
       <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th style="width:36%">Share</th><th>State</th></tr></thead>
@@ -1921,10 +1969,17 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         per_wt_state.setdefault(wt, s.get("worktree_state", "unknown"))
 
     def _worktree_state_pill(state: str) -> str:
-        """State column pill — visually distinct from the warning chips."""
+        """State column pill — visually distinct from the warning chips.
+
+        Fresh worktrees are "good" (neutral blue/info tone via ``pill-good``)
+        because they are the user's most useful state, not a cleanup target.
+        Merged + gone are cleanup candidates (warn / bad). Unknown is bad
+        because the user can't tell what state the worktree is in.
+        """
         cls = {
             "main": "pill-good",
             "live": "pill-good",
+            "fresh": "pill-good",
             "merged": "pill-warn",
             "gone": "pill-bad",
             "unknown": "pill-bad",

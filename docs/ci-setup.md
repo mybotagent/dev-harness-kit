@@ -27,25 +27,25 @@ Run `/dev-kit:ci-setup` once per project, after `/dev-kit:bootstrap` and before 
 
 ## What gets installed
 
-The skill copies 15 files from the `templates/ci/` source tree into the target project (was 8 in 0.1.0; added the 4 worktree-rule files in 0.1.1):
+The skill copies the `templates/ci/` source tree into the target project. Files installed:
 
 | Path | Purpose |
 |---|---|
 | `.github/workflows/ci.yml` | Branch-policy warn + `pytest` test + `validate.py` validator jobs |
 | `.github/workflows/auto-fix-pr.yml` | Auto-fix loop on `changes_requested` review (5-iteration cap, label counter, forbidden-path guard) |
-| `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate. **Self-aware install step** (0.1.1+): detects self-install vs consumer-install at runtime |
+| `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate. **Self-aware install step**: detects self-install vs consumer-install at runtime |
 | `.githooks/pre-push` | Client-side block of `git push` to `main`; activate with `git config core.hooksPath .githooks` |
 | `scripts/validate.py` | Extracted from dev-kit's own `ci.yml` 5-step validate job; checks install + marker + bash syntax |
 | `scripts/test.sh` | `pytest` wrapper (gracefully skips if no `tests/` directory) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
-| **`hooks/worktree-guard.sh`** (0.1.1+) | PreToolUse (Write\|Edit\|MultiEdit) — hard-block edits in the main checkout |
-| **`hooks/task-detector.sh`** (0.1.1+) | UserPromptSubmit — nudge new tasks to a worktree |
-| **`hooks/session-start-check.sh`** (0.1.1+) | SessionStart — gentle reminder about the worktree rule |
-| **`hooks/lib/worktree-detect.sh`** (0.1.1+) | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
-| **`hooks/hooks.json`** (0.1.1+) | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
-| **`.claude/rules/git-workflow.md`** (0.1.1+) | The worktree rule (every task = new worktree + new session + new branch) |
-| **`tests/test_worktree_guard.py`** (0.1.1+) | 14 regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
+| **`hooks/worktree-guard.sh`** | PreToolUse (Write\|Edit\|MultiEdit) — hard-block edits in the main checkout |
+| **`hooks/task-detector.sh`** | UserPromptSubmit — nudge new tasks to a worktree |
+| **`hooks/session-start-check.sh`** | SessionStart — gentle reminder about the worktree rule |
+| **`hooks/lib/worktree-detect.sh`** | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
+| **`hooks/hooks.json`** | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
+| **`.claude/rules/git-workflow.md`** | The worktree rule (every task = new worktree + new session + new branch) |
+| **`tests/test_worktree_guard.py`** | regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
 
 After install, the marker file `.dev-kit/ci-config.json` is written at the project root. The marker is the **contract** with `/dev-kit:build` — without it, build refuses to start.
 
@@ -61,7 +61,7 @@ This is the same set of checks GitHub Actions runs in `ci.yml`, but without requ
 === validate ===
 validate.py — repo_root=/path/to/repo
   - installation complete OK (15 files)
-  - ci-config marker OK (schema=1.0.0)
+  - ci-config marker OK
   - bash syntax OK (5 scripts clean)
   - test runner OK (bash -n clean)
 OK: CI installation valid
@@ -87,7 +87,7 @@ Run `/dev-kit:ci-setup` first.
 
 ### Why is my first PR's severity gate showing `::warning::review verdict missing`?
 
-Since 0.1.3 the gate tolerates missing verdicts in BOTH `pull_request` and `workflow_dispatch` modes — empty R or S now produces `::warning::` + default `Approve`, not a hard failure. This is intentional: the human gate (`REVIEW_REQUIRED` / `CHANGES_REQUESTED` on the PR) is what blocks merge, not a single missing agent verdict. Real review feedback (`Changes Requested` / `Blocked`) still exits 1 and blocks the PR. The `::warning::` is informational so you know the AI verdict was empty (action skipped, rate-limited, or transient error) and you can investigate.
+The gate tolerates missing verdicts in BOTH `pull_request` and `workflow_dispatch` modes — empty R or S now produces `::warning::` + default `Approve`, not a hard failure. This is intentional: the human gate (`REVIEW_REQUIRED` / `CHANGES_REQUESTED` on the PR) is what blocks merge, not a single missing agent verdict. Real review feedback (`Changes Requested` / `Blocked`) still exits 1 and blocks the PR. The `::warning::` is informational so you know the AI verdict was empty (action skipped, rate-limited, or transient error) and you can investigate.
 
 For the very first PR that ADDS `.github/workflows/review.yml`, the action still cannot validate the new workflow file against `main` (workflow-validation gate). Merge that bootstrap PR first; subsequent PRs flow through normally.
 
