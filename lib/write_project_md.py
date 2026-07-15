@@ -81,20 +81,22 @@ def render_stub_section_3(project_root: Path) -> str:
 
 
 def render_agents_md(project_root: Path | None = None) -> str:
-    """Render the universal AGENTS.md pointer.
+    """Return the target for the universal AGENTS.md symlink.
 
     AGENTS.md is the universal entry point that Codex / other CLIs read;
     Claude Code reads CLAUDE.md and `.claude/rules/` directly. CLAUDE.md
     contains the shared `rules/*.md` index, so this remains one short pointer
     instead of a second instruction document.
     """
-    return "Read and follow [CLAUDE.md](CLAUDE.md) before working in this repository.\n"
+    return "CLAUDE.md\n"
 
 
 def write_agents_md(project_root: Path) -> Path:
-    """Atomic write AGENTS.md. Idempotent."""
+    """Create the AGENTS.md -> CLAUDE.md compatibility symlink."""
     path = project_root / "AGENTS.md"
-    atomic_write_text(path, render_agents_md(project_root))
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    path.symlink_to("CLAUDE.md")
     return path
 
 
