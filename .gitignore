@@ -31,3 +31,4 @@ node_modules/
 
 # Local report artifacts
 token-dashboard-*.html
+token-dashboard-*.assets/

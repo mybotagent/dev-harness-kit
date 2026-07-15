@@ -1,7 +1,7 @@
 ---
 name: token-analyzer
 category: audit
-description: 0-arg token-efficiency dashboard. Runs tools/token_efficiency_analyzer.py over logs/{claude-code,codex}/*.jsonl to produce one self-contained HTML report -- 4-dim session scoring, 6 anti-pattern warnings, USD savings estimate.
+description: 0-arg token-efficiency dashboard. Runs tools/token_efficiency_analyzer.py over logs/{claude-code,codex}/*.jsonl to produce an HTML report (+ lazy per-worktree transcript sidecars) -- 4-dim session scoring, 6 anti-pattern warnings, USD savings estimate.
 when_to_use: |
   - User types /dev-kit:token-analyzer
   - User wants to know where token spend is going in their Claude Code / Codex sessions
@@ -15,12 +15,20 @@ user-invocable: true
 
 # /dev-kit:token-analyzer -- token efficiency dashboard
 
-Generate a self-contained HTML dashboard that turns the JSONL session
+Generate an HTML dashboard that turns the JSONL session
 transcripts captured by `/dev-kit:log` into a per-repository, last-N-days
 view of token spend, session efficiency, and anti-patterns. Distinct
-human action ("see the spend picture") with a distinct artifact (a
-single `.html` file), so it earns its own skill rather than an
-`--html` flag on another command.
+human action ("see the spend picture") with a distinct artifact (an
+`.html` file plus a `.assets/` sidecar tree), so it earns its own skill
+rather than an `--html` flag on another command.
+
+The dashboard's **Transcript Index** section links each worktree to a
+sidecar page under `<out>.assets/<worktree>/index.html`, which in turn
+links each session to its full raw transcript
+(`<out>.assets/<worktree>/<session>.html`). Navigation is plain
+`<a href>` — the browser loads a worktree's transcripts only when
+clicked, so drill-down is lazy and works under `file://` (no JS, no
+server). Pass `--no-transcripts` for an index-only run.
 
 **Why a separate skill, not a `--html` flag on `/dev-kit:log`**:
 `/dev-kit:log` toggles transcript capture (on/off/status/setup); the
@@ -48,10 +56,14 @@ slash commands.
    symlinked mount. Example emitted lines:
 
    ```
-   [ok] sessions=14  files_scanned=14  total_cost=$1.23  estimated_savings=$0.01  stale_cost=$0.00
+   [ok] sessions=14  files_scanned=14  total_cost=$1.23  estimated_savings=$0.01  stale_cost=$0.00  transcripts=14
    Open: ./token-dashboard-dev-harness-kit-30d.html
    ```
 
+   The `transcripts=N` field counts the per-session sidecar pages written
+   under `./token-dashboard-dev-harness-kit-30d.assets/<worktree>/`. The
+   dashboard links them from its **Transcript Index** section via relative
+   `<a href>`, so keep the `.assets/` dir next to the `.html` when sharing.
    Do not try to read the HTML back into the conversation -- it is a
    binary-ish artifact best opened in a browser.
 
@@ -69,7 +81,8 @@ The CLI accepts:
 | `--days <n>` | `30` | Look-back window |
 | `--logs-dir <path>` | `./logs` | Root for `claude-code/` + `codex/` subdirs (recursively walked) |
 | `--branch <name>` | _(all)_ | Filter to a single branch (case-insensitive substring on `gitBranch`). Empty = no filter. |
-| `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
+| `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path (sidecars land in `<out-stem>.assets/`) |
+| `--transcripts` / `--no-transcripts` | `--transcripts` (on) | Write per-session full-transcript sidecar pages under `<out>.assets/` and link them from the Transcript Index. `--no-transcripts` = index-only, inert Open cells |
 | `--cost-gate-tokens <int>` | `200000` | Per-session `input + cache_read` gate; sessions over this trigger stderr WARN |
 | `--cost-gate-usd <float>` | `5.00` | Per-session USD gate; sessions over this trigger stderr WARN |
 | `--pricing-override <path>` | _(none)_ | JSON file overriding the PRICING dict (shape: `{tier: {in, out, cache_write_5m, cache_write_1h, cache_read}}`) |
