@@ -259,6 +259,19 @@ class TestTaskDetector(unittest.TestCase):
         finally:
             main_tmp.cleanup()
 
+    def test_nudges_on_korean_hook_task(self):
+        main_tmp, _, _ = _init_main_with_worktree()
+        try:
+            r = _run_hook(
+                "task-detector.sh",
+                _prompt_payload("hook 오류를 수정해", cwd=main_tmp.name),
+                cwd=Path(main_tmp.name),
+            )
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("GIT-WORKFLOW REMINDER", r.stdout)
+        finally:
+            main_tmp.cleanup()
+
     def test_silent_on_false_positive_make_sure(self):
         """Major 1: 'make sure' starts with verb 'make' but is not a task.
         Word-boundary regex must not match."""

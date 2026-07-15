@@ -1,6 +1,5 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "Personal hooks (auto-on at user install). Team hooks (prettier-format, block-dangerous-commands, eslint-fix) are NOT in this plugin — see docs/team-adoption.md for the opt-in pattern; each project copies them into its own .claude/settings.json. cost-gate.sh is registered under SessionStart (init state), PostToolUse (update ledger), and PreToolUse (kill on runaway).",
+  "description": "Dev Kit lifecycle hooks",
   "hooks": {
     "PreToolUse": [
       {

@@ -196,15 +196,18 @@ class TestWorktreeAutoCutDirtyMain(unittest.TestCase):
     def tearDown(self):
         self._main.cleanup()
 
-    def test_silent_when_main_dirty(self):
+    def test_explains_when_main_dirty(self):
         r = _run_hook(
             "worktree-auto-cut.sh",
             _payload(prompt="add file foo", cwd=self._main.name),
             cwd=Path(self._main.name),
         )
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(r.stdout.strip(), "",
-                         f"dirty main should fall back; got: {r.stdout!r}")
+        doc = json.loads(r.stdout)
+        ctx = doc["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("main checkout is dirty", ctx)
+        self.assertIn("stash or commit", ctx)
+        self.assertFalse((Path(self._main.name) / ".worktrees").exists())
 
 
 class TestWorktreeAutoCutFires(unittest.TestCase):
@@ -290,6 +293,19 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(main_ref, "main",
                          f"main moved unexpectedly: {main_ref}")
+
+    def test_cuts_worktree_for_korean_task_prompt(self):
+        r = _run_hook(
+            "worktree-auto-cut.sh",
+            _payload(prompt="hook 오류를 수정해", cwd=self._main.name),
+            cwd=Path(self._main.name),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        ctx = doc["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("worktree auto-cut ready", ctx)
+        branch = re.search(r"branch:\s+(\S+)", ctx).group(1)
+        self.assertRegex(branch, r"^fix/[a-z0-9-]{2,40}-[a-f0-9]{6}$")
 
     def test_cuts_worktree_at_repo_root_when_session_starts_in_subdirectory(self):
         """The hook's cwd is not necessarily the repository root."""

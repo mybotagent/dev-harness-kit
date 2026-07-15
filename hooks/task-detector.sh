@@ -77,6 +77,13 @@ fi
 if [ "$task_intent" = "0" ] && printf '%s' "$LOWER" | grep -qE "(new (feature|task|endpoint|function|module|hook|skill)|feature request|bug report)"; then
   task_intent=1
 fi
+# Korean task prompts need the same worktree reminder. Require a code or
+# repository noun as well as an action word to avoid nudging on ordinary chat.
+if [ "$task_intent" = "0" ] \
+  && printf '%s' "$LOWER" | grep -qE '(수정|해결|구현|추가|변경|만들|작업)' \
+  && printf '%s' "$LOWER" | grep -qE '(hook|브랜치|worktree|레포|repo|코드|파일|에러|오류|기능)'; then
+  task_intent=1
+fi
 
 [ "$task_intent" = "1" ] || exit 0
 
