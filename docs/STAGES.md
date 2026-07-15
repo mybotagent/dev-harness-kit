@@ -8,7 +8,7 @@
 - **Must**: (a) sanity read-only audit (printed to stdout; `--persist-audit` writes `.dev-kit/sanity-report.md`) (b) codebase-map lazy-loading index in CLAUDE.md §3 (c) active-hooks.json SSOT init (d) CLAUDE.md §1~§5 unified record (e) AGENTS.md 1-line pointer (f) `--full-claude-md` opt-in writes `docs/CODEBASE-MAP.md`
 - **Must-Not**: modify files (sanity read-only). Modify lockfiles. Speculation. Persist hand-off file (CLAUDE.md §5 pointer is enough).
 - **AC**: On fresh repo: CLAUDE.md + AGENTS.md + `.dev-kit/.active-hooks.json` exist. CLAUDE.md §3 = lazy-loading index referencing canonical source files. `.dev-kit/` directory auto-created.
-- **Active Skills**: `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `write_project_md`
+- **Active Skills**: `bootstrap` (sanity + codebase-map + hook-matrix are inlined sub-stages), `write_project_md`
 - **Active Hooks**: `secret-scan`=read-only. Others OFF.
 - **Hand-off out**: §5 hand-off pointer in CLAUDE.md (no separate `.dev-kit/hand-off/` file from bootstrap)
 
@@ -28,7 +28,7 @@
 - **Must**: 5 gates (frame → validate → non-goals → decompose → emit) in **one Ralph loop, safety_valve=8** (MUST-15). The `validate` gate fuses the old evidence / diff-profit / socratic gates into one composite convergence test: `evidence_count >= 3` AND `value_score = LTV × reachable_users / cost >= 3.0` AND `ambiguity_score <= 3`. Phase index.json written via `lib/execute.py:register_step()` so every step carries an explicit `status` (`unimplemented` → `pending` → `in_progress` → `completed`, plus `error` / `blocked` for runtime).
 - **Must-Not**: Write code, build, or deploy. Write artifacts other than PRD.md + phases/ + .prd/ + .dev-kit/hand-off/. Set runtime-only statuses (`in_progress`, `completed`, `error`, `blocked`) — those belong to harness-runner. Run the old 5-question grill-me (replaced by the ambiguity loop).
 - **AC**: PRD.md 6-section DoD pass. `phases/<name>/step<N>.md` 4 fields (must-read / instruction / AC / Don't). `phases/<name>/index.json` schema valid. `value_score >= 3.0` AND `ambiguity_score <= 3` OR `loop-log.json` shows `status: held` + user acknowledgement. `loop-log.json` narrowing appended per cycle.
-- **Active Skills**: `plan` (self-contained, formerly `plan-ralph`), `build-harness-engine`
+- **Active Skills**: `plan` (self-contained, formerly `plan-ralph`)
 - **Active Hooks**: `stop-verify`=ON. `slop-detector`=OFF (planning doc allowed). Others OFF.
 - **Hand-off out**: `plan→build.md`
 
@@ -38,7 +38,7 @@
 - **Must**: (a) Follow `phases/<name>/step<N>.md` exactly. (b) Run AC commands and quote output. (c) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (d) 2-commit protocol (feat + chore).
 - **Must-Not**: Speculate on AC ("should work", "probably fine"). Delete `output.json`. Batch multiple changes.
 - **AC**: All steps `status=completed`. `pytest` exit code 0 + count quoted. 2-commit protocol followed.
-- **Active Skills**: `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology`
+- **Active Skills**: `build-tdd`, `build-debug`, `build-verify`, `build-refactor` (the per-step harness runner + methodology selector live in `lib/execute.py` + `lib/methodology/`; prune's 3-pass sweep is inlined into `prune`)
 - **Active Hooks**: `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` — all ON
 - **Sub-agent**: Phase 3 (planned). Currently sequential-only.
 - **Hand-off out**: `build→review.md`
@@ -78,7 +78,7 @@
 - **Must**: Output HIGH/MEDIUM/LOW buckets. Banned-phrase regex SSOT.
 - **Must-Not**: Modify files (read-only).
 - **AC**: HIGH ≥ 5 = warning. 0 findings = clean.
-- **Active Skills**: `audit-slop`, `audit-secret`
+- **Active Skills**: `audit` (slop + secret + outdated are inlined modes)
 
 ## Cross-cutting — Inspect (`/dev-kit:inspect`)
 

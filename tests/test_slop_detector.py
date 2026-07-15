@@ -210,7 +210,7 @@ class BankFallback(unittest.TestCase):
 
 
 class RegressionFixtures(unittest.TestCase):
-    """The fixtures referenced by skills/audit-slop/SKILL.md and the bank README."""
+    """The fixtures referenced by skills/audit/SKILL.md and the bank README."""
 
     def test_sample_with_slop_is_high(self) -> None:
         path = FIXTURE_DIR / "sample-with-slop.md"

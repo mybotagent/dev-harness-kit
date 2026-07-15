@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-422%20total-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-44-blueviolet)](skills/)
+[![Skills](https://img.shields.io/badge/skills-34-blueviolet)](skills/)
 [![Version](https://img.shields.io/badge/version-0.3.16-blue)](.claude-plugin/plugin.json)
 
 ## What
@@ -155,14 +155,14 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 44 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Full set: 34 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 44 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # 34 skills, flat: skills/<skill-name>/SKILL.md
 ├── .codex-plugin/         # plugin.json pointing Codex CLI at the same ./skills/ (no copy)
 ├── hooks/                 # 10 hook scripts (6 original + 3 worktree-rule + 1 cost-gate) + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup / cost_gate
@@ -196,13 +196,13 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 
 | Category | Skills |
 |---|---|
-| `bootstrap` | `bootstrap`, `bootstrap-active-hooks`, `bootstrap-codebase-map`, `bootstrap-sanity`, `bootstrap-full`, `ci-setup` |
+| `bootstrap` | `bootstrap` (sanity + codebase-map + hook-matrix are inlined sub-stages), `bootstrap-full`, `ci-setup` |
 | `plan` | `plan` |
-| `design` | `build-harness-engine` (only entry; the standalone `design` skill was merged into `plan`) |
-| `build` | `build`, `build-debug`, `build-engine`, `build-methodology`, `build-refactor`, `build-prune`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `refactor`, `prune` |
+| `design` | (deprecated — merged into `plan`) |
+| `build` | `build`, `build-debug`, `build-refactor`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `refactor`, `prune` (3-pass deletion sweep inlined into `prune`) |
 | `review` | `review` (3-dim, unified) |
 | `security` | `security` (10-dim OWASP, unified) |
-| `audit` | `audit`, `audit-secret`, `audit-slop`, `audit-outdated`, `inspect` (whole-codebase health), `report` (HTML viewer), `token-analyzer` (token-efficiency dashboard), `cost-gate` (live cost gate) |
+| `audit` | `audit` (slop + secret + outdated are inlined modes), `inspect` (whole-codebase health), `report` (HTML viewer), `token-analyzer` (token-efficiency dashboard), `cost-gate` (live cost gate) |
 | `eval` | `eval` |
 | `onboard` | `onboard` |
 | `repair` | `repair` |
@@ -460,7 +460,7 @@ Claude Code keeps reading `skills/` directly via `.claude-plugin/`, unaffected. 
 
 ## Skills by audience
 
-The kit ships **44 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
+The kit ships **34 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
 
 - **`user-invocable: true`** (or unset) — surfaces in `/dev-kit:` autocomplete. *You* type it.
 - **`user-invocable: false`** — hidden from autocomplete. *Claude* auto-invokes it as a sub-step when its parent skill runs.
@@ -486,7 +486,7 @@ These appear in slash autocomplete. Run them when you have a job to do.
 | `/dev-kit:refactor` | 3-phase refactor chain. **Rewrites** code (dead → dup → naming → coverage). Use when the code should be cleaner, not smaller. |
 | `/dev-kit:prune` | 3-phase deletion sweep. **Deletes** AI slop + dead features. Use when the codebase has accumulated cruft and you want it gone. |
 | `/dev-kit:feat-add` / `feat-fix` / `feat-revise` / `feat-remove` | One feature, one shape (add / fix / revise / remove). |
-| `/dev-kit:adapt` | Mid-build plan/spec amendment. Pauses the current step, diffs PRD + step file, proposes a minimal patch on user approval, resumes build-engine. |
+| `/dev-kit:adapt` | Mid-build plan/spec amendment. Pauses the current step, diffs PRD + step file, proposes a minimal patch on user approval, resumes the per-step harness runner (`lib/execute.py`). |
 | `/dev-kit:onboard` | Newcomer onboarding tour of a project. |
 | `/dev-kit:repair` | Eval-Repair loop with Human Review terminal. For LLM-eval assets scored against a golden set. |
 | `/dev-kit:ship` | Emit the release tag. The human gate. |
@@ -501,30 +501,24 @@ These appear in slash autocomplete. Run them when you have a job to do.
 
 ### For Claude — internal sub-skills, hidden from slash autocomplete
 
-These 14 skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
+These 4 skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
 
 The naming convention tells you which parent owns each:
 
 | Prefix | Parent skill |
 |---|---|
-| `build-*` (e.g. `build-engine`, `build-tdd`, `build-debug`, `build-refactor`, `build-prune`) | dispatched by `build`, `refactor`, or `prune` |
-| `bootstrap-*` (e.g. `bootstrap-sanity`, `bootstrap-codebase-map`) | dispatched by `bootstrap` |
-| `audit-*` (e.g. `audit-secret`, `audit-slop`) | dispatched by `audit` |
+| `build-*` (`build-tdd`, `build-debug`, `build-verify`, `build-refactor`) | dispatched by `build` or `refactor` |
 
 The `Called by` column below names the specific parent for each one.
 
 | Skill | Called by | Purpose |
 |---|---|---|
-| `build-engine` | `build` | Harness-runner engine per step (atomic write + 2-commit + parallel worktree). |
-| `build-harness-engine` | `plan` | Phase step file generation (`phases/<name>/{index.json, step<N>.md}`). |
 | `build-tdd` | `build` | Red-Green-Refactor cycle. |
 | `build-debug` | `build` (on failure) | 4-phase debug. |
 | `build-verify` | `build` (terminal) | Verify-before-completion gate. |
-| `build-methodology` | `build` | Per-methodology selector (TDD/SDD/etc). |
 | `build-refactor` | `refactor` | 4-pass refactor: dead → dup → naming → coverage. |
-| `build-prune` | `prune` | 3-pass deletion: orphan-code → dead-feature → slop-pattern. |
-| `bootstrap-sanity` / `bootstrap-codebase-map` / `bootstrap-active-hooks` | `bootstrap` | Sanity / codebase-map / hook wiring. |
-| `audit-secret` / `audit-slop` / `audit-outdated` | `audit` | Per-subject audit. |
+
+> Note: the per-step harness runner (`lib/execute.py`), the methodology selector (`lib/methodology/`), and the 3-pass prune sweep (inlined into `prune/SKILL.md` as "Phase 2 — 3-pass deletion sweep") live as either library code or inlined parent-skill sections — not as separate model-use skills. Same for `bootstrap-*` sub-stages (now inlined into `bootstrap`) and `audit-*` modes (now inlined into `audit`). The `simplify` → `refactor` rename and `build-simplify` → `build-refactor` rename are kept here for the historical record only.
 
 **Mental model**: user-facing skills are verbs (the *what*). Model-use skills are the actual mutating machinery (the *how*). Slash autocomplete surfaces only the verbs; Claude fills in the machinery.
 
@@ -744,6 +738,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.16 — 44 skills shipped across 14 categories, 422 pytest collected (420 passed + 2 skipped), 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **v0.3.16 — 34 skills shipped across 14 categories (was 44; pruned 10 internal/duplicate skill files in issue #176), 422 pytest collected (420 passed + 2 skipped), 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).

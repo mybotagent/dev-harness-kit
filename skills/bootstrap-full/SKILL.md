@@ -17,7 +17,7 @@ user-invocable: true
 
 ## What it does
 
-Runs the full new-project pipeline in a single invocation: the three deterministic sub-skills (`bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`) + `lib/write_project_md.py` (writes `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`), then immediately hands off to the same `lib/ci_setup.py:install_ci_config()` path used by `/dev-kit:ci-setup` (installs the 15 CI templates + pre-push hook + writes `.dev-kit/ci-config.json` marker + runs Phase 1.5 pre-flight probe + Phase 1.7 lint + Phase 3 verify). End state on disk is identical to running `/dev-kit:bootstrap` followed by `/dev-kit:ci-setup --force`, with no intermediate user prompts.
+Runs the full new-project pipeline in a single invocation: the three deterministic sub-stages now inlined into `bootstrap` (sanity → codebase-map → hook-matrix) + `lib/write_project_md.py` (writes `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`), then immediately hands off to the same `lib/ci_setup.py:install_ci_config()` path used by `/dev-kit:ci-setup` (installs the 15 CI templates + pre-push hook + writes `.dev-kit/ci-config.json` marker + runs Phase 1.5 pre-flight probe + Phase 1.7 lint + Phase 3 verify). End state on disk is identical to running `/dev-kit:bootstrap` followed by `/dev-kit:ci-setup --force`, with no intermediate user prompts.
 
 `/dev-kit:bootstrap` and `/dev-kit:ci-setup` remain standalone for granular cases (refreshing just one half, or onboarding an existing project that already has CLAUDE.md but no CI).
 
@@ -30,10 +30,10 @@ No visible flags. No option prompts (MUST-NOT-13).
 ## 4-Phase Orchestration (3 auto + 1 exit)
 
 ```
-[1] bootstrap       (delegates to bootstrap sub-skills + write_project_md.py)
-       ├── bootstrap-sanity           → stdout only
-       ├── bootstrap-codebase-map     → §3 lazy-loading index (consumed only by --full-claude-md)
-       ├── bootstrap-active-hooks     → .dev-kit/.active-hooks.json (SSOT)
+[1] bootstrap       (delegates to bootstrap sub-stages + write_project_md.py)
+       ├── sanity                     → stdout only
+       ├── codebase-map               → §3 lazy-loading index (consumed only by --full-claude-md)
+       ├── hook-matrix                → .dev-kit/.active-hooks.json (SSOT)
        └── write_project_md.py        → CLAUDE.md + AGENTS.md (atomic)
        ↓ (auto; --skip-ci short-circuits here)
 [2] ci-setup        (delegates to lib/ci_setup.py)
