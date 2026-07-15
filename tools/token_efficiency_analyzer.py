@@ -66,6 +66,12 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
 #
+# PRICING MUST be sourced from official provider docs every update — see
+# rules/token-pricing.md for the source-of-truth URLs, the re-verify
+# cadence, and the lessons-learned on matcher-order and substring
+# surprises (gpt-5 vs gpt-5.6-*). Adding a row without a TestPricingFor
+# case is forbidden by L1 (no prod code without verification artifact).
+#
 # Two providers are tracked:
 #   * Anthropic Claude (opus / sonnet / haiku) — rates match
 #     https://platform.claude.com/docs/en/docs/about-claude/pricing
