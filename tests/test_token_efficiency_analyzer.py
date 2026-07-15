@@ -1357,12 +1357,15 @@ class TestWorktreeStaleness(unittest.TestCase):
     """classify_worktree_dir() + dashboard surface (State column, stale chips,
     stale_cost tile, stdout field, JSON keys)."""
 
-    def _git_runner(self, *, porcelain="", tip="abc1234", merged=False, unique_commits=""):
+    def _git_runner(self, *, porcelain="", tip="abc1234", merged=False, unique_commits="",
+                    head_full="", main_full=""):
         """Build a fake ``git_runner`` that responds based on the command argv.
 
-        Matches four subcommand shapes:
+        Matches six subcommand shapes:
           - ``git -C <root> worktree list --porcelain``              → ``porcelain``
           - ``git -C <wt> rev-parse --short HEAD``                   → ``tip``
+          - ``git -C <wt> rev-parse HEAD``                           → ``head_full`` (full SHA, default empty)
+          - ``git -C <root> rev-parse origin/main``                  → ``main_full`` (full SHA, default empty)
           - ``git -C <wt> log origin/main..HEAD --oneline``          → ``unique_commits``
             (empty stdout ⇒ ``state="merged"``; non-empty ⇒ ``state="live"``)
           - ``git -C <wt> merge-base --is-ancestor …``               → ``merged`` flag (legacy)
@@ -1376,6 +1379,10 @@ class TestWorktreeStaleness(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
             if "rev-parse --short HEAD" in cmd:
                 return subprocess.CompletedProcess(args, 0, stdout=tip, stderr="")
+            if "rev-parse origin/main" in cmd:
+                return subprocess.CompletedProcess(args, 0, stdout=main_full, stderr="")
+            if "rev-parse HEAD" in cmd:
+                return subprocess.CompletedProcess(args, 0, stdout=head_full, stderr="")
             if "log origin/main..HEAD" in cmd:
                 return subprocess.CompletedProcess(args, 0, stdout=unique_commits, stderr="")
             if "merge-base --is-ancestor" in cmd:
@@ -1446,9 +1453,12 @@ class TestWorktreeStaleness(unittest.TestCase):
 
     def test_classify_worktree_dir_rebase_merge_with_no_unique_commits(self):
         """Rebase-merged branch: branch tip is a fast-forward of origin/main
-        after the rebase. ``log origin/main..HEAD`` is empty ⇒ ``merged``.
+        after the rebase. ``log origin/main..HEAD`` is empty AND the worktree
+        is older than FRESH_WORKTREE_MAX_AGE_SECONDS ⇒ ``merged``.
         """
-        from token_efficiency_analyzer import classify_worktree_dir
+        import os
+        import time
+        from token_efficiency_analyzer import classify_worktree_dir, FRESH_WORKTREE_MAX_AGE_SECONDS
         with tempfile.TemporaryDirectory(prefix="wt-rebase-") as td:
             root = Path(td)
             wt = root / ".claude" / "worktrees" / "rebase-target"
@@ -1458,9 +1468,77 @@ class TestWorktreeStaleness(unittest.TestCase):
                 f"worktree {wt}\nHEAD aaa1111\nbranch refs/heads/feat/rebase-target\n\n"
             )
             runner = self._git_runner(porcelain=porcelain, tip="aaa1111", unique_commits="")
+            # Backdate mtime so the worktree is clearly older than the freshness threshold.
+            old_mtime = time.time() - (FRESH_WORKTREE_MAX_AGE_SECONDS + 600)
+            os.utime(wt, (old_mtime, old_mtime))
             meta = classify_worktree_dir(wt, root, git_runner=runner)
             self.assertEqual(meta["state"], "merged")
             self.assertTrue(meta["branch_merged_into_main"])
+            self.assertFalse(meta["is_fresh"])
+
+    def test_classify_worktree_dir_fresh_worktree_same_sha_as_main(self):
+        """Fresh worktree: just cut from origin/main, HEAD == origin/main SHA,
+        no commits yet. ``log origin/main..HEAD`` is empty AND mtime is recent
+        ⇒ ``state="fresh"`` (NOT ``merged``). Regression: a fresh worktree used
+        to be mis-classified as ``merged`` because the log-empty test couldn't
+        tell it apart from a rebase-merged branch.
+        """
+        import time
+        from token_efficiency_analyzer import classify_worktree_dir
+        with tempfile.TemporaryDirectory(prefix="wt-fresh-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "verify-wt-wiring"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 52f7e81\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD 52f7e81\nbranch refs/heads/fix/fresh-worktree-state\n\n"
+            )
+            # HEAD SHA == origin/main SHA, log empty (no commits on the branch yet).
+            runner = self._git_runner(
+                porcelain=porcelain,
+                tip="52f7e81",
+                head_full="52f7e81d480097d1425a55b1081cff21fb56c0fe",
+                main_full="52f7e81d480097d1425a55b1081cff21fb56c0fe",
+                unique_commits="",
+            )
+            # mtime is "now" — just-created worktree.
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "fresh")
+            self.assertTrue(meta["worktree_listed"])
+            self.assertFalse(meta["branch_merged_into_main"])
+            self.assertTrue(meta["is_fresh"])
+            self.assertEqual(meta["branch_tip"], "52f7e81")
+
+    def test_classify_worktree_dir_fresh_boundary_just_over_threshold(self):
+        """Boundary: worktree mtime is just past the freshness threshold ⇒
+        falls back to ``merged``. Confirms the threshold isn't accidentally
+        inclusive on the wrong side.
+        """
+        import os
+        import time
+        from token_efficiency_analyzer import (
+            classify_worktree_dir, FRESH_WORKTREE_MAX_AGE_SECONDS,
+        )
+        with tempfile.TemporaryDirectory(prefix="wt-fresh-bound-") as td:
+            root = Path(td)
+            wt = root / ".claude" / "worktrees" / "stale-fresh"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {root}\nHEAD 52f7e81\nbranch refs/heads/main\n\n"
+                f"worktree {wt}\nHEAD 52f7e81\nbranch refs/heads/test/stale-fresh\n\n"
+            )
+            runner = self._git_runner(
+                porcelain=porcelain, tip="52f7e81",
+                head_full="52f7e81d480097d1425a55b1081cff21fb56c0fe",
+                main_full="52f7e81d480097d1425a55b1081cff21fb56c0fe",
+                unique_commits="",
+            )
+            # Backdate mtime to FRESH_THRESHOLD + 60s — clearly stale.
+            old_mtime = time.time() - (FRESH_WORKTREE_MAX_AGE_SECONDS + 60)
+            os.utime(wt, (old_mtime, old_mtime))
+            meta = classify_worktree_dir(wt, root, git_runner=runner)
+            self.assertEqual(meta["state"], "merged")
+            self.assertFalse(meta["is_fresh"])
 
     def test_classify_worktree_dir_gone_from_git_worktree_list(self):
         from token_efficiency_analyzer import classify_worktree_dir
@@ -1520,12 +1598,13 @@ class TestWorktreeStaleness(unittest.TestCase):
                 "log_path": "/tmp/fake.jsonl",
             }
 
-        # three worktrees with three different states
+        # four worktrees with four different states
         sessions = [
             _s("main-s",  "(main)",                  "main"),
             _s("live-s",  "feat-still-alive",        "live",  tokens=200),
             _s("gone-s",  "prune-baseline",          "gone",  tokens=50),
             _s("merge-s", "feature-and-adapt-skills","merged",tokens=80),
+            _s("fresh-s", "fix/fresh-worktree-state","fresh", tokens=10),
         ]
         from token_efficiency_analyzer import score_session
         scored = [(s, score_session(s)) for s in sessions]
@@ -1542,7 +1621,7 @@ class TestWorktreeStaleness(unittest.TestCase):
         panel = html.split("Cost by Worktree", 1)[1].split("Cost by Model", 1)[0]
         self.assertIn(">State<", panel)
         # Each state label must render at least once.
-        for state_label in ("live", "merged", "gone", "main"):
+        for state_label in ("live", "merged", "gone", "main", "fresh"):
             self.assertIn(f">{state_label}<", panel)
 
     def test_sessions_table_marks_stale_rows(self):
@@ -1569,6 +1648,7 @@ class TestWorktreeStaleness(unittest.TestCase):
             _s("stale-2", "merged-feat",      "merged"),
             _s("fresh-1", "feat-still-alive", "live"),     # NOT stale → no chip
             _s("main-1",  "(main)",           "main"),     # NOT stale → no chip
+            _s("fresh-wt","fix/fresh-wt",     "fresh"),    # fresh is NOT a cleanup target → no chip
         ]
         scored = [(s, score_session(s)) for s in stale_sessions]
         empty_warns: list[list] = [[] for _ in scored]
