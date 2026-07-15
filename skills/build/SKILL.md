@@ -24,7 +24,12 @@ Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup`
 
 1. `lib/execute.py:main` parses args; branches on `--parallel N`:
    - `--parallel 0` → `_run_sequential` (default).
-   - `--parallel N` → `_run_parallel` (N concurrent slots, each with its own worktree).
+   - `--parallel 1` → `_run_parallel` with 1 slot (effectively sequential).
+   - `--parallel N > 1` → refuses (exit 2) unless `--allow-parallel-build` is set.
+     Two concurrent `claude -p` steps WILL collide on shared files; the collision
+     is invisible during the run and surfaces only at merge time. The override
+     flag is an escape hatch for the rare case where declared `writes:` are
+     disjoint AND no step consumes another's output.
 2. Read `phases/<name>/index.json` (must contain `worktree: "<branch-base>"`; emitted by `/dev-kit:plan` as `<prefix>-<phase>`, e.g. `plan/plugin-harness-v3-0-mvp`); derive per-step branch = `<branch-base>-step<N>` and worktree path = `<root>/.claude/worktrees/<phase>-step<N>`. Falls back to `feat/<phase>` when the field is absent (defense-in-depth, not the contract).
 3. Skip entries where `status` ∈ `SKIPPABLE_STATUSES` (`completed`, `unimplemented`).
 4. Bail with exit 2 if any step has `status == "blocked"` (no implicit resume).
