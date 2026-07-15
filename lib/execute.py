@@ -232,16 +232,40 @@ def write_step_output(
 
 # ---------- CLI ----------
 
+_PARALLEL_BUILD_WARN = (
+    "ERROR: --parallel N > 1 is rarely correct for /dev-kit:build.\n"
+    "\n"
+    "Two concurrent `claude -p` steps WILL collide on shared files\n"
+    "(config, imports, types, schema). The collision is invisible during\n"
+    "the run — both commits land cleanly in their own per-step worktrees.\n"
+    "The damage surfaces only when both branches are merged into main.\n"
+    "\n"
+    "Use parallel build only when each step's declared writes are disjoint\n"
+    "AND no step consumes another step's output. To override this gate,\n"
+    "re-run with --allow-parallel-build.\n"
+)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="dev-harness-kit harness-runner")
     parser.add_argument("phase", help="phase alias (e.g., 0-mvp)")
     parser.add_argument("--project-root", default=".", help="project root directory")
     parser.add_argument("--push", action="store_true", help="git push after each step")
     parser.add_argument("--parallel", type=int, default=0, metavar="N", help="run N steps in parallel worktrees")
+    parser.add_argument("--allow-parallel-build", action="store_true",
+                        help="Required when --parallel > 1; confirms understanding that "
+                             "parallel builds collide on shared files and the conflict "
+                             "surfaces at merge time. Without this flag, --parallel > 1 is refused.")
     parser.add_argument("--skip-blocked", action="store_true",
                         help="continue past steps with status='blocked' instead of bailing; "
                              "skipped steps are listed in .dev-kit/hand-off/build→review.md")
     args = parser.parse_args()
+    # Gate: --parallel > 1 must require explicit acknowledgment (issue #175).
+    # Two concurrent writers WILL collide on shared files; conflict surfaces
+    # only at merge time, so a silent acceptance is an active damage vector.
+    if args.parallel > 1 and not args.allow_parallel_build:
+        print(_PARALLEL_BUILD_WARN, file=sys.stderr)
+        return 2
     root = Path(args.project_root).resolve()
     if args.parallel > 0:
         return _run_parallel(root, args.phase, args.parallel, args.push, args.skip_blocked)

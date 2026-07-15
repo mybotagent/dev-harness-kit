@@ -11,11 +11,13 @@ Tests cover:
 """
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call, ANY
 
@@ -519,8 +521,69 @@ class TestRunParallel(unittest.TestCase):
             proc_mock.returncode = 1
             proc_mock.communicate.return_value = ("", "boom")
             mr_popen.return_value = proc_mock
-            rc = execute._run_parallel(self.root, "0-mvp", n=1, push=False)
-            self.assertEqual(rc, 1, "non-zero exit from any slot must surface as rc=1")
+
+
+
+
+class TestParallelWarnLoud(unittest.TestCase):
+    """Issue #175: --parallel > 1 must warn-and-refuse without --allow-parallel-build.
+
+    Two concurrent `claude -p` steps collide on shared files; the collision
+    is invisible during the run and surfaces only at merge time. The
+    dangerous path must require explicit acknowledgment.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        # Stub out the runner entry points so main() never reaches the real
+        # subprocess pipeline; we only want to test the CLI gate here.
+        self._patches = [
+            patch.object(execute, "_run_sequential", return_value=0),
+            patch.object(execute, "_run_parallel", return_value=0),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_main(self, argv):
+        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    rc = execute.main()
+                except SystemExit as e:
+                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
+            return rc, buf.getvalue()
+
+    def test_parallel_above_1_refuses_without_override(self):
+        rc, stderr = self._run_main(["0-mvp", "--parallel", "3"])
+        self.assertEqual(rc, 2, f"--parallel 3 without --allow-parallel-build must refuse with exit 2, got {rc}")
+        self.assertIn("parallel", stderr.lower(), f"warning must mention 'parallel'; stderr was: {stderr!r}")
+        self.assertIn("merge", stderr.lower(), f"warning must explain the merge-conflict risk; stderr was: {stderr!r}")
+        self.assertIn("--allow-parallel-build", stderr,
+                      f"warning must tell the user the override flag; stderr was: {stderr!r}")
+
+    def test_parallel_above_1_proceeds_with_override(self):
+        rc, stderr = self._run_main(["0-mvp", "--parallel", "3", "--allow-parallel-build"])
+        self.assertNotEqual(rc, 2, f"--parallel 3 --allow-parallel-build must NOT be refused; got rc={rc}, stderr={stderr!r}")
+        self.assertNotIn("--allow-parallel-build", stderr,
+                         f"no warning expected when override is given; stderr was: {stderr!r}")
+
+    def test_parallel_zero_default_unchanged(self):
+        rc, stderr = self._run_main(["0-mvp"])
+        self.assertEqual(rc, 0, f"default --parallel 0 must remain unchanged, got rc={rc}")
+        self.assertNotIn("merge", stderr.lower(),
+                         f"no merge-conflict warning expected for --parallel 0; stderr was: {stderr!r}")
+
+    def test_parallel_one_unchanged(self):
+        rc, stderr = self._run_main(["0-mvp", "--parallel", "1"])
+        self.assertEqual(rc, 0, f"--parallel 1 must remain unchanged (effectively sequential), got rc={rc}")
+        self.assertNotIn("merge", stderr.lower(),
+                         f"no merge-conflict warning expected for --parallel 1; stderr was: {stderr!r}")
 
 
 if __name__ == "__main__":
