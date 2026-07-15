@@ -89,7 +89,7 @@ fi
 
 EXCLUDES=(
   --exclude='.git'
-  --exclude='.claude/worktrees'
+  --exclude='.worktrees'
   --exclude='.dev-kit'
   --exclude='.eval-cache'
   --exclude='*.pyc'

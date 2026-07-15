@@ -9,8 +9,8 @@ CLAUDE.md sections:
   §4 Hook Matrix (active-hooks.json SSOT, MUST-13)
   §5 Hand-off Pointer
 
-AGENTS.md: single-line pointer to CLAUDE.md for CLIs that read AGENTS.md
-instead of CLAUDE.md.
+AGENTS.md: universal entry point that points to CLAUDE.md for CLIs that read
+AGENTS.md instead of Claude's automatic instruction discovery.
 """
 from __future__ import annotations
 
@@ -80,20 +80,23 @@ def render_stub_section_3(project_root: Path) -> str:
     )
 
 
-def render_agents_md() -> str:
-    """Single-line AGENTS.md payload.
+def render_agents_md(project_root: Path | None = None) -> str:
+    """Return the target for the universal AGENTS.md symlink.
 
     AGENTS.md is the universal entry point that Codex / other CLIs read;
-    Claude Code reads CLAUDE.md directly. This file tells them to load
-    CLAUDE.md as the project SSOT.
+    Claude Code reads CLAUDE.md and `.claude/rules/` directly. CLAUDE.md
+    contains the shared `rules/*.md` index, so this remains one short pointer
+    instead of a second instruction document.
     """
     return "CLAUDE.md\n"
 
 
 def write_agents_md(project_root: Path) -> Path:
-    """Atomic write AGENTS.md. Idempotent."""
+    """Create the AGENTS.md -> CLAUDE.md compatibility symlink."""
     path = project_root / "AGENTS.md"
-    atomic_write_text(path, render_agents_md())
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    path.symlink_to("CLAUDE.md")
     return path
 
 
@@ -237,11 +240,18 @@ def render_claude_md(
     section_3 = render_stub_section_3(project_root)
     section_4 = hook_matrix if hook_matrix is not None else render_hook_matrix_table()
     section_5 = hand_off_chain if hand_off_chain is not None else (
-        "next_stage_trigger: /dev-kit:ci-setup --force\n"
+        "next_stage_trigger: /dev-kit:plan\n"
         "shortcut_trigger: /dev-kit:tdd-fast"
     )
 
     laws_text = "\n".join(f"- **L{i+1}**: {law}" for i, law in enumerate(laws))
+    shared_rules = sorted(
+        path.relative_to(project_root).as_posix()
+        for path in (project_root / "rules").glob("*.md")
+    ) if (project_root / "rules").is_dir() else []
+    shared_rules_text = "\n".join(f"- Read `{rule}` before planning or editing." for rule in shared_rules)
+    if not shared_rules_text:
+        shared_rules_text = "- Read every Markdown file under `rules/` when present."
 
     mode_label = "--slim-claude-md (default, lazy §3)"
 
@@ -280,6 +290,11 @@ def render_claude_md(
         "## §5 Hand-off Pointer\n"
         "\n"
         f"{section_5}\n"
+        "\n"
+        "## Shared rules (Claude Code + Codex)\n"
+        "\n"
+        "AGENTS.md points here so Claude Code and Codex use the same rule source.\n"
+        f"{shared_rules_text}\n"
         "\n"
         "<!-- END AUTO-GENERATED -->\n"
     )

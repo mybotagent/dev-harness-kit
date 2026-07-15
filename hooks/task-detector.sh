@@ -90,7 +90,7 @@ esac
 
 # In main checkout + new-task intent → emit additionalContext nudge.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-NUDGE="GIT-WORKFLOW REMINDER (.claude/rules/git-workflow.md): the user prompt looks like a new task and the session cwd is the main checkout (branch='$BRANCH'). Per the rule, every task = new worktree + new session + new branch. Before editing, the user should: (1) git fetch origin main && git pull --ff-only origin main; (2) git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main; (3) open a new Claude Code session inside that worktree path. If the user explicitly says 'do it now without a worktree', confirm the override before editing — worktree-guard.sh will block edits in the main checkout otherwise."
+NUDGE="GIT-WORKFLOW REMINDER (rules/git-workflow.md): the user prompt looks like a new task and the session cwd is the main checkout (branch='$BRANCH'). Per the rule, every task = new worktree + client handoff + new branch. Before editing: (1) git fetch origin main && git pull --ff-only origin main; (2) git worktree add -b <type>/<slug> .worktrees/<slug> origin/main; (3) Claude Code opens a new session in that path; Codex spawns/hand-offs a subagent with that path as cwd and passes the task prompt explicitly. If the user explicitly says 'do it now without a worktree', confirm the override before editing — worktree-guard.sh will block edits in the main checkout otherwise."
 
 jq -nc --arg ctx "$NUDGE" \
   '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'

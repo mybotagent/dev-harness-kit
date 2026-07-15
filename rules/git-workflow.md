@@ -9,13 +9,19 @@ paths:
 
 # Git workflow rules (dev-harness-kit)
 
+The canonical worktree root is `.worktrees/`. This path is shared by Claude
+Code and Codex; `.claude/worktrees/` and `.codex/worktrees/` are legacy paths
+that remain readable but must not be used for new worktrees.
+
 These rules apply to every code change — feature, fix, refactor, docs, test, chore.
 Violation = rejected by `git-guard` hook at commit/push time.
 
 ## Iron Laws (read first)
 
 1. **`main` is sacred.** Never commit directly to `main`. Never push to `main`. Never fast-forward a feature branch into `main` locally.
-2. **Every task = new worktree + new session + new branch.** No edits on the previous task's branch. No edits in the main checkout.
+2. **Every task = new worktree + client handoff + new branch.** Claude Code
+   opens a new session in the worktree; Codex spawns a subagent in it. No edits
+   on the previous task's branch or in the main checkout.
 3. **Always branch from latest `main`.** Cut from `origin/main` (just-fetched), not from a stale local ref or another feature branch.
 
 ## Branch naming (mandatory)
@@ -52,21 +58,26 @@ git checkout main
 git pull --ff-only origin main
 
 # 2. Cut a fresh worktree for the new task (auto-creates branch from origin/main)
-git worktree add -b fix/<slug> .claude/worktrees/fix-<slug> origin/main
+git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
 
-# 3. Open a new Claude Code session IN THAT WORKTREE
-#    (the session cwd is the worktree path, not the main checkout)
+# 3a. Claude Code: open a new Claude Code session IN THAT WORKTREE.
+#     (the session cwd is the worktree path, not the main checkout)
+# 3b. Codex: spawn/hand off a subagent with its working directory set to THAT
+#     WORKTREE. The parent session may remain in the main checkout.
 
 # 4. Do all edits, tests, commits, push — all from inside the worktree
 git push -u origin fix/<slug>
 gh pr create --base main --head fix/<slug> --title "..." --body "Closes #N"
 
 # 5. After PR is merged (or abandoned), remove the worktree
-git worktree remove .claude/worktrees/fix-<slug>
+git worktree remove .worktrees/fix-<slug>
 git branch -d fix/<slug>        # local branch gone
 ```
 
-**Why a new session?** Each task = fresh context. Don't carry over findings/decisions from the previous branch — they belong in the PR body and the commit message, not in the next branch's working memory.
+**Why client-specific handoff?** Claude Code can enter a new interactive
+session at the worktree path. Codex's parent session cannot change its status
+line or cwd, so Codex must pass the worktree path, branch, task prompt, and
+verification requirements to a spawned subagent.
 
 **Why a new worktree?** Multiple branches in one checkout collide on `phases/`, `.dev-kit/`, the running test process, and uncommitted edits. A worktree is a free, isolated copy.
 

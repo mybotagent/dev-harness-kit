@@ -58,8 +58,9 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "scripts/test.sh",
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
-    # Worktree-rule enforcement (every task = new worktree + new session
-    # + new branch). See .claude/rules/git-workflow.md.
+    # Worktree-rule enforcement (every task = new worktree + subagent handoff
+    # + new branch). Source is canonical rules/; destination remains
+    # .claude/rules/ for Claude Code discovery.
     "hooks/worktree-guard.sh",
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
@@ -170,7 +171,7 @@ def _resolve_template_source(rel_path: str) -> Path:
     """Resolve an EXPECTED_PATHS entry to its on-disk source path.
 
     Most templates live under `templates/ci/`. Worktree-rule files (hooks,
-    rules, tests) live at the plugin root (`hooks/`, `.claude/rules/`,
+    rules, tests) live at the plugin root (`hooks/`, `rules/`,
     `tests/`) because that is where they are developed and tested by the
     dev-harness-kit repo itself — keeping a parallel copy under
     `templates/ci/` historically caused silent byte drift across consumer
@@ -185,6 +186,14 @@ def _resolve_template_source(rel_path: str) -> Path:
         candidate = _HOOKS_ROOT / rel_path[len("hooks/"):]
         if not candidate.exists():
             raise FileNotFoundError(f"hook source missing: {candidate}")
+        return candidate
+    # Canonical shared rules live at plugin-root rules/. They are installed
+    # under .claude/rules/ in consumer repos because Claude Code discovers
+    # project rules from that compatibility location.
+    if rel_path == ".claude/rules/git-workflow.md":
+        candidate = _PLUGIN_ROOT / "rules" / "git-workflow.md"
+        if not candidate.exists():
+            raise FileNotFoundError(f"rule source missing: {candidate}")
         return candidate
     # Default: read from the templates/ci/ tree.
     candidate = _TEMPLATES_ROOT / rel_path

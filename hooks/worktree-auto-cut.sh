@@ -11,7 +11,7 @@
 # The hook never blocks. On any failure (network, dirty main, slug
 # derivation, etc.) it falls back to a manual-cut nudge so the user
 # is never stuck. On success it returns an additionalContext telling
-# the assistant to suggest opening a new session in the new path.
+# the assistant to hand off the task to a subagent in the new path.
 #
 # Discriminator: WORKTREE_DETECT = "main" + task-intent prompt.
 # Silent in worktrees, outside git, on non-task prompts, and when jq
@@ -177,7 +177,11 @@ if [ -z "$MAIN_REF" ] && git rev-parse --verify main >/dev/null 2>&1; then
 fi
 [ -n "$MAIN_REF" ] || exit 0
 
-WT_PARENT="$PWD/.claude/worktrees"
+# Hooks run in the session's current directory. Resolve the repository root
+# first so a session started from a subdirectory still shares the canonical
+# worktree root with Claude Code and Codex.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+WT_PARENT="$REPO_ROOT/.worktrees"
 mkdir -p "$WT_PARENT"
 WT_PATH="$WT_PARENT/$DIRNAME"
 
@@ -199,7 +203,7 @@ if ! git worktree add -b "$BRANCH" "$WT_PATH" "$MAIN_REF" >/dev/null 2>&1; then
 fi
 
 # Bootstrap: run /dev-kit:log setup + /dev-kit:log on inside the new
-# worktree so the user's first session there is captured. Falls
+# worktree so the delegated subagent's work is captured. Falls
 # through silently if either script is missing (e.g. dev-kit plugin
 # not yet installed in the consumer project).
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -213,12 +217,14 @@ if [ -f "$LOG_ON" ]; then
   (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_ON" >/dev/null 2>&1) || true
 fi
 
-# Build additionalContext — the assistant will see this and tell the
-# user to open a new session in the new path.
+# Build additionalContext — the harness consumes this as a client-specific
+# handoff envelope. The hook cannot call the host session or Agent API itself.
 CTX="worktree auto-cut ready
   branch:  $BRANCH
   path:    $WT_PATH
-  next:    open a new Claude Code session in $WT_PATH
+  Claude Code next: open a new session in $WT_PATH
+  Codex next: spawn a subagent with cwd=$WT_PATH and branch=$BRANCH
+  handoff: pass the original task prompt and this worktree path to the client-specific worker
   fallback: if any of the above fails, run:
             git fetch origin main && git worktree add -b $BRANCH $WT_PATH $MAIN_REF"
 jq -nc --arg ctx "$CTX" \

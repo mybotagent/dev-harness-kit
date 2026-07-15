@@ -221,7 +221,7 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
     def tearDown(self):
         # Clean up any worktree the hook may have created.
         root = Path(self._main.name)
-        wt_root = root / ".claude" / "worktrees"
+        wt_root = root / ".worktrees"
         if wt_root.exists():
             for child in wt_root.iterdir():
                 subprocess.run(
@@ -253,6 +253,9 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         ctx = doc.get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("worktree auto-cut ready", ctx,
                       f"expected auto-cut marker; got: {ctx!r}")
+        self.assertIn("Claude Code next: open a new session", ctx)
+        self.assertIn("Codex next: spawn a subagent", ctx)
+        self.assertIn("handoff: pass the original task prompt", ctx)
         # Slug must match <type>/<verb>-<noun>-<hash6>.
         m = re.search(r"branch:\s+(\S+)", ctx)
         self.assertIsNotNone(m, f"no branch line in context: {ctx!r}")
@@ -268,6 +271,11 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
             Path(wt_path).exists(),
             f"worktree path does not exist: {wt_path}",
         )
+        self.assertIn(
+            f"{os.sep}.worktrees{os.sep}",
+            wt_path,
+            f"new worktree must use the client-neutral .worktrees root: {wt_path}",
+        )
         # Worktree must be a real git worktree (HEAD on a branch).
         branch_ref = subprocess.run(
             ["git", "-C", wt_path, "symbolic-ref", "--short", "HEAD"],
@@ -282,6 +290,28 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(main_ref, "main",
                          f"main moved unexpectedly: {main_ref}")
+
+    def test_cuts_worktree_at_repo_root_when_session_starts_in_subdirectory(self):
+        """The hook's cwd is not necessarily the repository root."""
+        subdir = Path(self._main.name) / "src"
+        subdir.mkdir()
+        r = _run_hook(
+            "worktree-auto-cut.sh",
+            _payload(prompt="add file foo to the project", cwd=str(subdir)),
+            cwd=subdir,
+        )
+        self.assertEqual(
+            r.returncode, 0,
+            f"rc={r.returncode}, stderr={r.stderr}, stdout={r.stdout!r}",
+        )
+        doc = json.loads(r.stdout)
+        ctx = doc["hookSpecificOutput"]["additionalContext"]
+        wt_path = Path(re.search(r"path:\s+(\S+)", ctx).group(1))
+        self.assertEqual(
+            wt_path.parent.resolve(),
+            (Path(self._main.name) / ".worktrees").resolve(),
+        )
+        self.assertTrue(wt_path.is_dir())
 
 
 class TestWorktreeAutoCutOutsideGit(unittest.TestCase):

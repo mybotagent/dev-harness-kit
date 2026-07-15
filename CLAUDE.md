@@ -58,4 +58,12 @@
 next_stage_trigger: /dev-kit:plan
 shortcut_trigger: /dev-kit:tdd-fast
 
+## Shared rules (Claude Code + Codex)
+
+AGENTS.md points here so Claude Code and Codex use the same rule source.
+- Read `rules/git-workflow.md` before planning or editing.
+- Read `rules/session-hygiene.md` before planning or editing.
+- Read `rules/skill-authoring.md` before planning or editing.
+- Read `rules/test-files.md` before planning or editing.
+
 <!-- END AUTO-GENERATED -->

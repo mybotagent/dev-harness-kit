@@ -47,7 +47,7 @@ esac
 
 # In main checkout → emit nudge.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-NUDGE="GIT-WORKFLOW REMINDER (.claude/rules/git-workflow.md): this session started in the main repo checkout (branch='$BRANCH'). For any new implementation task, the rule requires a new worktree + new session + new branch. The hard edit-block is hooks/worktree-guard.sh (PreToolUse). If the user is just investigating or asking questions, proceed; before any Edit/Write, suggest the worktree cut: git fetch origin main && git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main."
+NUDGE="GIT-WORKFLOW REMINDER (rules/git-workflow.md): this session started in the main repo checkout (branch='$BRANCH'). For any new implementation task, the rule requires a new worktree + client handoff + new branch. The hard edit-block is hooks/worktree-guard.sh (PreToolUse). If the user is just investigating or asking questions, proceed; before any Edit/Write, cut a worktree with: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main. Claude Code then opens a new session in that path; Codex spawns/hand-offs a subagent with that path as its working directory."
 
 jq -nc --arg ctx "$NUDGE" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'

@@ -451,6 +451,12 @@ class TestDiscoverLogsWorktree(unittest.TestCase):
             self.assertIn(wt1_file, files)
             self.assertIn(wt2_file, files)
 
+    def test_canonical_worktree_logs_are_included(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            wt_file = self._touch(root / ".worktrees" / "wt" / "logs" / "codex" / "w.jsonl")
+            self.assertIn(wt_file, discover_logs(root / "logs", repo_root=root))
+
     def test_no_repo_root_does_not_walk_worktrees(self):
         # Backward compat: positional single-dir contract stays pristine.
         with tempfile.TemporaryDirectory() as td:
@@ -790,6 +796,10 @@ class TestWorktreeAwareness(unittest.TestCase):
             worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/feat-per-branch-log"),
             "feat-per-branch-log",
         )
+        self.assertEqual(
+            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.worktrees/fix-x"),
+            "fix-x",
+        )
 
     def test_worktree_from_cwd_nested_subdir_inside_worktree(self):
         # cwd may point anywhere inside the worktree, not just at its root.
@@ -837,6 +847,13 @@ class TestWorktreeAwareness(unittest.TestCase):
             worktree_from_path(
                 "/Users/sanghee/dev/dev-harness-kit/.claude/worktrees/fix-x"
                 "/logs/claude-code/main/x.jsonl"
+            ),
+            "fix-x",
+        )
+        self.assertEqual(
+            worktree_from_path(
+                "/Users/sanghee/dev/dev-harness-kit/.worktrees/fix-x"
+                "/logs/codex/main/x.jsonl"
             ),
             "fix-x",
         )

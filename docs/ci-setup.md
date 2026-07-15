@@ -44,12 +44,27 @@ The skill copies the `templates/ci/` source tree into the target project. Files 
 | **`hooks/session-start-check.sh`** | SessionStart — gentle reminder about the worktree rule |
 | **`hooks/lib/worktree-detect.sh`** | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
 | **`hooks/hooks.json`** | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
-| **`.claude/rules/git-workflow.md`** | The worktree rule (every task = new worktree + new session + new branch) |
+| **`rules/git-workflow.md`** | Canonical worktree rule; installed to `.claude/rules/git-workflow.md` for Claude Code discovery |
 | **`tests/test_worktree_guard.py`** | regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
 
 After install, the marker file `.dev-kit/ci-config.json` is written at the project root. The marker is the **contract** with `/dev-kit:build` — without it, build refuses to start.
 
 ## How to verify
+
+The Claude Code and Codex lifecycle hook definition is shared from
+`hooks/hooks.json`. For a local status report, run:
+
+```bash
+python3 bin/dev-kit-hooks-status.py
+```
+
+In Codex, use `/hooks` after installation or whenever the hook definition
+changes to review and trust the plugin hooks. The Git pre-push hook is separate
+from both clients and is inactive until the repository configures:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ```bash
 bash scripts/ci-local.sh
