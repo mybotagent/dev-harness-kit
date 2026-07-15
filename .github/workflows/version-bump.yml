@@ -1,9 +1,9 @@
 name: version-bump
 
 # Tag-only emission. PRs auto-include their own version bump via
-# .githooks/pre-commit (on the user's local checkout): any commit that
-# touches skills/* SKILL.md advances .claude-plugin/plugin.json:version
-# by PATCH++. The PR then carries the bumped version; squash-merge lands
+# .githooks/pre-push (on the user's local checkout): any push that
+# touches skills/* SKILL.md advances both plugin manifest versions by
+# PATCH++. The PR then carries the bumped versions; squash-merge lands
 # the bump commit on main; this workflow emits the matching tag.
 #
 # No more "create bump PR" path. That path was the source of every
