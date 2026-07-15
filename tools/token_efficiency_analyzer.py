@@ -249,6 +249,92 @@ def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
     return out
 
 
+def _dedupe_by_session(file_paths: list[Path]) -> list[Path]:
+    """Keep one copy per sessionId across dual-write files.
+
+    ``save_log.py`` dual-writes each capture to both the main checkout's
+    ``logs/`` and the worktree's own ``logs/`` (#173). A session that
+    moves between main and a worktree across turns also yields two
+    capture calls with different content, leaving each file with a
+    different snapshot of the same sessionId. Without dedup,
+    ``aggregate_session`` runs per-file, so each duplicate contributes
+    separately -> cost is double-counted, branch attribution drifts
+    (the first-seen file's ``gitBranch`` wins, which can be the stale
+    main-side copy), and ``Cost by Worktree`` shows inflated cost.
+
+    Strategy: read each file once, count its ``assistant`` records (proxy
+    for snapshot completeness), and prefer the file with the highest
+    count. Ties break toward the worktree-side copy (more specific path
+    -> correct worktree attribution). Files without a parseable
+    ``sessionId`` are kept as-is (legacy flat layout).
+    """
+    if not file_paths:
+        return file_paths
+
+    def _stats(path: Path) -> tuple[int, int]:
+        # (assistant_record_count, is_worktree_side)
+        assistants = 0
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if '"type":"assistant"' in line:
+                    assistants += 1
+        except OSError:
+            pass
+        return (assistants, 1 if "/.claude/worktrees/" in str(path) else 0)
+
+    chosen: dict[str, Path] = {}
+    for p in file_paths:
+        sid = None
+        try:
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                sid = obj.get("sessionId") or obj.get("session_id")
+                if sid:
+                    break
+        except OSError:
+            continue
+        if not sid:
+            continue
+        cur = chosen.get(sid)
+        if cur is None or _stats(p) > _stats(cur):
+            chosen[sid] = p
+
+    if not chosen:
+        return file_paths
+
+    keep = set(chosen.values())
+    keep_paths = set()
+    for p in file_paths:
+        if p in keep:
+            keep_paths.add(p)
+            continue
+        # Keep legacy flat files (no sessionId in any line) untouched.
+        try:
+            any_sid = False
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("sessionId") or obj.get("session_id"):
+                    any_sid = True
+                    break
+            if not any_sid:
+                keep_paths.add(p)
+        except OSError:
+            keep_paths.add(p)
+    return [p for p in file_paths if p in keep_paths]
+
+
 _KNOWN_SOURCES = ("claude-code", "codex")
 
 
@@ -1895,6 +1981,10 @@ def main(argv: list[str] | None = None) -> int:
     logs_dir = Path(args.logs_dir).resolve()
     repo_root = Path.cwd().resolve() if args.include_worktree_logs else None
     files = discover_logs(logs_dir, repo_root=repo_root)
+    # Dual-write (#173) places the same sessionId in two files; dedup to
+    # one snapshot per sessionId so cost and branch attribution are not
+    # double-counted or skewed by the stale main-side copy.
+    files = _dedupe_by_session(files)
     if not files:
         print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/", file=sys.stderr)
         return 2

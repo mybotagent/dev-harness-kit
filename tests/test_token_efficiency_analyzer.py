@@ -1088,6 +1088,64 @@ class TestWorktreeAwareness(unittest.TestCase):
             finally:
                 html_path.unlink(missing_ok=True)
 
+    def test_dedupe_dual_write_session(self):
+        """Same sessionId in two files -> one counted, cost from fuller copy."""
+        import json, tempfile
+        from io import StringIO
+        import contextlib
+        with tempfile.TemporaryDirectory(prefix="dedupe-") as td:
+            td_path = Path(td)
+            SID = "dedup-test-sid"
+            rec = {
+                "type": "assistant",
+                "sessionId": SID,
+                "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                "gitBranch": "main",
+                "timestamp": "2026-07-15T00:00:00.000Z",
+                "message": {"role": "assistant", "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "hi"}],
+                            "usage": {"input_tokens": 100, "output_tokens": 10,
+                                      "cache_read_input_tokens": 50,
+                                      "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                                         "ephemeral_1h_input_tokens": 0}}},
+            }
+            # Main-side copy: 1 assistant record (stale, partial snapshot).
+            main_dir = td_path / "logs" / "claude-code" / "main"
+            main_dir.mkdir(parents=True)
+            (main_dir / f"{SID}.jsonl").write_text(json.dumps(rec) + "\n")
+            # Worktree-side copy: 5 assistant records (more complete).
+            wt_dir = (td_path / "logs" / "claude-code"
+                      / "feat-x" / ".claude" / "worktrees" / "feat-x")
+            # Note: discover_logs walks <logs_dir>/<source>/** and any
+            # nested .claude/worktrees/ dirs, so place worktree copy under
+            # <logs_dir>/claude-code/<branch>/.claude/worktrees/<wt>/ to
+            # mimic the dual-write layout discovered at runtime.
+            wt = td_path / "logs" / "claude-code" / "feat-x" / ".claude" / "worktrees" / "feat-x"
+            wt.mkdir(parents=True)
+            lines = []
+            for i in range(5):
+                lines.append(json.dumps({**rec, "timestamp": f"2026-07-15T00:00:0{i}.000Z"}))
+            (wt / f"{SID}.jsonl").write_text("\n".join(lines) + "\n")
+            buf = StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([
+                    "--repo", "",
+                    "--days", "30",
+                    "--logs-dir", str(td_path / "logs"),
+                    "--no-include-worktree-logs",
+                    "--json",
+                ])
+            self.assertEqual(rc, 0)
+            data = json.loads(buf.getvalue())
+            self.assertEqual(
+                data["sessions"], 1,
+                msg=f"dedup should collapse to 1 session; got {data['sessions']}",
+            )
+            self.assertEqual(
+                data["files_scanned"], 1,
+                msg="files_scanned reflects the deduped file set, not raw discovery",
+            )
+
 
 class TestWorktreePanelFullCoverage(unittest.TestCase):
     """Cost-by-Worktree panel must list every disk worktree dir, not only
