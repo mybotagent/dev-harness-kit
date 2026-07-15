@@ -51,6 +51,21 @@ After install, the marker file `.dev-kit/ci-config.json` is written at the proje
 
 ## How to verify
 
+The Claude Code and Codex lifecycle hook definition is shared from
+`hooks/hooks.json`. For a local status report, run:
+
+```bash
+python3 bin/dev-kit-hooks-status.py
+```
+
+In Codex, use `/hooks` after installation or whenever the hook definition
+changes to review and trust the plugin hooks. The Git pre-push hook is separate
+from both clients and is inactive until the repository configures:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ```bash
 bash scripts/ci-local.sh
 ```

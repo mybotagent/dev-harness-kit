@@ -18,8 +18,8 @@
     "ax",
     "harness"
   ],
+  "hooks": "./hooks/hooks.json",
   "skills": "./skills/",
-  "hooks": {},
   "interface": {
     "displayName": "Dev Harness Kit",
     "shortDescription": "42 skills for planning, TDD build, review, security, and release workflows",

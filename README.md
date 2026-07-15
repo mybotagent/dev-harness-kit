@@ -451,7 +451,22 @@ $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","t
 
 ## Codex CLI compatibility (`.codex-plugin/plugin.json`)
 
-Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory — no per-skill copying. dev-kit's manifest points `"skills"` straight at the existing `./skills/`, so all canonical `skills/<name>/SKILL.md` files are exposed to Codex unchanged, with zero new files per skill and zero drift risk (there is nothing to keep in sync — it's the same directory, not a copy).
+Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory. The manifest also points `"hooks"` at `./hooks/hooks.json`, so Codex and Claude Code load the same hook definition and scripts. This keeps lifecycle events in one source of truth; it does not make client-specific output semantics identical.
+
+After enabling the plugin, review and trust its hooks with `/hooks` in Codex. Codex marks new or changed non-managed hooks for review and skips them until trusted. Run the local status check from the repository root:
+
+```bash
+python3 bin/dev-kit-hooks-status.py
+python3 bin/dev-kit-hooks-status.py --json
+```
+
+The report distinguishes Claude Code registration, Codex registration and trust review, the `.dev-kit/.active-hooks.json` matrix, and Git's separate pre-push hook. Git enforcement is active only after configuring it explicitly:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`PreToolUse`, `UserPromptSubmit`, `SessionStart`, `PostToolUse`, and `Stop` are shared through the plugin hook definition. Claude Code's `permissionDecision` response is client-specific; Codex's hook trust and lifecycle handling remain separate and are reported rather than inferred from the Claude configuration.
 
 Claude Code keeps reading `skills/` directly via `.claude-plugin/`, unaffected. MiniMax needs no generated artifact at all — it's a model backend, not a harness, reached by pointing either harness's existing model config at MiniMax's Anthropic-/OpenAI-compatible endpoint.
 
