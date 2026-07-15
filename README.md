@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-422%20total-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Skills](https://img.shields.io/badge/skills-34-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.3.16-blue)](.claude-plugin/plugin.json)
+[![Version](https://img.shields.io/badge/version-0.3.26-blue)](.claude-plugin/plugin.json)
 
 ## What
 
@@ -188,7 +188,7 @@ dev-harness-kit/
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
 | `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop in edits (T1 phrase + T2 structure + 5-dim scoring, 100+ KO+EN patterns) | advisory (opt-in strict) |
 | `stop-verify.sh` | Stop | Run regression tests on session end | hard-block |
-| `cost-gate.sh` | SessionStart / PostToolUse / PreToolUse (catch-all) | Live cost gate — warn at $5, hard kill (PreToolUse exit 2) at $10 per session | hard-block at kill |
+| `cost-gate.sh` | SessionStart / PostToolUse / PreToolUse (catch-all) | Live cost gate — warn at $5, advisory at $10 (PreToolUse emits `additionalContext`; **never blocks** in v0.3.23+) | advisory |
 
 The 3 new hooks (worktree-guard, task-detector, session-start-check) implement the worktree enforcement rule. The worktree-rule scripts (hooks + `lib/worktree-detect.sh`) also ship to consumer repos via `templates/ci/`.
 
@@ -372,15 +372,15 @@ This is a CLI, not a `/dev-kit:*` skill, because it operates on local files with
 
 ## Cost gate (`/dev-kit:cost-gate` + `hooks/cost-gate.sh`)
 
-A **preemptive, real-time cost gate** layered on top of (not replacing) the post-hoc `/dev-kit:token-analyzer` dashboard. Two layers share one state file at `<cwd>/.dev-kit/.cost-gate/state.json`; only the intensity differs.
+A **preemptive, real-time cost observer** layered on top of (not replacing) the post-hoc `/dev-kit:token-analyzer` dashboard. Two layers share one state file at `<cwd>/.dev-kit/.cost-gate/state.json`; only the lifecycle differs. **As of v0.3.23 the gate is warn-only — it never blocks tool calls.** A runaway session still shows up in the dashboard, in commit trailers, and in the PR-level label, but the model is never denied a tool mid-flight because of a cost threshold.
 
 | Layer | Trigger | Threshold (default) | Behavior |
 |---|---|---:|---|
-| **Session warn** | every tool call (PostToolUse) | `$5.00` | emits `additionalContext` nudge on first crossing |
-| **Session kill** | every tool call (PreToolUse) | `$10.00` | hard exit 2 with deny JSON — runaway prevention, no advisory path |
-| **PR flag** | PR `opened`/`synchronize`/`reopened` | `$20.00` | applies `cost-flag` label + upserts a single comment |
+| **Session warn** | every tool call (PostToolUse / PreToolUse) | `$5.00` | emits `additionalContext` nudge on first crossing — visible in the transcript, never a deny |
+| **Session limit (advisory)** | every tool call (PostToolUse / PreToolUse) | `$10.00` | stronger advisory that escalates to warn with the threshold crossed in the reason string. **No exit 2, no `permissionDecision: deny`.** Tool calls proceed. |
+| **PR flag** | PR `opened`/`synchronize`/`reopened` | `$20.00` | applies `cost-flag` label + upserts a single `<!-- dev-kit:cost-gate -->` comment |
 
-Override thresholds via env: `DEV_KIT_COST_WARN_USD`, `DEV_KIT_COST_KILL_USD`, `DEV_KIT_PR_COST_FLAG_USD`.
+Override thresholds via env: `DEV_KIT_COST_WARN_USD`, `DEV_KIT_COST_KILL_USD`, `DEV_KIT_PR_COST_FLAG_USD` (the `KILL_USD` name is kept for backward compatibility — at or above this threshold the status escalates to `limit` and the hook emits an advisory `additionalContext`; it never denies).
 
 ### Architecture
 
@@ -388,7 +388,7 @@ Override thresholds via env: `DEV_KIT_COST_WARN_USD`, `DEV_KIT_COST_KILL_USD`, `
                 hooks/cost-gate.sh (3 events)
                   ├── SessionStart  → init state + nudge
                   ├── PostToolUse   → update ledger (transcript scan + heuristic fallback)
-                  └── PreToolUse    → kill (exit 2 + deny JSON) when >= kill
+                  └── PreToolUse    → emit additionalContext (advisory only, never deny)
                           │
                           ▼
                 tools/cost_gate_status.py
@@ -400,7 +400,7 @@ Override thresholds via env: `DEV_KIT_COST_WARN_USD`, `DEV_KIT_COST_KILL_USD`, `
                   ├── heuristic fallback (per-tool token estimate, marked provenance)
                   ├── state I/O via lib/atomic.py
                   ├── footer parsing + dedup (per-session max)
-                  └── threshold evaluation
+                  └── threshold evaluation (warn / limit / ok; no kill branch)
 ```
 
 The PR aggregator (`.github/workflows/cost-flag.yml`) sums per-session maxima extracted from commit-footers:
@@ -420,12 +420,12 @@ git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
 
 | Path | Purpose |
 |---|---|
-| `lib/cost_gate.py` | Pricing (4 tiers, substring match), transcript scanner with byte-offset cursor, heuristic fallback, state I/O, threshold eval, footer parsing, PR aggregation |
-| `tools/cost_gate_status.py` | CLI + hook driver. Flags: `--state`, `--json`, `--html PATH`, `--footer`, `--aggregate-pr --bodies-file PATH`, `--hook-session-start`, `--hook-post-tool-use`, `--hook-pre-tool-use` |
-| `hooks/cost-gate.sh` | Three-event adapter. Fail-closed (deny JSON + exit 2) when `jq` or `python3` is missing |
-| `skills/cost-gate/SKILL.md` | Human-use inspection skill (read-only). Renders current spend, threshold distance, and the trailer block |
+| `lib/cost_gate.py` | Pricing (4 tiers, substring match), transcript scanner with byte-offset cursor, heuristic fallback, state I/O, threshold eval (`ok` / `warn` / `limit` — never `kill`), footer parsing, PR aggregation |
+| `tools/cost_gate_status.py` | CLI + hook driver. Flags: `--state`, `--json`, `--html PATH`, `--footer`, `--aggregate-pr --bodies-file PATH`, `--hook-session-start`, `--hook-post-tool-use`, `--hook-pre-tool-use`. All hook modes emit `additionalContext` to stdout; none returns exit 2 or `permissionDecision: deny` |
+| `hooks/cost-gate.sh` | Three-event adapter. Normal-path mode is advisory. **Fail-closed (deny JSON + exit 2)** only when `jq` or `python3` is missing — that is the one path that still denies, because the rule cannot run at all without those binaries |
+| `skills/cost-gate/SKILL.md` | Human-use inspection skill (read-only, `disallowed-tools: Write Edit`). Renders current spend, threshold distance, and the trailer block |
 | `.github/workflows/cost-flag.yml` | PR aggregator: applies / removes `cost-flag` label + upserts one `<!-- dev-kit:cost-gate -->` comment |
-| `tests/test_cost_gate.py` | 41 black-box tests: pricing, thresholds, state I/O atomicity, heuristics, footer dedup, CLI modes, hook behavior (SessionStart/PostToolUse/PreToolUse), jq-missing fail-closed, hooks.json wiring, isolation |
+| `tests/test_cost_gate.py` | 41 black-box tests: pricing, threshold escalation (`test_at_kill_emits_warn` / `test_above_kill_still_warn`), state I/O atomicity, heuristics, footer dedup, CLI modes, hook behavior (SessionStart / PostToolUse / PreToolUse emit `additionalContext` only), jq-missing fail-closed, hooks.json wiring, isolation |
 
 ### Isolation guarantee
 
@@ -438,19 +438,19 @@ $ TMPDIR=$(mktemp -d)
 $ echo '{"hook_event_name":"SessionStart","session_id":"s1","source":"startup","cwd":"'"$TMPDIR"'"}' | bash hooks/cost-gate.sh
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"cost-gate: session initialized ..."}}
 $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","tool_name":"Read"}' | bash hooks/cost-gate.sh
-# exit 0 (cost is $0)
-$ # force cost above kill threshold via state file
-$ python3 -c "import json, sys; sys.path.insert(0,'lib'); from atomic import atomic_write_json; from pathlib import Path; s=json.load(open('$TMPDIR/.dev-kit/.cost-gate/state.json')); s['totals']['cost_usd']=11.0; s['status']='kill'; atomic_write_json(Path('$TMPDIR/.dev-kit/.cost-gate/state.json'),s)"
+# exit 0 (cost is $0; no additionalContext; tool call proceeds)
+$ # force cost above the limit threshold via state file
+$ python3 -c "import json, sys; sys.path.insert(0,'lib'); from atomic import atomic_write_json; from pathlib import Path; s=json.load(open('$TMPDIR/.dev-kit/.cost-gate/state.json')); s['totals']['cost_usd']=11.0; s['status']='limit'; atomic_write_json(Path('$TMPDIR/.dev-kit/.cost-gate/state.json'),s)"
 $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","tool_name":"Read"}' | bash hooks/cost-gate.sh
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"COST GATE: session cost $11.00 >= kill threshold $10.00. Session aborted by runaway prevention..."}}
-# exit 2
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"cost-gate: advisory — session cost $11.00 >= limit threshold $10.00. Tool call proceeds; no deny."}}
+# exit 0 — gate stays advisory
 ```
 
 ### Why both a hook AND a skill (not one or the other)
 
-- **Hook** is what fires during the session — the only path that can hard-deny a `PreToolUse` and abort the session mid-flight. Cannot be skipped by the model.
+- **Hook** fires during the session and maintains the live ledger. It is the only path with a guaranteed cost view per tool call, but it is **advisory** as of v0.3.23 — operators get `additionalContext` in the transcript, not a deny. (The one exception is the jq/python3 fail-closed path, which denies because the rule cannot run at all without those binaries.)
 - **Skill** is the human-read-only window into the running ledger. Renders current spend, distance to thresholds, and the trailer block the PR aggregator needs.
-- **CI workflow** is the cross-session aggregator — neither the hook nor the skill can read every session that contributed to a PR (state files are local to the worktree where the session ran).
+- **CI workflow** is the cross-session aggregator — neither the hook nor the skill can read every session that contributed to a PR (state files are local to the worktree where the session ran). This is the only path that can label a PR `cost-flag`.
 
 ## ## Codex CLI compatibility (`.codex-plugin/plugin.json`)
 
@@ -738,6 +738,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.16 — 34 skills shipped across 14 categories (was 44; pruned 10 internal/duplicate skill files in issue #176), 422 pytest collected (420 passed + 2 skipped), 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **v0.3.26 — 34 skills shipped across 14 categories, 626 pytest collected, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
