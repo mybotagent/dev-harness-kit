@@ -9,9 +9,8 @@ CLAUDE.md sections:
   §4 Hook Matrix (active-hooks.json SSOT, MUST-13)
   §5 Hand-off Pointer
 
-AGENTS.md: universal entry point that points to CLAUDE.md and enumerates the
-shared `rules/*.md` files for CLIs that read AGENTS.md instead of
-Claude's automatic rule discovery.
+AGENTS.md: universal entry point that points to CLAUDE.md for CLIs that read
+AGENTS.md instead of Claude's automatic instruction discovery.
 """
 from __future__ import annotations
 
@@ -82,37 +81,14 @@ def render_stub_section_3(project_root: Path) -> str:
 
 
 def render_agents_md(project_root: Path | None = None) -> str:
-    """Render the universal AGENTS.md entry point.
+    """Render the universal AGENTS.md pointer.
 
     AGENTS.md is the universal entry point that Codex / other CLIs read;
-    Claude Code reads CLAUDE.md and `.claude/rules/` directly. The repository
-    keeps that directory as a compatibility link to canonical `rules/`.
-    Enumerating the
-    rule files here makes the same rule set explicit to Codex without copying
-    the rule contents into a second, drift-prone file.
+    Claude Code reads CLAUDE.md and `.claude/rules/` directly. CLAUDE.md
+    contains the shared `rules/*.md` index, so this remains one short pointer
+    instead of a second instruction document.
     """
-    root = (project_root or Path.cwd()).resolve()
-    rules_dir = root / "rules"
-    rules = sorted(
-        path.relative_to(root).as_posix()
-        for path in rules_dir.glob("*.md")
-    ) if rules_dir.is_dir() else []
-    lines = [
-        "# Shared agent instructions",
-        "",
-        "Read and follow `CLAUDE.md` before working in this repository.",
-        "The Claude Code and Codex instruction set is shared; do not create a",
-        "client-specific substitute or ignore the rules listed below.",
-        "",
-        "## Shared rules",
-        "",
-    ]
-    if rules:
-        lines.extend(f"- Read `{rule}` before planning or editing." for rule in rules)
-    else:
-        lines.append("- Read every Markdown file under `rules/` when present.")
-    lines.append("")
-    return "\n".join(lines)
+    return "CLAUDE.md\n"
 
 
 def write_agents_md(project_root: Path) -> Path:
@@ -267,6 +243,13 @@ def render_claude_md(
     )
 
     laws_text = "\n".join(f"- **L{i+1}**: {law}" for i, law in enumerate(laws))
+    shared_rules = sorted(
+        path.relative_to(project_root).as_posix()
+        for path in (project_root / "rules").glob("*.md")
+    ) if (project_root / "rules").is_dir() else []
+    shared_rules_text = "\n".join(f"- Read `{rule}` before planning or editing." for rule in shared_rules)
+    if not shared_rules_text:
+        shared_rules_text = "- Read every Markdown file under `rules/` when present."
 
     mode_label = "--slim-claude-md (default, lazy §3)"
 
@@ -305,6 +288,11 @@ def render_claude_md(
         "## §5 Hand-off Pointer\n"
         "\n"
         f"{section_5}\n"
+        "\n"
+        "## Shared rules (Claude Code + Codex)\n"
+        "\n"
+        "AGENTS.md points here so Claude Code and Codex use the same rule source.\n"
+        f"{shared_rules_text}\n"
         "\n"
         "<!-- END AUTO-GENERATED -->\n"
     )

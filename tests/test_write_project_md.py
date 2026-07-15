@@ -70,8 +70,7 @@ class TestWriteProjectMd(unittest.TestCase):
 
     def test_render_agents_md(self):
         agents = write_project_md.render_agents_md(self.root)
-        self.assertIn("CLAUDE.md", agents)
-        self.assertIn("rules/", agents)
+        self.assertEqual(agents.strip(), "CLAUDE.md")
 
     def test_render_claude_md_has_all_5_sections(self):
         md = write_project_md.render_claude_md(self.root)
@@ -110,9 +109,7 @@ class TestWriteProjectMd(unittest.TestCase):
         write_project_md.write_project_md(self.root, stage="plan")
         agents_path = self.root / "AGENTS.md"
         self.assertTrue(agents_path.exists())
-        agents = agents_path.read_text()
-        self.assertIn("CLAUDE.md", agents)
-        self.assertIn("rules/", agents)
+        self.assertEqual(agents_path.read_text().strip(), "CLAUDE.md")
 
     def test_write_full_map_writes_codebase_map_doc(self):
         write_project_md.write_project_md(self.root, full_map=True, stage="plan")
