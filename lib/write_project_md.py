@@ -9,8 +9,9 @@ CLAUDE.md sections:
   §4 Hook Matrix (active-hooks.json SSOT, MUST-13)
   §5 Hand-off Pointer
 
-AGENTS.md: single-line pointer to CLAUDE.md for CLIs that read AGENTS.md
-instead of CLAUDE.md.
+AGENTS.md: universal entry point that points to CLAUDE.md and enumerates the
+shared `.claude/rules/*.md` files for CLIs that read AGENTS.md instead of
+Claude's automatic rule discovery.
 """
 from __future__ import annotations
 
@@ -80,20 +81,42 @@ def render_stub_section_3(project_root: Path) -> str:
     )
 
 
-def render_agents_md() -> str:
-    """Single-line AGENTS.md payload.
+def render_agents_md(project_root: Path | None = None) -> str:
+    """Render the universal AGENTS.md entry point.
 
     AGENTS.md is the universal entry point that Codex / other CLIs read;
-    Claude Code reads CLAUDE.md directly. This file tells them to load
-    CLAUDE.md as the project SSOT.
+    Claude Code reads CLAUDE.md and `.claude/rules/` directly. Enumerating the
+    rule files here makes the same rule set explicit to Codex without copying
+    the rule contents into a second, drift-prone file.
     """
-    return "CLAUDE.md\n"
+    root = (project_root or Path.cwd()).resolve()
+    rules_dir = root / ".claude" / "rules"
+    rules = sorted(
+        path.relative_to(root).as_posix()
+        for path in rules_dir.glob("*.md")
+    ) if rules_dir.is_dir() else []
+    lines = [
+        "# Shared agent instructions",
+        "",
+        "Read and follow `CLAUDE.md` before working in this repository.",
+        "The Claude Code and Codex instruction set is shared; do not create a",
+        "client-specific substitute or ignore the rules listed below.",
+        "",
+        "## Shared rules",
+        "",
+    ]
+    if rules:
+        lines.extend(f"- Read `{rule}` before planning or editing." for rule in rules)
+    else:
+        lines.append("- Read every Markdown file under `.claude/rules/` when present.")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def write_agents_md(project_root: Path) -> Path:
     """Atomic write AGENTS.md. Idempotent."""
     path = project_root / "AGENTS.md"
-    atomic_write_text(path, render_agents_md())
+    atomic_write_text(path, render_agents_md(project_root))
     return path
 
 
