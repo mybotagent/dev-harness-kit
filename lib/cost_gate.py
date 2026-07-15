@@ -152,12 +152,20 @@ def resolve_thresholds(env: Optional[Dict[str, str]] = None) -> Dict[str, float]
 
 
 def evaluate_status(cost_usd_value: float, thresholds: Dict[str, float]) -> Tuple[str, List[str]]:
-    """Compute status (ok/warn/kill) and a list of human-readable reasons."""
+    """Compute status (ok/warn) and a list of human-readable reasons.
+
+    The historical 'kill' branch was removed: the cost-gate is advisory
+    only. When cost crosses session_kill we escalate to warn with the
+    threshold crossed in the reason, but the hook never denies.
+    """
     reasons: List[str] = []
-    if cost_usd_value >= thresholds["session_kill"]:
-        return "kill", [f"cost ${cost_usd_value:.2f} >= kill ${thresholds['session_kill']:.2f}"]
     if cost_usd_value >= thresholds["session_warn"]:
         reasons.append(f"cost ${cost_usd_value:.2f} >= warn ${thresholds['session_warn']:.2f}")
+        if cost_usd_value >= thresholds["session_kill"]:
+            reasons.append(
+                f"cost ${cost_usd_value:.2f} >= kill ${thresholds['session_kill']:.2f} "
+                f"(advisory — gate does not block)"
+            )
         return "warn", reasons
     return "ok", reasons
 

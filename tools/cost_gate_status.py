@@ -213,34 +213,33 @@ def _emit_post_tool_use(payload: Dict[str, Any]) -> int:
 
 
 def _emit_pre_tool_use(payload: Dict[str, Any]) -> int:
-    """PreToolUse: below kill → exit 0; at/above kill → deny JSON + exit 2."""
+    """PreToolUse: advisory only — emit additionalContext when cost is high.
+
+    The historical deny-on-kill branch was removed (cost-gate is now
+    warn-only). The hook still loads state and emits an additionalContext
+    line for high-cost sessions so operators get visibility, but it never
+    blocks the tool call.
+    """
     cwd = payload.get("cwd") or os.getcwd()
     state_path = _state_path(None, cwd)
     state = cg.load_state(state_path)
-    thresholds = cg.resolve_thresholds()
-    cost = 0.0
-    status = "ok"
-    if state is not None:
-        cost = float((state.get("totals") or {}).get("cost_usd", 0.0))
-        status, _ = cg.evaluate_status(cost, thresholds)
-    if status != "kill":
+    if state is None:
+        return 0
+    cost = float((state.get("totals") or {}).get("cost_usd", 0.0))
+    thresholds = state.get("thresholds_usd") or cg.resolve_thresholds()
+    status, reasons = cg.evaluate_status(cost, thresholds)
+    if status != "warn":
         return 0
     msg = (
-        f"COST GATE: session cost ${cost:.2f} >= kill threshold "
-        f"${thresholds['session_kill']:.2f}. Session aborted by runaway prevention. "
-        f"Reduce spend (e.g. /compact, switch to a smaller model) and start a new session. "
-        f"State: {state_path}"
+        f"cost-gate advisory: session cost ${cost:.2f} "
+        f"(warn ${thresholds['session_warn']:.2f}, "
+        f"kill ${thresholds['session_kill']:.2f}). "
+        f"No tool block is issued — gate is advisory only."
     )
-    deny = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": msg,
-        }
-    }
-    sys.stderr.write(json.dumps(deny))
-    sys.stderr.write("\n")
-    return 2
+    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": msg}}
+    sys.stdout.write(json.dumps(out))
+    sys.stdout.write("\n")
+    return 0
 
 
 # ---------------------------------------------------------------------------

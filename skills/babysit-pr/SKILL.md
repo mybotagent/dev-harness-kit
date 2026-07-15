@@ -37,7 +37,7 @@ the branch, stop and tell the user to push + open one.
 | `REVIEW_VERDICT` | `gh pr view --json reviewDecision -q .reviewDecision` (`''`/`APPROVED`/`CHANGES_REQUESTED`/`REVIEW_REQUIRED`) |
 | `CHECKS`         | `gh pr checks --json name,state,conclusion`                            |
 | `BRANCH`         | `git rev-parse --abbrev-ref HEAD`                                      |
-| `MAX_ITERS`      | `10` (hard cap; configurable via `BABYSIT_MAX_ITERS` env var)         |
+| `MAX_ITERS`      | `1000` (high cap; configurable via `BABYSIT_MAX_ITERS` env var; the 3-consecutive-no-progress stuck-loop guard still triggers earlier) |
 
 If `PR_NUMBER` is empty OR `PR_STATE != OPEN` → print a one-line message and
 exit 0. Never create a PR implicitly (MUST: explicit user action).
@@ -81,7 +81,9 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
 ```
 
 If `iter == MAX_ITERS` and PR is still blocked → print the unresolved blocker
-list, exit 1. **Never** silently retry past the cap.
+list, exit 1. **Never** silently retry past the cap. (The earlier
+3-consecutive-no-progress guard fires first when the loop is genuinely
+stuck and avoids burning the full 1000-iter budget.)
 
 ---
 

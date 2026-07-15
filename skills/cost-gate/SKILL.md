@@ -97,9 +97,13 @@ the maximum cumulative value per session.
   cost_usd=...` on success. Copy that line verbatim into the
   conversation so the user can audit without re-running.
 - **Stdout vs stderr contract.** The status summary goes to stdout. The
-  hook (cost-gate.sh) emits deny JSON to stderr when the kill threshold
-  fires; this skill never triggers that path because it runs after the
-  session has stopped, when state is settled.
+  hook (cost-gate.sh) is advisory only — it never emits a deny JSON. At
+  warn level it prints an `additionalContext` line to stdout via the
+  PreToolUse hook so operators get visibility; the kill threshold is a
+  stronger advisory that escalates to warn with the threshold crossed in
+  the reason string but still never blocks tool calls. This skill never
+  emits a deny because it runs after the session has stopped, when state
+  is settled.
 
 ## Related
 

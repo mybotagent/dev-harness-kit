@@ -280,13 +280,17 @@ class TestThresholds(unittest.TestCase):
         s, _ = self.evaluate_status(5.0, {"session_warn": 5.0, "session_kill": 10.0})
         self.assertEqual(s, "warn")
 
-    def test_at_kill_emits_kill(self):
-        s, _ = self.evaluate_status(10.0, {"session_warn": 5.0, "session_kill": 10.0})
-        self.assertEqual(s, "kill")
+    def test_at_kill_emits_warn(self):
+        # Kill threshold is advisory only — status escalates to warn with
+        # the threshold crossed in the reason, but it never returns "kill".
+        s, reasons = self.evaluate_status(10.0, {"session_warn": 5.0, "session_kill": 10.0})
+        self.assertEqual(s, "warn")
+        self.assertTrue(any("kill" in r for r in reasons))
 
-    def test_above_kill_still_kill(self):
-        s, _ = self.evaluate_status(999.0, {"session_warn": 5.0, "session_kill": 10.0})
-        self.assertEqual(s, "kill")
+    def test_above_kill_still_warn(self):
+        s, reasons = self.evaluate_status(999.0, {"session_warn": 5.0, "session_kill": 10.0})
+        self.assertEqual(s, "warn")
+        self.assertTrue(any("kill" in r for r in reasons))
 
 
 # ============================================================================
@@ -472,7 +476,9 @@ class TestHookPreToolUse(unittest.TestCase):
                           cwd=td_p)
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
 
-    def test_at_kill_denies_with_json(self):
+    def test_at_kill_emits_advisory_context(self):
+        # Kill threshold is advisory only — hook returns exit 0 + emits
+        # additionalContext instead of denying.
         with tempfile.TemporaryDirectory() as td:
             td_p = Path(td)
             _write_state(
@@ -491,11 +497,10 @@ class TestHookPreToolUse(unittest.TestCase):
             r = _run_hook("cost-gate.sh",
                           _pre_tool_use_payload(cwd=str(td_p)),
                           cwd=td_p)
-            self.assertEqual(r.returncode, 2, f"stderr={r.stderr}")
-            combined = r.stdout + r.stderr
-            self.assertIn("permissionDecision", combined)
-            self.assertIn('"deny"', combined)
-            self.assertIn("COST GATE", combined)
+            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
+            self.assertIn("advisory", r.stdout)
+            self.assertNotIn('"deny"', r.stdout + r.stderr)
+            self.assertNotIn("permissionDecision", r.stdout + r.stderr)
 
 
 class TestHookPostToolUse(unittest.TestCase):
