@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """test_log_on_session_start.py — regression tests for hooks/log-on-session-start.sh.
 
-Verifies that the new SessionStart hook:
+Verifies that the SessionStart hook:
   - Fires log-on idempotently inside a real worktree session with
     tools/save_log.py present (auto-install), emitting an additionalContext.
-  - Stays silent in a main checkout (loghooks there are owned by user
-    setup layer, not per-session automation).
+  - Fires log-on on the main checkout when dev-kit is installed
+    (tools/save_log.py present in main). Without it, the per-project
+    hook would be missing until the user runs /dev-kit:log on by hand.
+  - Stays silent in a main checkout when dev-kit is NOT installed
+    (no tools/save_log.py, no global install) — refuse-and-skip
+    instead of fabricating a setup.
   - Stays silent outside any git repo.
   - Empty payload: no crash, exit 0.
-  - Worktree without tools/save_log.py: silent no-op (refuse-and-skip).
+  - Worktree without tools/save_log.py: copies from main + fires
+    when main has it; silent refuse-and-skip when neither has it.
   - hooks.json wires log-on-session-start.sh into SessionStart with
     timeout >= 5 (log-on runs jq + python discovery).
 """
@@ -179,8 +184,15 @@ class TestLogOnSessionStartWorktree(unittest.TestCase):
             wt_parent.cleanup()
 
 
-class TestLogOnSessionStartMain(unittest.TestCase):
-    """Main checkout: hook stays silent (different layer owns main)."""
+class TestLogOnSessionStartMainWithDevKit(unittest.TestCase):
+    """Main checkout WITH dev-kit (tools/save_log.py present):
+    hook must fire log-on to install per-project hooks idempotently.
+
+    Why this exists: a fresh dev-kit:bootstrap project leaves the
+    project-level loghook uninstalled until the developer manually
+    runs /dev-kit:log on. That gap is silent data loss — every main
+    checkout session between bootstrap and the first manual on goes
+    un-captured. SessionStart auto-install fixes the gap."""
 
     def setUp(self):
         if not (HOOKS / "log-on-session-start.sh").exists():
@@ -188,21 +200,68 @@ class TestLogOnSessionStartMain(unittest.TestCase):
         if not shutil.which("jq"):
             self.skipTest("jq not installed; hook fails open")
 
-    def test_silent_in_main_checkout(self):
+    def test_fires_log_on_in_main_when_devkit_present(self):
         main_tmp, _, _ = _init_main_with_worktree()
+        template_td, template_dir = _make_loghooks_template_dir()
         try:
+            _touch_save_log(Path(main_tmp.name))
             r = _run_hook(
                 "log-on-session-start.sh",
                 _session_payload(cwd=main_tmp.name),
                 cwd=Path(main_tmp.name),
+                env={"LOGHOOKS_DIR": str(template_dir)},
+            )
+            self.assertEqual(
+                r.returncode, 0,
+                f"got rc={r.returncode}, stderr={r.stderr}, stdout={r.stdout!r}",
+            )
+            doc = json.loads(r.stdout)
+            self.assertIn("hookSpecificOutput", doc)
+            ctx = doc["hookSpecificOutput"].get("additionalContext", "")
+            self.assertIn(
+                "loghooks:", ctx,
+                f"expected log-on fire in main when dev-kit present; got: {ctx!r}",
+            )
+        finally:
+            template_td.cleanup()
+            main_tmp.cleanup()
+
+
+class TestLogOnSessionStartMainWithoutDevKit(unittest.TestCase):
+    """Main checkout WITHOUT dev-kit (no tools/save_log.py, no global
+    install): hook must stay silent. Refuse-and-skip instead of
+    fabricating a setup we don't own."""
+
+    def setUp(self):
+        if not (HOOKS / "log-on-session-start.sh").exists():
+            self.skipTest("log-on-session-start.sh not found")
+        if not shutil.which("jq"):
+            self.skipTest("jq not installed; hook fails open")
+
+    def test_silent_in_main_when_devkit_absent(self):
+        main_tmp, _, _ = _init_main_with_worktree()
+        # No _touch_save_log() — dev-kit is NOT installed in this
+        # throwaway repo, and we override HOME so the global-install
+        # fallback probe finds no ~/.claude/save_log.py.
+        empty_home = tempfile.TemporaryDirectory()
+        try:
+            self.assertFalse((Path(main_tmp.name) / "tools" / "save_log.py").exists())
+            r = _run_hook(
+                "log-on-session-start.sh",
+                _session_payload(cwd=main_tmp.name),
+                cwd=Path(main_tmp.name),
+                env={"HOME": empty_home.name},
             )
             self.assertEqual(
                 r.returncode, 0,
                 f"got rc={r.returncode}, stderr={r.stderr}",
             )
-            self.assertNotIn("loghooks:", r.stdout,
-                             f"unexpected log-on fire in main: stdout={r.stdout!r}")
+            self.assertNotIn(
+                "loghooks:", r.stdout,
+                f"unexpected log-on fire in main with no dev-kit: stdout={r.stdout!r}",
+            )
         finally:
+            empty_home.cleanup()
             main_tmp.cleanup()
 
 

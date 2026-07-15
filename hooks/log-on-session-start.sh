@@ -8,13 +8,26 @@
 # invisible to /dev-kit:token-analyzer until the developer remembers
 # to run `/dev-kit:log on` by hand.
 #
-# Fires only when the session is INSIDE a worktree. The main checkout
-# is silent here — its loghooks are owned by the user's machine setup,
-# not by per-session automation.
+# Discriminator (worktree-detect.sh):
+#   WORKTREE_DETECT=worktree → fire (auto-copy tools/save_log.py from
+#                                main checkout if missing, then log-on).
+#   WORKTREE_DETECT=main     → fire IFF dev-kit is installed locally
+#                              (`tools/save_log.py` in cwd) OR globally
+#                              (`~/.claude/save_log.py` exists). Without
+#                              either, stay silent — refuse to fabricate
+#                              a setup we don't own.
+#   WORKTREE_DETECT=outside  → silent (not a git working tree).
+#   WORKTREE_DETECT=""       → silent (jq missing — fails open, no-op).
 #
-# Discriminator: WORKTREE_DETECT = "worktree" ⇒ fire; anything else
-# (main, outside, "") ⇒ silent. Fails open (stderr warning) when
-# `jq` is missing — same policy as session-start-check.sh.
+# Why main now fires: a fresh `dev-kit:bootstrap` project leaves the
+# per-project loghook uninstalled until the developer runs /dev-kit:log
+# on by hand. That gap is silent data loss — every main checkout session
+# between bootstrap and the first manual on goes un-captured. Firing
+# here closes the gap with zero manual ritual.
+#
+# Fails open (exit 0 with stderr warning) when `jq` is missing or
+# when log-on.sh itself errors out — same policy as
+# session-start-check.sh.
 
 set -uo pipefail
 INPUT="$(cat)"
@@ -36,22 +49,44 @@ if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
 
-# Detect whether we are in a worktree. Stay silent in main checkout,
-# outside any git repo, detached HEADs, and unset cases.
+# Detect whether we are in a worktree or main. The rest of the script
+# branches on the discriminator.
 worktree_detect
 case "$WORKTREE_DETECT" in
-  worktree) ;;
-  *) exit 0 ;;
+  worktree|main) ;;  # proceed to dev-kit check
+  *) exit 0 ;;       # outside, jq-missing, or unset → silent
 esac
 
-# Bootstrap: if the worktree is missing `tools/save_log.py`, try to
-# copy it from the main checkout (the worktree's git-common-dir parent
-# holds it; same content because both checkouts share a single git
-# tree). Without this auto-copy, every fresh worktree stays invisible
-# to /dev-kit:token-analyzer until the user runs `/dev-kit:log setup`
-# by hand. If main also lacks the file, stay silent — the project has
-# no logging setup at all and we won't fabricate one.
-if [ ! -f "tools/save_log.py" ]; then
+# Dev-kit-presence check (main case only — worktree path is covered
+# by the auto-copy from main below).
+#
+# Fires when EITHER:
+#   1. tools/save_log.py is present in cwd (project install), OR
+#   2. ~/.claude/save_log.py is present (global install).
+#
+# Without either, the project has no dev-kit logging setup and we
+# refuse to fabricate one — a stub save_log.py would silently swallow
+# transcripts and break /dev-kit:token-analyzer's cost picture.
+if [ "$WORKTREE_DETECT" = "main" ]; then
+  HAS_PROJECT_SAVE_LOG=0
+  HAS_GLOBAL_SAVE_LOG=0
+  [ -x "./tools/save_log.py" ] && HAS_PROJECT_SAVE_LOG=1
+  [ -x "${HOME}/.claude/save_log.py" ] && HAS_GLOBAL_SAVE_LOG=1
+  if [ "$HAS_PROJECT_SAVE_LOG" -eq 0 ] && [ "$HAS_GLOBAL_SAVE_LOG" -eq 0 ]; then
+    # No dev-kit present. Stay silent — same as outside-git.
+    exit 0
+  fi
+fi
+
+# Worktree bootstrap: if the worktree is missing `tools/save_log.py`,
+# try to copy it from the main checkout (the worktree's git-common-dir
+# parent holds it; same content because both checkouts share a single
+# git tree). Without this auto-copy, every fresh worktree stays
+# invisible to /dev-kit:token-analyzer until the user runs
+# `/dev-kit:log setup` by hand. If main also lacks the file, stay
+# silent — the project has no logging setup at all and we won't
+# fabricate one.
+if [ "$WORKTREE_DETECT" = "worktree" ] && [ ! -f "tools/save_log.py" ]; then
   MAIN_CKOUT="$(git rev-parse --git-common-dir 2>/dev/null)/.."
   MAIN_CKOUT="$(cd "$MAIN_CKOUT" 2>/dev/null && pwd || true)"
   if [ -n "$MAIN_CKOUT" ] && [ -f "$MAIN_CKOUT/tools/save_log.py" ]; then
