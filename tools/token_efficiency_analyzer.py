@@ -5,8 +5,15 @@ Reads JSONL session transcripts under ``<logs_dir>/<source>/<session>.jsonl``
 (default: ``./logs/{claude-code,codex}``), aggregates per-session token and
 tool usage for a given repository over the last N days, scores each session
 0-100 against four dimensions (Cache Utilization, Output Density, Read
-Redundancy, Tool Economy), fires anti-pattern warnings, and emits a single
-self-contained HTML dashboard with embedded CSS.
+Redundancy, Tool Economy), fires anti-pattern warnings, and emits an HTML
+dashboard with embedded CSS.
+
+The dashboard is an index page plus a sibling ``<out>.assets/`` directory of
+per-session transcript sidecar pages (``<out>.assets/<worktree>/<session>.html``)
+linked from a "Transcript Index" section. Navigation is plain ``<a href>`` —
+a worktree's transcripts are only loaded by the browser when clicked, so the
+index stays small and each transcript loads lazily under ``file://`` (no JS,
+no fetch, no server). Pass ``--no-transcripts`` for an index-only run.
 
 Usage::
 
@@ -21,6 +28,7 @@ import argparse
 import html
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1529,6 +1537,14 @@ HTML_TEMPLATE = """<!doctype html>
     </table>
   </div>
 
+  <div class="section-title">Transcript Index <span class="muted" style="font-weight:400;font-size:11px">(click a worktree, then a session, to read the full captured log — loaded lazily per worktree)</span></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>Worktree</th><th style="text-align:right">Sessions</th><th style="text-align:right">Cost</th><th>Open</th></tr></thead>
+      <tbody>{transcript_index_rows}</tbody>
+    </table>
+  </div>
+
   <div class="section-title">ROI Actions (ranked by estimated savings)</div>
   <div class="panel">
     <ol class="roi">{roi_items}</ol>
@@ -1554,6 +1570,270 @@ HTML_TEMPLATE = """<!doctype html>
 """
 
 
+# ---------------------------------------------------------------------------
+# Transcript sidecar rendering (index -> worktree -> per-session).
+#
+# The main dashboard links each worktree to ``<out>.assets/<worktree>/index.html``;
+# that page links each session to ``<session>.html`` (full raw transcript).
+# Navigation is plain ``<a href>`` so the browser loads a page only when it is
+# clicked — genuinely lazy per worktree, and it works under ``file://`` with no
+# JS, no fetch, and no server. Sidecar pages reuse the dashboard ``CSS`` plus a
+# small ``SIDECAR_CSS`` overlay so index, worktree, and transcript pages share
+# one look.
+# ---------------------------------------------------------------------------
+
+SIDECAR_CSS = """
+.backlinks { margin-bottom: 18px; font-size: 13px; }
+.backlinks a { color: var(--accent); text-decoration: none; margin-right: 14px; }
+.backlinks a:hover { text-decoration: underline; }
+.sess-head { margin-bottom: 20px; }
+.sess-head .kv { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.sess-head code { color: var(--text); }
+.wt-group { margin: 22px 0 8px; font-size: 14px; font-weight: 600; }
+.turn { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 12px 0; background: var(--panel); }
+.turn-user { border-left: 3px solid var(--accent); }
+.turn-assistant { border-left: 3px solid var(--good); }
+.turn .role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+.turn .meta { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.bubble { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.55; }
+.thinking { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); font-style: italic; border-left: 2px solid var(--border); padding-left: 10px; margin: 8px 0; }
+.toolcall { margin: 10px 0; }
+.toolcall .tname { font-size: 12px; font-weight: 600; color: var(--warn); }
+.io { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; margin: 6px 0 0; }
+details.toolresult { margin: 8px 0 0; }
+details.toolresult > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.empty { color: var(--muted); font-size: 13px; }
+"""
+
+SIDECAR_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="wrap">
+{body}
+<div class="footer">Computed by tools/token_efficiency_analyzer.py · stdlib only · no external assets</div>
+</div>
+</body>
+</html>
+"""
+
+
+def _sidecar_page(title: str, body: str) -> str:
+    """Wrap sidecar body markup in the shared HTML shell (dashboard CSS + overlay)."""
+    return SIDECAR_TEMPLATE.format(title=html.escape(title), css=CSS + SIDECAR_CSS, body=body)
+
+
+def _safe_seg(name: str) -> str:
+    """Sanitize a worktree name into a filesystem/URL-safe path segment."""
+    s = (name or "").strip()
+    if s in ("", "(main)"):
+        return "main"
+    if s == "(unknown)":
+        return "unknown"
+    s = re.sub(r"[^\w.\-]", "_", s)
+    return s or "unnamed"
+
+
+def _sid_file(sid: str) -> str:
+    """Sanitize a session id into a ``<sid>.html`` sidecar filename."""
+    return re.sub(r"[^\w.\-]", "_", sid or "session") + ".html"
+
+
+def _session_cost(s: dict) -> float:
+    """USD cost for one aggregated session (same inputs as the dashboard panels)."""
+    return cost_usd(
+        s["model"],
+        input_tokens=s["input_tokens"],
+        output_tokens=s["output_tokens"],
+        cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+        cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+        cache_write_tokens=s["cache_write_tokens"],
+        cache_read_tokens=s["cache_read_tokens"],
+    )
+
+
+def _ts_range(session: dict) -> str:
+    """Human-readable ``first → last`` UTC range for a session header."""
+    f = session.get("first_ts")
+    l = session.get("last_ts")
+    if not f:
+        return "—"
+    fs = f.strftime("%Y-%m-%d %H:%M")
+    ls = l.strftime("%H:%M") if l else ""
+    return f"{fs} → {ls} UTC" if ls else f"{fs} UTC"
+
+
+def _flatten_tool_result(content) -> str:
+    """Reduce a tool_result ``content`` (str | list-of-blocks | None) to raw text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out: list[str] = []
+        for blk in content:
+            if isinstance(blk, dict):
+                if blk.get("type") == "text":
+                    out.append(str(blk.get("text") or ""))
+                else:
+                    try:
+                        out.append(json.dumps(blk, ensure_ascii=False))
+                    except (TypeError, ValueError):
+                        out.append(str(blk))
+            else:
+                out.append(str(blk))
+        return "\n".join(out)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _render_content_blocks(content) -> str:
+    """Render a message ``content`` (str or block list) into transcript markup."""
+    parts: list[str] = []
+    if isinstance(content, str):
+        if content.strip():
+            parts.append(f"<div class='bubble'>{html.escape(content)}</div>")
+    elif isinstance(content, list):
+        for blk in content:
+            if not isinstance(blk, dict):
+                continue
+            btype = blk.get("type")
+            if btype == "text":
+                t = blk.get("text")
+                if isinstance(t, str) and t.strip():
+                    parts.append(f"<div class='bubble'>{html.escape(t)}</div>")
+            elif btype == "thinking":
+                t = blk.get("thinking")
+                if isinstance(t, str) and t.strip():
+                    parts.append(f"<div class='thinking'>{html.escape(t)}</div>")
+            elif btype == "tool_use":
+                name = blk.get("name") or "?"
+                try:
+                    inp_str = json.dumps(blk.get("input"), indent=2, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    inp_str = str(blk.get("input"))
+                parts.append(
+                    f"<div class='toolcall'><div class='tname'>⚙ {html.escape(str(name))}</div>"
+                    f"<pre class='io'>{html.escape(inp_str)}</pre></div>"
+                )
+            elif btype == "tool_result":
+                out_str = _flatten_tool_result(blk.get("content"))
+                parts.append(
+                    "<details class='toolresult'><summary>tool result</summary>"
+                    f"<pre class='io'>{html.escape(out_str)}</pre></details>"
+                )
+    return "".join(parts)
+
+
+def _render_record(rec: dict) -> str:
+    """Render one JSONL record (a user or assistant turn) into transcript markup."""
+    rtype = rec.get("type")
+    if rtype not in ("user", "assistant"):
+        return ""
+    msg = rec.get("message") or {}
+    inner = _render_content_blocks(msg.get("content"))
+    if not inner:
+        return ""
+    ts = rec.get("timestamp") or ""
+    if rtype == "user":
+        return (
+            f"<div class='turn turn-user'><div class='role'>user</div>{inner}"
+            f"<div class='meta'>{html.escape(ts)}</div></div>"
+        )
+    usage = msg.get("usage") or {}
+    meta_bits = [b for b in (
+        html.escape(msg.get("model") or ""),
+        f"in {usage.get('input_tokens')}" if usage.get("input_tokens") else "",
+        f"out {usage.get('output_tokens')}" if usage.get("output_tokens") else "",
+        html.escape(ts),
+    ) if b]
+    return (
+        f"<div class='turn turn-assistant'><div class='role'>assistant</div>{inner}"
+        f"<div class='meta'>{' · '.join(meta_bits)}</div></div>"
+    )
+
+
+def render_transcript_page(path: Path, session: dict, *, main_href: str, wt_href: str) -> str:
+    """Render one session's full raw transcript — every turn, in file order."""
+    turns: list[str] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                block = _render_record(rec)
+                if block:
+                    turns.append(block)
+    except OSError:
+        turns = []
+
+    sid = session.get("session_id", "")
+    head = (
+        f"<div class='backlinks'><a href='{html.escape(main_href)}'>← Dashboard</a>"
+        f"<a href='{html.escape(wt_href)}'>← {html.escape(session.get('worktree') or 'worktree')}</a></div>"
+        "<h1>Transcript</h1>"
+        "<div class='sess-head'>"
+        f"<div class='kv'>session <code>{html.escape(sid)}</code></div>"
+        f"<div class='kv'>branch {html.escape(session.get('branch') or '—')} · "
+        f"worktree {html.escape(session.get('worktree') or '—')} · "
+        f"model {html.escape(session.get('model') or '?')}</div>"
+        f"<div class='kv'>{html.escape(_ts_range(session))}</div>"
+        "</div>"
+    )
+    body_inner = "\n".join(turns) or "<div class='empty'>No renderable turns in this transcript.</div>"
+    return _sidecar_page(f"Transcript {sid[:8]}", head + body_inner)
+
+
+def render_worktree_index(worktree: str, sessions: list[dict], *, main_href: str) -> str:
+    """Render a worktree's session list (grouped by branch), each linking to a transcript."""
+    _epoch = datetime.min.replace(tzinfo=timezone.utc)
+    by_branch: dict[str, list[dict]] = defaultdict(list)
+    for s in sessions:
+        by_branch[s.get("branch") or "—"].append(s)
+
+    blocks: list[str] = []
+    for branch in sorted(by_branch):
+        rows: list[str] = []
+        for s in sorted(by_branch[branch], key=lambda x: x.get("first_ts") or _epoch, reverse=True):
+            sid = s.get("session_id", "")
+            started = s["first_ts"].strftime("%Y-%m-%d %H:%M") if s.get("first_ts") else "—"
+            tokens = s["input_tokens"] + s["output_tokens"] + s["cache_write_tokens"] + s["cache_read_tokens"]
+            tools = sum(s["tool_counts"].values())
+            rows.append(
+                f"<tr><td><a href='{html.escape(_sid_file(sid))}'><code>{html.escape(sid[:8])}</code></a></td>"
+                f"<td>{html.escape(s.get('model') or '?')}</td>"
+                f"<td class='muted'>{html.escape(started)}</td>"
+                f"<td style='text-align:right'>{tokens:,}</td>"
+                f"<td style='text-align:right'>{tools:,}</td>"
+                f"<td style='text-align:right'>${_session_cost(s):.2f}</td></tr>"
+            )
+        blocks.append(
+            f"<div class='wt-group'>branch: {html.escape(branch)} "
+            f"<span class='muted'>({len(by_branch[branch])})</span></div>"
+            "<div class='panel' style='overflow-x:auto'><table>"
+            "<thead><tr><th>Session</th><th>Model</th><th>Started</th>"
+            "<th style='text-align:right'>Tokens</th><th style='text-align:right'>Tools</th>"
+            "<th style='text-align:right'>Cost</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div>"
+        )
+
+    body = (
+        f"<div class='backlinks'><a href='{html.escape(main_href)}'>← Dashboard</a></div>"
+        f"<h1>Worktree: {html.escape(worktree)}</h1>"
+        f"<div class='subtitle'>{len(sessions)} session(s) · click a session to open its full transcript</div>"
+        + ("".join(blocks) or "<div class='empty'>No sessions.</div>")
+    )
+    return _sidecar_page(f"Worktree {worktree}", body)
+
+
 def render_dashboard(repo: str, days: int, sessions: list[dict],
                      scored: list[tuple[dict, dict]],
                      warnings_per_session: list[list["Warning"]],
@@ -1564,7 +1844,8 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
                      wt_meta: dict[str, dict] | None = None,
                      stale_cost: float = 0.0,
                      stale_pct: float = 0.0,
-                     worktree_filter: str = "") -> str:
+                     worktree_filter: str = "",
+                     transcripts_dirname: str = "") -> str:
     """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``.
 
     ``estimated`` may be a legacy single float (sum) or a dict from the new
@@ -1903,6 +2184,34 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         )
     session_rows_html = "\n".join(session_rows_parts) or "<tr><td colspan='12' class='muted'>No sessions.</td></tr>"
 
+    # Transcript Index — one row per worktree, linking to its sidecar index
+    # page (which lazily lists that worktree's sessions). Mirrors the Cost by
+    # Worktree ordering: (main) pinned first, then by descending cost. When
+    # transcripts are disabled (--no-transcripts) the Open cell is inert.
+    ti_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s, _ in scored:
+        wt = s.get("worktree") or "(unknown)"
+        ti_costs[wt][0] += 1
+        ti_costs[wt][1] += _session_cost(s)
+    ti_sorted = sorted(ti_costs, key=lambda k: -ti_costs[k][1])
+    if "(main)" in ti_sorted:
+        ti_sorted.remove("(main)")
+        ti_sorted = ["(main)"] + ti_sorted
+    ti_rows: list[str] = []
+    for wt in ti_sorted:
+        if transcripts_dirname:
+            href = f"{transcripts_dirname}/{_safe_seg(wt)}/index.html"
+            open_cell = f"<a href='{html.escape(href)}'>open →</a>"
+        else:
+            open_cell = "<span class='muted'>—</span>"
+        ti_rows.append(
+            f"<tr><td>{html.escape(wt)}</td>"
+            f"<td style='text-align:right'>{int(ti_costs[wt][0])}</td>"
+            f"<td style='text-align:right'>${ti_costs[wt][1]:.2f}</td>"
+            f"<td>{open_cell}</td></tr>"
+        )
+    transcript_index_rows = "".join(ti_rows) or "<tr><td colspan='4' class='muted'>No sessions.</td></tr>"
+
     # Warnings list (deduped by code)
     seen_codes: set[str] = set()
     warn_blocks: list[str] = []
@@ -1990,6 +2299,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
         ttl_middle_html=ttl_middle_html,
         ttl_caveat=html.escape(CACHE_TTL_CAVEAT),
         session_rows=session_rows_html,
+        transcript_index_rows=transcript_index_rows,
         warnings_html=warnings_html,
         estimated_total=estimated["total"],
         estimated_cache_miss=estimated["cache_miss"],
@@ -2028,6 +2338,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Filter to a single worktree (case-insensitive substring on derived worktree name). Default: all worktrees.")
     parser.add_argument("--json", action="store_true",
                         help="Emit a machine-readable JSON summary to stdout (skips HTML write). Exit 3 on cost_gate==bad.")
+    parser.add_argument("--transcripts", action=argparse.BooleanOptionalAction, default=True,
+                        help="Write per-session full-transcript sidecar pages under <out>.assets/ and link "
+                             "them from the Transcript Index (default: True). Pass --no-transcripts for an "
+                             "index-only run.")
     args = parser.parse_args(argv)
 
     # Apply pricing override before any pricing call.
@@ -2197,6 +2511,9 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         return 0
 
+    out_path = Path(args.out) if args.out else Path(f"token-dashboard-{args.repo}-{args.days}d.html")
+    transcripts_dirname = (out_path.stem + ".assets") if args.transcripts else ""
+
     html_out = render_dashboard(
         repo=args.repo,
         days=args.days,
@@ -2211,15 +2528,41 @@ def main(argv: list[str] | None = None) -> int:
         stale_cost=stale_cost,
         stale_pct=stale_pct,
         worktree_filter=args.worktree,
+        transcripts_dirname=transcripts_dirname,
     )
 
-    out_path = Path(args.out) if args.out else Path(f"token-dashboard-{args.repo}-{args.days}d.html")
     out_path.write_text(html_out, encoding="utf-8")
+
+    # Transcript sidecars — one dir per worktree, one page per session, plus a
+    # per-worktree index. Written after the dashboard so stdout order is stable.
+    # Navigation is <a href> only, so nothing is loaded until the user clicks.
+    transcripts_written = 0
+    if args.transcripts:
+        assets_dir = out_path.with_name(out_path.stem + ".assets")
+        dash_href = f"../../{out_path.name}"
+        sessions_by_wt: dict[str, list[dict]] = defaultdict(list)
+        for s in selected:
+            sessions_by_wt[s.get("worktree") or "(unknown)"].append(s)
+        for wt, wt_sessions in sessions_by_wt.items():
+            wt_dir = assets_dir / _safe_seg(wt)
+            wt_dir.mkdir(parents=True, exist_ok=True)
+            (wt_dir / "index.html").write_text(
+                render_worktree_index(wt, wt_sessions, main_href=dash_href),
+                encoding="utf-8",
+            )
+            for s in wt_sessions:
+                (wt_dir / _sid_file(s["session_id"])).write_text(
+                    render_transcript_page(
+                        Path(s["log_path"]), s, main_href=dash_href, wt_href="index.html",
+                    ),
+                    encoding="utf-8",
+                )
+                transcripts_written += 1
 
     # Console summary (stdout — Iron Law contract).
     print(f"[ok] sessions={len(selected)}  files_scanned={len(files)}  "
           f"total_cost=${total_cost:.2f}  estimated_savings=${estimated['total']:.2f}  "
-          f"stale_cost=${stale_cost:.2f}")
+          f"stale_cost=${stale_cost:.2f}  transcripts={transcripts_written}")
     print(f"[ok] dashboard -> {out_path}")
     return 0
 
