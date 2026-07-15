@@ -23,8 +23,8 @@ class TestHooksStatus(unittest.TestCase):
 
     def test_codex_manifest_registers_shared_hook_definition(self):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
-        self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
-        codex_hooks = ROOT / ".codex-plugin" / manifest["hooks"]
+        self.assertEqual(manifest["hooks"], "./.codex-plugin/hooks/hooks.json")
+        codex_hooks = ROOT / manifest["hooks"]
         self.assertTrue(codex_hooks.is_file(), f"missing Codex plugin hooks: {codex_hooks}")
         claude_text = (ROOT / "hooks" / "hooks.json").read_text()
         codex_text = codex_hooks.read_text()

@@ -26,11 +26,20 @@ def hook_events(path: Path) -> list[str]:
     return sorted(data.get("hooks", {}).keys())
 
 
+def codex_hooks_path(root: Path, manifest: Path) -> Path:
+    """Resolve the Codex hook file relative to the plugin package root."""
+    try:
+        hooks_ref = json.loads(manifest.read_text(encoding="utf-8")).get("hooks", "")
+    except (OSError, json.JSONDecodeError):
+        return root / ".codex-plugin" / "hooks" / "hooks.json"
+    return root / hooks_ref if isinstance(hooks_ref, str) and hooks_ref else root / ".codex-plugin" / "hooks" / "hooks.json"
+
+
 def status(root: Path) -> dict[str, object]:
     hooks_json = root / "hooks" / "hooks.json"
-    codex_hooks_json = root / ".codex-plugin" / "hooks" / "hooks.json"
     claude_manifest = root / ".claude-plugin" / "plugin.json"
     codex_manifest = root / ".codex-plugin" / "plugin.json"
+    codex_hooks_json = codex_hooks_path(root, codex_manifest)
     git_hook = root / ".githooks" / "pre-push"
     configured_path = git_config(root, "core.hooksPath")
     configured_dir = Path(configured_path)
@@ -41,10 +50,7 @@ def status(root: Path) -> dict[str, object]:
 
     codex_registered = False
     try:
-        codex_registered = (
-            json.loads(codex_manifest.read_text(encoding="utf-8")).get("hooks") == "./hooks/hooks.json"
-            and codex_hooks_json.is_file()
-        )
+        codex_registered = codex_hooks_json.is_file()
     except (OSError, json.JSONDecodeError):
         pass
 
