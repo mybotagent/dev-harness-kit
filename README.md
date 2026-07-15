@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-422%20total-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Skills](https://img.shields.io/badge/skills-34-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.3.25-blue)](.claude-plugin/plugin.json)
+[![Version](https://img.shields.io/badge/version-0.3.26-blue)](.claude-plugin/plugin.json)
 
 ## What
 
@@ -738,6 +738,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.25 — 34 skills shipped across 14 categories, 626 pytest collected, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **v0.3.26 — 34 skills shipped across 14 categories, 626 pytest collected, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
