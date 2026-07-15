@@ -548,10 +548,15 @@ class TestJsonOutput(unittest.TestCase):
     def test_json_empty_logs_returns_2(self):
         empty = self.tmpdir / "empty"
         (empty / "claude-code").mkdir(parents=True)
+        # --no-include-worktree-logs scopes discovery to the test's empty
+        # tempdir; without it the analyzer auto-walks Path.cwd()/.claude/
+        # worktrees/*/logs/ on the test machine, finds live JSONL, and
+        # returns 0 instead of the expected "empty → 2".
         rc = main([
             "--repo", "fixture-repo",
             "--days", "30",
             "--logs-dir", str(empty),
+            "--no-include-worktree-logs",
             "--json",
         ])
         self.assertEqual(rc, 2)
@@ -1024,6 +1029,11 @@ class TestWorktreeAwareness(unittest.TestCase):
                     "--days", "30",
                     "--logs-dir", str(td_path / "logs"),
                     "--worktree", "feat",
+                    # Scope the walk to the test's tempdir; without this the
+                    # analyzer auto-discovers Path.cwd()/.claude/worktrees/*/
+                    # logs/ on the dev machine and files_scanned picks up
+                    # siblings, breaking the strict 2-fixture invariant below.
+                    "--no-include-worktree-logs",
                     "--json",
                 ])
             self.assertEqual(rc, 0)
