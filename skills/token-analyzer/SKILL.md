@@ -97,6 +97,8 @@ before running.
 One HTML file (default name `token-dashboard-<repo>-30d.html`).
 Self-contained: inline `<style>`, no `<script>`, no external assets.
 Dark-mode aware. Safe to email, archive, or open from `file://`.
+Both `claude-code` and `codex` CLI transcripts are first-class sources;
+the Cost Gate evaluates sessions from either source.
 
 Sections (rendered by `tools/token_efficiency_analyzer.py:render_dashboard`):
 
@@ -156,11 +158,19 @@ tile and every per-session row.
 
 | Tier | in | out | cache_write_5m | cache_write_1h | cache_read |
 |---|---:|---:|---:|---:|---:|
-| opus   | 15.00 | 75.00 | 18.75 | 30.00 | 1.50 |
-| sonnet |  3.00 | 15.00 |  3.75 |  6.00 | 0.30 |
-| haiku  |  0.80 |  4.00 |  1.00 |  1.60 | 0.08 |
+| opus        | 15.0000 | 75.0000 | 18.7500 | 30.0000 | 1.5000 |
+| sonnet      |  3.0000 | 15.0000 |  3.7500 |  6.0000 | 0.3000 |
+| haiku       |  0.8000 |  4.0000 |  1.0000 |  1.6000 | 0.0800 |
+| gpt-5-codex |  1.2500 | 10.0000 |  1.2500 |  1.2500 | 0.6250 |
+| gpt-5       |  1.2500 | 10.0000 |  1.2500 |  1.2500 | 0.6250 |
+| gpt-4.1     |  2.5000 | 10.0000 |  2.5000 |  2.5000 | 1.2500 |
+| gpt-4o      |  2.5000 | 10.0000 |  2.5000 |  2.5000 | 1.2500 |
+| o3          | 10.0000 | 40.0000 | 10.0000 | 10.0000 | 5.0000 |
+| o4-mini     |  1.1000 |  4.4000 |  1.1000 |  1.1000 | 0.5500 |
 
-5m TTL write = 1.25x base input. 1h TTL write = 2.0x base input. Override
+Anthropic 5m TTL write = 1.25x base input; 1h TTL write = 2.0x base
+input. OpenAI has a single cached-input discount (~50% of base input)
+and no TTL split, so both cache-write columns equal base input. Override
 any tier with `--pricing-override <path>.json`. Unknown model ids fall
 back to sonnet pricing AND print a stderr WARN line.
 

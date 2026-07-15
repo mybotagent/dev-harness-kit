@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 from token_efficiency_analyzer import (  # noqa: E402
     DEFAULT_COST_GATE_TOKENS,
     DEFAULT_COST_GATE_USD,
+    DEFAULT_PRICING_KEY,
     PRICING,
     WARNING_RECOMMENDATIONS,
     _KNOWN_SOURCES,
@@ -178,6 +179,29 @@ class TestPricingFor(unittest.TestCase):
         self.assertNotIn("MiniMax-M3", unknown)
         self.assertEqual(p["in"], PRICING["minimax"]["in"])
 
+    def test_gpt_5_codex_routes_before_gpt_5(self):
+        self.assertEqual(
+            pricing_for("gpt-5-codex-2025-08-07"),
+            PRICING["gpt-5-codex"],
+        )
+
+    def test_gpt_5(self):
+        self.assertEqual(pricing_for("gpt-5"), PRICING["gpt-5"])
+
+    def test_openai_model_tiers(self):
+        for model_id in ("gpt-4.1", "gpt-4o", "o3", "o4-mini"):
+            with self.subTest(model_id=model_id):
+                self.assertEqual(pricing_for(model_id), PRICING[model_id])
+
+    def test_unknown_openai_model_collects_and_falls_back(self):
+        unknown: set[str] = set()
+        model_id = "gpt-99-totally-fake"
+        self.assertEqual(
+            pricing_for(model_id, _unknown_models=unknown),
+            PRICING[DEFAULT_PRICING_KEY],
+        )
+        self.assertEqual(unknown, {model_id})
+
     def test_unknown_collects(self):
         # An id matching no tier must be collected AND fall back to sonnet.
         unknown: set[str] = set()
@@ -238,6 +262,29 @@ class TestCostUsd(unittest.TestCase):
         # Sonnet: in = 3.00
         self.assertAlmostEqual(a, 3.75, places=4)   # 1.25x
         self.assertAlmostEqual(b, 6.00, places=4)   # 2.0x
+
+    def test_gpt_5_codex_input_cost(self):
+        self.assertAlmostEqual(
+            cost_usd("gpt-5-codex", input_tokens=1_000_000, output_tokens=0),
+            1.25,
+        )
+
+    def test_gpt_5_codex_output_cost(self):
+        self.assertAlmostEqual(
+            cost_usd("gpt-5-codex", input_tokens=0, output_tokens=1_000_000),
+            10.00,
+        )
+
+    def test_gpt_5_codex_cache_read_cost(self):
+        self.assertAlmostEqual(
+            cost_usd(
+                "gpt-5-codex",
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=1_000_000,
+            ),
+            0.625,
+        )
 
 
 class TestEvaluateWarnings(unittest.TestCase):
