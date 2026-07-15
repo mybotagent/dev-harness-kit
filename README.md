@@ -216,7 +216,7 @@ The canonical shared rule is `rules/git-workflow.md`. Claude Code discovers it
 through the `.claude/rules` compatibility symlink, while Codex reads the same
 file through `AGENTS.md`. The rule makes this a hard requirement:
 
-> **Every task = new worktree + subagent handoff + new branch.** No edits on the previous task's branch. No edits in the main checkout.
+> **Every task = new worktree + client handoff + new branch.** Claude Code opens a new session in the worktree; Codex spawns a subagent there. No edits on the previous task's branch or in the main checkout.
 
 Enforced by 3 hooks:
 - `worktree-guard.sh` — hard-block any Edit/Write in the main checkout
@@ -740,7 +740,7 @@ git add -A && git commit -m "chore(ci): refresh dev-kit templates"
 - **Methodology extension (MUST-48)**: TDD/SDD/DDD/BDD/FDD selectable.
 - **A2A typed (MUST-39)**: Sub-agent ↔ main JSON Schema SSOT.
 - **Plugin-only**: `.claude/skills/`, `commands/`, `install.sh` all removed. plugin manifest is SSOT.
-- **Worktree-per-task**: every task is a new worktree + subagent handoff + new branch. Enforced by 3 hooks, documented in `rules/git-workflow.md`.
+- **Worktree-per-task**: every task is a new worktree + client-specific handoff + new branch. Enforced by 3 hooks, documented in `rules/git-workflow.md`.
 - **Consumer-install**: the same `review.yml` + worktree-rule files work in both dev-harness-kit and consumer repos via a self-aware install step.
 
 ## Contributing

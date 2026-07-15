@@ -32,7 +32,7 @@ Detect via `Read` on `./.git`:
 | Result | Meaning | Action |
 |---|---|---|
 | file content starts with `gitdir:` | inside a worktree | proceed to Gate 1 |
-| `Read` fails because `./.git` is a directory | main checkout | **STOP**. Do NOT ask Gate 1. Tell the parent agent: "Worktree required. Per `.claude/rules/git-workflow.md`, every task = new worktree + subagent handoff + new branch. Run: `git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main` — then spawn/hand off a subagent with that path as cwd and re-invoke `/dev-kit:plan`." |
+| `Read` fails because `./.git` is a directory | main checkout | **STOP**. Do NOT ask Gate 1. Tell the parent agent: "Worktree required. Per `rules/git-workflow.md`, every task = new worktree + client handoff + new branch. Run: `git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main` — Claude Code opens a new session in that path; Codex spawns/hand-offs a subagent with that path as cwd, then re-invokes `/dev-kit:plan`." |
 | `Read` fails for any other reason (no repo, file missing) | outside any git repo | proceed (no worktree rule applies) |
 
 This mirrors the discriminator in `hooks/lib/worktree-detect.sh`

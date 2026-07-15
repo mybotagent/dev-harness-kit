@@ -217,13 +217,14 @@ if [ -f "$LOG_ON" ]; then
   (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_ON" >/dev/null 2>&1) || true
 fi
 
-# Build additionalContext — the harness consumes this as a subagent handoff
-# envelope. The hook cannot call the host Agent API itself.
+# Build additionalContext — the harness consumes this as a client-specific
+# handoff envelope. The hook cannot call the host session or Agent API itself.
 CTX="worktree auto-cut ready
   branch:  $BRANCH
   path:    $WT_PATH
-  handoff: spawn a subagent with cwd=$WT_PATH and branch=$BRANCH
-  next:    pass the original task prompt and this worktree path to the subagent
+  Claude Code next: open a new session in $WT_PATH
+  Codex next: spawn a subagent with cwd=$WT_PATH and branch=$BRANCH
+  handoff: pass the original task prompt and this worktree path to the client-specific worker
   fallback: if any of the above fails, run:
             git fetch origin main && git worktree add -b $BRANCH $WT_PATH $MAIN_REF"
 jq -nc --arg ctx "$CTX" \
