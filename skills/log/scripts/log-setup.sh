@@ -28,7 +28,7 @@ Creates the target project's logging scaffold:
 Idempotent: re-running refreshes save_log.py to the current source version.
 --force overwrites even if the local copy SHA matches.
 --all-worktrees also runs setup + hook install for every existing
-                     sibling worktree under <target>/.claude/worktrees/*/.
+                     sibling worktree under <target>/.worktrees/*/.
                      Use this once after --target on the main checkout to
                      close the per-worktree capture gap.
 --global          install to \$HOME/.claude/ instead of a per-project
@@ -167,7 +167,7 @@ else
 fi
 
 if [[ "$ALL_WORKTREES" -eq 1 ]]; then
-    WT_ROOT="$TARGET_DIR/.claude/worktrees"
+    WT_ROOT="$TARGET_DIR/.worktrees"
     if [[ ! -d "$WT_ROOT" ]]; then
         echo
         echo "--all-worktrees: no $WT_ROOT; nothing to backfill."

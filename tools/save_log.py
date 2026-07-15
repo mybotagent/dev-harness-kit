@@ -292,7 +292,7 @@ def main() -> int:
     # Secondary write: the worktree's own logs/<tool>/<branch>/ when the
     # session actually started in a worktree. Lets the analyzer's
     # worktree_from_path() bucket the session under the right worktree
-    # name (the path segment <repo>/.claude/worktrees/<name>/ is what
+    # name (the path segment <repo>/.worktrees/<name>/, or a legacy root, is what
     # it reads). Without this, every worktree session falls back to
     # (main) attribution via the cwd field — which can be the parent
     # checkout path, not the worktree.

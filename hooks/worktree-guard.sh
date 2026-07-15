@@ -11,7 +11,7 @@
 # Allows (exit 0):
 #   Edits from inside ANY git worktree. The discriminator is
 #   `git_dir == git_common_dir` which is robust to the worktree living
-#   anywhere on disk (not just `.claude/worktrees/`).
+#   anywhere on disk (not just `.worktrees/`).
 #   Edits in non-git directories — this hook is project-scoped.
 #   Empty / probe payloads — nothing to gate.
 #
@@ -52,7 +52,7 @@ esac
 
 # In main checkout → deny with actionable reason.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden. Per .claude/rules/git-workflow.md: every task = new worktree + new session + new branch. Run: git fetch origin main && git worktree add -b <type>/<slug> .claude/worktrees/<slug> origin/main — then open a new Claude Code session inside that worktree path."
+MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden. Per .claude/rules/git-workflow.md: every task = new worktree + new session + new branch. Run: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main — then open a new Claude Code session inside that worktree path."
 
 # Build JSON via jq so embedded quotes / backslashes are escaped safely.
 jq -nc --arg reason "$MSG" \

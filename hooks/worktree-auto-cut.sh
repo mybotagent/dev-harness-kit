@@ -177,7 +177,7 @@ if [ -z "$MAIN_REF" ] && git rev-parse --verify main >/dev/null 2>&1; then
 fi
 [ -n "$MAIN_REF" ] || exit 0
 
-WT_PARENT="$PWD/.claude/worktrees"
+WT_PARENT="$PWD/.worktrees"
 mkdir -p "$WT_PARENT"
 WT_PATH="$WT_PARENT/$DIRNAME"
 

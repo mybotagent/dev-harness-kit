@@ -331,7 +331,7 @@ def _run_one_step(
       8. Push per-step branch when `push=True`.
       9. Mark `completed` with measured duration.
     """
-    wt = root / ".claude" / "worktrees" / f"{phase}-step{step_num}"
+    wt = root / ".worktrees" / f"{phase}-step{step_num}"
     branch = f"{worktree_branch}-step{step_num}"
 
     # 1. per-step worktree (MUST-38)
@@ -499,7 +499,7 @@ class _SlotRunner:
             return
         n = step["step"]
         self.current_step = step
-        self.wt = self.root / ".claude" / "worktrees" / f"{self.phase}-step{n}"
+        self.wt = self.root / ".worktrees" / f"{self.phase}-step{n}"
         self.branch = f"{self.worktree_branch}-step{n}"
         subprocess.run(
             ["git", "worktree", "add", "-B", self.branch, str(self.wt), "origin/main"],

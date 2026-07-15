@@ -49,6 +49,19 @@ from typing import Iterable
 #: degrades to ``merged`` the next day.
 FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
 
+# `.worktrees/` is client-neutral. Keep legacy roots discoverable so older
+# Claude/Codex sessions remain visible after the migration.
+WORKTREE_ROOT_NAMES = (".worktrees", ".claude/worktrees", ".codex/worktrees")
+
+
+def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
+    for i, part in enumerate(parts):
+        if part == ".worktrees" and i + 1 < len(parts):
+            return parts[i + 1], i
+        if part in {".claude", ".codex"} and i + 2 < len(parts) and parts[i + 1] == "worktrees":
+            return parts[i + 2], i
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
@@ -239,22 +252,23 @@ def discover_logs(logs_dir: Path, *, repo_root: Path | None = None) -> list[Path
     are picked up alongside any legacy flat files left over from before the
     branch layout existed.
 
-    When ``repo_root`` is provided, also walk every sibling worktree at
-    ``<repo_root>/.claude/worktrees/*/logs/`` so sessions run in any worktree
+    When ``repo_root`` is provided, also walk every sibling worktree at the
+    canonical or legacy worktree roots so sessions run in any worktree
     are visible from a single ``/dev-kit:token-analyzer`` invocation in the
     main checkout (worktree logs are gitignored and live in separate dirs).
     """
     out = _discover_one_logs_dir(logs_dir)
     if repo_root is not None:
-        wt_root = repo_root / ".claude" / "worktrees"
-        if wt_root.exists():
-            for sub_wt in sorted(wt_root.iterdir()):
-                out.extend(_walk_all_worktree_logs(sub_wt))
+        for root_name in WORKTREE_ROOT_NAMES:
+            wt_root = repo_root / root_name
+            if wt_root.exists():
+                for sub_wt in sorted(wt_root.iterdir()):
+                    out.extend(_walk_all_worktree_logs(sub_wt))
     return out
 
 
 def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
-    """Walk <wt_root>/logs/ and recurse into any nested .claude/worktrees/.
+    """Walk <wt_root>/logs/ and recurse into any nested worktree roots.
 
     Sessions captured from inside a worktree-created-from-a-worktree (nested
     layout like .claude/worktrees/A/.claude/worktrees/B/) are still real
@@ -267,10 +281,11 @@ def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
         return []
     seen.add(real)
     out: list = _discover_one_logs_dir(wt_root / "logs")
-    nested = wt_root / ".claude" / "worktrees"
-    if nested.exists():
-        for sub in sorted(nested.iterdir()):
-            out.extend(_walk_all_worktree_logs(sub, seen))
+    for root_name in WORKTREE_ROOT_NAMES:
+        nested = wt_root / root_name
+        if nested.exists():
+            for sub in sorted(nested.iterdir()):
+                out.extend(_walk_all_worktree_logs(sub, seen))
     return out
 
 
@@ -305,7 +320,7 @@ def _dedupe_by_session(file_paths: list[Path]) -> list[Path]:
                     assistants += 1
         except OSError:
             pass
-        return (assistants, 1 if "/.claude/worktrees/" in str(path) else 0)
+        return (assistants, 1 if _worktree_marker(path.parts) else 0)
 
     chosen: dict[str, Path] = {}
     for p in file_paths:
@@ -390,7 +405,7 @@ def parse_iso(ts: str) -> datetime | None:
 def repo_from_cwd(cwd: str | None) -> str:
     """Derive the project root label from ``cwd``.
 
-    For a session running inside a worktree (``.claude/worktrees/<name>/``)
+    For a session running inside a worktree (``.worktrees/<name>/`` or a legacy root)
     the project's logical name is the segment immediately above that
     marker, not the worktree dir itself. Walking up lets a single
     ``--repo <project>`` invocation surface sessions from every checkout
@@ -399,20 +414,19 @@ def repo_from_cwd(cwd: str | None) -> str:
     if not cwd:
         return ""
     parts = Path(cwd).parts
-    for i, part in enumerate(parts):
-        if (part == ".claude" and i + 2 < len(parts)
-                and parts[i + 1] == "worktrees" and i >= 1):
-            return parts[i - 1]
+    marker = _worktree_marker(parts)
+    if marker and marker[1] >= 1:
+        return parts[marker[1] - 1]
     return Path(cwd).name
 
 
 def worktree_from_cwd(cwd: str | None) -> str:
     """Derive the git worktree dir name from ``cwd``.
 
-    A worktree in this repo lives under ``<repo>/.claude/worktrees/<name>/``
+    A worktree in this repo lives under ``<repo>/.worktrees/<name>/``
     (project convention enforced by ``.claude/rules/git-workflow.md``).
     Returns ``(main)`` when ``cwd`` is the main checkout, the worktree
-    basename when ``cwd`` sits under ``.claude/worktrees/<name>/``, and
+    basename when ``cwd`` sits under a canonical or legacy worktree root, and
     ``(unknown)`` when ``cwd`` is missing. The literal bucket names keep
     the Cost by Worktree panel populated even when only the main checkout
     has been used.
@@ -420,17 +434,17 @@ def worktree_from_cwd(cwd: str | None) -> str:
     if not cwd:
         return "(unknown)"
     parts = Path(cwd).parts
-    for i, part in enumerate(parts):
-        if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
-            return parts[i + 2]
+    marker = _worktree_marker(parts)
+    if marker:
+        return marker[0]
     return "(main)"
 
 
 def worktree_from_path(path: Path | str | None) -> str:
     """Derive the git worktree dir name from a JSONL file path.
 
-    Returns the basename of the worktree when ``path`` sits under
-    ``<repo>/.claude/worktrees/<name>/logs/``; otherwise ``(main)``.
+    Returns the basename of the worktree when ``path`` sits under a canonical
+    or legacy worktree root; otherwise ``(main)``.
 
     Path-based resolution is authoritative because the ``cwd`` recorded
     in a session transcript often points at the parent checkout, not the
@@ -441,9 +455,9 @@ def worktree_from_path(path: Path | str | None) -> str:
     if not path:
         return "(main)"
     parts = Path(path).parts
-    for i, part in enumerate(parts):
-        if part == ".claude" and i + 2 < len(parts) and parts[i + 1] == "worktrees":
-            return parts[i + 2]
+    marker = _worktree_marker(parts)
+    if marker:
+        return marker[0]
     return "(main)"
 
 
@@ -604,7 +618,7 @@ def classify_all_worktrees(
     git_runner=subprocess.run,
     timeout: int = 5,
 ) -> dict[str, dict]:
-    """Classify every ``<repo_root>/.claude/worktrees/*`` dir.
+    """Classify every canonical or legacy worktree directory.
 
     Always includes the sentinel key ``"(main)"`` mapped to
     ``{"state": "main", ...}`` so consumers can dereference it without a
@@ -626,15 +640,16 @@ def classify_all_worktrees(
             "branch_name": "",
         },
     }
-    wt_root = Path(repo_root) / ".claude" / "worktrees"
-    if not wt_root.exists() or not wt_root.is_dir():
-        return meta
-    for child in sorted(wt_root.iterdir()):
-        if not child.is_dir():
+    for root_name in WORKTREE_ROOT_NAMES:
+        wt_root = Path(repo_root) / root_name
+        if not wt_root.exists() or not wt_root.is_dir():
             continue
-        meta[child.name] = classify_worktree_dir(
-            child, Path(repo_root), git_runner=git_runner, timeout=timeout
-        )
+        for child in sorted(wt_root.iterdir()):
+            if not child.is_dir():
+                continue
+            meta[child.name] = classify_worktree_dir(
+                child, Path(repo_root), git_runner=git_runner, timeout=timeout
+            )
     return meta
 
 
@@ -2379,7 +2394,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--logs-dir", default="logs", help="Logs root directory (default: ./logs).")
     parser.add_argument("--include-worktree-logs", action=argparse.BooleanOptionalAction,
                         default=True,
-                        help="Auto-discover logs from .claude/worktrees/*/logs/ (default: True). "
+                        help="Auto-discover logs from .worktrees/*/logs/ and legacy worktree roots (default: True). "
                              "Pass --no-include-worktree-logs to disable.")
     parser.add_argument("--out", default=None, help="Output HTML path (default: token-dashboard-<repo>-<days>d.html).")
     parser.add_argument("--cost-gate-tokens", type=int, default=DEFAULT_COST_GATE_TOKENS,
@@ -2416,7 +2431,7 @@ def main(argv: list[str] | None = None) -> int:
 
     unknown_models: set[str] = set()
 
-    # Worktree classification (per project `.claude/worktrees/*/` dir, vs
+    # Worktree classification (per project canonical/legacy worktree dir, vs
     # `git worktree list` + ancestor-of-origin/main check). Skipped when
     # --no-include-worktree-logs is in effect to avoid surprising git walks.
     wt_meta: dict[str, dict] = (

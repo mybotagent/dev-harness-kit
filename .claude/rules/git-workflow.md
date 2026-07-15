@@ -9,6 +9,10 @@ paths:
 
 # Git workflow rules (dev-harness-kit)
 
+The canonical worktree root is `.worktrees/`. This path is shared by Claude
+Code and Codex; `.claude/worktrees/` and `.codex/worktrees/` are legacy paths
+that remain readable but must not be used for new worktrees.
+
 These rules apply to every code change — feature, fix, refactor, docs, test, chore.
 Violation = rejected by `git-guard` hook at commit/push time.
 
@@ -52,7 +56,7 @@ git checkout main
 git pull --ff-only origin main
 
 # 2. Cut a fresh worktree for the new task (auto-creates branch from origin/main)
-git worktree add -b fix/<slug> .claude/worktrees/fix-<slug> origin/main
+git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
 
 # 3. Open a new Claude Code session IN THAT WORKTREE
 #    (the session cwd is the worktree path, not the main checkout)
@@ -62,7 +66,7 @@ git push -u origin fix/<slug>
 gh pr create --base main --head fix/<slug> --title "..." --body "Closes #N"
 
 # 5. After PR is merged (or abandoned), remove the worktree
-git worktree remove .claude/worktrees/fix-<slug>
+git worktree remove .worktrees/fix-<slug>
 git branch -d fix/<slug>        # local branch gone
 ```
 
