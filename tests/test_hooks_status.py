@@ -24,6 +24,19 @@ class TestHooksStatus(unittest.TestCase):
     def test_codex_manifest_registers_shared_hook_definition(self):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
+        codex_hooks = ROOT / ".codex-plugin" / "hooks" / "hooks.json"
+        self.assertTrue(codex_hooks.is_file(), f"missing Codex plugin hooks: {codex_hooks}")
+        claude_text = (ROOT / "hooks" / "hooks.json").read_text()
+        codex_text = codex_hooks.read_text()
+        self.assertIn("${PLUGIN_ROOT}", codex_text)
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", codex_text)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}", claude_text)
+        self.assertNotIn("${PLUGIN_ROOT}", claude_text)
+        self.assertEqual(
+            json.loads(codex_text)["hooks"].keys(),
+            json.loads(claude_text)["hooks"].keys(),
+            "Codex and Claude hook events must stay synchronized",
+        )
 
     def test_shared_definition_keeps_the_complete_claude_hook_inventory(self):
         config = json.loads((ROOT / "hooks" / "hooks.json").read_text())

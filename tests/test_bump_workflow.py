@@ -6,7 +6,7 @@ tag-only emission. It does NOT create bump PRs, does NOT race-recover
 orphans, does NOT carry a commit message. The full chain is:
 
   user edits skill
-    -> .githooks/pre-commit auto-bumps plugin.json:version (PATCH++)
+    -> .githooks/pre-push auto-bumps both plugin manifest versions (PATCH++)
     -> user pushes branch, opens PR
     -> ci.yml:version-freshness check (PR head > PR base) gates the merge
     -> squash-merge lands the bump commit on main
@@ -40,6 +40,7 @@ import yaml
 WORKFLOW_PATH = (
     Path(__file__).parent.parent / ".github" / "workflows" / "version-bump.yml"
 )
+PRE_PUSH_PATH = Path(__file__).parent.parent / ".githooks" / "pre-push"
 
 
 def _yaml_text() -> str:
@@ -62,6 +63,23 @@ def _find_step(doc: dict, name_substr: str) -> dict | None:
 
 
 class TestBumpWorkflow(unittest.TestCase):
+
+    def test_pre_push_bumps_both_plugin_manifests(self):
+        """Claude and Codex manifests must advance together on PR pushes."""
+        text = PRE_PUSH_PATH.read_text(encoding="utf-8")
+        self.assertIn('CLAUDE_PLUGIN=".claude-plugin/plugin.json"', text)
+        self.assertIn('CODEX_PLUGIN=".codex-plugin/plugin.json"', text)
+        self.assertIn('git add "$CLAUDE_PLUGIN" "$CODEX_PLUGIN"', text)
+        self.assertIn('jq --arg v "$NEW_VERSION"', text)
+
+    def test_plugin_manifest_versions_are_in_sync(self):
+        """The two published plugin surfaces must expose one release version."""
+        import json
+
+        root = PRE_PUSH_PATH.parent.parent
+        claude = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+        codex = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
+        self.assertEqual(claude["version"], codex["version"])
 
     def test_01_workflow_file_exists(self):
         self.assertTrue(WORKFLOW_PATH.exists(),
@@ -88,7 +106,7 @@ class TestBumpWorkflow(unittest.TestCase):
     def test_03_push_only_trigger_no_pull_request(self):
         """The refactored workflow is push-to-main only. No pull_request
         trigger -- PRs already carry their own version bump via
-        .githooks/pre-commit, so the workflow does not need to react to
+        .githooks/pre-push, so the workflow does not need to react to
         PR-closed events. Pin this to prevent re-introduction of the old
         bump-PR creation path."""
         doc = _yaml_doc()

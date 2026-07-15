@@ -28,6 +28,7 @@ def hook_events(path: Path) -> list[str]:
 
 def status(root: Path) -> dict[str, object]:
     hooks_json = root / "hooks" / "hooks.json"
+    codex_hooks_json = root / ".codex-plugin" / "hooks" / "hooks.json"
     claude_manifest = root / ".claude-plugin" / "plugin.json"
     codex_manifest = root / ".codex-plugin" / "plugin.json"
     git_hook = root / ".githooks" / "pre-push"
@@ -40,7 +41,10 @@ def status(root: Path) -> dict[str, object]:
 
     codex_registered = False
     try:
-        codex_registered = json.loads(codex_manifest.read_text(encoding="utf-8")).get("hooks") == "./hooks/hooks.json"
+        codex_registered = (
+            json.loads(codex_manifest.read_text(encoding="utf-8")).get("hooks") == "./hooks/hooks.json"
+            and codex_hooks_json.is_file()
+        )
     except (OSError, json.JSONDecodeError):
         pass
 
@@ -57,7 +61,8 @@ def status(root: Path) -> dict[str, object]:
         },
         "codex": {
             "manifest": codex_manifest.is_file(),
-            "hooks_registered": codex_registered and hooks_json.is_file(),
+            "hooks_registered": codex_registered,
+            "hooks_path": str(codex_hooks_json),
             "trust": "review with /hooks if new or changed",
         },
         "git": {

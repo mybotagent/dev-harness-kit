@@ -459,7 +459,7 @@ $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","t
 
 ## Codex CLI compatibility (`.codex-plugin/plugin.json`)
 
-Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory. The manifest also points `"hooks"` at `./hooks/hooks.json`, so Codex and Claude Code load the same hook definition and scripts. This keeps lifecycle events in one source of truth; it does not make client-specific output semantics identical.
+Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory. The manifest points `"hooks"` at the bundled `.codex-plugin/hooks/hooks.json`; this copy mirrors the canonical `hooks/hooks.json` because Codex requires plugin-bundled hook files to remain inside the plugin root. Codex commands use `${PLUGIN_ROOT}`, while Claude Code commands use `${CLAUDE_PLUGIN_ROOT}`. Claude Code continues to load the canonical definition from `hooks/hooks.json`; a regression test keeps both event inventories synchronized.
 
 After enabling the plugin, review and trust its hooks with `/hooks` in Codex. Codex marks new or changed non-managed hooks for review and skips them until trusted. Run the local status check from the repository root:
 

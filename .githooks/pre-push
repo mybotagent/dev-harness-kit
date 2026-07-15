@@ -3,10 +3,10 @@
 #
 # Two responsibilities, run in order:
 #   1. Block direct push to `main` (PR-only workflow policy).
-#   2. Auto-bump .claude-plugin/plugin.json:version (PATCH++) before pushing
+#   2. Auto-bump both plugin manifests' versions (PATCH++) before pushing
 #      a non-main branch, by comparing the LOCAL version against origin/main.
-#      - LOCAL == MAIN: bump PATCH (BASE + 1), commit, push.
-#      - LOCAL >  MAIN: skip (user already bumped — respect their value).
+#      - LOCAL == MAIN: bump PATCH (BASE + 1) in both manifests, commit, push.
+#      - LOCAL >  MAIN: respect the user's version and sync Codex if needed.
 #      - LOCAL <  MAIN: refuse with a clear error (user must rebase first;
 #        another PR merged and advanced main past this branch's tip).
 #
@@ -27,6 +27,11 @@
 # This hook is the client-side enforcement + CI will additionally gate.
 
 set -eo pipefail
+
+# Release manifests. Claude is the current release baseline; Codex is kept
+# at the exact same version by this hook.
+CLAUDE_PLUGIN=".claude-plugin/plugin.json"
+CODEX_PLUGIN=".codex-plugin/plugin.json"
 
 # jq is required for the version auto-bump (and is already a hard dep
 # elsewhere: lib/ci_setup.py and version-bump.yml both call jq). Check
@@ -72,8 +77,13 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
             if ! git fetch origin main 2>/dev/null; then
               echo "[pre-push] WARN: could not fetch origin/main; skipping version bump (CI freshness is the backstop)"
             else
-              MAIN_VERSION="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")"
-              LOCAL_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
+              MAIN_VERSION="$(git show origin/main:"$CLAUDE_PLUGIN" 2>/dev/null | jq -r .version 2>/dev/null || echo "")"
+              LOCAL_VERSION="$(jq -r .version "$CLAUDE_PLUGIN")"
+
+              if [ ! -f "$CODEX_PLUGIN" ]; then
+                echo "[pre-push] ::error:: missing Codex plugin manifest: $CODEX_PLUGIN" >&2
+                exit 1
+              fi
 
               if [ -z "$MAIN_VERSION" ]; then
                 echo "[pre-push] WARN: origin/main has no plugin.json:version; skipping bump"
@@ -100,22 +110,35 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
                 HIGHER="$(printf '%s\n%s\n' "$MAIN_VERSION" "$LOCAL_VERSION" | sort -V | tail -1)"
 
                 if [ "$HIGHER" = "$LOCAL_VERSION" ] && [ "$LOCAL_VERSION" != "$MAIN_VERSION" ]; then
-                  # LOCAL > MAIN — user already bumped. Leave alone.
-                  echo "[pre-push] version $LOCAL_VERSION > main $MAIN_VERSION; OK"
+                  # LOCAL > MAIN — user already bumped. Sync Codex if needed.
+                  CODEX_VERSION="$(jq -r .version "$CODEX_PLUGIN")"
+                  if [ "$CODEX_VERSION" != "$LOCAL_VERSION" ]; then
+                    TMP="$(mktemp)"
+                    jq --arg v "$LOCAL_VERSION" '.version = $v' "$CODEX_PLUGIN" > "$TMP"
+                    mv "$TMP" "$CODEX_PLUGIN"
+                    git add "$CODEX_PLUGIN"
+                    git commit --no-verify -m "chore(release): sync Codex plugin to v${LOCAL_VERSION}" >/dev/null
+                    echo "[pre-push] synced Codex plugin version: $CODEX_VERSION -> $LOCAL_VERSION"
+                  else
+                    echo "[pre-push] version $LOCAL_VERSION > main $MAIN_VERSION; OK"
+                  fi
                 elif [ "$LOCAL_VERSION" = "$MAIN_VERSION" ]; then
-                  # LOCAL == MAIN — auto-bump PATCH and stage.
+                  # LOCAL == MAIN — auto-bump PATCH in both manifests and stage.
                   TMP="$(mktemp)"
                   trap 'rm -f "$TMP"' EXIT
-                  jq --arg v "$NEW_VERSION" '.version = $v' .claude-plugin/plugin.json > "$TMP"
-                  mv "$TMP" .claude-plugin/plugin.json
+                  jq --arg v "$NEW_VERSION" '.version = $v' "$CLAUDE_PLUGIN" > "$TMP"
+                  mv "$TMP" "$CLAUDE_PLUGIN"
+                  TMP="$(mktemp)"
+                  jq --arg v "$NEW_VERSION" '.version = $v' "$CODEX_PLUGIN" > "$TMP"
+                  mv "$TMP" "$CODEX_PLUGIN"
                   # --no-verify: skip the user's pre-commit hook. The
                   # pre-push hook IS the source of truth for the bump; we
                   # don't want a stale pre-commit hook to bundle
                   # unrelated changes (e.g. .env → ci-review-provider.txt
                   # sync) into the bump commit.
-                  git add .claude-plugin/plugin.json
+                  git add "$CLAUDE_PLUGIN" "$CODEX_PLUGIN"
                   git commit --no-verify -m "chore(release): bump dev-kit to v${NEW_VERSION}" >/dev/null
-                  echo "[pre-push] auto-bumped plugin.json: $LOCAL_VERSION -> $NEW_VERSION (matches origin/main)"
+                  echo "[pre-push] auto-bumped Claude + Codex plugin versions: $LOCAL_VERSION -> $NEW_VERSION (matches origin/main)"
                 else
                   # LOCAL < MAIN — stale; refuse.
                   echo "[pre-push] ::error:: local version $LOCAL_VERSION is OLDER than origin/main $MAIN_VERSION" >&2
