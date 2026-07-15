@@ -21,7 +21,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 PRUNE_SKILL = PROJECT_ROOT / "skills" / "prune" / "SKILL.md"
-BUILD_PRUNE_SKILL = PROJECT_ROOT / "skills" / "build-prune" / "SKILL.md"
 
 
 class TestPruneSchema(unittest.TestCase):
@@ -78,7 +77,7 @@ class TestPruneSchema(unittest.TestCase):
 
     def test_no_edit_tool_allowed(self):
         # prune is an orchestrator; deletions belong to phase 2
-        # (build-prune) which emits commands for the user to run.
+        # (the inlined 3-pass sweep) which emits commands for the user to run.
         m = re.search(r"^disallowed-tools:\s*(.+)$", self.text, re.MULTILINE)
         self.assertIsNotNone(m, "disallowed-tools: frontmatter missing")
         tools = m.group(1).split()
@@ -110,43 +109,6 @@ class TestPruneSchema(unittest.TestCase):
             "never deletes files itself", self.text,
             "prune must declare it never calls rm/git-rm itself",
         )
-
-
-class TestBuildPruneSchema(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        if not BUILD_PRUNE_SKILL.exists():
-            raise unittest.SkipTest(f"{BUILD_PRUNE_SKILL} missing")
-        cls.text = BUILD_PRUNE_SKILL.read_text(encoding="utf-8")
-
-    def test_frontmatter_user_invocable_false(self):
-        # build-prune is a model-use internal block, hidden from slash.
-        m = re.search(r"^user-invocable:\s*(.+)$", self.text, re.MULTILINE)
-        self.assertIsNotNone(m, "user-invocable: frontmatter missing")
-        self.assertEqual(
-            m.group(1).strip(), "false",
-            "build-prune must be model-use only (user-invocable: false)",
-        )
-
-    def test_three_passes_present(self):
-        for n in (1, 2, 3):
-            pattern = rf"\[{n}/3\]"
-            self.assertRegex(
-                self.text, pattern,
-                f"pass [{n}/3] heading missing from body",
-            )
-
-    def test_pass_names_match_documented_chain(self):
-        self.assertRegex(self.text, r"\[1/3\]\s*ORPHAN-CODE", "pass 1 should be ORPHAN-CODE")
-        self.assertRegex(self.text, r"\[2/3\]\s*DEAD-FEATURE", "pass 2 should be DEAD-FEATURE")
-        self.assertRegex(self.text, r"\[3/3\]\s*SLOP-PATTERN", "pass 3 should be SLOP-PATTERN")
-
-    def test_iron_law_present(self):
-        self.assertIn("No deletion without reproducible signal", self.text)
-
-    def test_never_invokes_rm_directly(self):
-        # The internal skill also must not run rm; bash-guard blocks it.
-        self.assertIn("never calls them itself", self.text)
 
 
 if __name__ == "__main__":

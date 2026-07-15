@@ -12,7 +12,7 @@ Rate 1-10 on each dimension. Below 35/50 → revise (per hardikpandya/stop-slop)
 
 ## Severity ladder (matches the hook runtime — SSOT)
 
-The `audit-slop` skill applies this ladder to translate raw match counts into a HIGH / MEDIUM / LOW bucket. The runtime hook uses the same thresholds.
+The `audit --slop-only` mode (inlined into `skills/audit/SKILL.md`) applies this ladder to translate raw match counts into a HIGH / MEDIUM / LOW bucket. The runtime hook uses the same thresholds.
 
 | Conditions | Bucket | Rationale |
 |---|---|---|

@@ -292,7 +292,7 @@ structured cleanup), or `/dev-kit:review` (per-PR check).
 - `/dev-kit:refactor` is the 3-phase wrapper: this skill (baseline) ->
   `build-refactor` (4-pass cleanup) -> `review` (verify). Rewrites code.
 - `/dev-kit:prune` is the 3-phase wrapper: this skill (baseline) ->
-  `build-prune` (3-pass deletion sweep) -> `review` (verify). Deletes code.
+  its inlined Phase 2 (3-pass deletion sweep) -> `review` (verify). Deletes code.
 - `/dev-kit:report` reads `.dev-kit/inspect-report.md` (this skill's
   output) and renders it as a self-contained HTML page alongside the
   eval report. Run report after inspect to share findings with

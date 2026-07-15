@@ -15,7 +15,9 @@ user-invocable: false
 
 > Previously named `build-simplify`. Renamed to match the parent
 > `/dev-kit:refactor` skill. For actual code deletion (slop, dead
-> features, orphan code), see the sibling `build-prune` skill.
+> features, orphan code), see the sibling `/dev-kit:prune` skill — its
+> 3-pass deletion sweep (orphan-code → dead-feature → slop-pattern) is
+> inlined into `skills/prune/SKILL.md` as "Phase 2".
 
 ## Iron Law
 **No cleanup without regression test.** Pass 1 = dead code removal — confirm all affected tests pass before next pass.
@@ -40,8 +42,8 @@ user-invocable: false
 - One pass = one kind. Confirm regression test pass after each.
 - ❌ guess. Measure first (e.g., `coverage report --include=src/lib`).
 - This skill *refactors* (rewrites / extracts / renames). It does **not**
-  delete whole files or features. For deletion, dispatch `build-prune`
-  via `/dev-kit:prune`.
+  delete whole files or features. For deletion, dispatch `/dev-kit:prune`
+  (3-pass sweep inlined into its Phase 2 section).
 
 ## Hook integration
 
@@ -55,7 +57,7 @@ Build stage active. During cleanup edits, `tdd-guard` passes if test changes acc
 | "Leave tests as-is" | L1 violation |
 | "Comment out to disable" | L4 violation |
 | "Verify later" | L3 violation |
-| "Delete the whole unused module" | Out of scope. Use `build-prune` → `/dev-kit:prune`. |
+| "Delete the whole unused module" | Out of scope. Use `/dev-kit:prune` (its Phase 2 3-pass sweep). |
 
 ## Hand-off
 

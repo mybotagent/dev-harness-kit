@@ -68,7 +68,7 @@ safety:
 
 **Current human-use skills** (26): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `token-analyzer`, `adapt`, `cost-gate`.
 
-**Current model-use skills** (14): `build-tdd`, `build-debug`, `build-engine`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology`, `build-harness-engine`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`.
+**Current model-use skills** (4): `build-tdd`, `build-debug`, `build-verify`, `build-refactor`. The other 10 engine/audit/bootstrap internal blocks (`build-engine`, `build-harness-engine`, `build-methodology`, `build-prune`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`) were either folded into their parent skill body (issue #176) or already exist as pure logic in `lib/` with no skill wrapper.
 
 > Note: `simplify` → `refactor` rename (this PR) and `build-simplify` → `build-refactor` rename. The verb `simplify` still appears in the human-facing description of `refactor` (e.g., "refactor everything" is a common user phrase) but the skill name is `refactor`. For the deletion counterpart, see `/dev-kit:prune`.
 
@@ -95,4 +95,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (43 as of #feat/refactor-rename-and-prune ⨯ #feat/token-analyzer-skill ⨯ #feat/cost-gate; bump both test_smoke.py and this rule together when adding a new skill).
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (34 as of #feat/skill-inventory-prune — prunes 10 internal/duplicate skill files; bump both test_smoke.py and this rule together when adding a new skill).

@@ -58,4 +58,4 @@ Hook: [verify-gate] You said it works but cited no output/exit/test evidence.
 
 ## Hand-off
 
-On verify pass → `state_codec.transition_stage(root, "review")` auto. On fail → loop back to build-engine.
+On verify pass → `state_codec.transition_stage(root, "review")` auto. On fail → loop back to the per-step harness runner (lib/execute.py).

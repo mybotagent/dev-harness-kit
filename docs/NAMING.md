@@ -13,13 +13,13 @@
 
 | Category | Pattern | Examples |
 |---|---|---|
-| `bootstrap` | `<category>-<instrument>` | `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `ci-setup` (slash brevity; see note) |
+| `bootstrap` | `<category>-<instrument>` | `bootstrap` (sanity / codebase-map / hook-matrix are inlined sub-stages), `ci-setup` (slash brevity; see note) |
 | `plan` | (none — `plan` is standalone) | — |
 | `design` | `design-<instrument>` | (deprecated — merged into plan) |
-| `build` | `build-<discipline>` | `build-engine`, `build-tdd`, `build-debug`, `build-verify`, `build-refactor`, `build-prune`, `build-methodology` |
+| `build` | `build-<discipline>` | `build-tdd`, `build-debug`, `build-verify`, `build-refactor` |
 | `review` | `review-<subject>` | (none — `review` is standalone) |
 | `security` | `security-<subject>` | (none — `security` is standalone) |
-| `audit` | `audit-<subject>` | `audit-slop`, `audit-secret` |
+| `audit` | `audit-<subject>` | `audit` (slop / secret / outdated are inlined modes) |
 | `shortcuts` | `shortcut-<name>` | `shortcut-tdd-fast`, `shortcut-quick-fix` |
 | `ship` | (no skill, gate only) | — |
 

@@ -1,7 +1,7 @@
 ---
 name: prune
 category: build
-description: 0-arg slop-removal chain. One slash wraps inspect → build-prune → review. 3 gated phases for deleting AI slop and dead features (not refactoring).
+description: 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring).
 when_to_use: |
   - User types /dev-kit:prune
   - User types "remove AI slop" / "delete dead code" / "sweep the codebase for cruft"
@@ -16,13 +16,12 @@ user-invocable: true
 ## What it does
 
 Whole-pipeline *deletion* sweep: dispatches `/dev-kit:inspect` for a
-read-only baseline, then `/dev-kit:build-prune` for the mutating 3-pass
-removal (orphan-code → dead-feature → slop-pattern), then
-`/dev-kit:review` for the per-diff verification. The three phases are
-**separate calls, not one big cycle** (MUST-NO-LOOP) -- each phase
-gates the next on a quoted exit code and test count. No deletion lands
-without a passing test suite; no phase starts without the previous
-phase's green evidence.
+read-only baseline, then runs a 3-pass deletion sweep
+(orphan-code → dead-feature → slop-pattern), then `/dev-kit:review` for
+the per-diff verification. The three phases are **separate calls, not
+one big cycle** (MUST-NO-LOOP) -- each phase gates the next on a quoted
+exit code and test count. No deletion lands without a passing test
+suite; no phase starts without the previous phase's green evidence.
 
 **`/dev-kit:prune` vs. `/dev-kit:refactor` vs. `/dev-kit:feat-remove`:**
 
@@ -58,8 +57,8 @@ phase's green evidence.
 [1/3] INSPECT   -> /dev-kit:inspect
        (read-only baseline; .dev-kit/inspect-report.md with 8-dim findings)
        ↓ quoted: report path + verdict + finding count
-[2/3] PRUNE     -> /dev-kit:build-prune
-       (3 passes internally: orphan-code -> dead-feature -> slop-pattern;
+[2/3] PRUNE     -> 3 passes in sequence (see below)
+       (orphan-code -> dead-feature -> slop-pattern;
         each pass ends with quoted regression-test green;
         skill emits rm/git-rm commands for the user to run)
        ↓ quoted: 3 × (pass name + test count + exit 0)
@@ -68,7 +67,67 @@ phase's green evidence.
        ↓ quoted: per-dim finding count + overall verdict
 ```
 
-## Rules (no exceptions)
+## Phase 2 — 3-pass deletion sweep
+
+> Sibling of `build-refactor`. `build-refactor` rewrites/extracts/renames;
+> phase-2 of `prune` *deletes*. Both are model-use operations.
+
+### Iron Law
+**No deletion without reproducible signal + regression test.** Each pass must produce a quoted grep/dependency report AND a quoted post-delete test run.
+
+### The 3 passes
+
+```
+[1/3] ORPHAN-CODE  → exports with no callers, files with no importers,
+                     branches with no path to them
+       (Grep + glob for all references; must return 0 matches after delete)
+       ↓ regression test green
+[2/3] DEAD-FEATURE → entire capabilities with no live users
+                     (unused env vars, deprecated paths, unreachable entry points)
+       (Dependency graph check; user must ack any cascade)
+       ↓ regression test green
+[3/3] SLOP-PATTERN → AI-tell patterns: defensive over-engineering, boilerplate,
+                     comment-as-narration, try/except pass blocks, dead options
+                     (Matches audit-slop heuristics but mutates rather than reports)
+       ↓ full test suite green
+```
+
+### Pass rules
+
+- Do not bundle 3 passes into one cycle (MUST-NO-LOOP).
+- One pass = one kind. Confirm regression test pass after each.
+- The skill **emits** `rm` / `git rm` commands to a report file. It
+  never calls them itself. The user runs them. Mirrors `feat-remove`
+  discipline.
+- ❌ guess. Measure first (e.g., `vulture src/`, `pydeps --show-cycles`,
+  custom grep for AI-tell patterns).
+- Dependents block by default. If a deletion candidate has any
+  importer/caller/test/doc reference, surface the list and refuse to
+  proceed without user ack.
+
+### Red flags
+
+| Thought | Reality |
+|---|---|
+| "Do all 3 passes at once" | Can't tell which pass caused regression |
+| "Just `rm -rf` the suspicious dir" | L4 violation + `feat-remove` discipline breach |
+| "Comment out to disable" | L4 violation |
+| "Verify later" | L3 violation |
+| "The user said the feature is dead" | Still surface the dependents list. The user might be wrong. |
+| "This is a small file, skip the orphan check" | No. MUST-L2 — every deletion needs a reproducible signal. |
+| "I'll just rename to `.bak` instead of deleting" | L4 violation. Renamed-to-bak is the same as commented-out. |
+| "This is refactor, not prune" | Stop. Hand off to `build-refactor` instead. |
+
+### Hand-off
+
+- Previous (read first): `/dev-kit:inspect` — produces the report that
+  prioritizes which passes to run.
+- After 3 passes green, `state_codec.append_hand_off(root, "build", "review", "...")`.
+  Next: `/dev-kit:review`.
+- If a candidate turns out to be a refactor (rename, extract) rather than
+  a deletion, hand off to `build-refactor` for that single item.
+
+## Phase rules (no exceptions)
 
 - MUST-L1: no phase 2 (prune) without a phase-1 (inspect) report.
 - MUST-L2: every deletion must have a reproducible signal (orphan grep,
@@ -81,8 +140,8 @@ phase's green evidence.
   reference" leftovers. Every deletion lands clean — actually removed
   from disk and git, not commented out.
 - MUST-NO-LOOP: phases are sequential gates, not a single retried
-  cycle. Phase 2's 3 passes are themselves separate calls inside
-  `build-prune`; do not collapse them here.
+  cycle. Phase 2's 3 passes are themselves separate calls; do not
+  collapse them here.
 - If any phase is RED, stop. Surface the failing phase's quoted output
   to the user. Do not run subsequent phases on a red baseline.
 - The skill never deletes files itself. Phase 2 emits the commands;
@@ -114,26 +173,13 @@ phase's green evidence.
 - After all 3 phases green: a single quoted full-suite run
   (test count + exit code + duration) in the final report.
 
-## Red flags
-
-| Thought | Reality |
-|---|---|
-| "Run all 3 phases in one big cycle" | MUST-NO-LOOP violation. Each phase must gate the next on quoted output. |
-| "Skip phase 1, I already know the slop" | MUST-L1 violation. The baseline is what makes phase 2's deletions verifiable. |
-| "Phase 2 is enough, review is overhead" | L3 violation. The review catches what the prune pass missed (e.g., accidental prod-path delete). |
-| "I'll just comment out the dead code instead of deleting" | L4 violation. Commented-out code is stub. Delete or keep, no third state. |
-| "I'll silently cascade to dependents" | Block. Surface the list. The user must ack. |
-| "The skill should `rm` for me" | No. The skill emits commands; the user runs them. Mirrors `feat-remove` discipline. |
-| "Suite still passes after phase 2" | L3 violation. Quote the count. |
-| "Phase 3 found a HIGH, but it's small, let's ship" | Stop. Re-run phase 2 or hand off to `/dev-kit:plan` for a structured fix. |
-
 ## Next step
 
 - All 3 phases green + user has run the deletion commands ->
   `/dev-kit:ship` (release tag emit) or `/dev-kit:status` (HOTL
   visualization of the whole sweep).
 - Any phase RED -> the failing phase is the deliverable. Fix the
-  blocker (usually: re-run `build-prune` after the regression is fixed,
+  blocker (usually: re-run the failing pass after the regression is fixed,
   or `/dev-kit:plan` to scope a structured fix for HIGH findings).
 - For one named feature end-to-end, use `/dev-kit:feat-remove <feature>`.
 - For pure refactoring (no deletion), use `/dev-kit:refactor`.
