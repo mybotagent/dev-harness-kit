@@ -44,7 +44,7 @@ The skill copies the `templates/ci/` source tree into the target project. Files 
 | **`hooks/session-start-check.sh`** | SessionStart — gentle reminder about the worktree rule |
 | **`hooks/lib/worktree-detect.sh`** | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
 | **`hooks/hooks.json`** | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
-| **`.claude/rules/git-workflow.md`** | The worktree rule (every task = new worktree + new session + new branch) |
+| **`.claude/rules/git-workflow.md`** | The worktree rule (every task = new worktree + subagent handoff + new branch) |
 | **`tests/test_worktree_guard.py`** | regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
 
 After install, the marker file `.dev-kit/ci-config.json` is written at the project root. The marker is the **contract** with `/dev-kit:build` — without it, build refuses to start.

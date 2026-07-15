@@ -7,7 +7,7 @@ Verifies the bash-level behavior of:
   - hooks/session-start-check.sh  (SessionStart — advisory additionalContext)
 
 The hard rule under test (.claude/rules/git-workflow.md):
-  "Every task = new worktree + new session + new branch."
+  "Every task = new worktree + subagent handoff + new branch."
 
 We test the scripts as black boxes by feeding them JSON via stdin and
 asserting on exit code + stdout/stderr. No mocks. We synthesize real

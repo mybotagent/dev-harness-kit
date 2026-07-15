@@ -19,7 +19,7 @@ Violation = rejected by `git-guard` hook at commit/push time.
 ## Iron Laws (read first)
 
 1. **`main` is sacred.** Never commit directly to `main`. Never push to `main`. Never fast-forward a feature branch into `main` locally.
-2. **Every task = new worktree + new session + new branch.** No edits on the previous task's branch. No edits in the main checkout.
+2. **Every task = new worktree + subagent handoff + new branch.** No edits on the previous task's branch. No edits in the main checkout.
 3. **Always branch from latest `main`.** Cut from `origin/main` (just-fetched), not from a stale local ref or another feature branch.
 
 ## Branch naming (mandatory)
@@ -58,8 +58,8 @@ git pull --ff-only origin main
 # 2. Cut a fresh worktree for the new task (auto-creates branch from origin/main)
 git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
 
-# 3. Open a new Claude Code session IN THAT WORKTREE
-#    (the session cwd is the worktree path, not the main checkout)
+# 3. Spawn/hand off a subagent with its working directory set to THAT WORKTREE.
+#    The parent session may remain in the main checkout; the subagent must not.
 
 # 4. Do all edits, tests, commits, push — all from inside the worktree
 git push -u origin fix/<slug>
@@ -70,7 +70,7 @@ git worktree remove .worktrees/fix-<slug>
 git branch -d fix/<slug>        # local branch gone
 ```
 
-**Why a new session?** Each task = fresh context. Don't carry over findings/decisions from the previous branch — they belong in the PR body and the commit message, not in the next branch's working memory.
+**Why a subagent handoff?** Each task gets fresh context while the parent session can remain where it is. Pass the worktree path, branch, task prompt, and verification requirements explicitly; do not rely on the parent's status line or cwd.
 
 **Why a new worktree?** Multiple branches in one checkout collide on `phases/`, `.dev-kit/`, the running test process, and uncommitted edits. A worktree is a free, isolated copy.
 

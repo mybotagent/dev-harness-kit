@@ -253,6 +253,9 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         ctx = doc.get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("worktree auto-cut ready", ctx,
                       f"expected auto-cut marker; got: {ctx!r}")
+        self.assertIn("handoff: spawn a subagent", ctx)
+        self.assertIn("next:    pass the original task prompt", ctx)
+        self.assertNotIn("open a new Claude Code session", ctx)
         # Slug must match <type>/<verb>-<noun>-<hash6>.
         m = re.search(r"branch:\s+(\S+)", ctx)
         self.assertIsNotNone(m, f"no branch line in context: {ctx!r}")

@@ -27,10 +27,12 @@ Creates the target project's logging scaffold:
 
 Idempotent: re-running refreshes save_log.py to the current source version.
 --force overwrites even if the local copy SHA matches.
---all-worktrees also runs setup + hook install for every existing
-                     sibling worktree under <target>/.worktrees/*/.
-                     Use this once after --target on the main checkout to
-                     close the per-worktree capture gap.
+--all-worktrees also runs setup + hook install for every existing sibling
+                     worktree under <target>/.worktrees/*/. Legacy
+                     <target>/.claude/worktrees/*/ and
+                     <target>/.codex/worktrees/*/ roots are also scanned for
+                     backwards compatibility. Use this once after --target
+                     on the main checkout to close the per-worktree gap.
 --global          install to \$HOME/.claude/ instead of a per-project
                   target. Recommended for multi-project / multi-worktree
                   users — a single setup captures every session anywhere
@@ -167,31 +169,47 @@ else
 fi
 
 if [[ "$ALL_WORKTREES" -eq 1 ]]; then
-    WT_ROOT="$TARGET_DIR/.worktrees"
-    if [[ ! -d "$WT_ROOT" ]]; then
+    # .worktrees is the shared canonical root. Keep the two historical roots
+    # discoverable so upgrading does not strand existing worktrees.
+    WT_ROOTS=(
+        "$TARGET_DIR/.worktrees"
+        "$TARGET_DIR/.claude/worktrees"
+        "$TARGET_DIR/.codex/worktrees"
+    )
+    existing_root=0
+    for root in "${WT_ROOTS[@]}"; do
+        if [[ -d "$root" ]]; then
+            existing_root=1
+            break
+        fi
+    done
+    if [[ "$existing_root" -eq 0 ]]; then
         echo
-        echo "--all-worktrees: no $WT_ROOT; nothing to backfill."
+        echo "--all-worktrees: no canonical or legacy worktree roots; nothing to backfill."
         exit 0
     fi
     ok=0
     failed=0
-    for wt in "$WT_ROOT"/*/; do
-        [[ -d "$wt" ]] || continue
-        name="$(basename "$wt")"
-        echo
-        echo "==> backfilling worktree: $name"
-        if ! TARGET_DIR="$wt" FORCE="$FORCE" "$SCRIPT_DIR/log-setup.sh" --target "$wt" >/dev/null; then
-            echo "WARN: setup failed for $wt" >&2
-            failed=$((failed + 1))
-            continue
-        fi
-        if TARGET_DIR="$wt" "$SCRIPT_DIR/log-on.sh" --target "$wt" --claude-only; then
-            ok=$((ok + 1))
-        else
-            echo "WARN: hook install failed for $wt" >&2
-            failed=$((failed + 1))
-        fi
+    for root in "${WT_ROOTS[@]}"; do
+        [[ -d "$root" ]] || continue
+        for wt in "$root"/*/; do
+            [[ -d "$wt" ]] || continue
+            name="$(basename "$wt")"
+            echo
+            echo "==> backfilling worktree: $name (root: $root)"
+            if ! TARGET_DIR="$wt" FORCE="$FORCE" "$SCRIPT_DIR/log-setup.sh" --target "$wt" >/dev/null; then
+                echo "WARN: setup failed for $wt" >&2
+                failed=$((failed + 1))
+                continue
+            fi
+            if TARGET_DIR="$wt" "$SCRIPT_DIR/log-on.sh" --target "$wt" --claude-only; then
+                ok=$((ok + 1))
+            else
+                echo "WARN: hook install failed for $wt" >&2
+                failed=$((failed + 1))
+            fi
+        done
     done
     echo
-    echo "--all-worktrees summary: ok=$ok failed=$failed (target: $WT_ROOT)"
+    echo "--all-worktrees summary: ok=$ok failed=$failed (roots: ${WT_ROOTS[*]})"
 fi

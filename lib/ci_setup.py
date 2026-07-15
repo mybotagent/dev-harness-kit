@@ -58,7 +58,7 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "scripts/test.sh",
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
-    # Worktree-rule enforcement (every task = new worktree + new session
+    # Worktree-rule enforcement (every task = new worktree + subagent handoff
     # + new branch). See .claude/rules/git-workflow.md.
     "hooks/worktree-guard.sh",
     "hooks/task-detector.sh",
