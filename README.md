@@ -2,21 +2,18 @@
 
 > AI-native unified harness plugin — absorbs 5 repos + A2A typed + Eval-Repair loop + Human-on-the-Loop.
 
-[![Tests](https://img.shields.io/badge/tests-422%20total-brightgreen)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-34-blueviolet)](skills/)
-[![Version](https://img.shields.io/badge/version-0.3.26-blue)](.claude-plugin/plugin.json)
 
 ## What
 
 - **Plan+Design automation**: One `/dev-kit:plan` command auto-generates PRD.md + `phases/<name>/{index.json, step<N>.md}`. 5 gates in 1 Ralph loop: `frame` → `validate` (evidence + value_score + ambiguity loop) → `non-goals` → `decompose` → `emit`. The old 5-question grill-me is replaced by a quantified loop (ambiguity 0-10, target ≤ 3; value_score = LTV × reachable / cost, target ≥ 3.0).
 - **Per-step sub-agent delegation in Build**: harness-runner engine + TDD + auto-fix loop.
 - **Review/Security fan-out**: 3-dim (correctness + security + architecture) + 10-dim OWASP A01–A10, parallel in a single message.
-- **Agent-behavior eval** (`/dev-kit:eval`): replays recorded agent transcripts and judges them against per-dim rubrics (review / security / plan) plus a 20-checkbox code-sanity rubric (clean-code + over-engineering + value/meaning). 12 seed cases in the box.
+- **Agent-behavior eval** (`/dev-kit:eval`): replays recorded agent transcripts and judges them against per-dim rubrics (review / security / plan) plus a 20-checkbox code-sanity rubric (clean-code + over-engineering + value/meaning). Seed cases in the box.
 - **Eval-Repair 8-step loop**: auto-check + Specialized Fixer + final = Human Review.
 - **Human-on-the-Loop auto + user approves last**: zero response fatigue.
-- **Worktree enforcement (NEW in 0.1.1)**: `worktree-guard` blocks Edit/Write in the main checkout; `task-detector` nudges new tasks to a worktree; `session-start-check` reminds at session start. See `.claude/rules/git-workflow.md`.
-- **Consumer-install (NEW in 0.1.1)**: `/dev-kit:ci-setup` ships a self-aware `review.yml` that works in both the dev-harness-kit repo itself (self-install) and consumer repos (clones from public source).
+- **Worktree enforcement**: `worktree-guard` blocks Edit/Write in the main checkout; `task-detector` nudges new tasks to a worktree; `session-start-check` reminds at session start. See `.claude/rules/git-workflow.md`.
+- **Consumer-install**: `/dev-kit:ci-setup` ships a self-aware `review.yml` that works in both the dev-harness-kit repo itself (self-install) and consumer repos (clones from public source).
 - **Token efficiency analyzer (`tools/token_efficiency_analyzer.py`)**: stdlib-only CLI that turns `logs/{claude-code,codex}/**/*.jsonl` (per-branch layout: `<tool>/<branch>/<session>.jsonl`) into a single self-contained HTML dashboard — 4-dim session scoring (cache utilization · output density · read redundancy · tool economy), 6 anti-pattern warnings (prefix misalignment, Read-heavy cartography failure, heavy context, model overspec, cache write-not-reused, repeated user-message injection), a USD savings estimate, and a "Cost by Branch" panel. See [Token efficiency analyzer](#token-efficiency-analyzer-toolstoken_efficiency_analyzerpy).
 
 ## Install (plugin-only)
@@ -106,7 +103,7 @@ claude plugin marketplace add sh-ai-x/dev-harness-kit
 claude plugin install dev-kit
 # (live source: claude --plugin-dir /path/to/dev-harness-kit)
 
-# 3. One-shot setup (CLAUDE.md + AGENTS.md + active-hooks.json + 15 CI templates + marker)
+# 3. One-shot setup (CLAUDE.md + AGENTS.md + active-hooks.json + CI templates + marker)
 /dev-kit:bootstrap-full
 #    Equivalent to running `/dev-kit:bootstrap` then `/dev-kit:ci-setup --force` in sequence.
 #    Use the two separately when you only want one half.
@@ -117,7 +114,7 @@ git commit -m "chore: bootstrap dev-kit"
 git push -u origin main
 ```
 
-**Use `--force` on first install** — for consumers (the dominant case), `--force` is the safe standard. On a truly fresh repo the result is identical to default install (all 15 files copy either way), but `--force` is robust against partial installs from a previous attempt and is robust to a stale plugin cache. Re-run with `--force` later to pull in upstream template changes. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup-new-in-011) for refresh vs first-install semantics.
+**Use `--force` on first install** — for consumers (the dominant case), `--force` is the safe standard. On a truly fresh repo the result is identical to default install (all files copy either way), but `--force` is robust against partial installs from a previous attempt and is robust to a stale plugin cache. Re-run with `--force` later to pull in upstream template changes. See the [Consumer-install deep-dive](#consumer-install-via-dev-kitci-setup) for refresh vs first-install semantics.
 
 Typical next step: `/dev-kit:plan` for PRD + phases auto.
 
@@ -155,27 +152,27 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:quick-fix               # verify+debug on demand
 ```
 
-Full set: 34 skills. Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
+Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
 
 ## Directory layout
 
 ```
 dev-harness-kit/
 ├── .claude-plugin/        # marketplace.json (source: url object) + plugin.json
-├── skills/                # 34 skills, flat: skills/<skill-name>/SKILL.md
+├── skills/                # flat: skills/<skill-name>/SKILL.md
 ├── .codex-plugin/         # plugin.json pointing Codex CLI at the same ./skills/ (no copy)
-├── hooks/                 # 10 hook scripts (6 original + 3 worktree-rule + 1 cost-gate) + lib/ + hooks.json
+├── hooks/                 # hook scripts + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup / cost_gate
 ├── bin/                   # devkit-refresh.sh (manual cache refresh, optional)
 ├── tools/                 # save_log.py (Stop-hook transcript saver) + token_efficiency_analyzer.py (HTML dashboard) + cost_gate_status.py (live cost CLI + hook driver)
 ├── templates/ci/          # CI workflow templates shipped to consumer repos via /dev-kit:ci-setup
-├── tests/                 # 570 tests (pytest) — 35 files
+├── tests/                 # pytest suite
 ├── eval/                  # cases/ + fixtures/ + transcripts/ + prompts/ + golden/ (agent-behavior eval)
 ├── docs/                  # STAGES, NAMING, COST-ANALYSIS, PRE-IMPL-CHECK, ci-setup, adr/
 └── CLAUDE.md              # SSOT (auto-generated by /dev-kit:bootstrap)
 ```
 
-### Hook scripts (9)
+### Hook scripts
 
 | Hook | Event | Purpose | Mode |
 |---|---|---|---|
@@ -186,13 +183,13 @@ dev-harness-kit/
 | `task-detector.sh` | UserPromptSubmit | Nudge new tasks to a worktree | advisory |
 | `session-start-check.sh` | SessionStart | Remind about worktree rule at session start | advisory |
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
-| `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop in edits (T1 phrase + T2 structure + 5-dim scoring, 100+ KO+EN patterns) | advisory (opt-in strict) |
+| `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop in edits (T1 phrase + T2 structure + multi-dim scoring, KO+EN patterns) | advisory (opt-in strict) |
 | `stop-verify.sh` | Stop | Run regression tests on session end | hard-block |
-| `cost-gate.sh` | SessionStart / PostToolUse / PreToolUse (catch-all) | Live cost gate — warn at $5, advisory at $10 (PreToolUse emits `additionalContext`; **never blocks** in v0.3.23+) | advisory |
+| `cost-gate.sh` | SessionStart / PostToolUse / PreToolUse (catch-all) | Live cost gate — warn at $5, advisory at $10 (PreToolUse emits `additionalContext`; **never blocks**) | advisory |
 
 The 3 new hooks (worktree-guard, task-detector, session-start-check) implement the worktree enforcement rule. The worktree-rule scripts (hooks + `lib/worktree-detect.sh`) also ship to consumer repos via `templates/ci/`.
 
-### Skill categories (14)
+### Skill categories
 
 | Category | Skills |
 |---|---|
@@ -213,7 +210,7 @@ The 3 new hooks (worktree-guard, task-detector, session-start-check) implement t
 
 Category is preserved in each SKILL.md `category:` frontmatter. Directory nesting is none (Claude Code plugin rule: `skills/<name>/SKILL.md`, one level).
 
-## Worktree rule (new in 0.1.1)
+## Worktree rule
 
 The `.claude/rules/git-workflow.md` rule makes this a hard requirement:
 
@@ -268,7 +265,7 @@ open token-dashboard-my-project-30d.html
 
 ### Preview
 
-![Token efficiency dashboard — dev-harness-kit, last 30 days, 7 active sessions](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
 
 *The dashboard above was generated against this repo's own `logs/claude-code/` transcripts — Cost Gate banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost distribution, model + cache TTL mix, session table with letter-grade scores + warning chips, and a reclaim-axis savings breakdown.*
 
@@ -372,7 +369,7 @@ This is a CLI, not a `/dev-kit:*` skill, because it operates on local files with
 
 ## Cost gate (`/dev-kit:cost-gate` + `hooks/cost-gate.sh`)
 
-A **preemptive, real-time cost observer** layered on top of (not replacing) the post-hoc `/dev-kit:token-analyzer` dashboard. Two layers share one state file at `<cwd>/.dev-kit/.cost-gate/state.json`; only the lifecycle differs. **As of v0.3.23 the gate is warn-only — it never blocks tool calls.** A runaway session still shows up in the dashboard, in commit trailers, and in the PR-level label, but the model is never denied a tool mid-flight because of a cost threshold.
+A **preemptive, real-time cost observer** layered on top of (not replacing) the post-hoc `/dev-kit:token-analyzer` dashboard. Two layers share one state file at `<cwd>/.dev-kit/.cost-gate/state.json`; only the lifecycle differs. **The gate is warn-only — it never blocks tool calls.** A runaway session still shows up in the dashboard, in commit trailers, and in the PR-level label, but the model is never denied a tool mid-flight because of a cost threshold.
 
 | Layer | Trigger | Threshold (default) | Behavior |
 |---|---|---:|---|
@@ -425,7 +422,7 @@ git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
 | `hooks/cost-gate.sh` | Three-event adapter. Normal-path mode is advisory. **Fail-closed (deny JSON + exit 2)** only when `jq` or `python3` is missing — that is the one path that still denies, because the rule cannot run at all without those binaries |
 | `skills/cost-gate/SKILL.md` | Human-use inspection skill (read-only, `disallowed-tools: Write Edit`). Renders current spend, threshold distance, and the trailer block |
 | `.github/workflows/cost-flag.yml` | PR aggregator: applies / removes `cost-flag` label + upserts one `<!-- dev-kit:cost-gate -->` comment |
-| `tests/test_cost_gate.py` | 41 black-box tests: pricing, threshold escalation (`test_at_kill_emits_warn` / `test_above_kill_still_warn`), state I/O atomicity, heuristics, footer dedup, CLI modes, hook behavior (SessionStart / PostToolUse / PreToolUse emit `additionalContext` only), jq-missing fail-closed, hooks.json wiring, isolation |
+| `tests/test_cost_gate.py` | black-box tests: pricing, threshold escalation (`test_at_kill_emits_warn` / `test_above_kill_still_warn`), state I/O atomicity, heuristics, footer dedup, CLI modes, hook behavior (SessionStart / PostToolUse / PreToolUse emit `additionalContext` only), jq-missing fail-closed, hooks.json wiring, isolation |
 
 ### Isolation guarantee
 
@@ -448,19 +445,19 @@ $ echo '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"'"$TMPDIR"'","t
 
 ### Why both a hook AND a skill (not one or the other)
 
-- **Hook** fires during the session and maintains the live ledger. It is the only path with a guaranteed cost view per tool call, but it is **advisory** as of v0.3.23 — operators get `additionalContext` in the transcript, not a deny. (The one exception is the jq/python3 fail-closed path, which denies because the rule cannot run at all without those binaries.)
+- **Hook** fires during the session and maintains the live ledger. It is the only path with a guaranteed cost view per tool call, but it is **advisory** — operators get `additionalContext` in the transcript, not a deny. (The one exception is the jq/python3 fail-closed path, which denies because the rule cannot run at all without those binaries.)
 - **Skill** is the human-read-only window into the running ledger. Renders current spend, distance to thresholds, and the trailer block the PR aggregator needs.
 - **CI workflow** is the cross-session aggregator — neither the hook nor the skill can read every session that contributed to a PR (state files are local to the worktree where the session ran). This is the only path that can label a PR `cost-flag`.
 
-## ## Codex CLI compatibility (`.codex-plugin/plugin.json`)
+## Codex CLI compatibility (`.codex-plugin/plugin.json`)
 
-Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory — no per-skill copying. dev-kit's manifest points `"skills"` straight at the existing `./skills/`, so all 44 canonical `skills/<name>/SKILL.md` files are exposed to Codex unchanged, with zero new files per skill and zero drift risk (there is nothing to keep in sync — it's the same directory, not a copy).
+Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory — no per-skill copying. dev-kit's manifest points `"skills"` straight at the existing `./skills/`, so all canonical `skills/<name>/SKILL.md` files are exposed to Codex unchanged, with zero new files per skill and zero drift risk (there is nothing to keep in sync — it's the same directory, not a copy).
 
 Claude Code keeps reading `skills/` directly via `.claude-plugin/`, unaffected. MiniMax needs no generated artifact at all — it's a model backend, not a harness, reached by pointing either harness's existing model config at MiniMax's Anthropic-/OpenAI-compatible endpoint.
 
 ## Skills by audience
 
-The kit ships **34 skills** total, but only the user-facing ones appear in `/dev-kit:` slash autocomplete. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
+Not every skill appears in `/dev-kit:` slash autocomplete — only the user-facing ones do. Each skill's SKILL.md has a `user-invocable` frontmatter flag that controls this:
 
 - **`user-invocable: true`** (or unset) — surfaces in `/dev-kit:` autocomplete. *You* type it.
 - **`user-invocable: false`** — hidden from autocomplete. *Claude* auto-invokes it as a sub-step when its parent skill runs.
@@ -501,7 +498,7 @@ These appear in slash autocomplete. Run them when you have a job to do.
 
 ### For Claude — internal sub-skills, hidden from slash autocomplete
 
-These 4 skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
+These skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
 
 The naming convention tells you which parent owns each:
 
@@ -581,7 +578,7 @@ Embedded in the `review` judge for the `code_sanity_score` axis. Composite = `0.
 
 The full checklist lives in `eval/prompts/judge-code-sanity.md`; pinning it in the ADR-0022 freezes the rubric. Any change to the 20 items requires an ADR update.
 
-### 12 seed cases (across 3 dims)
+### Seed cases (across 3 dims)
 
 ```
 eval/cases/
@@ -611,7 +608,7 @@ eval/cases/<dim>/<name>.json     # input + expected behavior
 eval/transcripts/<dim>/<name>.json  # recorded agent output (replay)
 eval/prompts/judge-<dim>.md     # per-dim LLM-as-judge rubric
 eval/prompts/judge-code-sanity.md  # shared 20-checkbox rubric
-eval/golden/<dim>-<name>-<hash>.json  # schema 2.0.0 baseline
+eval/golden/<dim>-<name>-<hash>.json  # frozen baseline (schema in ADR-0022)
 lib/eval_runner.py              # discover_cases → replay → judge → report
 lib/llm_judge.py                # keep JUDGE_AXES; add DIM_AXES
 ```
@@ -619,7 +616,7 @@ lib/llm_judge.py                # keep JUDGE_AXES; add DIM_AXES
 ### CLI
 
 ```bash
-# Full eval (12 cases, 3 dims) — writes .dev-kit/eval-report.md
+# Full eval (all cases across 3 dims) — writes .dev-kit/eval-report.md
 python lib/eval_runner.py --project-root . [--dry-run]
 
 # Restrict to one dim
@@ -644,7 +641,7 @@ $EDITOR eval/cases/review/07_my_new_case.json
 #   "category": "real-bug",
 #   "input_path": "path/to/fixture.py",   # or input_inline for plans
 #   "expected": { "verdict": "Blocked", "min_severity": "major", ... },
-#   "schema_version": "2.0.0"
+#   "schema_version": "<see ADR-0022>"
 # }
 
 # 2. record + drop the transcript (one-time per case)
@@ -660,15 +657,15 @@ Missing transcript = `SKIPPED` (a setup gap, not a regression). API error per-ca
 
 See `docs/adr/ADR-0022-eval-agent-behavior.md` for the full rationale, alternatives considered, and consequences.
 
-## Consumer-install via `/dev-kit:ci-setup` (new in 0.1.1)
+## Consumer-install via `/dev-kit:ci-setup`
 
 `/dev-kit:ci-setup` is what makes dev-kit work in OTHER repos. It copies:
-- 3 GitHub Actions workflows (ci, auto-fix-pr, review)
-- 4 scripts (validate, test, branch-policy, ci-local)
-- 1 pre-push hook
-- **NEW in 0.1.1**: 4 worktree-rule files (hooks, lib, rule, tests)
+- GitHub Actions workflows (ci, auto-fix-pr, review)
+- scripts (validate, test, branch-policy, ci-local)
+- a pre-push hook
+- worktree-rule files (hooks, lib, rule, tests)
 
-Total: 15 files. The shipped `review.yml` is **self-aware**: it detects whether the checkout IS the dev-kit plugin (self-install, symlink) or a plain consumer repo (clones from public), so the same workflow file works in both contexts.
+The shipped `review.yml` is **self-aware**: it detects whether the checkout IS the dev-kit plugin (self-install, symlink) or a plain consumer repo (clones from public), so the same workflow file works in both contexts.
 
 **Switching the CI review provider** (MiniMax / Anthropic / DeepSeek): edit `CI_REVIEW_PROVIDER` in your local `.env`, then commit. `.githooks/pre-commit` reads it from the main checkout's `.env` (works from any worktree) and syncs the git-tracked `.github/ci-review-provider.txt` into that commit if it drifted — CI itself only ever reads the tracked file, since a GitHub-hosted runner can't see your local `.env`. Each provider needs its matching repo secret (`MINMAX_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`) pushed via `gh secret set` first. Note: a PR that itself edits `.github/workflows/review.yml` will always get skipped by `claude-code-action`'s own anti-tampering guard ("workflow file must match the default branch") — that's expected and resolves itself once such a PR is merged.
 
@@ -680,7 +677,7 @@ After install, consumer repos get:
 
 ### `/dev-kit:ci-setup --force` — when to use vs when NOT
 
-`ci-setup` is **idempotent by default**. The marker file `.dev-kit/ci-config.json` records installed_at + content hashes; if all 15 EXPECTED_PATHS files are present and match, the re-run is a no-op (skip + report). `--force` overwrites the 15 EXPECTED_PATHS files regardless.
+`ci-setup` is **idempotent by default**. The marker file `.dev-kit/ci-config.json` records installed_at + content hashes; if all EXPECTED_PATHS files are present and match, the re-run is a no-op (skip + report). `--force` overwrites the EXPECTED_PATHS files regardless.
 
 **Use `--force` when:**
 - First install on a fresh repo (default install is also correct on a truly fresh repo, but `--force` is robust against partial installs from a previous attempt and against a stale plugin cache — see "First-time consumer setup" above)
@@ -691,7 +688,7 @@ After install, consumer repos get:
 
 **Do NOT use `--force` when:**
 - Re-running after no upstream changes (default is a no-op skip; `--force` creates noise in the diff and may overwrite local customizations)
-- The consumer repo has hand-edited any of the 15 EXPECTED_PATHS files (e.g. a customized `branch-policy.sh`). `--force` overwrites your edits — review the diff before committing
+- The consumer repo has hand-edited any of the EXPECTED_PATHS files (e.g. a customized `branch-policy.sh`). `--force` overwrites your edits — review the diff before committing
 - You're unsure what changed in dev-kit since your last install. Run `git log --oneline templates/ci/` in your dev-kit checkout first
 
 **Workflow:**
@@ -719,16 +716,16 @@ git add -A && git commit -m "chore(ci): refresh dev-kit templates"
 - **HOTL (MUST-29)**: auto-progress + user supervisor + 1× interrupt.
 - **Methodology extension (MUST-48)**: TDD/SDD/DDD/BDD/FDD selectable.
 - **A2A typed (MUST-39)**: Sub-agent ↔ main JSON Schema SSOT.
-- **Plugin-only (v0.1.0+)**: `.claude/skills/`, `commands/`, `install.sh` all removed. plugin manifest is SSOT.
-- **Worktree-per-task (v0.1.1+)**: every task is a new worktree + new session + new branch. Enforced by 3 hooks, documented in `.claude/rules/git-workflow.md`.
-- **Consumer-install (v0.1.1+)**: the same `review.yml` + worktree-rule files work in both dev-harness-kit and consumer repos via a self-aware install step.
+- **Plugin-only**: `.claude/skills/`, `commands/`, `install.sh` all removed. plugin manifest is SSOT.
+- **Worktree-per-task**: every task is a new worktree + new session + new branch. Enforced by 3 hooks, documented in `.claude/rules/git-workflow.md`.
+- **Consumer-install**: the same `review.yml` + worktree-rule files work in both dev-harness-kit and consumer repos via a self-aware install step.
 
 ## Contributing
 
 Pass pre-impl gate (`docs/PRE-IMPL-CHECK.md`) + 8-dimension cost (`docs/COST-ANALYSIS.md`).
 
 ```bash
-python3 -m pytest tests/ -q          # 422 tests
+python3 -m pytest tests/ -q
 claude plugin validate .claude-plugin/plugin.json
 ```
 
@@ -738,6 +735,6 @@ MIT
 
 ## Status
 
-🚀 **v0.3.26 — 34 skills shipped across 14 categories, 626 pytest collected, 12 eval cases live. Ongoing: per-skill drift audit, slop-detector v2 (multi-tier scan, 100+ patterns), Eval case expansion, template refresh.**
+🚀 **Active development. Ongoing: per-skill drift audit, slop-detector (multi-tier scan), eval case expansion, template refresh.**
 
 See [`docs/STAGES.md`](docs/STAGES.md), [`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
