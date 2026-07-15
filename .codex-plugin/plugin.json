@@ -18,7 +18,7 @@
     "ax",
     "harness"
   ],
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./.codex-plugin/hooks/hooks.json",
   "skills": "./skills/",
   "interface": {
     "displayName": "Dev Harness Kit",
