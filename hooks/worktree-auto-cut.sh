@@ -177,7 +177,11 @@ if [ -z "$MAIN_REF" ] && git rev-parse --verify main >/dev/null 2>&1; then
 fi
 [ -n "$MAIN_REF" ] || exit 0
 
-WT_PARENT="$PWD/.worktrees"
+# Hooks run in the session's current directory. Resolve the repository root
+# first so a session started from a subdirectory still shares the canonical
+# worktree root with Claude Code and Codex.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+WT_PARENT="$REPO_ROOT/.worktrees"
 mkdir -p "$WT_PARENT"
 WT_PATH="$WT_PARENT/$DIRNAME"
 
