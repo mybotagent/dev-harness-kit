@@ -1,8 +1,0 @@
-{
-  "active": "tdd",
-  "available": ["tdd", "sdd", "ddd", "bdd", "fdd"],
-  "registry_paths": [
-    "lib/methodology/tdd.py"
-  ],
-  "version": "0.1.0"
-}

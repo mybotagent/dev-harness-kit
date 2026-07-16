@@ -12,15 +12,12 @@ Adds:
                                        ↘ blocked → pending (human unblock)
     completed → pending (manual reset)
 - per-step timing: started_at set on in_progress; completed_at + duration_seconds on completed
-- MAX_RETRIES = 3 self-correction
 - --parallel mode (worktree, N-step concurrent)
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -29,7 +26,6 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
-MAX_RETRIES = 3
 SCHEMA_VERSION = "1.0.0"
 # Sub-agent stdout marker. If the per-step `claude -p` emits this line, the
 # runner transitions the step to `blocked` (with reason) instead of `completed`

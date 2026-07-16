@@ -190,7 +190,6 @@ class TestCiSetupHasNoDuplicateImportRe(unittest.TestCase):
 
         Scope: only the top-level import block (before any `def`/`class`).
         Function-local imports (e.g. `import re as _re` inside
-        preflight_probe) are a separate concern and out of scope for #80.
         """
         src_path = Path(self.ci_setup.__file__)
         src_lines = src_path.read_text().splitlines()

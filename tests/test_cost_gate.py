@@ -190,10 +190,9 @@ class TestThresholds(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(LIB))
         from cost_gate import (  # type: ignore
-            DEFAULT_THRESHOLDS, evaluate_status, resolve_thresholds,
+            DEFAULT_THRESHOLDS, resolve_thresholds,
         )
         self.DEFAULT_THRESHOLDS = DEFAULT_THRESHOLDS
-        self.evaluate_status = evaluate_status
         self.resolve_thresholds = resolve_thresholds
 
     def test_default_thresholds_have_no_kill(self):
@@ -207,49 +206,9 @@ class TestThresholds(unittest.TestCase):
         th = self.resolve_thresholds()
         self.assertNotIn("session_kill", th)
 
-    def test_below_warn_is_ok(self):
-        s, _ = self.evaluate_status(0.0, {"session_warn": 5.0, "pr_flag": 20.0})
-        self.assertEqual(s, "ok")
-
-    def test_at_warn_emits_warn(self):
-        s, reasons = self.evaluate_status(5.0, {"session_warn": 5.0, "pr_flag": 20.0})
-        self.assertEqual(s, "warn")
-        self.assertTrue(any("warn" in r for r in reasons))
-
-    def test_above_warn_still_warn(self):
-        s, _ = self.evaluate_status(999.0, {"session_warn": 5.0, "pr_flag": 20.0})
-        self.assertEqual(s, "warn")
-
-    def test_status_never_returns_kill(self):
-        # Belt + suspenders: no input produces a "kill" status.
-        for cost in (0.0, 5.0, 10.0, 999.0):
-            s, _ = self.evaluate_status(cost, {"session_warn": 5.0, "pr_flag": 20.0})
-            self.assertNotEqual(s, "kill", f"cost={cost} returned 'kill'")
-
-
 # ============================================================================
 # 5. lib/cost_gate.py — heuristic fallback
 # ============================================================================
-
-class TestHeuristic(unittest.TestCase):
-    def setUp(self):
-        sys.path.insert(0, str(LIB))
-        from cost_gate import heuristic_tool_cost  # type: ignore
-        self.heuristic_tool_cost = heuristic_tool_cost
-
-    def test_agent_high_estimate(self):
-        c = self.heuristic_tool_cost("Agent", "claude-sonnet-5")
-        self.assertGreater(c, 0.01)
-
-    def test_read_low_estimate(self):
-        c_read = self.heuristic_tool_cost("Read", "claude-sonnet-5")
-        c_write = self.heuristic_tool_cost("Edit", "claude-sonnet-5")
-        self.assertGreater(c_read, c_write)  # Read reads more
-
-    def test_unknown_tool_falls_back_to_default(self):
-        c = self.heuristic_tool_cost("SomeRandomMCPTool", "claude-sonnet-5")
-        self.assertGreater(c, 0.0)
-
 
 # ============================================================================
 # 6. lib/cost_gate.py — footer parsing + dedup

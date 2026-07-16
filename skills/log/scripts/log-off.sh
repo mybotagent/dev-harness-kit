@@ -34,28 +34,8 @@ Env:
 EOF
 }
 
-CLAUDE_ONLY=0
-CODEX_ONLY=0
-GLOBAL=0
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --target)       TARGET_DIR="$2"; shift 2 ;;
-        --global)       GLOBAL=1; shift ;;
-        --claude-only)  CLAUDE_ONLY=1; shift ;;
-        --codex-only)   CODEX_ONLY=1; shift ;;
-        -h|--help)      usage; exit 0 ;;
-        *) echo "ERROR: unknown arg: $1" >&2; usage; exit 1 ;;
-    esac
-done
-
-if [[ "$CLAUDE_ONLY" -eq 1 && "$CODEX_ONLY" -eq 1 ]]; then
-    echo "ERROR: --claude-only and --codex-only are mutually exclusive" >&2
-    exit 1
-fi
-if [[ "$GLOBAL" -eq 1 && -n "${TARGET_DIR:-}" ]]; then
-    echo "ERROR: --global is mutually exclusive with --target" >&2
-    exit 1
-fi
+LOG_USAGE=usage
+parse_log_args "$@"
 
 require_jq
 if [[ "$GLOBAL" -eq 1 ]]; then

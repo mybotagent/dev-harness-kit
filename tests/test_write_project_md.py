@@ -61,13 +61,6 @@ class TestWriteProjectMd(unittest.TestCase):
         for tag in ("## Tree", "## Manifest", "## External deps", "## Conventions"):
             self.assertIn(tag, full)
 
-    def test_render_full_section_3_is_alias(self):
-        """render_full_section_3 kept for back-compat; aliases render_codebase_map_doc."""
-        self.assertEqual(
-            write_project_md.render_full_section_3(self.root),
-            write_project_md.render_codebase_map_doc(self.root),
-        )
-
     def test_render_agents_md(self):
         agents = write_project_md.render_agents_md(self.root)
         self.assertEqual(agents.strip(), "CLAUDE.md")

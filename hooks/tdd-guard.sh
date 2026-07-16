@@ -5,11 +5,12 @@
 # Adapted from dev-harness/.claude/hooks/tdd-guard.sh (sh-ai-x/dev-harness).
 
 set -eo pipefail
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [ -z "$FILE" ] && exit 0
 case "$FILE" in
-  *.md|*.txt|*.json|*.yaml|*.yml|*.toml|*.cfg|*.ini|*.sh|*.md) exit 0 ;;
+  *.md|*.txt|*.json|*.yaml|*.yml|*.toml|*.cfg|*.ini|*.sh) exit 0 ;;
 esac
 
 # Enforce paths
@@ -23,8 +24,7 @@ case "$FILE" in
     done
     # Strict mode → hard block
     if [ "${DEV_KIT_STRICT:-0}" = "1" ]; then
-      echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"TDD GUARD (strict): '${FILE}'에 대한 테스트 파일이 없습니다.\"}}" >&2
-      exit 2
+      deny "TDD GUARD (strict)" "${FILE}에 대한 테스트 파일이 없습니다."
     fi
     # Default: advisory stderr warning (MUST-12)
     echo "[tdd-guard] ${FILE}: no adjacent test (advisory, write allowed). tip: write test first then code." >&2

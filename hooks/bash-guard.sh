@@ -39,8 +39,7 @@ BLOCKED_PATTERNS=(
 for pattern in "${BLOCKED_PATTERNS[@]}"; do
   if echo "$CMD" | grep -qE "$pattern"; then
     if [ "${DEV_KIT_STRICT:-0}" = "1" ]; then
-      echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"BASH GUARD (strict): pattern '$pattern' blocked.\"}}" >&2
-      exit 2
+      deny "BASH GUARD (strict)" "pattern '$pattern' blocked."
     fi
     echo "[bash-guard] Pattern '$pattern' in command: ${CMD:0:60}... (advisory). strict mode required to block." >&2
     exit 0

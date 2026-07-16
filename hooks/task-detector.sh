@@ -34,6 +34,7 @@ INPUT="$(cat)"
 # Source the shared worktree-detection helper.
 # shellcheck source=lib/worktree-detect.sh
 source "$(dirname "$0")/lib/worktree-detect.sh"
+source "${BASH_SOURCE[0]%/*}/lib/session-envelope.sh"
 
 # Warn (not fail) if jq is missing. See worktree-detect.sh for the
 # helper that emits the warning and the rationale.
@@ -45,12 +46,7 @@ fi
 PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)"
 [ -z "$PROMPT" ] && exit 0
 
-# Prefer cwd from the hook payload (consistent with
-# session-start-check.sh). Fall back to PWD for older hook callers.
-HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
-if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
-  cd "$HOOK_CWD" || exit 0
-fi
+extract_hook_cwd "task-detector.sh"
 
 # Detect task intent (case-insensitive). Word-boundary regex on the
 # leading verb avoids matching "make sure", "write a brief", etc.
@@ -96,9 +92,8 @@ case "$WORKTREE_DETECT" in
 esac
 
 # In main checkout + new-task intent → emit additionalContext nudge.
-BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
+BRANCH="$(current_branch)"
 NUDGE="GIT-WORKFLOW REMINDER (rules/git-workflow.md): the user prompt looks like a new task and the session cwd is the main checkout (branch='$BRANCH'). Per the rule, every task = new worktree + client handoff + new branch. Before editing: (1) git fetch origin main && git pull --ff-only origin main; (2) git worktree add -b <type>/<slug> .worktrees/<slug> origin/main; (3) Claude Code opens a new session in that path; Codex spawns/hand-offs a subagent with that path as cwd and passes the task prompt explicitly. If the user explicitly says 'do it now without a worktree', confirm the override before editing — worktree-guard.sh will block edits in the main checkout otherwise."
 
-jq -nc --arg ctx "$NUDGE" \
-  '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
+emit_worktree_nudge "UserPromptSubmit" "$NUDGE"
 exit 0

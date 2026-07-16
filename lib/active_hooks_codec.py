@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 from typing import Dict
 
-from atomic import atomic_write_json  # noqa: E402
+try:
+    from .atomic import atomic_write_json  # type: ignore  # noqa: E402
+except ImportError:
+    from atomic import atomic_write_json  # type: ignore  # noqa: E402
 
 DEFAULT_MATRIX: Dict[str, Dict[str, object]] = {
     "bootstrap": {

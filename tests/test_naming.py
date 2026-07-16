@@ -99,7 +99,9 @@ class TestNaming(unittest.TestCase):
             self.skipTest("no lib dir yet")
         violations = []
         for f in lib_dir.glob("*.py"):
-            # Python snake_case is fine
+            # Allow __init__.py (Python package marker) + snake_case modules.
+            if f.name == "__init__.py":
+                continue
             if not re.match(r"^[a-z][a-z0-9_]*\.py$", f.name):
                 violations.append(f.name)
         self.assertEqual(violations, [], f"Python naming: {violations}")

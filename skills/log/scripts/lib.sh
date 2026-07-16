@@ -244,3 +244,45 @@ count_managed() {
         | length
     ' "$target"
 }
+
+
+# parse_log_args — shared CLI parser for log-on/off/setup/status.
+# Parses: --target DIR | --global | --codex-only | --claude-only | -h | --help
+# Validates mutual exclusivity of --codex-only/--claude-only and --global/--target.
+# Sets globals CLAUDE_ONLY, CODEX_ONLY, GLOBAL, TARGET_DIR.
+# On -h/--help, prints $LOG_USAGE (each script sets its own) and exits 0.
+# On unknown arg, prints usage to stderr and exits 1.
+parse_log_args() {
+    CLAUDE_ONLY=0
+    CODEX_ONLY=0
+    GLOBAL=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --target)       TARGET_DIR="$2"; shift 2 ;;
+            --global)       GLOBAL=1; shift ;;
+            --claude-only)  CLAUDE_ONLY=1; shift ;;
+            --codex-only)   CODEX_ONLY=1; shift ;;
+            -h|--help)
+                if [[ -n "${LOG_USAGE:-}" ]]; then
+                    eval "$LOG_USAGE"
+                fi
+                exit 0
+                ;;
+            *) echo "ERROR: unknown arg: $1" >&2
+                if [[ -n "${LOG_USAGE:-}" ]]; then
+                    eval "$LOG_USAGE" >&2
+                fi
+                exit 1
+                ;;
+        esac
+    done
+
+    if [[ "$CLAUDE_ONLY" -eq 1 && "$CODEX_ONLY" -eq 1 ]]; then
+        echo "ERROR: --claude-only and --codex-only are mutually exclusive" >&2
+        exit 1
+    fi
+    if [[ "$GLOBAL" -eq 1 && -n "${TARGET_DIR:-}" ]]; then
+        echo "ERROR: --global is mutually exclusive with --target" >&2
+        exit 1
+    fi
+}
