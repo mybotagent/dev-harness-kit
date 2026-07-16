@@ -2084,6 +2084,16 @@ class TestCodexSessionParsing(unittest.TestCase):
         s = aggregate_session(p)
         self.assertEqual(s["model"], "gpt-5.6-luna")
 
+    def test_missing_model_metadata_stays_empty(self) -> None:
+        p = self._write_codex("sid-no-model", [
+            {"type": "session_meta", "payload": {
+                "session_id": "sid-no-model",
+                "cwd": "/tmp/fix-repo",
+            }},
+        ])
+        s = aggregate_session(p)
+        self.assertEqual(s["model"], "")
+
     def test_event_msg_token_count_overwrites_with_final_snapshot(self) -> None:
         """codex emits incremental ``token_count`` snapshots; we keep the final."""
         p = self._write_codex("sid-tokens", [

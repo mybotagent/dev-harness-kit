@@ -443,6 +443,20 @@ def parse_iso(ts: str) -> datetime | None:
         return None
 
 
+def _codex_nested_field(record: dict, field: str):
+    """Read an explicit Codex field from a record or nested payload object."""
+    value = record.get(field)
+    if value is not None:
+        return value
+    payload = record.get("payload")
+    while isinstance(payload, dict):
+        value = payload.get(field)
+        if value is not None:
+            return value
+        payload = payload.get("payload")
+    return None
+
+
 def repo_from_cwd(cwd: str | None) -> str:
     """Derive the project root label from ``cwd``.
 
@@ -815,21 +829,23 @@ def aggregate_session(path: Path) -> dict | None:
                         last_ts = ts
 
                 if session_id is None:
-                    session_id = rec.get("sessionId") or rec.get("session_id") or path.stem
+                    session_id = (
+                        rec.get("sessionId")
+                        or rec.get("session_id")
+                        or _codex_nested_field(rec, "sessionId")
+                        or _codex_nested_field(rec, "session_id")
+                        or path.stem
+                    )
                 if not repo:
                     # codex rollouts put cwd at session_meta.payload.cwd or
                     # turn_context.payload.cwd — NOT at the record top
                     # level. Harvest from those shapes too.
-                    _rcwd = rec.get("cwd")
-                    if not _rcwd:
-                        _rc_payload = rec.get("payload")
-                        if isinstance(_rc_payload, dict):
-                            _rcwd = _rc_payload.get("cwd")
+                    _rcwd = _codex_nested_field(rec, "cwd")
                     repo = repo_from_cwd(_rcwd)
                 gb = rec.get("gitBranch")
                 if isinstance(gb, str) and gb.strip():
                     branch_counts[gb.strip()] += 1
-                cwd_raw = rec.get("cwd")
+                cwd_raw = _codex_nested_field(rec, "cwd")
                 if isinstance(cwd_raw, str) and cwd_raw.strip():
                     worktree_counts[worktree_from_cwd(cwd_raw)] += 1
 
@@ -866,7 +882,7 @@ def aggregate_session(path: Path) -> dict | None:
                     # codex: model lives on the per-turn context line.
                     tc_payload = rec.get("payload") or {}
                     if isinstance(tc_payload, dict):
-                        m = tc_payload.get("model")
+                        m = _codex_nested_field(rec, "model")
                         if isinstance(m, str) and m:
                             models[m] += 1
                 elif rec_type == "event_msg":
