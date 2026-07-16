@@ -145,6 +145,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 ```
 /dev-kit:bootstrap              # first entry (auto-generate CLAUDE.md)
 /dev-kit:ci-setup                # install dev-kit CI templates (workflows + hooks + scripts + worktree-rule files) into target repo
+/dev-kit:ci-doctor               # read-only PASS/FAIL audit of CI readiness after /dev-kit:ci-setup (verifies workflows, marker, provider file, secrets, gh auth)
 /dev-kit:bootstrap-full          # one-shot: bootstrap + ci-setup in a single call (new-project default)
 /dev-kit:log setup|on|off|status # toggle loghooks (Stop/SessionEnd transcripts) per project
 /dev-kit:plan                    # PRD + phases auto (Plan+Design unified)
@@ -699,7 +700,11 @@ claude --plugin-dir /Users/sanghee/dev/dev-harness-kit   # or use marketplace in
 # 3. Review the diff before committing — ci-setup prints a per-file created/overwritten/skipped table
 git diff .github/ scripts/ .githooks/ hooks/ .claude/ tests/
 
-# 4. Commit + push
+# 4. Verify CI readiness before opening the first PR — /dev-kit:ci-doctor prints PASS/FAIL
+/dev-kit:ci-doctor
+# Re-run after each remediation until verdict=PASS, then push + open PR
+
+# 5. Commit + push
 git add -A && git commit -m "chore(ci): refresh dev-kit templates"
 ```
 
