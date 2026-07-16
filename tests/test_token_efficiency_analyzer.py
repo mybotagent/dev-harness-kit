@@ -2084,6 +2084,21 @@ class TestCodexSessionParsing(unittest.TestCase):
         s = aggregate_session(p)
         self.assertEqual(s["model"], "gpt-5.6-luna")
 
+    def test_latest_turn_model_is_shown_when_session_switches_models(self) -> None:
+        p = self._write_codex("sid-model-switch", [
+            {"type": "turn_context", "payload": {"model": "MiniMax-M3"},
+             "timestamp": "2026-07-15T10:00:00.000Z",
+             "cwd": "/tmp/fix-repo"},
+            {"type": "turn_context", "payload": {"model": "MiniMax-M3"},
+             "timestamp": "2026-07-15T10:01:00.000Z",
+             "cwd": "/tmp/fix-repo"},
+            {"type": "turn_context", "payload": {"model": "gpt-5.6-luna"},
+             "timestamp": "2026-07-15T10:02:00.000Z",
+             "cwd": "/tmp/fix-repo"},
+        ])
+        s = aggregate_session(p)
+        self.assertEqual(s["model"], "gpt-5.6-luna")
+
     def test_missing_model_metadata_stays_empty(self) -> None:
         p = self._write_codex("sid-no-model", [
             {"type": "session_meta", "payload": {

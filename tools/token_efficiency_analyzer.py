@@ -788,6 +788,7 @@ def aggregate_session(path: Path) -> dict | None:
     repo = ""
     source = _source_for(path)
     models: Counter[str] = Counter()
+    latest_model = ""
     input_tokens = 0
     output_tokens = 0
     cache_write_tokens = 0
@@ -856,6 +857,7 @@ def aggregate_session(path: Path) -> dict | None:
                     m = msg.get("model")
                     if m:
                         models[m] += 1
+                        latest_model = m
                     u = msg.get("usage") or {}
                     # input_tokens = non-cached input (cache missed)
                     input_tokens       += int(u.get("input_tokens") or 0)
@@ -885,6 +887,7 @@ def aggregate_session(path: Path) -> dict | None:
                         m = _codex_nested_field(rec, "model")
                         if isinstance(m, str) and m:
                             models[m] += 1
+                            latest_model = m
                 elif rec_type == "event_msg":
                     # codex: emit `token_count` (cumulative total_token_usage)
                     # and `user_message` events. We overwrite (not accumulate)
@@ -971,7 +974,10 @@ def aggregate_session(path: Path) -> dict | None:
         "repo": repo or path.stem.split("__")[0],
         "branch": branch,
         "worktree": worktree,
-        "model": models.most_common(1)[0][0] if models else "",
+        # A session can switch models. The dashboard's Active Sessions row
+        # should show the model that handled the latest turn, not the model
+        # that appeared most often earlier in the session.
+        "model": latest_model or (models.most_common(1)[0][0] if models else ""),
         "first_ts": first_ts,
         "last_ts": last_ts,
         "input_tokens": input_tokens,
