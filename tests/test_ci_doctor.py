@@ -40,14 +40,30 @@ class TestCiDoctor(unittest.TestCase):
         self.cs.install_ci_config(target)
 
     def test_audit_passes_after_fresh_install(self):
-        """Happy path: `ci-setup` leaves a target that `ci-doctor` audits as PASS."""
+        """Happy path: `ci-setup` leaves a target that `ci-doctor` audits as PASS.
+
+        Excludes the `gh auth` / `repo context` / `secret set:` rows
+        from the ok check because the test environment's gh CLI may be
+        installed-but-unauthenticated (typical for CI runners). The
+        audit correctly surfaces that as FAIL in production; the test
+        asserts only that the install-shape rows (files / marker /
+        provider file) are PASS — secrets behavior is exercised by the
+        per-secret tests below.
+        """
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
             r = self.cd.audit(target)
-            self.assertTrue(r.ok, f"audit failed: {[(c.label, c.state, c.detail) for c in r.checks]}")
-            self.assertEqual(len(r.failing()), 0)
+            install_shape_rows = [
+                c for c in r.checks
+                if not c.label.startswith(("gh auth", "repo context", "secret set:"))
+            ]
+            failing_shape = [c for c in install_shape_rows if c.state == "FAIL"]
+            self.assertEqual(
+                failing_shape, [],
+                f"install-shape audit failed: {[(c.label, c.state, c.detail) for c in failing_shape]}",
+            )
 
     def test_required_files_check_finds_missing_workflow(self):
         """FAIL row surfaces when a required workflow file is missing."""
