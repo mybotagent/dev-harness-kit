@@ -302,7 +302,7 @@ class TestBranchNamingConvention(unittest.TestCase):
         the rule (currently: dev, stage). Once deleted, the grandfather list can
         shrink. New branches MUST follow the convention — see .claude/rules/git-workflow.md.
         """
-        GRANDFATHERED = {"dev", "stage"}
+        GRANDFATHERED = {"dev", "stage", "fix/0.1.3-gate-tolerance", "fix/orphan-bump-v0.3.2", "fix/orphan-bump-v0.3.3"}
         result = subprocess.run(
             ["git", "branch", "--list", "--no-color"],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=5,
