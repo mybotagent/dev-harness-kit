@@ -4,6 +4,15 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Fixed — worktree add leaves stale files (fix/worktree-stale-file-recovery, issue #215)
+
+When `git worktree add <path>` runs against a directory that already contains files (typical after a partial/cancelled prior attempt, or an external cleanup that left files behind), git creates the worktree's bookkeeping but does NOT overwrite the pre-existing files. The new worktree's working tree then disagrees with HEAD for those files — `git status` shows them as `modified:`, and tests fail with `ImportError` against symbols that exist in HEAD but not in the on-disk file. Triage on 2026-07-16 against `.worktrees/fix-save-log-branch-imports/tools/save_log.py` showed a 16,346-byte HEAD blob vs an 8,450-byte on-disk file (pre-existing, never refreshed) that masked three functions and the dual-write logic.
+
+- **feat(hooks)**: `hooks/lib/worktree-verify-clean.sh` — `worktree_verify_clean <wt_path>` helper. Walks tracked files at HEAD, compares each on-disk SHA (`git hash-object`) against HEAD's blob SHA (`git rev-parse HEAD:<p>`), and `git checkout HEAD -- <path>` restores any divergence. Untracked files, deleted files, and files where disk content already matches HEAD are left alone. Always exits 0 (the repair is best-effort; sync drift is recoverable).
+- **feat(hooks)**: `hooks/worktree-verify-clean.sh` — CLI wrapper (run as `bash hooks/worktree-verify-clean.sh <worktree-path>` for a one-shot post-cut verify) and opt-in PostToolUse:Bash hook that fires on every `git worktree add` Claude Code observes. The hook is opt-in — wiring is left to `ci-setup` or per-project `hooks.json` so the protected surface stays small. CLI mode is safe to run repeatedly (idempotent: clean worktrees report `repaired=0`).
+- **docs(rules)**: `rules/git-workflow.md` step 2a documents the verify step and links to both the helper and the wrapper.
+- **test**: `tests/test_worktree_verify_clean.py` — 12 regression tests covering the helper (repairs a stale file, no-op on clean / non-git / nonexistent paths, idempotent) and the wrapper (CLI mode repair, silent on unrelated `git` commands, empty/probe payloads, `--help`). All 12 pass; the 73 pre-existing worktree + save_log tests remain green.
+
 ### Fixed — `dev-kit:ci-setup --force` regression cluster (fix/ci-setup-regressions, issue #202)
 
 Four `--force` regressions surfaced during the `sh-ai-x/claude-statusline` PR #9 refresh and surfaced again by `/dev-kit:security` on PR #11. All four addressed at the upstream template / install-engine level so future consumer refreshes don't re-introduce them.
