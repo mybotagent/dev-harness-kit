@@ -123,6 +123,7 @@ verification requirements to a spawned subagent.
    - `git push` to `main` or `origin main` (deny with reason)
    - `git checkout main` followed by `git commit` in the same command
    - `git push --force` and `git push -f` (already blocked by `bash-guard.sh` — kept for redundancy)
+   - **`hooks/review-yml-isolation.sh`** (PreToolUse, Bash matcher, paired with `git-guard.sh`) — blocks `git commit` when `git diff --cached --name-only` contains a file named `review.yml` AND at least one other path. The PR must be `review.yml`-only. Shipped via `ci-setup` (`EXPECTED_PATHS`, `EXECUTABLE_PATHS`, marker `hooks` list — see `lib/ci_setup.py`). **Fails closed** (deny) when `jq` is missing.
 2. **`hooks/worktree-guard.sh`** (PreToolUse, Write|Edit|MultiEdit matcher) — HARD BLOCK on edits in the main checkout. Discriminator: `git rev-parse --git-dir == --git-common-dir` evaluated from the repo toplevel (canonicalized via `realpath`). Any Edit/Write/MultiEdit attempted while the session cwd is the main checkout is denied with an actionable message naming the worktree command. **Fails closed** (deny) when `jq` is missing.
 3. **`hooks/task-detector.sh`** (UserPromptSubmit) — EARLY WARNING. Detects new-task intent in user prompts (slash-invocations; verb-leading start with word boundary; polite-prefix forms like "let's add"; intent-implying noun phrases). When intent matches AND the session is in the main checkout, emits an `additionalContext` nudge so Claude remembers the rule before doing any work. Silent in worktrees and on clarifying questions. **Fails open with a stderr warning** when `jq` is missing (advisory hook; the hard block is worktree-guard.sh).
 4. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks. **Fails open with a stderr warning** when `jq` is missing.
@@ -148,15 +149,34 @@ verification requirements to a spawned subagent.
 - **`hotfix/*`**: only used to revert a merged main commit. PR is auto-mergeable. Still requires a worktree (the revert is a real change). Still requires CI green.
 - **Documentation-only fixes to README/CHANGELOG** that the user explicitly requests as "just fix it now" with no PR review: maintainer judgment, but **never** on `main` directly — branch + PR is the only path.
 
+## Review.yml PR isolation
+
+`review.yml` (both `.github/workflows/review.yml` and the template mirror
+`templates/ci/.github/workflows/review.yml`) is the CI workflow that runs
+`/dev-kit:review` and `/dev-kit:security` on every PR. Because the gate
+verdict lives in the workflow itself, a `review.yml` change is the ONE
+file that should never share a PR with unrelated edits — mixing makes
+the gate's verdict unreadable (which finding belongs to which intent?)
+and blocks targeted revert when only the workflow is broken.
+
+Rule: any commit that modifies `review.yml` (basename match) must contain
+ONLY `review.yml`. No source code, no other workflow files, no template
+edits, no unrelated cleanup. If you also need to change other files,
+make two commits on the same branch (or split into two PRs) — the gate
+will still review the `review.yml` commit in isolation, and a broken
+`review.yml` can be reverted without dragging unrelated diff back.
+
 ## Related
 
 - `tests/test_git_workflow.py` (branch-naming + `git-guard` regression)
 - `tests/test_worktree_guard.py` (`worktree-guard` + `task-detector` + `session-start-check` regression)
 - `tests/test_worktree_verify_clean.py` (issue #215 — `git worktree add` stale-file repair regression)
+- `tests/test_review_yml_isolation.py` (`review-yml-isolation` regression — staged-set isolation, jq-missing fail-closed, hooks.json wiring)
 - `hooks/lib/worktree-detect.sh` (shared discriminator — single source of truth)
 - `hooks/lib/worktree-verify-clean.sh` (`worktree_verify_clean` helper — issue #215)
 - `hooks/git-guard.sh` (PreToolUse Bash block)
 - `hooks/worktree-guard.sh` (PreToolUse Edit/Write block, fails closed)
+- `hooks/review-yml-isolation.sh` (PreToolUse Bash block, fails closed — `review.yml` PR isolation)
 - `hooks/task-detector.sh` (UserPromptSubmit nudge, fails open with warning)
 - `hooks/session-start-check.sh` (SessionStart nudge, fails open with warning)
 - `hooks/worktree-verify-clean.sh` (CLI wrapper + opt-in PostToolUse:Bash hook for issue #215)

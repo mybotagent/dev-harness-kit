@@ -71,10 +71,12 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "hooks/worktree-guard.sh",
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
+    "hooks/review-yml-isolation.sh",
     "hooks/lib/worktree-detect.sh",
     "hooks/hooks.json",
     ".claude/rules/git-workflow.md",
     "tests/test_worktree_guard.py",
+    "tests/test_review_yml_isolation.py",
     # Runtime-artifact gitignore fragment (issue #202). Installed via a
     # marked-block merge so consumer-owned lines outside the block are
     # preserved across --force refreshes.
@@ -91,6 +93,7 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/worktree-guard.sh",
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
+    "hooks/review-yml-isolation.sh",
     "hooks/lib/worktree-detect.sh",
 )
 
@@ -549,11 +552,15 @@ def _build_marker() -> dict:
             "hooks/worktree-guard.sh",
             "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
+            "hooks/review-yml-isolation.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/hooks.json",
         ],
         "rules": [".claude/rules/git-workflow.md"],
-        "tests": ["tests/test_worktree_guard.py"],
+        "tests": [
+            "tests/test_worktree_guard.py",
+            "tests/test_review_yml_isolation.py",
+        ],
     }
 
 
