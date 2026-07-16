@@ -372,6 +372,17 @@ python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
 open token-dashboard-my-project-30d.html
 ```
 
+### Preview
+
+![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+
+*The screenshot above is regenerated from the latest dashboard HTML by
+`tools/render_dashboard.py` (Playwright + Chrome, 1440 × 2x) — Cost Gate
+banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost
+distribution, model + cache TTL mix, session table with letter-grade scores +
+warning chips, and a reclaim-axis savings breakdown. Refresh after any
+`tools/token_efficiency_analyzer.py` change.*
+
 The dashboard answers three questions per repo over the last N days:
 
 1. **Where is the spend going?** Per-repo, per-tool (flags `Read`-heavy), and
