@@ -176,6 +176,24 @@ def _claude_has_text(obj) -> bool:
     return isinstance(message, dict) and bool(_content_text(message.get("content")))
 
 
+def _claude_has_usage(obj) -> bool:
+    """True if a claude-code assistant line carries token-accounting usage.
+
+    Tool-call-only assistant turns have no conversation text (so _claude_has_text
+    drops them) but still carry message.usage (input/output/cache tokens) and the
+    tool_use blocks the analyzer counts. Retaining them keeps token + tool + Read
+    accounting accurate — the text-only filter under-counted claude-code spend by
+    ~50%. Mirrors the codex-side _codex_has_event_tokens fix. isMeta lines
+    (slash-command output, /context dumps) stay excluded.
+    """
+    if not isinstance(obj, dict) or obj.get("type") != "assistant":
+        return False
+    if obj.get("isMeta"):
+        return False
+    message = obj.get("message")
+    return isinstance(message, dict) and isinstance(message.get("usage"), dict)
+
+
 def _codex_has_event_text(obj) -> bool:
     """True if a codex line is a user_message/agent_message event with text."""
     if not isinstance(obj, dict) or obj.get("type") != "event_msg":
@@ -295,7 +313,12 @@ def slim_transcript(raw: str, tool: str):
         if not kept:                            # fallback: response_item (no event_msg present)
             kept = [line for line, obj in pairs if _codex_has_response_text(obj)]
     else:
-        kept = [line for line, obj in pairs if _claude_has_text(obj)]
+        # Union: keep conversation text (user + assistant) AND every usage-bearing
+        # assistant turn. Tool-call-only turns have no text but carry message.usage +
+        # tool_use blocks the analyzer needs; text-only filtering dropped ~50% of the
+        # token accounting. A line matching both predicates is emitted once.
+        kept = [line for line, obj in pairs
+                if _claude_has_text(obj) or _claude_has_usage(obj)]
     if not kept:
         return None
     return "\n".join(kept) + "\n"
