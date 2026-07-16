@@ -367,6 +367,12 @@ python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
 open token-dashboard-my-project-30d.html
 ```
 
+### 미리 보기
+
+![토큰 효율 대시보드 — dev-harness-kit, 최근 30일](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+
+*위 스크린샷은 최신 대시보드 HTML을 `tools/render_dashboard.py`(Playwright + Chrome, 1440 × 2x)로 재생성한 것입니다 — Cost Gate 배너, 4-타일 개요, 저장소별/도구별/브랜치별/worktree별 비용 분포, 모델 + 캐시 TTL 구성, 문자 등급 점수 + 경고 칩이 있는 세션 테이블, 그리고 reclaim-axis 절감 분석이 포함됩니다. `tools/token_efficiency_analyzer.py` 변경 후 새로고침하세요.*
+
 대시보드는 최근 N일간 저장소별로 세 가지 질문에 답합니다:
 
 1. **지출은 어디로 가는가?** 저장소별·도구별(`Read` 과다 플래그)·세션별 비용
