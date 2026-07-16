@@ -66,7 +66,7 @@ safety:
 | **Human-use** (stage commands, utilities, shortcuts) | `true` | `false` (default) or `true` | ✅ Yes |
 | **Model-use** (internal building blocks) | **`false`** | `false` (default) | ❌ No |
 
-**Current human-use skills** (26): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `token-analyzer`, `adapt`, `cost-gate`.
+**Current human-use skills** (27): `bootstrap`, `ci-setup`, `plan`, `build`, `review`, `security`, `audit`, `inspect`, `eval`, `report`, `repair`, `ship`, `status`, `onboard`, `config`, `shortcut-quick-fix`, `shortcut-tdd-fast`, `feat-add`, `feat-fix`, `feat-revise`, `feat-remove`, `refactor`, `prune`, `token-analyzer`, `adapt`, `cost-gate`, `codex-cache-update`.
 
 **Current model-use skills** (4): `build-tdd`, `build-debug`, `build-verify`, `build-refactor`. The other 10 engine/audit/bootstrap internal blocks (`build-engine`, `build-harness-engine`, `build-methodology`, `build-prune`, `bootstrap-sanity`, `bootstrap-codebase-map`, `bootstrap-active-hooks`, `audit-secret`, `audit-slop`, `audit-outdated`) were either folded into their parent skill body (issue #176) or already exist as pure logic in `lib/` with no skill wrapper.
 
@@ -95,4 +95,4 @@ safety:
 ## Validation
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
-- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (34 as of #feat/skill-inventory-prune — prunes 10 internal/duplicate skill files; bump both test_smoke.py and this rule together when adding a new skill).
+- `tests/test_smoke.py` enforces: exactly `SKILL_COUNT` skills total (35 as of `codex-cache-update`; bump both test_smoke.py and this rule together when adding a new skill).

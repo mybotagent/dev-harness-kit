@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Cache Update"
+  short_description: "Refresh the dev-kit marketplace and Codex plugin cache"
+  default_prompt: "Update the dev-kit marketplace and synchronize the Codex plugin cache to the latest commit."
