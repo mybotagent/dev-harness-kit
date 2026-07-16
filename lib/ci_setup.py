@@ -16,6 +16,7 @@ Usage (from the skill body or directly):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -68,6 +69,10 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "hooks/hooks.json",
     ".claude/rules/git-workflow.md",
     "tests/test_worktree_guard.py",
+    # Runtime-artifact gitignore fragment (issue #202). Installed via a
+    # marked-block merge so consumer-owned lines outside the block are
+    # preserved across --force refreshes.
+    ".gitignore",
 )
 
 # Files that need the executable bit after install.
@@ -208,8 +213,16 @@ def _copy_template(rel_path: str, target_dir: Path, *, force: bool) -> str:
     Raises FileNotFoundError if the template source is missing (treated as
     a programmer/install error, not a runtime idem-key collision).
 
+    Special-case `.gitignore` (issue #202): rather than overwriting the
+    consumer's existing `.gitignore`, the dev-kit fragment is appended
+    inside a marked `# >>> dev-kit >>>` / `# <<< dev-kit <<<` block.
+    Re-running `--force` is idempotent — the existing block is replaced
+    in place; lines outside the block are preserved.
+
     Source resolution: see `_resolve_template_source` (issue #89 split).
     """
+    if rel_path == ".gitignore":
+        return _install_gitignore_fragment(_resolve_template_source(rel_path), target_dir, force=force)
     src = _resolve_template_source(rel_path)
     dst = target_dir / rel_path
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -220,6 +233,61 @@ def _copy_template(rel_path: str, target_dir: Path, *, force: bool) -> str:
         return "overwritten"
     shutil.copy2(src, dst)
     return "created"
+
+
+# Markers delimiting the dev-kit-managed block inside `.gitignore`. Anything
+# outside these markers is owned by the consumer; anything inside is owned
+# by `dev-kit:ci-setup` (issue #202). Bumping these strings is a breaking
+# change for existing consumer installs — old fragments would be orphaned.
+_GITIGNORE_BLOCK_START = "# >>> dev-kit >>>"
+_GITIGNORE_BLOCK_END = "# <<< dev-kit <<<"
+
+
+def _install_gitignore_fragment(src: Path, target_dir: Path, *, force: bool) -> str:
+    """Merge `templates/ci/.gitignore` into the target's `.gitignore`.
+
+    Three cases:
+      1. Target `.gitignore` does not exist → copy the fragment as-is.
+      2. Target `.gitignore` exists and already contains the dev-kit block
+         → replace the block in place; preserve lines outside it.
+      3. Target `.gitignore` exists without the dev-kit block → append
+         the block at the end.
+
+    Idempotent: re-running `--force` produces the same final state. Never
+    touches lines outside the marked block.
+
+    Returns `created` (case 1), `overwritten` (cases 2 & 3 with a real
+    change), or `skipped` (case 3 where the existing file already
+    contains the same block content — only possible if `force=False`
+    AND the block is already present).
+    """
+    dst = target_dir / ".gitignore"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fragment = src.read_text(encoding="utf-8")
+    block = f"{_GITIGNORE_BLOCK_START}\n{fragment.rstrip()}\n{_GITIGNORE_BLOCK_END}\n"
+    if not dst.exists():
+        # Case 1: brand-new install. Always wrap the fragment in the
+        # marked block (no markers ≠ idempotent — see issue #202).
+        dst.write_text(block, encoding="utf-8")
+        return "created"
+    existing = dst.read_text(encoding="utf-8")
+    if _GITIGNORE_BLOCK_START in existing and _GITIGNORE_BLOCK_END in existing:
+        # Case 2: replace the existing block in place.
+        before, _, rest = existing.partition(_GITIGNORE_BLOCK_START)
+        _, _, after = rest.partition(_GITIGNORE_BLOCK_END)
+        new = before + block + after.lstrip("\n")
+        if new == existing:
+            return "skipped"
+        dst.write_text(new, encoding="utf-8")
+        return "overwritten"
+    # Case 3: append block at end. Always done — appending is non-destructive
+    # (consumer lines outside the block are preserved) and idempotent
+    # (re-running finds the markers and goes through Case 2).
+    new = existing.rstrip("\n") + "\n\n" + block
+    if new == existing:
+        return "skipped"
+    dst.write_text(new, encoding="utf-8")
+    return "overwritten"
 
 
 def _chmod_executable(rel_paths: tuple[str, ...], target_dir: Path) -> None:
@@ -366,6 +434,53 @@ def _build_marker() -> dict:
     }
 
 
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of `path`'s bytes.
+
+    Used by the drift-detection pass (issue #202) to record the template
+    bytes that landed on the consumer's repo at install time. The next
+    `--force` install compares the recorded SHA against the current file
+    SHA to detect locally-modified files that would be silently
+    overwritten.
+    """
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _detect_drift(target_dir: Path, recorded_shas: dict[str, str]) -> List[str]:
+    """Compare current file SHAs against `recorded_shas` (issue #202).
+
+    For each path in `recorded_shas`:
+      - if the file no longer exists at `target_dir`: skip (the path was
+        deleted by the consumer; not our concern)
+      - if the file's current SHA matches the recorded SHA: in sync, no
+        drift
+      - if the file's current SHA differs from the recorded SHA: drift;
+        the consumer modified it locally since the last install. Emit a
+        warning so the user knows `--force` will overwrite the change.
+
+    Returns a list of human-readable drift warnings (one per drifted file).
+    The install itself is never blocked by drift — warnings are advisory.
+    """
+    out: List[str] = []
+    target = Path(target_dir).resolve()
+    for rel, recorded in recorded_shas.items():
+        p = target / rel
+        if not p.is_file():
+            continue
+        try:
+            current = _sha256_file(p)
+        except OSError:
+            continue
+        if current != recorded:
+            out.append(
+                f"{rel}: locally modified since last install (drift detected); "
+                f"`--force` will overwrite. Backup to {rel}.bak if you want to keep it."
+            )
+    return out
+
+
 def install_ci_config(
     target_dir: Path,
     *,
@@ -410,18 +525,47 @@ def install_ci_config(
 
     report = InstallReport()
 
+    # Read prior marker (if any) so the drift-detection pass (issue #202)
+    # can compare current file SHAs against the SHAs recorded at the last
+    # install. Drift = locally-modified file about to be overwritten by
+    # `--force`. We always read the marker when present, even if `force`
+    # is False, so the no-op idempotent re-install can still surface
+    # drift findings from a *prior* `--force` cycle.
+    existing_marker = target / MARKER_REL
+    prior_marker: dict = {}
+    if existing_marker.is_file():
+        try:
+            prior_marker = json.loads(existing_marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            prior_marker = {}
+
     # Presence-based "already installed" detection: marker exists AND every
     # template file is present ⇒ nothing to copy. Phase 1 of the skill body
     # can still detect "already installed" via marker_path.
-    existing_marker = target / MARKER_REL
     if existing_marker.exists() and not force:
         if all((target / rel).exists() for rel in EXPECTED_PATHS):
             report.skipped.extend(EXPECTED_PATHS)
             report.marker_path = str(existing_marker)
             report.elapsed_ms = int((time.monotonic() - started) * 1000)
+            # Drift detection still runs even on no-op re-installs: the
+            # consumer may have modified files locally since the last
+            # install, and we want the next `--force` invocation to
+            # surface that.
+            recorded_shas = prior_marker.get("installed_file_shas", {})
+            if isinstance(recorded_shas, dict):
+                report.warnings.extend(_detect_drift(target, recorded_shas))
             if lint:
                 report.warnings.extend(lint_installed_workflows(target))
             return report
+
+    # Drift detection BEFORE the copy loop (issue #202). Only meaningful
+    # when `force=True` AND a prior marker recorded SHAs — without those
+    # SHAs we have nothing to compare against. Drift is advisory: the
+    # install proceeds; the warning tells the user their local change
+    # is about to be overwritten.
+    recorded_shas = prior_marker.get("installed_file_shas", {})
+    if force and isinstance(recorded_shas, dict) and recorded_shas:
+        report.warnings.extend(_detect_drift(target, recorded_shas))
 
     for rel in EXPECTED_PATHS:
         try:
@@ -440,8 +584,31 @@ def install_ci_config(
     _chmod_executable(EXECUTABLE_PATHS, target)
 
     # Write marker (overwrites on force, always succeeds idempotently).
+    # Record SHA-256 of every EXPECTED_PATHS file so the next install's
+    # drift-detection pass can identify locally-modified files (issue #202).
     marker = target / MARKER_REL
-    atomic_write_json(marker, _build_marker())
+    marker_payload = _build_marker()
+    new_shas: dict[str, str] = {}
+    for rel in EXPECTED_PATHS:
+        p = target / rel
+        if p.is_file():
+            try:
+                new_shas[rel] = _sha256_file(p)
+            except OSError:
+                # Unreadable file (permissions, race). Skip — better to
+                # under-record than to crash the install on transient
+                # FS errors.
+                continue
+    # Carry forward any prior SHAs for files we didn't touch (e.g.
+    # deleted locally). Preserves historical accuracy for files that
+    # vanish between installs without polluting with stale-but-current
+    # entries for newly-overwritten files.
+    if isinstance(prior_marker.get("installed_file_shas"), dict):
+        for rel, sha in prior_marker["installed_file_shas"].items():
+            if rel not in new_shas:
+                new_shas[rel] = sha
+    marker_payload["installed_file_shas"] = new_shas
+    atomic_write_json(marker, marker_payload)
     report.marker_path = str(marker)
 
     # Lint pass on installed workflows -- catches stale gate patterns and
