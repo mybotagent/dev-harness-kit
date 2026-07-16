@@ -24,6 +24,7 @@ import os
 import shutil
 import sys
 import time
+import yaml
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -951,6 +952,66 @@ _KNOWN_STALE_PATTERNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# Workflow files checked for `#`-inside-block-scalar anti-pattern
+# (issue #219 Bug 1). YAML literal block scalars (`if: |`) and folded
+# block scalars (`if: >`) treat every indented line, including `#`-prefixed
+# comments, as part of the expression string passed to GitHub's expression
+# parser. `#` is not valid in an expression, so the parser refuses to
+# compile the workflow -> startup failure on every push. The lint pass
+# scans each file's parsed YAML for `if:` blocks whose values contain
+# `#`-prefixed lines and reports the first such occurrence.
+_IF_BLOCK_SCALAR_WORKFLOWS: tuple[str, ...] = (
+    ".github/workflows/auto-fix-pr.yml",
+    ".github/workflows/review.yml",
+    ".github/workflows/ci.yml",
+)
+
+
+def _lint_if_block_scalar_hashes(content: str, rel: str) -> List[str]:
+    """Return one warning string per `#`-prefixed line inside any
+    `if: |` / `if: >` block scalar in `content`, else [].
+
+    The check is YAML-aware: only literal/folded block scalars under `if:`
+    (or `if` at any depth — e.g. `jobs.<name>.if`) count. `#` lines inside
+    `run:` shell-script blocks or `prompt:` markdown blocks are fine — those
+    go through bash / markdown parsers, not the GitHub expression parser.
+    """
+    out: List[str] = []
+    try:
+        doc = yaml.safe_load(content)
+    except yaml.YAMLError:
+        # A YAML syntax error in a workflow file is already surfaced by
+        # GitHub's UI; the lint pass is for the more subtle `#`-in-block
+        # pattern. Skip files that don't even parse as YAML.
+        return out
+
+    def _scan(node: object, path: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                child_path = f"{path}.{k}" if path else str(k)
+                if k == "if" and isinstance(v, str) and "\n" in v:
+                    bad = [
+                        ln for ln in v.splitlines()
+                        if ln.lstrip().startswith("#")
+                    ]
+                    if bad:
+                        out.append(
+                            f"{rel}: {child_path}: `#`-prefixed line inside "
+                            f"`if:` block scalar breaks GitHub Actions "
+                            f"expression parser (issue #219 Bug 1). "
+                            f"Move the comment ABOVE `if:`. "
+                            f"First offender: {bad[0]!r}"
+                        )
+                        return
+                _scan(v, child_path)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _scan(v, f"{path}[{i}]")
+
+    _scan(doc, "")
+    return out
+
+
 def lint_installed_workflows(target_dir: Path) -> List[str]:
     """Scan installed EXPECTED_PATHS for known-stale patterns.
 
@@ -973,6 +1034,15 @@ def lint_installed_workflows(target_dir: Path) -> List[str]:
             continue
         if needle in content:
             out.append(f"{rel}: {explain}")
+    for rel in _IF_BLOCK_SCALAR_WORKFLOWS:
+        p = target / rel
+        if not p.is_file():
+            continue
+        try:
+            content = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        out.extend(_lint_if_block_scalar_hashes(content, rel))
     return out
 
 
