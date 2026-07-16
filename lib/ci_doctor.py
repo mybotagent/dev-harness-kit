@@ -109,6 +109,33 @@ REQUIRED_FILES: tuple[str, ...] = (
 )
 
 
+# Consumer-only artifacts: present after a `ci-setup` install into a
+# downstream repo, but intentionally absent (or gitignored) in the dev-kit
+# plugin authoring source itself. In the source repo these are SKIP, not FAIL.
+CONSUMER_ONLY_FILES: frozenset[str] = frozenset({".dev-kit/ci-config.json"})
+CONSUMER_ONLY_SECRETS: frozenset[str] = frozenset({"DEV_KIT_GITHUB_TOKEN"})
+
+
+def _is_source_repo(target_dir: Path) -> bool:
+    """True iff `target_dir` is the dev-kit plugin authoring source.
+
+    Signal: `.claude-plugin/plugin.json` whose `name` is `dev-kit`. A
+    consumer that installed CI via `/dev-kit:bootstrap-full` never authors
+    this manifest, so its presence uniquely identifies the source repo.
+    Consumer-only artifacts (the `.dev-kit/ci-config.json` build marker,
+    the `DEV_KIT_GITHUB_TOKEN` PAT) are not applicable here — the source
+    repo's own CI uses the default `GITHUB_TOKEN` and needs no marker.
+    """
+    manifest = target_dir / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return False
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("name") == "dev-kit"
+
+
 def _detect_owner_repo(target_dir: Path) -> str:
     """Mirror ci_setup._detect_owner_repo — duplicated here to avoid
     importing the writer module for a read-only audit."""
@@ -162,21 +189,27 @@ def _list_repo_secrets(repo: str) -> tuple[set[str], str]:
         return set(), f"gh secret list error: {e}"
 
 
-def _check_required_files(target: Path) -> list[Check]:
+def _check_required_files(target: Path, source_repo: bool = False) -> list[Check]:
     out: list[Check] = []
     for rel in REQUIRED_FILES:
         p = target / rel
-        if not p.is_file():
-            out.append(Check(f"file present: {rel}", "FAIL", "missing"))
-        else:
+        if p.is_file():
             size = p.stat().st_size
             out.append(Check(f"file present: {rel}", "PASS", f"{size} bytes"))
+        elif source_repo and rel in CONSUMER_ONLY_FILES:
+            out.append(Check(f"file present: {rel}", "SKIP",
+                             "source repo: consumer marker not applicable"))
+        else:
+            out.append(Check(f"file present: {rel}", "FAIL", "missing"))
     return out
 
 
-def _check_marker_payload(target: Path) -> list[Check]:
+def _check_marker_payload(target: Path, source_repo: bool = False) -> list[Check]:
     marker = target / ".dev-kit" / "ci-config.json"
     if not marker.is_file():
+        if source_repo:
+            return [Check("marker parseable", "SKIP",
+                          "source repo: consumer marker not applicable")]
         return [Check("marker parseable", "FAIL", ".dev-kit/ci-config.json missing")]
     try:
         payload = json.loads(marker.read_text(encoding="utf-8"))
@@ -210,7 +243,8 @@ def _check_provider_file(target: Path) -> list[Check]:
     return [Check("provider file content", "PASS", raw)]
 
 
-def _check_secrets(target: Path, provider: str | None) -> list[Check]:
+def _check_secrets(target: Path, provider: str | None,
+                   source_repo: bool = False) -> list[Check]:
     repo = _detect_owner_repo(target)
     if not repo:
         return [Check("repo context", "SKIP", "no GitHub remote on origin")]
@@ -222,7 +256,10 @@ def _check_secrets(target: Path, provider: str | None) -> list[Check]:
     needed = cs.required_secrets_for_provider(provider)
     out: list[Check] = []
     for name in needed:
-        if name in secrets:
+        if source_repo and name in CONSUMER_ONLY_SECRETS:
+            out.append(Check(f"secret set: {name}", "SKIP",
+                             "source repo: PAT not required"))
+        elif name in secrets:
             out.append(Check(f"secret set: {name}", "PASS", ""))
         else:
             out.append(Check(f"secret set: {name}", "FAIL",
@@ -265,11 +302,15 @@ def audit(target_dir: Path, *, provider: str | None = None) -> DoctorReport:
         ])
     report = DoctorReport()
     report.checks.append(Check("target dir", "PASS", str(target)))
-    report.checks.extend(_check_required_files(target))
-    report.checks.extend(_check_marker_payload(target))
+    source_repo = _is_source_repo(target)
+    if source_repo:
+        report.checks.append(Check("repo role", "INFO",
+                                   "dev-kit source repo: consumer-only checks skipped"))
+    report.checks.extend(_check_required_files(target, source_repo))
+    report.checks.extend(_check_marker_payload(target, source_repo))
     report.checks.extend(_check_provider_file(target))
     report.checks.append(_check_gh_auth())
-    report.checks.extend(_check_secrets(target, provider))
+    report.checks.extend(_check_secrets(target, provider, source_repo))
     return report
 
 

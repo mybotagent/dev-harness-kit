@@ -167,6 +167,92 @@ class TestCiDoctor(unittest.TestCase):
         self.assertTrue(r.ok)
         self.assertEqual(len(r.failing()), 0)
 
+    # --- source-repo detection + consumer-only skip ---------------------
+
+    def _mark_source_repo(self, target: Path) -> None:
+        """Make `target` look like the dev-kit plugin authoring source:
+        a `.claude-plugin/plugin.json` naming this plugin `dev-kit`."""
+        (target / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        (target / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "dev-kit", "version": "0.0.0"}), encoding="utf-8"
+        )
+
+    def test_is_source_repo_true_for_dev_kit_manifest(self):
+        """`.claude-plugin/plugin.json` naming dev-kit ⇒ source repo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._mark_source_repo(target)
+            self.assertTrue(self.cd._is_source_repo(target))
+
+    def test_is_source_repo_false_for_consumer(self):
+        """A consumer install (no plugin manifest) is not the source repo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            self.assertFalse(self.cd._is_source_repo(target))
+
+    def test_is_source_repo_false_for_other_plugin(self):
+        """A different plugin's manifest is not the dev-kit source repo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            (target / ".claude-plugin").mkdir(parents=True)
+            (target / ".claude-plugin" / "plugin.json").write_text(
+                json.dumps({"name": "some-other-plugin"}), encoding="utf-8"
+            )
+            self.assertFalse(self.cd._is_source_repo(target))
+
+    def test_source_repo_skips_marker_rows(self):
+        """In the source repo, the missing consumer marker is SKIP not FAIL."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            # Source repo gitignores `.dev-kit/` — simulate its absence.
+            import shutil as _sh
+            _sh.rmtree(target / ".dev-kit")
+            self._mark_source_repo(target)
+            r = self.cd.audit(target)
+            marker_rows = [
+                c for c in r.checks
+                if "ci-config.json" in c.label or c.label.startswith("marker")
+            ]
+            self.assertTrue(marker_rows, "expected marker/config rows present")
+            self.assertTrue(
+                all(c.state == "SKIP" for c in marker_rows),
+                f"marker rows must be SKIP in source repo; got "
+                f"{[(c.label, c.state) for c in marker_rows]}",
+            )
+            self.assertFalse(
+                any("ci-config.json" in c.label and c.state == "FAIL"
+                    for c in r.checks),
+                "missing consumer marker must not FAIL in source repo",
+            )
+
+    def test_source_repo_skips_dev_kit_github_token_secret(self):
+        """In the source repo, DEV_KIT_GITHUB_TOKEN is not a required secret.
+
+        Provider API-key secrets are still required (source CI uses them),
+        so only the PAT row is skipped. Independent of gh availability:
+        the row must never be a FAIL asking to set DEV_KIT_GITHUB_TOKEN.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            self._mark_source_repo(target)
+            r = self.cd.audit(target)
+            pat_fail = [
+                c for c in r.checks
+                if "DEV_KIT_GITHUB_TOKEN" in c.label and c.state == "FAIL"
+            ]
+            self.assertEqual(
+                pat_fail, [],
+                "DEV_KIT_GITHUB_TOKEN must not FAIL in source repo",
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
