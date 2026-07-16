@@ -78,17 +78,51 @@ def _extract_gate_bash() -> str:
     return "\n".join(body).rstrip() + "\n"
 
 
-def _run_gate(r: str, s: str, event: str = "pull_request") -> subprocess.CompletedProcess:
-    """Execute the gate bash with R, S, EVENT_NAME env vars. Returns CompletedProcess."""
+def _run_gate(
+    r: str,
+    s: str,
+    event: str = "pull_request",
+    r_agent: str = "true",
+    s_agent: str = "true",
+    r_result: str = "success",
+    s_result: str = "success",
+) -> subprocess.CompletedProcess:
+    """Execute the gate bash with R, S, EVENT_NAME, agent_ran, result env vars.
+
+    Defaults model the "happy CI" state (agents ran, no failures), so existing
+    tests that pre-date the agent_ran = false hard-fail exercise the original
+    tolerance without false positives. New tests for the bootstrap-PR / silent-
+    skip case override `r_agent` or `s_agent` to "false".
+    """
     bash = _extract_gate_bash()
-    # Strip the `needs.<job>.outputs.verdict` interpolation lines -- they're
+    # Strip the `needs.<job>.outputs.X` interpolation lines -- they're
     # GitHub Actions expressions, not real bash. Replace with env-driven values.
     bash = bash.replace('R="${{ needs.review.outputs.verdict }}"', 'R="${R_OVERRIDE:-}"')
     bash = bash.replace('S="${{ needs.security.outputs.verdict }}"', 'S="${S_OVERRIDE:-}"')
+    bash = bash.replace(
+        'R_AGENT="${{ needs.review.outputs.agent_ran }}"',
+        'R_AGENT="${R_AGENT_OVERRIDE:-true}"',
+    )
+    bash = bash.replace(
+        'S_AGENT="${{ needs.security.outputs.agent_ran }}"',
+        'S_AGENT="${S_AGENT_OVERRIDE:-true}"',
+    )
+    bash = bash.replace(
+        'R_RESULT="${{ needs.review.result }}"',
+        'R_RESULT="${R_RESULT_OVERRIDE:-success}"',
+    )
+    bash = bash.replace(
+        'S_RESULT="${{ needs.security.result }}"',
+        'S_RESULT="${S_RESULT_OVERRIDE:-success}"',
+    )
     bash = bash.replace('EVENT="$EVENT_NAME"', 'EVENT="${EVENT_OVERRIDE:-pull_request}"')
     env = os.environ.copy()
     env["R_OVERRIDE"] = r
     env["S_OVERRIDE"] = s
+    env["R_AGENT_OVERRIDE"] = r_agent
+    env["S_AGENT_OVERRIDE"] = s_agent
+    env["R_RESULT_OVERRIDE"] = r_result
+    env["S_RESULT_OVERRIDE"] = s_result
     env["EVENT_OVERRIDE"] = event
     return subprocess.run(
         ["bash", "-c", bash],
@@ -98,23 +132,32 @@ def _run_gate(r: str, s: str, event: str = "pull_request") -> subprocess.Complet
 
 class TestSeverityGateTolerance(unittest.TestCase):
     """The contract: empty R or S defaults to Approve + ::warning:: in both
-    event modes. Pre-#44 the gate hard-failed on missing verdicts, which
-    broke any PR whose agent skipped (workflow-validation skip on the very
-    PR that ADDS .github/workflows/review.yml, action rate-limit, transient
-    network error). The fix mirrors the project's own .github/workflows/review.yml
-    (5d6c53e): the human gate (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR)
-    is what actually blocks merge, not a single missing agent verdict.
+    event modes WHEN agents actually ran. Pre-#44 the gate hard-failed on
+    missing verdicts, which broke any PR whose agent skipped (workflow-
+    validation skip on the very PR that ADDS .github/workflows/review.yml,
+    action rate-limit, transient network error). The fix mirrors the
+    project's own .github/workflows/review.yml (5d6c53e): the human gate
+    (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR) is what actually blocks
+    merge, not a single missing agent verdict.
+
+    BUT (issue #212-C1-fix): when anthropics/claude-code-action@v1 was
+    SKIPPED (a 0 claude-comment count means the action never ran, even
+    though the job's `result` is "success"), the previous tolerance
+    silently defaulted to Approve. That's the exact symptom this test
+    suite must guard against: agent_ran=false is the unambiguous signal
+    that the verdict is meaningless, and the gate must hard-fail in that
+    case regardless of event mode.
 
     Real review feedback (Changes Requested / Blocked) still exits 1.
     Unparseable verdicts (e.g. "Requested" truncation) exit 0 + ::warning::.
     """
 
     def test_pull_request_empty_R_empty_S_defaults_to_approve(self):
-        """Empty R AND empty S: default both to Approve + ::warning::, exit 0."""
+        """Empty R AND empty S (with agents ran): default both to Approve + ::warning::, exit 0."""
         cp = _run_gate(r="", s="", event="pull_request")
         self.assertEqual(
             cp.returncode, 0,
-            f"empty R/S in pull_request mode MUST default to Approve + ::warning:: (was hard-fail).\nstdout={cp.stdout}\nstderr={cp.stderr}",
+            f"empty R/S with agents_ran MUST default to Approve + ::warning:: (was hard-fail).\nstdout={cp.stdout}\nstderr={cp.stderr}",
         )
         self.assertIn("::warning::review verdict missing", cp.stdout)
         self.assertIn("::warning::security verdict missing", cp.stdout)
@@ -163,12 +206,66 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         self.assertIn("::warning::review verdict missing", cp.stdout)
 
+    # === Issue #212-C1-fix: agent skip detection ===
+
+    def test_review_agent_skipped_hard_fails(self):
+        """anthropics/claude-code-action@v1 skipped (PR touches .github/workflows/*).
+
+        The action exits 0 with a "workflow validation skip" warning; the job's
+        `result` is `success` (exit-0 mask). The previous gate saw verdict=empty
+        + result=success and silently defaulted to Approve. Issue #212-C1-fix:
+        the new `agent_ran=false` signal hard-fails with a remediation message.
+        The remediation message is written to stderr so GH Actions UI shows it
+        as an annotation -- that's why the assertion checks both streams.
+        """
+        cp = _run_gate(r="", s="Approve", event="pull_request", r_agent="false")
+        self.assertEqual(
+            cp.returncode, 1,
+            f"agent_ran=false MUST hard-fail (was Approve default).\nstdout={cp.stdout}\nstderr={cp.stderr}",
+        )
+        combined = cp.stdout + cp.stderr
+        self.assertIn("::error::review+security gate: AI agent was skipped", combined)
+        self.assertIn("anthropics/claude-code-action@v1 refused", combined)
+
+    def test_security_agent_skipped_hard_fails(self):
+        cp = _run_gate(r="Approve", s="", event="pull_request", s_agent="false")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        combined = cp.stdout + cp.stderr
+        self.assertIn("::error::review+security gate: AI agent was skipped", combined)
+
+    def test_both_agents_skipped_hard_fails(self):
+        cp = _run_gate(r="", s="", event="pull_request", r_agent="false", s_agent="false")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        combined = cp.stdout + cp.stderr
+        # Even with both verdicts empty, the "agent skipped" check fires
+        # BEFORE the empty-verdict tolerance to surface the bootstrap-PR
+        # scenario specifically (issue #212-C1).
+        self.assertIn("AI agent was skipped", combined)
+        # The empty-verdict warnings are SKIPPED in favor of the hard-fail
+        # so the user gets a single, unambiguous error.
+        self.assertNotIn("::warning::review verdict missing", combined)
+
+    def test_agent_skip_with_real_verdicts_still_hard_fails(self):
+        """agent_ran=false + verdict=Approve still hard-fails.
+
+        A real verdict on a skipped run is impossible (the action never ran
+        to produce a comment). But in practice a previous run's track_progress
+        comment may still be on the PR — that comment is stale w.r.t. the
+        current diff. Hard-fail regardless of verdict to avoid attributing
+        old analysis to a new run.
+        """
+        cp = _run_gate(r="Approve", s="Approve", event="pull_request", r_agent="false")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertIn("AI agent was skipped", cp.stdout + cp.stderr)
+
     def test_extracted_bash_is_nonempty(self):
         """Sanity: the extractor actually returns bash, not a header."""
         bash = _extract_gate_bash()
         self.assertIn("R=", bash)
         self.assertIn("S=", bash)
         self.assertIn("EVENT=", bash)
+        self.assertIn("R_AGENT=", bash, "R_AGENT env var must be referenced in gate")
+        self.assertIn("S_AGENT=", bash, "S_AGENT env var must be referenced in gate")
         self.assertNotIn("run:", bash, "extractor must strip the run: | header")
 
 
