@@ -17,7 +17,7 @@ disable-model-invocation: false
 
 ## Iron Law
 
-**0-arg default OK; `--force` is the only visible flag. Hidden flags: `--target DIR`, `--skip-verify`. Never modifies the dev-kit repo (only writes into target). `dev-kit:build` will refuse to start without the `.dev-kit/ci-config.json` marker this skill writes.**
+**0-arg default OK; `--force` and `--setup-secrets` are the visible flags. Hidden flags: `--target DIR`, `--skip-verify`, `--provider NAME`. Never modifies the dev-kit repo (only writes into target). `dev-kit:build` will refuse to start without the `.dev-kit/ci-config.json` marker this skill writes.**
 
 The skill surfaces **lint warnings** (non-fatal) via `lib/ci_setup.py:lint_installed_workflows()`. Warnings flag known-stale patterns in previously-installed workflows -- e.g. the pre-0.1.3 gate in `templates/ci/.github/workflows/review.yml` that hard-failed in `pull_request` mode on missing verdicts while defaulting to Approve in `workflow_dispatch` mode (an internal inconsistency that produced spurious CI failures whenever the `/dev-kit:*` agents skipped posting a verdict comment). Warnings never block the install; the user acts on them by re-running with `--force` to refresh the template.**
 
@@ -25,10 +25,11 @@ The skill surfaces **lint warnings** (non-fatal) via `lib/ci_setup.py:lint_insta
 
 ### Phase 1 — Detect (deterministic, no LLM call)
 
-1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--skip-verify` skips Phase 3.
+1.1. Parse arguments: `--target DIR` defaults to `$PWD`; `--force` overwrites existing files; `--setup-secrets` prompts for and configures required repo secrets via `gh secret set` (issue #212-B1/B2/B3); `--skip-verify` skips Phase 3.
 1.2. Check `python3 ≥ 3.10` (dev-kit requirement).
 1.3. **Delegate presence short-circuit to `lib/ci_setup.py:install_ci_config()`** — it reads the existing marker and returns a no-op `InstallReport` (all paths in `skipped`, no files touched, marker not rewritten) when the marker AND every `EXPECTED_PATHS` file already exist AND `force=False`. The skill body surfaces this as "already installed; pass `--force` to refresh" and exits 0. No version comparison — content presence is the only check.
 1.4. Probe target prerequisites: `.git/` (warn if absent — CI is git-themed), `.github/` (create if absent).
+1.5. The lib **hard-verifies** `.dev-kit/ci-config.json` after write (issue #212-A3/E1): round-trip JSON parse + non-empty dict. An empty / corrupt / zero-byte marker is reported as `errors` rather than swallowed silently and breaking `/dev-kit:build`'s pre-flight gate later.
 
 ### Phase 2 — Install (via `lib/ci_setup.py`)
 
@@ -105,6 +106,18 @@ skill prints the canonical 5-step checklist (see lib/ci_setup.py:POST_INSTALL_CH
 OWNER/REPO is auto-filled from `git remote get-url origin` if a remote is
 configured; otherwise the literal placeholder is shown so the user can
 edit it. The checklist NEVER blocks -- it is guidance only.
+
+### Phase 4b -- Optional secrets setup (`--setup-secrets`, issue #212-B1/B2/B3)
+
+When `--setup-secrets` is passed, after the marker is written the skill:
+
+1. Reads the provider from `.github/ci-review-provider.txt` (default `minimax`).
+2. Calls `lib/ci_setup.py:required_secrets_for_provider()` to enumerate the secrets required for that provider (`DEV_KIT_GITHUB_TOKEN` + the provider's API key).
+3. Prompts the user, one secret at a time, using AskUserQuestion. Reads the value from stdin (no echo). Never writes the value to disk or logs it.
+4. Calls `lib/ci_setup.py:set_repo_secrets()` to invoke `gh secret set NAME --repo OWNER/REPO` for each. Reports `OK` / `WARN` per secret.
+5. If any secret fails to set (no `gh`, not authenticated, repo not reachable), prints the missing `gh secret set` commands from the checklist so the user can paste them manually.
+
+The install is considered successful even if `gh secret set` fails — secrets are an external precondition the user can satisfy later. The report's `warnings` (not `errors`) surface the failure so the user knows.
 
 ## Rules
 

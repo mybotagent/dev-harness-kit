@@ -82,6 +82,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
+      agent_ran: ${{ steps.extract_verdict.outputs.agent_ran }}
     permissions:
       contents: read
       pull-requests: write
@@ -278,6 +279,7 @@ jobs:
           if [ "${{ steps.fallback.outputs.needs_fallback }}" = "true" ]; then
             echo "review_verdict=Approve (fallback: PR modifies workflow files)"
             echo "verdict=Approve" >> "$GITHUB_OUTPUT"
+            echo "agent_ran=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
@@ -285,8 +287,20 @@ jobs:
             | grep -E 'Verdict: (Approve|Blocked|Changes Requested)' | tail -1 \
             | grep -oE 'Verdict:[[:space:]]*(Approve|Blocked|Changes Requested)' \
             | sed -E 's/.*Verdict:[[:space:]]*//' || true)"
-          echo "review_verdict=${verdict:-<none>}"
+          # Issue #212-C1-fix: detect anthropics/claude-code-action@v1 skip.
+          # A 0 claude-count means the action skipped (workflow validation);
+          # `agent_ran=false` tells the gate to hard-fail with the
+          # bootstrap-PR remediation message — the previous tolerance
+          # silently masked this as Approve.
+          claude_count=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select((.user.login // "") | startswith("claude"))] | length')
+          agent_ran="false"
+          if [ "$claude_count" -gt 0 ]; then
+            agent_ran="true"
+          fi
+          echo "review_verdict=${verdict:-<none>}  claude_comments=${claude_count}  agent_ran=${agent_ran}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
 
   security:
     # See review-job comment above; same fork-safety contract.
@@ -298,6 +312,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
+      agent_ran: ${{ steps.extract_verdict.outputs.agent_ran }}
     permissions:
       contents: read
       pull-requests: write
@@ -490,6 +505,7 @@ jobs:
           if [ "${{ steps.fallback.outputs.needs_fallback }}" = "true" ]; then
             echo "security_verdict=Approve (fallback: PR modifies workflow files)"
             echo "verdict=Approve" >> "$GITHUB_OUTPUT"
+            echo "agent_ran=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
@@ -497,8 +513,19 @@ jobs:
             | grep -E 'Verdict: (Approve|Blocked|Changes Requested)' | tail -1 \
             | grep -oE 'Verdict:[[:space:]]*(Approve|Blocked|Changes Requested)' \
             | sed -E 's/.*Verdict:[[:space:]]*//' || true)"
-          echo "security_verdict=${verdict:-<none>}"
+          # Issue #212-C1-fix: same skip-detector as review extract. A 0
+          # claude-count means anthropics/claude-code-action@v1 skipped due
+          # to workflow validation; agent_ran=false tells the gate to
+          # hard-fail with the bootstrap-PR remediation message.
+          claude_count=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select((.user.login // "") | startswith("claude"))] | length')
+          agent_ran="false"
+          if [ "$claude_count" -gt 0 ]; then
+            agent_ran="true"
+          fi
+          echo "security_verdict=${verdict:-<none>}  claude_comments=${claude_count}  agent_ran=${agent_ran}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
 
   gate:
     # Severity gate: same fork-safety guard. Pull from job outputs --
@@ -532,19 +559,89 @@ jobs:
           # This is robust: no fragile comment-body matching required.
           R="${{ needs.review.outputs.verdict }}"
           S="${{ needs.security.outputs.verdict }}"
+          # agent_ran: false when anthropics/claude-code-action@v1 SKIPPED
+          # the run due to workflow-validation. Set by the 'Extract <skill>
+          # verdict' post-step based on whether any claude-prefixed comment
+          # exists on the PR. The action skips silently on PRs that touch
+          # .github/workflows/* (and on bootstrap-PRs that add the file).
+          R_AGENT="${{ needs.review.outputs.agent_ran }}"
+          S_AGENT="${{ needs.security.outputs.agent_ran }}"
+          # Job-level results: success | failure | cancelled | skipped.
+          # Issue #212-C1: if the upstream agent job FAILED, the empty
+          # verdict is "agent never ran" (e.g. DEV_KIT_GITHUB_TOKEN missing,
+          # action rate-limit, install error), NOT "agent ran and gave
+          # no severity". Distinct failure mode → distinct gate behavior:
+          # hard-fail (exit 1) so the install problem surfaces instead of
+          # being papered over by the Approve default.
+          R_RESULT="${{ needs.review.result }}"
+          S_RESULT="${{ needs.security.result }}"
           EVENT="$EVENT_NAME"
-          echo "review=$R  security=$S"
+          echo "review=$R (result=$R_RESULT, agent_ran=$R_AGENT)"
+          echo "security=$S (result=$S_RESULT, agent_ran=$S_AGENT)"
 
-          # Tolerate missing verdicts in BOTH event modes. The previous
-          # strict pull_request branch hard-failed on empty R or S, which
-          # broke any PR whose agent skipped (workflow-validation skip on
+          # Issue #212-C1-fix: anthropics/claude-code-action@v1 exits 0 with
+          # a "workflow validation skip" warning when the PR's head differs
+          # from the default branch under .github/workflows/*. Result is
+          # "success" (the action's exit-0 mask), but the agent never ran —
+          # `agent_ran=false` is the unambiguous signal. Defaulting to
+          # Approve on empty verdict in this case masked the skip as a
+          # silent pass (the bootstrap-PR / PR-modifies-workflow scenario).
+          # Hard-fail with a remediation message so the user knows to merge
+          # the workflow change first and re-push from a clean branch.
+          if [ "$R_AGENT" = "false" ] || [ "$S_AGENT" = "false" ]; then
+            {
+              echo "::error::review+security gate: AI agent was skipped"
+              echo "  review.agent_ran=$R_AGENT verdict=$R"
+              echo "  security.agent_ran=$S_AGENT verdict=$S"
+              echo
+              echo "  anthropics/claude-code-action@v1 refused to run on this PR."
+              echo "  The action refuses any PR whose head differs from the"
+              echo "  default branch under .github/workflows/*. Result is"
+              echo "  success (exit-0), but no claude[bot] comment was posted"
+              echo "  -- the 'Approve' verdict in the gate was the empty-verdict"
+              echo "  tolerance, NOT an actual AI review."
+              echo
+              echo "  Fix:"
+              echo "    1. Merge this PR's workflow changes to main first."
+              echo "    2. Re-open or sync from the updated default branch."
+              echo "    3. Future PRs (without workflow modifications) will run"
+              echo "       the agent normally and post real verdicts + inline"
+              echo "       comments."
+            } >&2
+            exit 1
+          fi
+
+          # Hard-fail gate if EITHER upstream job actually failed (not
+          # skipped/cancelled). An empty verdict + failure result is the
+          # canonical "install is broken" signature from issue #212.
+          if [ "$R_RESULT" = "failure" ] || [ "$S_RESULT" = "failure" ]; then
+            {
+              echo "::error::review+security gate: upstream agent job failed"
+              echo "  review.result=$R_RESULT verdict=$R"
+              echo "  security.result=$S_RESULT verdict=$S"
+              echo
+              echo "  This means the /dev-kit:* agent never produced a verdict,"
+              echo "  most often because one of:"
+              echo "    - DEV_KIT_GITHUB_TOKEN secret missing or expired"
+              echo "    - MINIMAX_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY missing"
+              echo "    - dev-kit plugin install failed (see 'Install dev-kit plugin' step)"
+              echo "    - anthropics/claude-code-action@v1 rate-limit / transient network error"
+              echo
+              echo "  The severity gate does NOT default to Approve on failure"
+              echo "  (that would mask install bugs -- issue #212-C1)."
+            } >&2
+            exit 1
+          fi
+
+          # Tolerate missing verdicts in BOTH event modes WHEN the upstream
+          # job actually succeeded / was skipped (workflow-validation skip on
           # the very PR that ADDS .github/workflows/review.yml, action
-          # rate-limit, transient network error). The fix: default to
-          # Approve + ::warning:: in both modes so the human gate
+          # rate-limit masked by success, transient network error). The
+          # fix: default to Approve + ::warning:: so the human gate
           # (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR) is what
           # actually blocks merge, not a single missing agent verdict.
-          [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT); defaulting to Approve"; R="Approve"; }
-          [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT); defaulting to Approve"; S="Approve"; }
+          [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT, result=$R_RESULT); defaulting to Approve"; R="Approve"; }
+          [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT, result=$S_RESULT); defaulting to Approve"; S="Approve"; }
 
           # worst-of wins
           rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
