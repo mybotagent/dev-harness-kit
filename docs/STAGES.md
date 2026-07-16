@@ -17,7 +17,7 @@
 - **Goal**: Replicate dev-kit's CI shape (workflows + pre-push hook + local runner) into the target repo. One-command CI parity.
 - **Must**: (a) Idempotent install via `.dev-kit/ci-config.json` marker. (b) Mirror of `.githooks/pre-push` + 3 GitHub Actions workflows. (c) `validate.py` extracted from dev-kit's own `ci.yml` 5-step validate job. (d) `--force` flag for refresh; otherwise refuse overwrite.
 - **Must-Not**: Modify dev-kit's own repo. Drop the marker. Delete user-created files in target.
-- **AC**: All 8 expected files exist post-install. `python3 scripts/validate.py` exits 0. `.dev-kit/ci-config.json` has correct schema.
+- **AC**: All 15 expected files exist post-install (3 workflows + 4 scripts + 5 worktree-rule files + pre-push + .claude/rules/git-workflow.md + tests). `python3 scripts/validate.py` exits 0. `.dev-kit/ci-config.json` has correct schema.
 - **Active Skills**: `ci-setup` (0-arg orchestrator; hidden `--force`, `--target DIR`)
 - **Active Hooks**: same as Bootstrap (`secret-scan`=read-only)
 - **Hand-off out**: gates `build` via marker file
@@ -28,7 +28,7 @@
 - **Must**: 5 gates (frame → validate → non-goals → decompose → emit) in **one Ralph loop, safety_valve=8** (MUST-15). The `validate` gate fuses the old evidence / diff-profit / socratic gates into one composite convergence test: `evidence_count >= 3` AND `value_score = LTV × reachable_users / cost >= 3.0` AND `ambiguity_score <= 3`. Phase index.json written via `lib/execute.py:register_step()` so every step carries an explicit `status` (`unimplemented` → `pending` → `in_progress` → `completed`, plus `error` / `blocked` for runtime).
 - **Must-Not**: Write code, build, or deploy. Write artifacts other than PRD.md + phases/ + .prd/ + .dev-kit/hand-off/. Set runtime-only statuses (`in_progress`, `completed`, `error`, `blocked`) — those belong to harness-runner. Run the old 5-question grill-me (replaced by the ambiguity loop).
 - **AC**: PRD.md 6-section DoD pass. `phases/<name>/step<N>.md` 4 fields (must-read / instruction / AC / Don't). `phases/<name>/index.json` schema valid. `value_score >= 3.0` AND `ambiguity_score <= 3` OR `loop-log.json` shows `status: held` + user acknowledgement. `loop-log.json` narrowing appended per cycle.
-- **Active Skills**: `plan` (self-contained, formerly `plan-ralph`)
+- **Active Skills**: `plan` (self-contained)
 - **Active Hooks**: `stop-verify`=ON. `slop-detector`=OFF (planning doc allowed). Others OFF.
 - **Hand-off out**: `plan→build.md`
 
@@ -50,7 +50,7 @@
 - **Must-Not**: Skip verifier pass. Report unverified critical.
 - **AC**: PR summary `**Verdict:**` + sorted inline findings. Per-severity count.
 - **Active Skills**: `review`
-- **Active Hooks**: `slop-detector`, `secret-scan`, `stop-verify` = ON. `review-pre-commit` (git) + `dev-kit-review.yml` (CI).
+- **Active Hooks**: `slop-detector`, `secret-scan`, `stop-verify` = ON. Review/security verdict gates run via `.github/workflows/review.yml` (CI).
 - **Hand-off out**: `review→ship.md`
 
 ## Stage 5b — Security (`/dev-kit:security`)
@@ -118,7 +118,7 @@
 - **Goal**: Asset freshness eval (CLAUDE.md / skill / hook / Iron Law).
 - **Must**: 4-axis score (semantic_drift / completeness / correctness / consistency). 2-judge cross-check.
 - **AC**: ≥ 8 OK. < 5 ROT → CI fail.
-- **Active Skills**: `audit-eval`, `audit-a2a` (Phase 3)
+- **Active Skills**: `eval` (3 dims: review, security, plan; cross-cutting agent-behavior rubrics)
 
 ## Cross-cutting — Repair (`/dev-kit:repair`)
 

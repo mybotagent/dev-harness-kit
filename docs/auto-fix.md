@@ -43,11 +43,11 @@ The workflow is **enabled by default** in this repo. To disable for a specific P
 ```
 REVIEW BODY (top-level):
   "PR #12 makes a clean, useful refactor... Two 🟠 majors block merge:
-   1. skills/plan-ralph/SKILL.md:4 description still has Korean...
+   1. skills/plan/SKILL.md:4 description still has Korean...
    2. .claude/rules/test-files.md:6 path **/tests/** matches Python..."
 
 INLINE COMMENTS (file:line → note):
-  "skills/plan-ralph/SKILL.md:4: Korean description contradicts..."
+  "skills/plan/SKILL.md:4: Korean description contradicts..."
   ".claude/rules/test-files.md:6: **/tests/** path matches Python..."
 
 RULES:
