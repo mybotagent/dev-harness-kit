@@ -225,28 +225,6 @@ def new_session_state(
     }
 
 
-def new_pr_state(
-    *,
-    pr_number: int,
-    repository: str,
-    branch: str,
-    thresholds: Optional[Dict[str, float]] = None,
-) -> Dict[str, Any]:
-    th = thresholds or resolve_thresholds()
-    return {
-        "schema_version": STATE_SCHEMA_VERSION,
-        "scope": "pr",
-        "scope_id": f"pr-{pr_number}",
-        "repository": repository,
-        "branch": branch,
-        "thresholds_usd": dict(th),
-        "totals": dict(DEFAULT_TOTAL),
-        "sessions": [],
-        "status": "ok",
-        "warn_emitted": False,
-        "cursor": {"transcript_path": "", "byte_offset": 0, "seen_ids": []},
-        "warnings": [],
-    }
 
 
 def load_state(path: Path) -> Optional[Dict[str, Any]]:
@@ -274,10 +252,6 @@ def default_state_path(cwd: str) -> Path:
     return Path(cwd) / ".dev-kit" / ".cost-gate" / "state.json"
 
 
-def env_state_path() -> Optional[Path]:
-    """Override state path via DEV_KIT_COST_GATE_STATE (test helper)."""
-    raw = os.environ.get("DEV_KIT_COST_GATE_STATE")
-    return Path(raw) if raw else None
 
 
 # ---------------------------------------------------------------------------

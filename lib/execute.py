@@ -162,7 +162,6 @@ def update_step_status(
                 s["completed_at"] = now
                 if duration_seconds is None and "started_at" in s:
                     try:
-                        from datetime import datetime
                         started = datetime.fromisoformat(s["started_at"])
                         finished = datetime.fromisoformat(now)
                         duration_seconds = max(0.0, (finished - started).total_seconds())

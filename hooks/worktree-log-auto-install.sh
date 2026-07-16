@@ -47,35 +47,6 @@ case "$CMD" in
   *) exit 0 ;;
 esac
 
-# Walk argv-style tokens. The new worktree path is the first positional
-# arg after `git worktree add <flags>`. We collect --flag and --flag=value
-# pairs to skip them, then take the first non-flag arg as the path.
-NEW_WT=""
-SKIP_NEXT=0
-for tok in $CMD; do
-  if [[ "$SKIP_NEXT" -eq 1 ]]; then
-    SKIP_NEXT=0
-    continue
-  fi
-  case "$tok" in
-    --*)  SKIP_NEXT=1 ;;       # --detach, --checkout, --force, --lock
-    -*)   ;;                  # short flags (-b, -B, etc.) handled with value
-    *)
-      # First non-flag token after `git` is `worktree`, skip.
-      if [[ -z "$NEW_WT" ]]; then
-        # But we have to skip past `git` and `worktree` and `add` first.
-        # Simpler: look for the FIRST token after `add` that looks like
-        # a path. We do that by tracking the parse state.
-        :
-      fi
-      ;;
-  esac
-done
-
-# The state machine above is too coarse. Use a cleaner split:
-# Take everything after `git worktree add` and split into tokens. The
-# NEW worktree path is the first token that is not a flag and not
-# `add`'s branch argument.
 REST="${CMD#*git worktree add }"
 # Strip leading flags. A flag is `--word[=val]` or `-X val`/`-Xval`.
 # Easier: just find the first arg without leading `-` AND not equal to
