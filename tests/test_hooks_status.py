@@ -55,15 +55,15 @@ class TestHooksStatus(unittest.TestCase):
         expected = {
             "PreToolUse": {
                 "tdd-guard.sh", "worktree-guard.sh", "bash-guard.sh",
-                "git-guard.sh", "cost-gate.sh",
+                "git-guard.sh",
             },
             "UserPromptSubmit": {"task-detector.sh", "worktree-auto-cut.sh"},
             "SessionStart": {
-                "session-start-check.sh", "log-on-session-start.sh", "cost-gate.sh",
+                "session-start-check.sh", "log-on-session-start.sh",
             },
             "PostToolUse": {
                 "secret-scan.sh", "slop-detector.sh",
-                "worktree-log-auto-install.sh", "cost-gate.sh",
+                "worktree-log-auto-install.sh",
             },
             "Stop": {"stop-verify.sh"},
         }

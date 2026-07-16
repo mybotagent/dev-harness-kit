@@ -1,12 +1,12 @@
 ---
 name: cost-gate
 category: audit
-description: 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost gate can aggregate.
+description: 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost flag can aggregate.
 when_to_use:
   - User types /dev-kit:cost-gate
-  - User wants to know the running session's cost before it hits the kill threshold
+  - User wants to know the running session's cost before it hits the warn threshold
   - User is about to commit on a PR branch and needs the Cost-gate trailer
-  - User suspects a session is approaching the runaway-prevention boundary
+  - User wants visibility into per-session spend without leaving the terminal
 allowed-tools: Read Bash
 disallowed-tools: Write Edit
 model: haiku
@@ -14,19 +14,19 @@ user-invocable: true
 disable-model-invocation: true
 ---
 
-# /dev-kit:cost-gate -- preemptive cost-gate status
+# /dev-kit:cost-gate -- read-only cost measurement
 
 Inspect the **live** cost state for the current session. Distinct from
 `/dev-kit:token-analyzer` (which is post-hoc over historical JSONL logs).
-The cost-gate runs during the session itself; this skill is the human
-read-only window into its running ledger.
+The cost-gate is observed via this skill during the session itself; it is
+**read-only** and never blocks tool calls. There is no cost hook.
 
 ## What it does
 
 1. Read the live state file at `$CWD/.dev-kit/.cost-gate/state.json`
    (overridable via `DEV_KIT_COST_GATE_STATE`).
-2. Print the running cost, threshold distance, and status (`ok` / `warn`
-   / `kill`) in plain text.
+2. Print the running cost, threshold distance, and status (`ok` / `warn`)
+   in plain text.
 3. Emit the exact two-line git-trailer block the user (or the agent) can
    copy into a commit message so the PR-level aggregator picks it up:
 
@@ -59,9 +59,8 @@ The underlying CLI accepts:
 | `--footer` | _(off)_ | Two-line git trailer for commit messages |
 | `--aggregate-pr --bodies-file PATH` | _(off)_ | Aggregate Cost-gate trailers across PR commits |
 
-Threshold overrides (env): `DEV_KIT_COST_WARN_USD`, `DEV_KIT_COST_KILL_USD`,
-`DEV_KIT_PR_COST_FLAG_USD`. Defaults: session warn $5, session kill $10,
-PR flag $20.
+Threshold overrides (env): `DEV_KIT_COST_WARN_USD`,
+`DEV_KIT_PR_COST_FLAG_USD`. Defaults: session warn $5, PR flag $20.
 
 ## Output (default text)
 
@@ -70,7 +69,7 @@ scope: session  scope_id: sess-abc
 status: warn    cost_usd: $5.42
 sessions: 1  actual=1  estimated=0
 input=12450  output=2100  cache_read=89000
-session_warn: $5.00  session_kill: $10.00  pr_flag: $20.00
+session_warn: $5.00  pr_flag: $20.00
 warnings: ['cost $5.42 >= warn $5.00']
 state_path: /Users/.../dev-harness-kit/.dev-kit/.cost-gate/state.json
 ```
@@ -78,7 +77,7 @@ state_path: /Users/.../dev-harness-kit/.dev-kit/.cost-gate/state.json
 ## Hand-off
 
 The trailer block printed by `--footer` is the input the PR-level cost
-gate (`.github/workflows/cost-flag.yml`) aggregates. If the user commits
+flag (`.github/workflows/cost-flag.yml`) aggregates. If the user commits
 on a PR branch, append the two lines to the commit body so the
 aggregator picks them up:
 
@@ -93,17 +92,13 @@ the maximum cumulative value per session.
 
 - **Read-only.** This skill does not modify state. The CLI prints; it
   does not write.
+- **No blocking.** The cost-gate is observed only. There is no hook and
+  no `session_kill` threshold; the cost-gate cannot deny a tool call.
 - **Quote the summary line.** The CLI prints `scope=... status=...
   cost_usd=...` on success. Copy that line verbatim into the
   conversation so the user can audit without re-running.
-- **Stdout vs stderr contract.** The status summary goes to stdout. The
-  hook (cost-gate.sh) is advisory only — it never emits a deny JSON. At
-  warn level it prints an `additionalContext` line to stdout via the
-  PreToolUse hook so operators get visibility; the kill threshold is a
-  stronger advisory that escalates to warn with the threshold crossed in
-  the reason string but still never blocks tool calls. This skill never
-  emits a deny because it runs after the session has stopped, when state
-  is settled.
+- **Stdout vs stderr contract.** The status summary goes to stdout. This
+  skill never emits a deny JSON or non-zero exit code for high cost.
 
 ## Related
 
@@ -111,8 +106,6 @@ the maximum cumulative value per session.
 - `lib/cost_gate.py` -- pricing table, transcript scanner, threshold
   evaluation, footer parsing, PR aggregation. Independent of
   `tools/token_efficiency_analyzer.py`.
-- `hooks/cost-gate.sh` -- the live PreToolUse/PostToolUse/SessionStart
-  hook that maintains the state this skill reads.
 - `.github/workflows/cost-flag.yml` -- PR-level aggregator that applies
   the `cost-flag` label when cumulative cost exceeds $20.
 

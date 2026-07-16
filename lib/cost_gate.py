@@ -1,4 +1,10 @@
-"""cost_gate.py — preemptive + real-time cost gate library.
+"""cost_gate.py — cost measurement library (read-only display).
+
+Cost is observed and aggregated; it is never used to block tool calls. The
+subsystem is a measurement library: pricing, transcript scanning, state
+I/O, threshold evaluation, footer parsing, and PR aggregation. There is no
+hook driver — the only consumer is the read-only /dev-kit:cost-gate skill
+(via tools/cost_gate_status.py).
 
 Independent of the post-hoc dashboard (different pricing table, different
 state file, different transcript scanner). Owns its own pricing tiers,
@@ -23,7 +29,7 @@ Heuristic tool-token estimates (when transcript usage is absent):
     Bash/Grep/Glob=3000, Write/Edit/MultiEdit=2000, other=3000
     Costed as 85% input / 15% output.
 
-Thresholds: session_warn=$5, session_kill=$10, pr_flag=$20.
+Thresholds: session_warn=$5, pr_flag=$20.
 """
 from __future__ import annotations
 
@@ -32,7 +38,6 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -125,7 +130,6 @@ def cost_usd(
 
 DEFAULT_THRESHOLDS = {
     "session_warn": 5.0,
-    "session_kill": 10.0,
     "pr_flag": 20.0,
 }
 
@@ -146,7 +150,6 @@ def resolve_thresholds(env: Optional[Dict[str, str]] = None) -> Dict[str, float]
         env = os.environ
     return {
         "session_warn": _env_threshold("DEV_KIT_COST_WARN_USD", DEFAULT_THRESHOLDS["session_warn"]),
-        "session_kill": _env_threshold("DEV_KIT_COST_KILL_USD", DEFAULT_THRESHOLDS["session_kill"]),
         "pr_flag":      _env_threshold("DEV_KIT_PR_COST_FLAG_USD", DEFAULT_THRESHOLDS["pr_flag"]),
     }
 
@@ -154,18 +157,13 @@ def resolve_thresholds(env: Optional[Dict[str, str]] = None) -> Dict[str, float]
 def evaluate_status(cost_usd_value: float, thresholds: Dict[str, float]) -> Tuple[str, List[str]]:
     """Compute status (ok/warn) and a list of human-readable reasons.
 
-    The historical 'kill' branch was removed: the cost-gate is advisory
-    only. When cost crosses session_kill we escalate to warn with the
-    threshold crossed in the reason, but the hook never denies.
+    Cost is observed, not enforced: status reflects the warn threshold
+    crossing only. There is no kill status — the cost-gate hook is
+    removed, so nothing depends on this status for blocking.
     """
     reasons: List[str] = []
     if cost_usd_value >= thresholds["session_warn"]:
         reasons.append(f"cost ${cost_usd_value:.2f} >= warn ${thresholds['session_warn']:.2f}")
-        if cost_usd_value >= thresholds["session_kill"]:
-            reasons.append(
-                f"cost ${cost_usd_value:.2f} >= kill ${thresholds['session_kill']:.2f} "
-                f"(advisory — gate does not block)"
-            )
         return "warn", reasons
     return "ok", reasons
 
@@ -463,7 +461,7 @@ def format_text(state: Dict[str, Any], state_path: Path) -> str:
         f"status: {state.get('status', 'ok')}  cost_usd: ${float(totals.get('cost_usd', 0.0)):.2f}",
         f"sessions: {len(sessions)}  actual={actual_n}  estimated={est_n}",
         f"input={totals.get('input_tokens', 0)}  output={totals.get('output_tokens', 0)}  cache_read={totals.get('cache_read_input_tokens', 0)}",
-        f"session_warn: ${th.get('session_warn', 0):.2f}  session_kill: ${th.get('session_kill', 0):.2f}  pr_flag: ${th.get('pr_flag', 0):.2f}",
+        f"session_warn: ${th.get('session_warn', 0):.2f}  pr_flag: ${th.get('pr_flag', 0):.2f}",
         f"warnings: {state.get('warnings', [])}",
         f"state_path: {state_path}",
     ]
@@ -476,7 +474,7 @@ def format_html(state: Dict[str, Any], state_path: Path) -> str:
     th = state.get("thresholds_usd") or DEFAULT_THRESHOLDS
     sessions = state.get("sessions") or []
     status = state.get("status", "ok")
-    bg = {"ok": "#0a3d0a", "warn": "#7a5a00", "kill": "#7a0000"}.get(status, "#333")
+    bg = {"ok": "#0a3d0a", "warn": "#7a5a00"}.get(status, "#333")
     fg = "#fff"
     rows = "".join(
         f"<tr><td>{s.get('session_id','')}</td><td>{s.get('model','')}</td>"
@@ -492,8 +490,7 @@ def format_html(state: Dict[str, Any], state_path: Path) -> str:
         f".banner{{background:{bg};color:{fg};padding:8px 14px;border-radius:6px;}}</style>"
         f"</head><body><div class='banner'>status: {status} — "
         f"${float(totals.get('cost_usd', 0)):.2f} "
-        f"(warn ${th.get('session_warn',0):.2f}, "
-        f"kill ${th.get('session_kill',0):.2f})</div>"
+        f"(warn ${th.get('session_warn',0):.2f})</div>"
         f"<h2>Totals</h2><ul>"
         f"<li>input_tokens: {totals.get('input_tokens',0)}</li>"
         f"<li>output_tokens: {totals.get('output_tokens',0)}</li>"

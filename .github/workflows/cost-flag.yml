@@ -80,7 +80,7 @@ jobs:
               "scope_id": f"pr-{os.environ.get('PR_NUMBER', '0')}",
               "repository": os.environ.get("REPO", ""),
               "branch": os.environ.get("BRANCH", ""),
-              "thresholds_usd": {"session_warn": 5.0, "session_kill": 10.0, "pr_flag": float(d.get("threshold_usd", 20.0))},
+              "thresholds_usd": {"session_warn": 5.0, "pr_flag": float(d.get("threshold_usd", 20.0))},
               "totals": {
                   "input_tokens": 0, "output_tokens": 0,
                   "cache_creation_input_tokens": 0,
