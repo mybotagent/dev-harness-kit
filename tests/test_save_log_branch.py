@@ -312,5 +312,77 @@ class TestSaveLogBranch(unittest.TestCase):
         self.assertEqual(detect_branch(str(bogus)), "no-git")
 
 
+class TestSlimClaudeUsageCapture(unittest.TestCase):
+    """Regression: slim_transcript must retain tool-call-only assistant turns.
+
+    Those turns carry no conversation text (so _claude_has_text drops them) but
+    still hold message.usage (input/output/cache tokens) and tool_use blocks that
+    tokens_efficiency_analyzer reads. Dropping them under-counts spend by ~50%.
+    Mirrors the codex-side _codex_has_event_tokens fix.
+    """
+
+    def _lines(self):
+        # (a) user text, (b) assistant text+usage, (c) assistant tool_use-only+usage,
+        # (d) user tool_result (no text/usage), (e) assistant isMeta.
+        a = {"type": "user", "message": {"role": "user", "content": "hello"}}
+        b = {"type": "assistant", "message": {
+            "role": "assistant", "model": "m",
+            "content": [{"type": "text", "text": "hi"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_read_input_tokens": 100}}}
+        c = {"type": "assistant", "message": {
+            "role": "assistant", "model": "m",
+            "content": [{"type": "tool_use", "name": "Read",
+                         "input": {"file_path": "/x"}}],
+            "usage": {"input_tokens": 8, "output_tokens": 2,
+                      "cache_read_input_tokens": 200}}}
+        d = {"type": "user", "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t",
+                         "content": "big tool output " * 100}]}}
+        e = {"type": "assistant", "isMeta": True, "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "meta"}],
+            "usage": {"input_tokens": 1}}}
+        return a, b, c, d, e
+
+    def test_tool_only_usage_line_is_retained(self):
+        from save_log import slim_transcript
+        a, b, c, d, e = self._lines()
+        raw = "\n".join(json.dumps(x) for x in (a, b, c, d, e)) + "\n"
+        out = slim_transcript(raw, "claude-code")
+        self.assertIsNotNone(out)
+        kept = [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+
+        # (a) user text, (b) assistant text+usage, (c) assistant tool-only+usage kept.
+        self.assertIn(a, kept)
+        self.assertIn(b, kept)
+        self.assertIn(c, kept, "tool-call-only assistant turn (usage-bearing) was dropped")
+        # (d) tool_result and (e) isMeta dropped.
+        self.assertNotIn(d, kept)
+        self.assertNotIn(e, kept)
+
+        # Token accounting is now complete: both usage-bearing assistant turns survive.
+        usage_msgs = [k for k in kept
+                      if k.get("type") == "assistant" and (k.get("message") or {}).get("usage")]
+        self.assertEqual(len(usage_msgs), 2)
+        total_input = sum(int(k["message"]["usage"].get("input_tokens") or 0) for k in usage_msgs)
+        total_cache_read = sum(
+            int(k["message"]["usage"].get("cache_read_input_tokens") or 0) for k in usage_msgs)
+        self.assertEqual(total_input, 18)
+        self.assertEqual(total_cache_read, 300)
+
+    def test_claude_has_usage_predicate(self):
+        from save_log import _claude_has_text, _claude_has_usage
+        a, b, c, d, e = self._lines()
+        # tool-only assistant turn: no text but has usage -> retained by the new predicate.
+        self.assertFalse(_claude_has_text(c))
+        self.assertTrue(_claude_has_usage(c))
+        # user text turn: no usage.
+        self.assertFalse(_claude_has_usage(a))
+        # isMeta assistant turn: excluded even though usage is present.
+        self.assertFalse(_claude_has_usage(e))
+
+
 if __name__ == "__main__":
     unittest.main()
