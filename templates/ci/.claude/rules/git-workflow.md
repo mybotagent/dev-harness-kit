@@ -117,7 +117,6 @@ git branch -d fix/<slug>        # local branch gone
 
 ## Related
 
-- `docs/adr/ADR-0022-branch-strategy.md` (rationale, alternatives considered)
 - `tests/test_git_workflow.py` (branch-naming + `git-guard` regression)
 - `tests/test_worktree_guard.py` (`worktree-guard` + `task-detector` + `session-start-check` regression)
 - `hooks/lib/worktree-detect.sh` (shared discriminator — single source of truth)

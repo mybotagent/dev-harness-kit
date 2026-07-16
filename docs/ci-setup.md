@@ -119,7 +119,7 @@ A: No — re-running without `--force` is idempotent and will skip existing file
 A: No. `scripts/ci-local.sh` runs the same validators locally on any POSIX host. `act` is optional — install from <https://nektos.act.dev> if you want full GitHub Actions parity (e.g., Docker-based matrix testing).
 
 **Q: How do I uninstall?**
-A: Delete `.dev-kit/ci-config.json`, then `git rm` the 8 installed files (or `rm -rf` them if the target repo is freshly built and not yet under version control). The CI templates are intentionally not deeply integrated — they're plain files you own.
+A: Delete `.dev-kit/ci-config.json`, then `git rm` the 15 installed files (or `rm -rf` them if the target repo is freshly built and not yet under version control). The CI templates are intentionally not deeply integrated — they're plain files you own.
 
 **Q: My CI fails on `Install dev-kit plugin` with `DEV_KIT_GITHUB_TOKEN secret is required`. What now?**
 A: The dev-harness-kit source repo (`sh-ai-x/dev-harness-kit`) is private. The consumer-install branch of `review.yml` clones it via `git clone https://x-access-token:${DEV_KIT_GITHUB_TOKEN}@github.com/sh-ai-x/dev-harness-kit.git`. To make this work in your CI:

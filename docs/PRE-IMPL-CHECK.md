@@ -46,10 +46,9 @@
 | `dev-harness-kit/` directory | (1 dir) | `mkdir + touch .gitkeep` | `test_dir_exists` | — |
 | `CLAUDE.md` (§1~§5 unified) | (1 file, SSOT) | `lib/write_project_md.py` + 5 Iron Laws + skeleton sections | `test_write_project_md_skeleton` | `test_no_dup_iron_law` |
 | `.claude-plugin/marketplace.json` | (1 file) | dev-harness-kit marketplace declaration | `test_marketplace_valid` | `test_install_sh_dependency` |
-| `.claude-plugin/plugin/plugin.json` | (1 file) | name=dev-harness-kit | `test_plugin_json_schema` | `test_naming_consistent` |
+| `.claude-plugin/plugin.json` | (1 file) | name=dev-harness-kit | `test_plugin_json_schema` | `test_naming_consistent` |
 | `hooks/hooks.json` (all `exit 0`) | (1 file) | Pre/Post/Stop × 2 = 6 hooks, single file | `test_hooks_json_all_exit0` | `test_hook_portable_paths` |
 | `skills/bootstrap/SKILL.md` (sanity + codebase-map + hook-matrix inlined sub-stages) | (1 file) | Deterministic read-only audit + 4-section codebase-map synthesis + hook matrix init | `test_sanity_deterministic` | `test_sanity_readonly_no_modify` |
-| `commands/bootstrap.md` | (1 file) | `/dev-kit:bootstrap` 0-arg orchestrator | `test_bootstrap_command_zero_arg` | `test_bootstrap_stage_aware_hooks` |
 | `lib/{state_codec,active_hooks_codec,write_project_md}.py` | (3 files) | Each snake_case.py, ≥1 test | `test_state_codec_roundtrip` etc. | `test_<module>_ssot` |
 | `.env.example` | (1 file) | Provider + Token env var template | `test_env_example_keys` | `test_install_doc_consistent` |
 
