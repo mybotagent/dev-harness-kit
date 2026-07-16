@@ -13,11 +13,14 @@ when the new filters DO match.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
+TOOL_PY = PROJECT_ROOT / "tools" / "save_log.py"
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 import save_log  # noqa: E402  (sys.path mutated above)
@@ -159,6 +162,77 @@ class TestCodexFallbackStillWorks(unittest.TestCase):
         slim = save_log.slim_transcript(raw, "codex")
         self.assertIsNotNone(slim)
         self.assertIn("legacy text", slim)
+
+
+class TestCodexRolloutEndToEnd(unittest.TestCase):
+    """Capture a realistic Codex rollout and aggregate the retained file."""
+
+    def test_retains_nested_metadata_and_final_valid_token_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="save-log-codex-e2e-") as tmp:
+            root = Path(tmp)
+            transcript = root / "rollout.jsonl"
+            records = [
+                {"type": "session_meta", "payload": {
+                    "cwd": "/Users/sanghee/dev/dev-harness-kit",
+                    "session_id": "codex-e2e-session",
+                }},
+                {"type": "turn_context", "payload": {
+                    "model": "gpt-5.6-luna",
+                }},
+                {"type": "event_msg", "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": {
+                        "input_tokens": 500,
+                        "cached_input_tokens": 400,
+                        "output_tokens": 50,
+                        "reasoning_output_tokens": 20,
+                    }},
+                }},
+                {"type": "event_msg", "payload": {
+                    "type": "token_count", "info": None,
+                }},
+                {"type": "response_item", "payload": {
+                    "type": "function_call", "name": "Read",
+                    "input": {"file_path": "/tmp/example.py"},
+                }},
+            ]
+            transcript.write_text(
+                "".join(json.dumps(record) + "\n" for record in records),
+                encoding="utf-8",
+            )
+            hook_payload = {
+                "transcript_path": str(transcript),
+                "cwd": str(root),
+                "session_id": "hook-session",
+            }
+            result = subprocess.run(
+                [sys.executable, str(TOOL_PY), "--tool", "codex"],
+                input=json.dumps(hook_payload),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            saved = root / "logs" / "codex" / "no-git" / "hook-session.jsonl"
+            self.assertTrue(saved.is_file())
+            retained = [json.loads(line) for line in saved.read_text().splitlines()]
+            self.assertEqual(
+                [record["type"] for record in retained],
+                ["session_meta", "turn_context", "event_msg", "response_item"],
+            )
+
+            sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+            from token_efficiency_analyzer import aggregate_session
+            session = aggregate_session(saved)
+            self.assertIsNotNone(session)
+            self.assertEqual(session["session_id"], "codex-e2e-session")
+            self.assertEqual(session["repo"], "dev-harness-kit")
+            self.assertEqual(session["model"], "gpt-5.6-luna")
+            self.assertEqual(session["input_tokens"], 100)
+            self.assertEqual(session["cache_read_tokens"], 400)
+            self.assertEqual(session["output_tokens"], 70)
+            self.assertEqual(session["tool_counts"]["Read"], 1)
 
 
 if __name__ == "__main__":

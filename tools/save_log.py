@@ -211,6 +211,16 @@ def _codex_has_turn_context(obj) -> bool:
     return isinstance(payload, dict) and bool(payload.get("model"))
 
 
+def _codex_has_session_meta(obj) -> bool:
+    """True if a codex line carries session identity or working directory."""
+    if not isinstance(obj, dict) or obj.get("type") != "session_meta":
+        return False
+    payload = obj.get("payload")
+    return isinstance(payload, dict) and bool(
+        payload.get("session_id") or payload.get("sessionId") or payload.get("cwd")
+    )
+
+
 def _codex_has_event_tokens(obj) -> bool:
     """True if a codex line is a ``token_count`` event (carries usage info).
 
@@ -275,6 +285,7 @@ def slim_transcript(raw: str, tool: str):
                 continue
             if (
                 _codex_has_event_text(obj)
+                or _codex_has_session_meta(obj)
                 or _codex_has_turn_context(obj)
                 or _codex_has_event_tokens(obj)
                 or _codex_has_response_tool_call(obj)
