@@ -408,8 +408,22 @@ class TestRunSequential(unittest.TestCase):
             self.assertGreaterEqual(step1["duration_seconds"], 0.0)
 
     def test_two_commit_protocol_per_step(self):
-        with patch.object(execute.subprocess, "run") as mr:
-            mr.return_value = self._fake_proc()
+        # Issue #221 RC2: the runner no longer uses `--allow-empty`. Each
+        # commit first runs `git add -A`, then asks `git diff --cached --quiet`
+        # whether anything is staged. The mock here makes the index DIRTY
+        # (rc=1) so the runner proceeds with both commits — matching the
+        # real-world "sub-agent wrote files" scenario.
+        def _side_effect(*args, **kwargs):
+            # subprocess.run(cmd, cwd=..., check=True, capture_output=True, text=True)
+            # `args` is the tuple of positional args (only `cmd`); `kwargs`
+            # holds everything else (including `cwd`).
+            cmd = args[0] if args else kwargs.get("args", [])
+            if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
+                m = MagicMock(); m.returncode = 1; m.stdout = ""; m.stderr = ""
+                return m
+            return self._fake_proc()
+
+        with patch.object(execute.subprocess, "run", side_effect=_side_effect) as mr:
             rc = execute._run_sequential(self.root, "0-mvp", push=False)
             self.assertEqual(rc, 0)
             commits = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "commit"]]
@@ -429,6 +443,131 @@ class TestRunSequential(unittest.TestCase):
             step1 = next(s for s in idx["steps"] if s["step"] == 1)
             self.assertEqual(step1["status"], "error")
             self.assertIn("error_message", step1)
+
+    # === Issue #221: harness ships empty commits ===
+    #
+    # Root causes & one expected harness-side fix each:
+    # (1) `claude -p` invoked plainly with no --add-dir / --allowedTools, so a
+    #     parent-sandbox-restricted consumer silently blocks every sub-agent
+    #     write → no files in worktree → "feat" commit is empty.
+    # (2) `git commit --allow-empty` masks the missing files and registers the
+    #     step as `completed` (exit_code==0).
+    # (3) `<!-- status: blocked -->` in sub-agent stdout is ignored; runner only
+    #     inspects exit_code and reports success.
+
+    def test_claude_p_invoked_with_add_dir_and_allowed_tools(self):
+        """Issue #221 RC1: claude -p must be spawned with --add-dir <worktree>
+        + --allowedTools "Write,Edit,Bash" so the non-interactive sub-agent
+        can write into the per-step worktree even when the consumer's parent
+        Claude Code sandbox is restrictive."""
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc()
+            execute._run_sequential(self.root, "0-mvp", push=False)
+            claude = next(c for c in mr.call_args_list if c.args[0][0] == "claude")
+            cmd = claude.args[0]
+            self.assertIn("--add-dir", cmd,
+                          f"claude -p missing --add-dir <worktree>; cmd={cmd}")
+            # The arg after --add-dir must be the per-step worktree path.
+            i = cmd.index("--add-dir")
+            self.assertEqual(cmd[i + 1].endswith("0-mvp-step1"), True,
+                             f"--add-dir target must be the per-step worktree, got {cmd[i+1]}")
+            self.assertIn("--allowedTools", cmd,
+                          f"claude -p missing --allowedTools; cmd={cmd}")
+            tools = cmd[cmd.index("--allowedTools") + 1]
+            for required in ("Write", "Edit", "Bash"):
+                self.assertIn(required, tools,
+                              f"--allowedTools must include {required}; got {tools!r}")
+
+    def test_git_add_a_runs_before_commit_and_skips_empty(self):
+        """Issue #221 RC2: runner must stage sub-agent writes (`git add -A`)
+        and ONLY emit a commit when the index is dirty — never silently fall
+        back to `--allow-empty`. If the sub-agent produced nothing, the per-step
+        branch gets no commit and the step's status flips accordingly (not
+        `completed`)."""
+        # First half — sub-agent DID write files: index dirty → both commits land.
+        def _side_effect_dirty(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
+                m = MagicMock(); m.returncode = 1; m.stdout = ""; m.stderr = ""
+                return m
+            return self._fake_proc()
+
+        with patch.object(execute.subprocess, "run", side_effect=_side_effect_dirty) as mr:
+            execute._run_sequential(self.root, "0-mvp", push=False)
+            # 1. `git add -A` runs in the per-step worktree BEFORE each commit
+            #    (one add per _commit_step call — we call it twice).
+            adds = [c for c in mr.call_args_list if c.args[0][:3] == ["git", "add", "-A"]]
+            self.assertEqual(len(adds), 2,
+                             f"expected 2 `git add -A` (one per _commit_step), got {adds}")
+            for a in adds:
+                # cwd is the worktree (kargs), NOT a positional arg → confirms
+                # the staging ran in the per-step worktree, not the project root.
+                self.assertTrue(str(a.kwargs.get("cwd", "")).endswith("0-mvp-step1"),
+                                f"`git add -A` cwd must be the worktree; got {a.kwargs.get('cwd')!r}")
+            # 2. None of the commits use --allow-empty (silent-data-loss flag).
+            commits = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "commit"]]
+            self.assertEqual(len(commits), 2, f"expected 2 commits on the dirty path, got {commits}")
+            for c in commits:
+                self.assertNotIn("--allow-empty", c.args[0],
+                                 f"--allow-empty must NOT be used; commit args were {c.args[0]}")
+
+        # Second half — sub-agent WROTE NOTHING: index clean + blocked-marker
+        # → ZERO commits, NOT an empty commit masquerading as feat(...).
+        # Status transitions to `blocked` so the human is asked instead of
+        # silently advancing.
+        def _side_effect_clean(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
+                m = MagicMock(); m.returncode = 0; m.stdout = ""; m.stderr = ""
+                return m
+            return self._fake_proc(stdout="no files written\n<!-- status: blocked --> waiting for human input")
+
+        fresh_tmp = tempfile.TemporaryDirectory()
+        fresh_root = Path(fresh_tmp.name)
+        (fresh_root / "phases" / "0-mvp").mkdir(parents=True)
+        (fresh_root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\n", encoding="utf-8")
+        (fresh_root / "phases" / "0-mvp" / "index.json").write_text(json.dumps({
+            "phase": "0-mvp",
+            "worktree": "feat/clean",
+            "steps": [{"step": 1, "name": "x", "status": "pending"}],
+        }), encoding="utf-8")
+        with patch.object(execute.subprocess, "run", side_effect=_side_effect_clean) as mr:
+            rc = execute._run_sequential(fresh_root, "0-mvp", push=False)
+            self.assertEqual(rc, 2, "blocked-marker path must return 2 to bail the loop")
+            commits = [c for c in mr.call_args_list if c.args[0][:2] == ["git", "commit"]]
+            self.assertEqual(commits, [],
+                             f"empty-index + blocked-marker → ZERO commits; got {commits}")
+            idx = json.loads((fresh_root / "phases" / "0-mvp" / "index.json").read_text())
+            self.assertEqual(idx["steps"][0]["status"], "blocked",
+                             "clean-index + blocked-marker must surface as `blocked`, NOT `completed`")
+        fresh_tmp.cleanup()
+
+    def test_blocked_marker_in_stdout_marks_step_blocked(self):
+        """Issue #221 RC3: when sub-agent stdout contains the
+        `<!-- status: blocked -->` marker, the runner must transition the step
+        to `status=blocked` (with a `blocked_reason`) instead of silently
+        advancing to `completed`. Returning 2 (like a pre-existing blocked
+        step) is also required so the loop bails for human unblock."""
+        with patch.object(execute.subprocess, "run") as mr:
+            mr.return_value = self._fake_proc(
+                returncode=0,
+                stdout="i need an API key, cannot proceed\n<!-- status: blocked -->",
+                stderr="",
+            )
+            rc = execute._run_sequential(self.root, "0-mvp", push=False)
+            self.assertEqual(rc, 2,
+                             f"blocked-marker step must bail with rc=2, got {rc}")
+            idx = json.loads((self.root / "phases" / "0-mvp" / "index.json").read_text())
+            step1 = next(s for s in idx["steps"] if s["step"] == 1)
+            self.assertEqual(step1["status"], "blocked",
+                             f"stdout had `<!-- status: blocked -->` but step status is {step1['status']!r}")
+            self.assertIn("blocked_reason", step1,
+                          "blocked status must record the sub-agent's reason")
+            # And the step-OUTPUT json must surface the marker verdict for audit.
+            output = json.loads((self.root / "phases" / "0-mvp" / "step1-output.json").read_text())
+            self.assertEqual(output["blocked"], True,
+                             "output json must surface blocked=True for audit")
+            self.assertIn("API key", output["blocked_reason"])
 
     def test_push_only_when_flag(self):
         with patch.object(execute.subprocess, "run") as mr:
