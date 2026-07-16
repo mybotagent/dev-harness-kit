@@ -16,6 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
+      # Checkout is mandatory here even though scripts/branch-policy.sh
+      # only reads env vars today: consumer repos frequently extend the
+      # branch-policy job with custom checks that DO need the working
+      # tree (commit metadata, file content, git show). Removing this
+      # step broke sh-ai-x/claude-statusline at PR #9 (see issue #202):
+      # the upstream template had no checkout, so the consumer's local
+      # fix adding one was silently reverted on the next --force.
+      - uses: actions/checkout@v4
       - name: Direct push to main — policy violation recorded
         run: bash scripts/branch-policy.sh
 

@@ -57,7 +57,12 @@ jobs:
             echo "::warning::Reached 5 auto-fix iterations. Stopping to avoid infinite loop. Human review required."
             gh pr comment "${{ github.event.pull_request.number }}" \
               --body "🤖 Auto-fix reached 5-iteration cap. Handing off to human review."
-            exit 0
+            # Hard-stop with non-zero exit (issue #202): a zero exit let
+            # the subsequent agent steps run anyway, re-triggering the
+            # loop and defeating the 5-iteration cap. A non-zero exit
+            # fails this step → job stops → red CI check + human-review
+            # visibility.
+            exit 1
           fi
 
       - name: Collect review feedback (sanitized)
