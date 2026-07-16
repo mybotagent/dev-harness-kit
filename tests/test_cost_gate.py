@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""test_cost_gate.py — regression tests for the cost-gate hook + library + CLI.
+"""test_cost_gate.py — regression tests for the cost-gate library + CLI.
 
 Black-box coverage:
 
-  1. Hook behavior (SessionStart, PostToolUse, PreToolUse) — exit codes,
-     stdout/stderr contracts, jq-missing fail-closed.
-  2. lib/cost_gate.py — pricing tiers, unknown-model fallback, state I/O
-     atomicity, transcript scanner, heuristic fallback provenance, footer
+  1. lib/cost_gate.py — pricing tiers, unknown-model fallback, state I/O
+     atomicity, threshold evaluation, heuristic fallback provenance, footer
      parsing + dedup, PR aggregation.
-  3. tools/cost_gate_status.py — text/json/html/footer/aggregate-pr output.
-  4. PR-level label decision — threshold crossing, footer dedup, missing
+  2. tools/cost_gate_status.py — text/json/html/footer/aggregate-pr output.
+  3. PR-level label decision — threshold crossing, footer dedup, missing
      telemetry.
-  5. hooks.json wiring — cost-gate.sh registered under all 3 events.
+  4. lib/cost_gate.py exposes no session_kill threshold (the blocking
+     gate is removed; cost is observed only).
 
 No import of tools.token_efficiency_analyzer — isolation guarantee.
 """
@@ -19,8 +18,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,25 +25,11 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOKS = REPO_ROOT / "hooks"
 LIB = REPO_ROOT / "lib"
 TOOLS = REPO_ROOT / "tools"
 
 
 # --- helpers -----------------------------------------------------------------
-
-def _run_hook(script: str, payload: dict, cwd: Path | None = None,
-              env_extra: dict | None = None) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
-    return subprocess.run(
-        ["bash", str(HOOKS / script)],
-        input=json.dumps(payload),
-        capture_output=True, text=True, timeout=10,
-        cwd=str(cwd) if cwd else None, env=env,
-    )
-
 
 def _run_cli(*args: str, cwd: Path | None = None,
              env_extra: dict | None = None) -> subprocess.CompletedProcess:
@@ -58,69 +41,6 @@ def _run_cli(*args: str, cwd: Path | None = None,
         capture_output=True, text=True, timeout=15,
         cwd=str(cwd) if cwd else None, env=env,
     )
-
-
-def _session_start_payload(session_id: str = "sess-1", source: str = "startup",
-                           cwd: str = "", model: str = "",
-                           transcript_path: str = "") -> dict:
-    p = {
-        "hook_event_name": "SessionStart",
-        "session_id": session_id,
-        "source": source,
-    }
-    if cwd:
-        p["cwd"] = cwd
-    if model:
-        p["model"] = model
-    if transcript_path:
-        p["transcript_path"] = transcript_path
-    return p
-
-
-def _post_tool_use_payload(tool_name: str = "Read", session_id: str = "sess-1",
-                           cwd: str = "", transcript_path: str = "") -> dict:
-    p = {
-        "hook_event_name": "PostToolUse",
-        "session_id": session_id,
-        "tool_name": tool_name,
-        "tool_input": {"file_path": "/tmp/x"},
-        "tool_response": {"ok": True},
-    }
-    if cwd:
-        p["cwd"] = cwd
-    if transcript_path:
-        p["transcript_path"] = transcript_path
-    return p
-
-
-def _pre_tool_use_payload(tool_name: str = "Read", session_id: str = "sess-1",
-                          cwd: str = "") -> dict:
-    p = {
-        "hook_event_name": "PreToolUse",
-        "session_id": session_id,
-        "tool_name": tool_name,
-        "tool_input": {"file_path": "/tmp/x"},
-    }
-    if cwd:
-        p["cwd"] = cwd
-    return p
-
-
-def _write_state(path: Path, **overrides) -> None:
-    """Write a minimal state file with overrides."""
-    import sys as _sys
-    _sys.path.insert(0, str(LIB))
-    from cost_gate import new_session_state  # type: ignore
-    state = new_session_state(
-        session_id="sess-1",
-        cwd=str(path.parent.parent),
-        branch="feat/cost-gate",
-        repository="dev-harness-kit",
-        model="claude-sonnet-5",
-    )
-    state.update(overrides)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
 # ============================================================================
@@ -263,34 +183,48 @@ class TestStateIO(unittest.TestCase):
 
 
 # ============================================================================
-# 4. lib/cost_gate.py — thresholds
+# 4. lib/cost_gate.py — thresholds (no kill branch)
 # ============================================================================
 
 class TestThresholds(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(LIB))
-        from cost_gate import evaluate_status  # type: ignore
+        from cost_gate import (  # type: ignore
+            DEFAULT_THRESHOLDS, evaluate_status, resolve_thresholds,
+        )
+        self.DEFAULT_THRESHOLDS = DEFAULT_THRESHOLDS
         self.evaluate_status = evaluate_status
+        self.resolve_thresholds = resolve_thresholds
+
+    def test_default_thresholds_have_no_kill(self):
+        # The cost-gate is observed only. There is no session_kill threshold
+        # in the default config — adding one back would be a regression.
+        self.assertNotIn("session_kill", self.DEFAULT_THRESHOLDS)
+        self.assertIn("session_warn", self.DEFAULT_THRESHOLDS)
+        self.assertIn("pr_flag", self.DEFAULT_THRESHOLDS)
+
+    def test_resolve_thresholds_has_no_kill(self):
+        th = self.resolve_thresholds()
+        self.assertNotIn("session_kill", th)
 
     def test_below_warn_is_ok(self):
-        s, _ = self.evaluate_status(0.0, {"session_warn": 5.0, "session_kill": 10.0})
+        s, _ = self.evaluate_status(0.0, {"session_warn": 5.0, "pr_flag": 20.0})
         self.assertEqual(s, "ok")
 
     def test_at_warn_emits_warn(self):
-        s, _ = self.evaluate_status(5.0, {"session_warn": 5.0, "session_kill": 10.0})
+        s, reasons = self.evaluate_status(5.0, {"session_warn": 5.0, "pr_flag": 20.0})
+        self.assertEqual(s, "warn")
+        self.assertTrue(any("warn" in r for r in reasons))
+
+    def test_above_warn_still_warn(self):
+        s, _ = self.evaluate_status(999.0, {"session_warn": 5.0, "pr_flag": 20.0})
         self.assertEqual(s, "warn")
 
-    def test_at_kill_emits_warn(self):
-        # Kill threshold is advisory only — status escalates to warn with
-        # the threshold crossed in the reason, but it never returns "kill".
-        s, reasons = self.evaluate_status(10.0, {"session_warn": 5.0, "session_kill": 10.0})
-        self.assertEqual(s, "warn")
-        self.assertTrue(any("kill" in r for r in reasons))
-
-    def test_above_kill_still_warn(self):
-        s, reasons = self.evaluate_status(999.0, {"session_warn": 5.0, "session_kill": 10.0})
-        self.assertEqual(s, "warn")
-        self.assertTrue(any("kill" in r for r in reasons))
+    def test_status_never_returns_kill(self):
+        # Belt + suspenders: no input produces a "kill" status.
+        for cost in (0.0, 5.0, 10.0, 999.0):
+            s, _ = self.evaluate_status(cost, {"session_warn": 5.0, "pr_flag": 20.0})
+            self.assertNotEqual(s, "kill", f"cost={cost} returned 'kill'")
 
 
 # ============================================================================
@@ -369,7 +303,17 @@ class TestCliText(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
             self.assertIn("scope:", r.stdout)
             self.assertIn("session_warn:", r.stdout)
-            self.assertIn("session_kill:", r.stdout)
+            self.assertIn("pr_flag:", r.stdout)
+            # No kill threshold should be displayed.
+            self.assertNotIn("session_kill:", r.stdout)
+
+    def test_text_has_no_hook_modes(self):
+        # The cost-gate hook is removed. The CLI must not accept any
+        # --hook-* flag (those would be misleading at best).
+        with tempfile.TemporaryDirectory() as td:
+            r = _run_cli("--hook-session-start", cwd=Path(td))
+            self.assertNotEqual(r.returncode, 0,
+                                f"hook flag accepted: stdout={r.stdout!r}")
 
 
 class TestCliJson(unittest.TestCase):
@@ -382,6 +326,8 @@ class TestCliJson(unittest.TestCase):
             for k in ("scope", "totals", "thresholds_usd", "status",
                       "warnings", "state_path"):
                 self.assertIn(k, doc, f"missing {k} in JSON: {doc}")
+            # No kill threshold in JSON output either.
+            self.assertNotIn("session_kill", doc.get("thresholds_usd", {}))
 
 
 class TestCliHtml(unittest.TestCase):
@@ -395,6 +341,8 @@ class TestCliHtml(unittest.TestCase):
             content = out.read_text(encoding="utf-8")
             self.assertIn("<html", content)
             self.assertNotIn("<script", content)
+            # No kill mention.
+            self.assertNotIn("kill", content)
 
 
 class TestCliFooter(unittest.TestCase):
@@ -408,207 +356,31 @@ class TestCliFooter(unittest.TestCase):
 
 
 # ============================================================================
-# 8. hooks/cost-gate.sh — behavior
+# 8. hooks/cost-gate.sh — gone
 # ============================================================================
 
-class TestHookSessionStart(unittest.TestCase):
-    def setUp(self):
-        if not (HOOKS / "cost-gate.sh").exists():
-            self.skipTest("cost-gate.sh not found")
+class TestHookScriptRemoved(unittest.TestCase):
+    def test_cost_gate_sh_does_not_exist(self):
+        path = REPO_ROOT / "hooks" / "cost-gate.sh"
+        self.assertFalse(path.exists(), f"{path} still exists — hook was removed")
 
-    def test_session_start_initializes_state_and_emits_context(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            r = _run_hook("cost-gate.sh",
-                          _session_start_payload(cwd=str(td_p)),
-                          cwd=td_p)
-            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
-            self.assertIn("additionalContext", r.stdout)
-            state = td_p / ".dev-kit" / ".cost-gate" / "state.json"
-            self.assertTrue(state.exists(), f"state file missing: {state}")
-            doc = json.loads(state.read_text(encoding="utf-8"))
-            self.assertEqual(doc["scope"], "session")
-            self.assertEqual(doc["totals"]["cost_usd"], 0.0)
-
-    def test_session_start_compact_preserves_session(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            # First startup
-            _run_hook("cost-gate.sh",
-                      _session_start_payload(session_id="sess-A", cwd=str(td_p)),
-                      cwd=td_p)
-            # Then compact with same session id — should preserve, not reset
-            r = _run_hook("cost-gate.sh",
-                          _session_start_payload(session_id="sess-A",
-                                                 source="compact",
-                                                 cwd=str(td_p)),
-                          cwd=td_p)
-            self.assertEqual(r.returncode, 0)
-            state = td_p / ".dev-kit" / ".cost-gate" / "state.json"
-            doc = json.loads(state.read_text(encoding="utf-8"))
-            self.assertEqual(doc["scope_id"], "sess-A")
-
-
-class TestHookPreToolUse(unittest.TestCase):
-    def setUp(self):
-        if not (HOOKS / "cost-gate.sh").exists():
-            self.skipTest("cost-gate.sh not found")
-
-    def test_below_kill_returns_0(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            # Initialize state below kill.
-            _write_state(
-                td_p / ".dev-kit" / ".cost-gate" / "state.json",
-                totals={
-                    "input_tokens": 1000, "output_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "cache_creation_5m_input_tokens": 0,
-                    "cache_creation_1h_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "estimated_tokens": 0,
-                    "cost_usd": 0.5,
-                },
-                status="ok",
-            )
-            r = _run_hook("cost-gate.sh",
-                          _pre_tool_use_payload(cwd=str(td_p)),
-                          cwd=td_p)
-            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
-
-    def test_at_kill_emits_advisory_context(self):
-        # Kill threshold is advisory only — hook returns exit 0 + emits
-        # additionalContext instead of denying.
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            _write_state(
-                td_p / ".dev-kit" / ".cost-gate" / "state.json",
-                totals={
-                    "input_tokens": 0, "output_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "cache_creation_5m_input_tokens": 0,
-                    "cache_creation_1h_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
-                    "estimated_tokens": 0,
-                    "cost_usd": 10.0,
-                },
-                status="kill",
-            )
-            r = _run_hook("cost-gate.sh",
-                          _pre_tool_use_payload(cwd=str(td_p)),
-                          cwd=td_p)
-            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
-            self.assertIn("advisory", r.stdout)
-            self.assertNotIn('"deny"', r.stdout + r.stderr)
-            self.assertNotIn("permissionDecision", r.stdout + r.stderr)
-
-
-class TestHookPostToolUse(unittest.TestCase):
-    def setUp(self):
-        if not (HOOKS / "cost-gate.sh").exists():
-            self.skipTest("cost-gate.sh not found")
-
-    def test_post_tool_use_updates_state_silently(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            # Initialize first.
-            _run_hook("cost-gate.sh",
-                      _session_start_payload(cwd=str(td_p)),
-                      cwd=td_p)
-            r = _run_hook("cost-gate.sh",
-                          _post_tool_use_payload(tool_name="Read",
-                                                 cwd=str(td_p)),
-                          cwd=td_p)
-            self.assertEqual(r.returncode, 0, f"stderr={r.stderr}")
-            # State must still exist and have a session updated_at.
-            state = td_p / ".dev-kit" / ".cost-gate" / "state.json"
-            self.assertTrue(state.exists())
-
-
-class TestHookFailClosed(unittest.TestCase):
-    def setUp(self):
-        if not (HOOKS / "cost-gate.sh").exists():
-            self.skipTest("cost-gate.sh not found")
-        self._bash = shutil.which("bash")
-        self._jq = shutil.which("jq")
-        if not self._bash:
-            self.skipTest("bash not on PATH")
-        if not self._jq:
-            self.skipTest("jq not on host — cannot simulate missing-jq")
-
-    def test_pretooluse_denies_when_jq_missing(self):
-        # Build a minimal PATH that includes the dirs of utilities we need
-        # EXCEPT jq's dir. On macOS dev boxes, jq is in /opt/homebrew/bin and
-        # bash is in /bin/bash — different dirs, the test trivially strips jq.
-        # On Linux CI (Ubuntu) both live in /usr/bin, so we must capture
-        # bash's absolute path BEFORE stripping and pass it explicitly.
-        util_dirs = set()
-        for util in ("cat", "echo", "printf", "command", "python3"):
-            p = shutil.which(util)
-            if p:
-                util_dirs.add(os.path.dirname(p))
-        # Ensure bash's dir survives the strip (it always should — bash is
-        # resolved via self._bash, not via PATH, so this is defensive).
-        util_dirs.add(os.path.dirname(self._bash))
-        util_dirs.discard(os.path.dirname(self._jq))
-        minimal_path = os.pathsep.join(sorted(util_dirs)) or "/nonexistent"
-        with tempfile.TemporaryDirectory() as td:
-            td_p = Path(td)
-            payload = _pre_tool_use_payload(cwd=str(td_p))
-            r = subprocess.run(
-                [self._bash, str(HOOKS / "cost-gate.sh")],
-                input=json.dumps(payload), capture_output=True, text=True,
-                timeout=5, cwd=str(td_p),
-                env={**os.environ, "PATH": minimal_path},
-            )
-            self.assertEqual(r.returncode, 2, f"got rc={r.returncode}, stderr={r.stderr}")
-            combined = r.stdout + r.stderr
-            self.assertIn("permissionDecision", combined)
-            self.assertIn("jq is required", combined) or self.assertIn("jq", combined)
+    def test_hooks_json_does_not_wire_cost_gate(self):
+        cfg_path = REPO_ROOT / "hooks" / "hooks.json"
+        if not cfg_path.exists():
+            self.skipTest(f"hooks.json not found at {cfg_path}")
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        for event, entries in cfg.get("hooks", {}).items():
+            for entry in entries:
+                for h in entry.get("hooks", []):
+                    cmd = h.get("command", "")
+                    self.assertNotIn(
+                        "cost-gate.sh", cmd,
+                        f"hooks.json still wires cost-gate.sh under {event}: {cmd}",
+                    )
 
 
 # ============================================================================
-# 9. hooks.json wiring
-# ============================================================================
-
-class TestHooksJsonWiring(unittest.TestCase):
-    def setUp(self):
-        path = HOOKS / "hooks.json"
-        if not path.exists():
-            self.skipTest(f"hooks.json not found at {path}")
-        self._cfg = json.loads(path.read_text(encoding="utf-8"))
-
-    def _hooks_under(self, event: str) -> list:
-        flat = []
-        for entry in self._cfg["hooks"].get(event, []):
-            for h in entry.get("hooks", []):
-                flat.append(h.get("command", ""))
-        return flat
-
-    def test_cost_gate_in_sessionstart(self):
-        cmds = self._hooks_under("SessionStart")
-        self.assertTrue(
-            any("cost-gate.sh" in c for c in cmds),
-            f"cost-gate.sh not wired into SessionStart. Got: {cmds}",
-        )
-
-    def test_cost_gate_in_posttooluse(self):
-        cmds = self._hooks_under("PostToolUse")
-        self.assertTrue(
-            any("cost-gate.sh" in c for c in cmds),
-            f"cost-gate.sh not wired into PostToolUse. Got: {cmds}",
-        )
-
-    def test_cost_gate_in_pretooluse(self):
-        cmds = self._hooks_under("PreToolUse")
-        self.assertTrue(
-            any("cost-gate.sh" in c for c in cmds),
-            f"cost-gate.sh not wired into PreToolUse. Got: {cmds}",
-        )
-
-
-# ============================================================================
-# 10. Isolation guarantee — no import of token_efficiency_analyzer
+# 9. Isolation guarantee — no import of token_efficiency_analyzer
 # ============================================================================
 
 class TestIsolation(unittest.TestCase):
