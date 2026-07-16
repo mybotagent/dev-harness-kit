@@ -619,6 +619,96 @@ class TestCiSetup(unittest.TestCase):
             self.assertEqual(recorded, actual,
                              "marker SHA must match post-install file bytes")
 
+    # === Issue #212: provider-file install + secrets catalog ===
+
+    def test_provider_file_landed_in_empty_target(self):
+        """Issue #212-A1: .github/ci-review-provider.txt is in EXPECTED_PATHS
+        and contains a valid provider name on fresh install."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r = self.ci_setup.install_ci_config(target)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            provider_path = target / ".github" / "ci-review-provider.txt"
+            self.assertTrue(
+                provider_path.exists(),
+                ".github/ci-review-provider.txt missing after install",
+            )
+            content = provider_path.read_text(encoding="utf-8").strip().lower()
+            self.assertIn(
+                content, self.ci_setup.PROVIDER_SECRETS,
+                f"provider file content '{content}' not in catalog",
+            )
+
+    def test_provider_file_appears_in_expected_paths(self):
+        """Issue #212-A1 sanity: the provider file path lives in EXPECTED_PATHS."""
+        self.assertIn(
+            ".github/ci-review-provider.txt",
+            self.ci_setup.EXPECTED_PATHS,
+            "ci-review-provider.txt not in EXPECTED_PATHS; consumers will not see it",
+        )
+
+    def test_required_secrets_catalog_contains_known_providers(self):
+        """Issue #212-B1/B2: every supported provider has a secret entry."""
+        for provider in ("minimax", "anthropic", "deepseek"):
+            secrets = self.ci_setup.required_secrets_for_provider(provider)
+            self.assertIn(
+                "DEV_KIT_GITHUB_TOKEN", secrets,
+                f"{provider}: missing DEV_KIT_GITHUB_TOKEN",
+            )
+            self.assertGreater(
+                len(secrets), 1,
+                f"{provider}: catalog only returned the consumer PAT; "
+                "provider-specific API key is missing",
+            )
+
+    def test_required_secrets_unknown_provider_falls_back_to_minimax(self):
+        """Unknown provider names fall back to the minimax catalog (matches the
+        gate's default fallback). Always includes DEV_KIT_GITHUB_TOKEN."""
+        secrets = self.ci_setup.required_secrets_for_provider("not-a-provider")
+        self.assertIn("DEV_KIT_GITHUB_TOKEN", secrets)
+        self.assertIn("MINIMAX_API_KEY", secrets)
+
+    def test_gh_secret_set_command_format(self):
+        """Issue #212-B3: helper renders an exact, paste-able gh command."""
+        cmd = self.ci_setup.gh_secret_set_command("OWNER/REPO", "MINIMAX_API_KEY")
+        self.assertEqual(cmd, "gh secret set MINIMAX_API_KEY --repo OWNER/REPO")
+
+    def test_read_provider_file_returns_minimax_when_missing(self):
+        """Issue #212-A1: read_provider_file falls back to 'minimax' (not raises)
+        when the file is absent or unreadable, so the gate's default applies."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            # No file: returns 'minimax'.
+            self.assertEqual(self.ci_setup.read_provider_file(target), "minimax")
+            # Unknown value: returns 'minimax' (treated as missing).
+            (target / ".github").mkdir(parents=True)
+            (target / ".github" / "ci-review-provider.txt").write_text("garbage\n")
+            self.assertEqual(self.ci_setup.read_provider_file(target), "minimax")
+            # Recognized value: returns normalized value.
+            (target / ".github" / "ci-review-provider.txt").write_text("DeepSeek\n")
+            self.assertEqual(self.ci_setup.read_provider_file(target), "deepseek")
+
+    def test_marker_verifies_after_install(self):
+        """Issue #212-A3/E1: the marker must round-trip through a real
+        read after atomic_write_json — empty/zero-byte markers fail loudly,
+        not silently."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r = self.ci_setup.install_ci_config(target)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            marker = target / ".dev-kit" / "ci-config.json"
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, dict)
+            self.assertGreater(len(payload), 0)
+            # ci_review_provider_file pointer recorded for ci-doctor to read.
+            self.assertEqual(
+                payload.get("ci_review_provider_file"),
+                ".github/ci-review-provider.txt",
+            )
+
 
 def tempfile_path(name: str):
     """Return a Path to a tempfile file (helper for test_invalid_target_dir_raises)."""

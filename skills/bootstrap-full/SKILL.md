@@ -39,7 +39,8 @@ No visible flags. No option prompts (MUST-NOT-13).
 [2] ci-setup        (delegates to lib/ci_setup.py)
        ├── 1.5 pre-flight probe       → OK/WARN/INFO/SKIP per gh dep (non-blocking)
        ├── install_ci_config()        → 15 EXPECTED_PATHS + .dev-kit/ci-config.json marker
-       └── 1.7 lint pass              → warnings printed as rows; non-fatal
+       ├── 1.7 lint pass              → warnings printed as rows; non-fatal
+       └── 4 post-install checklist   → ALWAYS printed on success (issue #212-D2)
        ↓ (auto; --skip-verify short-circuits here)
 [3] verify          (delegates to ci-setup Phase 3)
        ├── bash -n on every .sh
@@ -48,6 +49,7 @@ No visible flags. No option prompts (MUST-NOT-13).
        └── scripts/ci-local.sh        → expect exit 0
        ↓
 [4] exit → pointer to /dev-kit:plan, then /dev-kit:build (plan → build is the canonical sequence; ci-config.json marker satisfies build's pre-flight gate)
+         AND pointer to /dev-kit:ci-doctor for post-install verification (issue #212-D1).
 ```
 
 ## Hook integration (stage=bootstrap)
@@ -86,6 +88,10 @@ Same matrix as `/dev-kit:bootstrap`. `active-hooks.json` SSOT auto-initialized (
 
 ## Next step
 
-After `/dev-kit:bootstrap-full`, run `/dev-kit:plan` first to synthesize `PRD.md` + `phases/` from the user's idea, then `/dev-kit:build` (the `.dev-kit/ci-config.json` marker satisfies `skills/build/SKILL.md`'s pre-flight gate). This plan → build order is the canonical sequence; `/dev-kit:plan` is required when idea → PRD artifacts are not yet on disk.
+After `/dev-kit:bootstrap-full`, follow this sequence:
+
+1. The post-install checklist (`POST_INSTALL_CHECKLIST` in `lib/ci_setup.py`) prints automatically at the end of Phase 2 with concrete `gh secret set` commands, branch-protection notes, and the bootstrap-PR caveat. Do these in order.
+2. Run `/dev-kit:ci-doctor` (issue #212-D1) for a one-shot PASS/FAIL audit. Re-run after each remediation until `ci-doctor verdict: PASS`.
+3. Run `/dev-kit:plan` to synthesize `PRD.md` + `phases/` from the user's idea, then `/dev-kit:build` (the `.dev-kit/ci-config.json` marker satisfies `skills/build/SKILL.md`'s pre-flight gate). This plan → build order is the canonical sequence; `/dev-kit:plan` is required when idea → PRD artifacts are not yet on disk.
 
 For incremental refresh, run `/dev-kit:ci-setup --force` (CI half) or `/dev-kit:bootstrap` (CLAUDE.md half) independently — both remain invocable.

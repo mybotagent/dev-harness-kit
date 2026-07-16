@@ -54,6 +54,11 @@ EXPECTED_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
+    # Provider selector for review.yml (issue #212-A1). Plain text file;
+    # consumers switch by editing the file and pushing. The pre-commit
+    # hook `.githooks/pre-commit` (consumer-installed) auto-syncs from
+    # the local `.env` `CI_REVIEW_PROVIDER` variable.
+    ".github/ci-review-provider.txt",
     ".githooks/pre-push",
     "scripts/validate.py",
     "scripts/test.sh",
@@ -123,6 +128,122 @@ POST_INSTALL_CHECKLIST: tuple[tuple[str, str], ...] = (
           "Merge that\n"
           "       bootstrap PR first; the gate works on every PR after."),
 )
+
+
+# Provider-aware required-secret catalog (issue #212-B1/B2). Each
+# provider carries its own API-key secret name. `DEV_KIT_GITHUB_TOKEN`
+# is the consumer-install precondition and is added regardless of provider.
+# Keep keys lowercase + values human-readable so the skill body can render
+# the checklist in plain English.
+PROVIDER_SECRETS: dict[str, tuple[tuple[str, str], ...]] = {
+    "minimax": (
+        ("MINIMAX_API_KEY", "MiniMax provider API key"),
+    ),
+    "anthropic": (
+        ("ANTHROPIC_API_KEY", "Anthropic API key (claude-code-action opt-in)"),
+    ),
+    "deepseek": (
+        ("DEEPSEEK_API_KEY", "DeepSeek provider API key"),
+    ),
+}
+
+# Consumer install always needs the dev-harness-kit PAT. The skill body
+# reads `ci-review-provider.txt` and merges the matching provider secret
+# above with this PAT.
+DEV_KIT_CONSUMER_SECRET: tuple[str, str] = (
+    "DEV_KIT_GITHUB_TOKEN",
+    "Fine-grained PAT with `contents:read` on sh-ai-x/dev-harness-kit "
+    "(required when this repo is NOT the dev-harness-kit source itself)",
+)
+
+
+def required_secrets_for_provider(provider: str) -> tuple[str, ...]:
+    """Names of repo secrets required for the given review provider.
+
+    Always includes `DEV_KIT_GITHUB_TOKEN` (consumer-install precondition).
+    The provider's own API-key secret is appended. Unknown provider names
+    fall back to `minimax` (matches the gate's default fallback).
+
+    Returns:
+        Tuple of secret names (e.g. `("DEV_KIT_GITHUB_TOKEN", "MINIMAX_API_KEY")`).
+    """
+    provider = (provider or "minimax").strip().lower()
+    names = [DEV_KIT_CONSUMER_SECRET[0]]
+    for secret_name, _ in PROVIDER_SECRETS.get(provider, PROVIDER_SECRETS["minimax"]):
+        if secret_name not in names:
+            names.append(secret_name)
+    return tuple(names)
+
+
+def gh_secret_set_command(repo: str, secret_name: str) -> str:
+    """Render the exact `gh secret set` invocation for one secret.
+
+    Issue #212-B3: makes the discover path "list secrets → paste commands"
+    instead of "fail CI → read log → man-page `gh secret set`". The print
+    path goes through `print_checklist=True` and the post-install recap.
+    """
+    return f"gh secret set {secret_name} --repo {repo}"
+
+
+def set_repo_secret(repo: str, name: str, value: str, *, gh_path: str | None = None) -> ProbeResult:
+    """Run `gh secret set NAME --repo REPO` for one secret.
+
+    Reads from stdin; never logs the value. Returns a ProbeResult with
+    state OK | WARN. WARN is also returned when `gh` is absent so the
+    caller can skip without crashing.
+    """
+    gh = gh_path or shutil.which("gh")
+    if not gh:
+        return ProbeResult(f"{name} set", "WARN", "gh not on PATH")
+    try:
+        cp = subprocess.run(
+            [gh, "secret", "set", name, "--repo", repo],
+            input=value,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+        return ProbeResult(f"{name} set", "WARN", f"gh CLI error: {e}")
+    if cp.returncode != 0:
+        err = (cp.stderr or "").strip().splitlines()[-1] if cp.stderr else ""
+        return ProbeResult(f"{name} set", "WARN", err or "gh secret set returned non-zero")
+    return ProbeResult(f"{name} set", "OK", "")
+
+
+def set_repo_secrets(
+    repo: str,
+    secrets: dict[str, str],
+    *,
+    gh_path: str | None = None,
+) -> list[ProbeResult]:
+    """Set multiple repo secrets in sequence.
+
+    `secrets` maps secret name → value. Returns one ProbeResult per secret
+    (in input order). Empty `secrets` returns an empty list (no probe).
+    Never raises — every error becomes a WARN ProbeResult.
+    """
+    out: list[ProbeResult] = []
+    for name, value in secrets.items():
+        out.append(set_repo_secret(repo, name, value, gh_path=gh_path))
+    return out
+
+
+def read_provider_file(target_dir: Path) -> str:
+    """Read `.github/ci-review-provider.txt` from `target_dir`.
+
+    Returns the trimmed string content, or `"minimax"` when the file is
+    missing / unreadable / empty. Idempotent read; never raises.
+    """
+    p = target_dir / ".github" / "ci-review-provider.txt"
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except OSError:
+        return "minimax"
+    value = raw.strip().lower()
+    if value not in PROVIDER_SECRETS:
+        return "minimax"
+    return value
 
 
 @dataclass
@@ -415,6 +536,7 @@ def _build_marker() -> dict:
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
+        "ci_review_provider_file": ".github/ci-review-provider.txt",
         "scripts": [
             "scripts/validate.py",
             "scripts/test.sh",
@@ -610,6 +732,22 @@ def install_ci_config(
     marker_payload["installed_file_shas"] = new_shas
     atomic_write_json(marker, marker_payload)
     report.marker_path = str(marker)
+
+    # Issue #212-A3/E1: hard-verify marker is on disk. `atomic_write_json`
+    # only writes the file — never raises. A subsequent read-back asserts
+    # the marker is parseable JSON (catches a zero-byte / partial-write
+    # outcome that would otherwise pass silently and break the build
+    # pre-flight gate later). Logged as an error in the report so the
+    # skill body surfaces it; the install still returns so callers can
+    # surface a custom error.
+    try:
+        on_disk = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(on_disk, dict) or not on_disk:
+            report.errors.append(
+                f"{MARKER_REL}: marker written but parseable payload is empty"
+            )
+    except (OSError, json.JSONDecodeError) as e:
+        report.errors.append(f"{MARKER_REL}: marker verification failed: {e}")
 
     # Lint pass on installed workflows -- catches stale gate patterns and
     # other known-bad shapes that local validate.py + ci-local.sh pass.
