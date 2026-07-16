@@ -11,10 +11,10 @@
 # "why does it keep switching to deepseek", they were right: the silent
 # rewrite was the bug.
 #
-# New model: the tracked file is user-controlled. To switch provider,
-# run `bin/set-provider.sh <minimax|anthropic|deepseek>`, review the
-# diff it prints, then commit + push. CI_REVIEW_PROVIDER in .env is a
-# local convenience only; it does NOT auto-propagate.
+# New model: the tracked file is user-controlled, and `.env` is no longer
+# consulted for provider selection at all. To switch provider, run
+# `bin/set-provider.sh <minimax|anthropic|deepseek>`, review the diff it
+# prints, then commit + push.
 #
 # Version auto-bump lives in .githooks/pre-push, not here — pre-commit
 # fires on every commit (incl. amend / rebase), and bumping on each

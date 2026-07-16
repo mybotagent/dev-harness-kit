@@ -56,9 +56,10 @@ EXPECTED_PATHS: tuple[str, ...] = (
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
     # Provider selector for review.yml (issue #212-A1). Plain text file;
-    # consumers switch by editing the file and pushing. The pre-commit
-    # hook `.githooks/pre-commit` (consumer-installed) auto-syncs from
-    # the local `.env` `CI_REVIEW_PROVIDER` variable.
+    # consumers switch by running `bin/set-provider.sh <provider>` and
+    # pushing the resulting commit. `.env` is NOT consulted — a
+    # GitHub-hosted runner can't see it anyway, and the silent
+    # `.env` -> tracked-file sync was removed (see #230).
     ".github/ci-review-provider.txt",
     ".githooks/pre-push",
     "scripts/validate.py",
