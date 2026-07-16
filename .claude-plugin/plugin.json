@@ -3,7 +3,7 @@
   "name": "dev-kit",
   "displayName": "Dev Harness Kit",
   "version": "0.3.43",
-  "description": "AI-native dev harness: 13 categories, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop",
+  "description": "AI-native dev harness: A2A typed, Eval-Repair, Human-on-the-Loop",
   "author": {
     "name": "sanghee",
     "url": "https://github.com/sanghee"

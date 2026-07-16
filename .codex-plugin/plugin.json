@@ -22,7 +22,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Dev Harness Kit",
-    "shortDescription": "42 skills for planning, TDD build, review, security, and release workflows",
+    "shortDescription": "Skills for planning, TDD build, review, security, and release workflows",
     "longDescription": "Use dev-kit to run bootstrap, plan, build, review, security, audit, and ship stages through a single skill set shared with Claude Code.",
     "developerName": "sanghee",
     "category": "Developer Tools",
