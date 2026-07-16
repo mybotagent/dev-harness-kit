@@ -39,6 +39,7 @@ _HOOK_RELPATHS: tuple[str, ...] = (
     "hooks/worktree-guard.sh",
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
+    "hooks/review-yml-isolation.sh",
     "hooks/lib/worktree-detect.sh",
     "hooks/hooks.json",
 )
