@@ -14,7 +14,7 @@
 - **Human-on-the-Loop auto + user approves last**: zero response fatigue.
 - **Worktree enforcement**: `worktree-guard` blocks Edit/Write in the main checkout; `task-detector` nudges new tasks to a worktree; `session-start-check` reminds at session start. See `.claude/rules/git-workflow.md`.
 - **Consumer-install**: `/dev-kit:ci-setup` ships a self-aware `review.yml` that works in both the dev-harness-kit repo itself (self-install) and consumer repos (clones from public source).
-- **Token efficiency analyzer (`tools/token_efficiency_analyzer.py`)**: stdlib-only CLI that turns `logs/{claude-code,codex}/**/*.jsonl` (per-branch layout: `<tool>/<branch>/<session>.jsonl`) into a single self-contained HTML dashboard — 4-dim session scoring (cache utilization · output density · read redundancy · tool economy), 6 anti-pattern warnings (prefix misalignment, Read-heavy cartography failure, heavy context, model overspec, cache write-not-reused, repeated user-message injection), a USD savings estimate, and a "Cost by Branch" panel. See [Token efficiency analyzer](#token-efficiency-analyzer-toolstoken_efficiency_analyzerpy).
+- **Cost gate (`tools/cost_gate_status.py` + `lib/cost_gate.py`)**: stdlib-only CLI that aggregates per-PR cost from commit trailers and applies the `cost-flag` label via `.github/workflows/cost-flag.yml`. Read-only — never blocks tool calls.
 
 ## Install (plugin-only)
 
@@ -161,7 +161,7 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:inspect                 # 8-dim code health audit (read-only, project-wide)
 /dev-kit:eval                    # agent-behavior eval (review/security/plan + code-sanity rubric)
 /dev-kit:report                  # HTML viewer for eval + inspect markdown reports
-/dev-kit:token-analyzer           # token-efficiency dashboard from logs/{claude-code,codex}/**/*.jsonl
+/dev-kit:log                 # auto-install per-session log capture hook (Claude/Codex)
 /dev-kit:repair approve|reject|defer <asset>   # Eval-Repair Human Review
 /dev-kit:ship                    # release tag
 /dev-kit:babysit-pr              # 0-arg PR babysitter loop
@@ -190,7 +190,7 @@ dev-harness-kit/
 ├── hooks/                 # hook scripts + lib/ + hooks.json
 ├── lib/                   # state_codec / active_hooks_codec / write_project_md / execute / methodology/ / ci_setup / cost_gate / atomic / eval_runner / llm_judge / render_report_html / install.sh
 ├── bin/                   # devkit-refresh.sh + dev-kit-hooks-status.py + dev-kit-report.py
-├── tools/                 # save_log.py (Stop-hook transcript saver) + token_efficiency_analyzer.py (HTML dashboard) + cost_gate_status.py (live cost CLI + hook driver)
+├── tools/                 # save_log.py (Stop-hook transcript saver) + cost_gate_status.py (PR-level cost aggregator + hook driver)
 ├── templates/ci/          # CI workflow templates shipped to consumer repos via /dev-kit:ci-setup
 ├── tests/                 # pytest suite
 ├── eval/                  # cases/ + fixtures/ + transcripts/ + prompts/ + golden/ (agent-behavior eval)
@@ -253,140 +253,9 @@ Wrap the standalone [`~/dev/loghooks`](https://github.com/sh-ai-x/loghooks) repo
 
 Every installed entry carries `_loghooks_managed=true`. `off` strips only those — pre-existing user hooks are always preserved. Captured transcripts land in `logs/<tool>/<branch>/<sid>.jsonl` (grouped by `gitBranch`) and are gitignored (see [`logs/README.md`](logs/README.md)). See `skills/log/SKILL.md` for the full contract.
 
-## Token efficiency analyzer (`/dev-kit:token-analyzer` → `tools/token_efficiency_analyzer.py`)
-
-A standalone stdlib-only Python CLI that consumes the `logs/{claude-code,codex}/*.jsonl` transcripts captured by the loghooks above and emits a single self-contained HTML dashboard. No external dependencies, no JavaScript, no network — the output is one HTML file with inline CSS that opens directly in a browser.
-
-The user-facing entry point is the **`/dev-kit:token-analyzer`** skill (in the `audit` category) which invokes the underlying `tools/token_efficiency_analyzer.py` driver — see [`skills/token-analyzer/SKILL.md`](skills/token-analyzer/SKILL.md) for the skill contract. The CLI itself is also invokable directly for scripted / CI use:
-
-```bash
-python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
-```
-
-The dashboard answers three questions for any given repository over the last N days:
-
-1. **Where is the spend going?** Per-repo cost share, per-tool cost share (with a flag if `Read` dominates), per-session breakdown.
-2. **How efficient is each session?** A 0-100 score across 4 dimensions.
-3. **What should I fix?** Six anti-pattern warnings + a USD estimate of recoverable spend.
-
-### Quick start
-
-```bash
-# 1. Make sure loghooks are running (see Loghooks section above)
-#    -> produces logs/claude-code/<branch>/<session-id>.jsonl
-# 2. Generate the dashboard for one repository, last 30 days
-python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
-# 3. Open the output file
-open token-dashboard-my-project-30d.html
-```
-
-### Preview
-
-![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
-
-*The dashboard above was generated against this repo's own `logs/claude-code/` transcripts — Cost Gate banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost distribution, model + cache TTL mix, session table with letter-grade scores + warning chips, and a reclaim-axis savings breakdown.*
-
-Common flags:
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--repo <name>` | (required) | Matches `Path(cwd).name` of each session — i.e. the repo's directory basename |
-| `--days <n>` | `30` | Look-back window; sessions with `last_ts` older are dropped |
-| `--logs-dir <path>` | `./logs` | Root for `claude-code/` and `codex/` subdirs |
-| `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
-
-### Pricing model
-
-Per-model USD pricing baked into the script (matched by model id substring — `opus` / `sonnet` / `haiku`):
-
-| Model | Input $/M | Output $/M | Cache Write $/M | Cache Read $/M |
-|---|---:|---:|---:|---:|
-| Opus   | 15.00 | 75.00 | 18.75 (1.25×) | 1.50 (0.10×) |
-| Sonnet |  3.00 | 15.00 |  3.75 (1.25×) | 0.30 (0.10×) |
-| Haiku  |  0.80 |  4.00 |  1.00 (1.25×) | 0.08 (0.10×) |
-
-The 1.25× cache-write surcharge reflects the priming premium on the first turn; the 0.10× cache-read rate reflects that cached tokens cost ~10% of base input. Unrecognized model ids fall back to Sonnet pricing. Override `PRICING` at the top of the file to match your contracted rates.
-
-### Scoring rubric (per session, 0-100 weighted)
-
-The script computes 4 orthogonal dimensions and a weighted total:
-
-| Dimension | Weight | Formula | What it penalizes |
-|---|---:|---|---|
-| **Cache Utilization** | 0.35 | `cache_read / (input + cache_read) × 100` | Prefix misalignment — every missed cache re-primes the full prompt at full input price |
-| **Output Density** | 0.25 | `min(100, output / total_input × 400)` | Sessions that read a lot and ship nothing |
-| **Read Redundancy** | 0.20 | `max(0, 100 − (max_repeat_reads − 1) × 12.5)` | Re-reading the same file — a missing cartography |
-| **Tool Economy** | 0.20 | `max(0, 100 − tools_per_1k_out × 2)` | Tool thrashing — many calls for thin output |
-
-Total = `0.35×cache + 0.25×density + 0.20×redundancy + 0.20×economy`, rounded to 1 decimal.
-
-### Warning triggers (6 anti-patterns)
-
-Each trigger has a specific condition and the exact recommended fix from the prompt — the message is rendered verbatim in the dashboard:
-
-| Code | Condition | Why it fires |
-|---|---|---|
-| `CACHE_HIT_LOW` | `cache_hit_ratio < 50%` | A single token shift in the prefix (date, model change, CLAUDE.md edit) invalidates the entire cache. Move volatile data to the tail; do not switch models mid-session. |
-| `READ_HEAVY` | `Read` tool cost ≥ 40% of total tool cost | Large files are being re-read repeatedly. Pin them once in cache; build a cartography so the agent finds the entry point without exploration. |
-| `HEAVY_CONTEXT` | `total_input > 500K tokens` in one session | Long sessions accumulate context. Delegate exploration to sub-agents and pass summaries back; run `/compact` at sensible checkpoints. |
-| `MODEL_OVERSPEC` | Opus + density score < 20 | Typo fixes and trivial logic don't need Opus. Match the model to the task: Sonnet for code, Haiku for routine work. |
-| `WRITE_NOT_REUSED` | `cache_write > 50K` AND `cache_read < 2 × cache_write` | The first cache write costs 25% more. If the data won't be re-read 2-3× within the 5-minute TTL, don't put it in the front of the prompt. |
-| `REPEATED_USER_MSG` | Any user message text appears ≥ 2× | Re-injecting cached context via user messages is wasted spend and confuses the agent. Drop finished sub-tasks from context immediately. |
-
-### Estimated savings (USD)
-
-Conservative reclaim model — only the cache-miss penalty + duplicate-read waste, not the entire bill:
-
-- **Cache-miss penalty**: shift tokens from the billable input bucket into `cache_read` until the session hits 70%. Saved = `shifted × (input_price − cache_read_price)`.
-- **Duplicate-read waste**: for each file read more than once, count `2K tokens × (n − 1)` at base input price.
-
-Real Anthropic billing doesn't break out per-tool spend, so the per-tool cost column is imputed from `n_calls × 2K_tokens × input_price` and is a heuristic, not a billing-API call.
-
-### Dashboard structure
-
-The HTML output has four regions, all from a single template (`render_dashboard()`):
-
-1. **Overview** — 4 metric tiles: active sessions, total cost, avg score, avg cache hit ratio
-2. **Cost & Token Distribution** — Cost by Repository (share bar) + Cost by Tool (share bar, with a yellow banner if `Read` is #1)
-3. **Sessions** — one row per session: model, start time, input/output/cache-hit/cost, score pill, warning chips
-4. **Actionable Insights & Estimated Savings** — USD savings callout (green gradient) + deduplicated warning blocks
-
-### Constraints & guarantees
-
-- **Stdlib only**: `argparse`, `collections`, `datetime`, `html`, `json`, `os`, `pathlib`, `statistics`, `sys`. No `pip install`, no transitive risk.
-- **Single self-contained HTML**: inline `<style>`, no `<script>`, no external assets. Drop it in Slack, an email, or a PR — renders identically anywhere.
-- **No TODOs / stubs**: the entire path is implemented end-to-end (parser → scoring → warnings → savings → HTML → write).
-- **No completion claims without evidence**: see Verification below.
-
-### Verification
-
-The fixture at `fixtures/make_fixture.py` generates one synthetic JSONL per warning trigger, all with `cwd=/tmp/fixture-repo`:
-
-```bash
-$ python3 fixtures/make_fixture.py
-wrote .../aaaa-low-cache.jsonl       (3 records)
-wrote .../bbbb-read-heavy.jsonl      (2 records)
-wrote .../cccc-heavy-ctx.jsonl       (2 records)
-wrote .../dddd-opus-typo.jsonl       (2 records)
-wrote .../eeee-write-not-reused.jsonl (2 records)
-wrote .../ffff-repeated-msg.jsonl    (6 records)
-
-$ python3 tools/token_efficiency_analyzer.py --repo "fixture-repo" --days 30 \
-      --logs-dir fixtures/logs --out fixtures/out/dashboard.html
-[ok] sessions=6  files_scanned=6  total_cost=$10.64  estimated_savings=$2.25
-[ok] dashboard -> fixtures/out/dashboard.html
-EXIT=0
-```
-
-All 6 warning codes (`CACHE_HIT_LOW`, `READ_HEAVY`, `HEAVY_CONTEXT`, `MODEL_OVERSPEC`, `WRITE_NOT_REUSED`, `REPEATED_USER_MSG`) appear in the rendered HTML; score pills render across all three bands (good / warn / bad).
-
-### Why a tool, not a skill
-
-This is a CLI, not a `/dev-kit:*` skill, because it operates on local files with no LLM call in the loop — wrapping it as a skill would force an unnecessary model round-trip for pure data transformation. Skills are reserved for steps where the model adds value (planning, design, review, eval). The loghooks that *produce* the input remain a skill (`/dev-kit:log`); the analyzer that *consumes* the output is a script.
-
 ## Cost gate (`/dev-kit:cost-gate`)
 
-A **read-only cost measurement** layer. Distinct from the post-hoc `/dev-kit:token-analyzer` dashboard: cost-gate prints the running ledger on demand and emits the trailer block the PR aggregator needs; the analyzer replays historical JSONL sessions. Two layers, one state file at `<cwd>/.dev-kit/.cost-gate/state.json`. **The gate is observed only — it never blocks tool calls.** A runaway session still shows up in the dashboard, in commit trailers, and in the PR-level label, but the model is never denied a tool mid-flight because of a cost threshold.
+A **read-only cost measurement** layer. Emits commit-trailer blocks (`Cost-gate: $X.XX` per session) and applies the PR-level `cost-flag` label via `.github/workflows/cost-flag.yml` when the aggregated total exceeds the threshold (default $20, configurable via `DEV_KIT_PR_COST_FLAG_USD`). **The gate is observed only — it never blocks tool calls.** A runaway session still surfaces in trailers and the PR label, but the model is never denied a tool mid-flight because of a cost threshold.
 
 | Layer | Trigger | Threshold (default) | Behavior |
 |---|---|---:|---|
@@ -438,7 +307,7 @@ git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
 
 ### Isolation guarantee
 
-`lib/cost_gate.py` and `tools/cost_gate_status.py` do **not** import `tools/token_efficiency_analyzer.py`. Both pricing tables, state files, and transcript scanners remain independent paths. The post-hoc dashboard (`/dev-kit:token-analyzer`) and the live gate (`/dev-kit:cost-gate`) read different files and have different lifecycles. A regression test (`TestIsolation`) asserts no cross-import.
+`lib/cost_gate.py` and `tools/cost_gate_status.py` carry their own pricing tables, state files, and transcript scanners. The CI cost-gate (`/dev-kit:cost-gate`, `.github/workflows/cost-flag.yml`) reads commit trailers and applies the PR-level `cost-flag` label independently.
 
 ### Manual smoke
 

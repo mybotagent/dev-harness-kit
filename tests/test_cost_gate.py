@@ -12,7 +12,7 @@ Black-box coverage:
   4. lib/cost_gate.py exposes no session_kill threshold (the blocking
      gate is removed; cost is observed only).
 
-No import of tools.token_efficiency_analyzer — isolation guarantee.
+No import of tools.token_efficiency_analyzer — isolation guarantee (no longer required since the analyzer was removed; the comment is kept for historical context).
 """
 from __future__ import annotations
 
@@ -377,29 +377,6 @@ class TestHookScriptRemoved(unittest.TestCase):
                         "cost-gate.sh", cmd,
                         f"hooks.json still wires cost-gate.sh under {event}: {cmd}",
                     )
-
-
-# ============================================================================
-# 9. Isolation guarantee — no import of token_efficiency_analyzer
-# ============================================================================
-
-class TestIsolation(unittest.TestCase):
-    def test_lib_cost_gate_does_not_import_token_analyzer(self):
-        path = LIB / "cost_gate.py"
-        if not path.exists():
-            self.skipTest("cost_gate.py not found")
-        text = path.read_text(encoding="utf-8")
-        self.assertNotIn("token_efficiency_analyzer", text,
-                         "lib/cost_gate.py must not import token_efficiency_analyzer")
-
-    def test_tools_cost_gate_status_does_not_import_token_analyzer(self):
-        path = TOOLS / "cost_gate_status.py"
-        if not path.exists():
-            self.skipTest("cost_gate_status.py not found")
-        text = path.read_text(encoding="utf-8")
-        self.assertNotIn("token_efficiency_analyzer", text,
-                         "tools/cost_gate_status.py must not import token_efficiency_analyzer")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

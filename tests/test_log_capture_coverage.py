@@ -2,17 +2,18 @@
 """test_log_capture_coverage.py — End-to-end coverage of the worktree
 session-capture pipeline.
 
-Goal: prove that a session started inside a sibling worktree shows up in
-the analyzer dashboard without any manual reconciliation. Pipeline under
-test:
+Goal: prove that a session started inside a sibling worktree is captured
+to the canonical location, and that nested worktree-of-worktree sessions
+also land in main. Pipeline under test:
 
   1. ``tools/save_log.py`` (capture hook) writes to the **main** checkout's
      ``logs/`` regardless of which worktree the session ran in.
-  2. ``tools/token_efficiency_analyzer.py`` discovers JSONL files under
-     ``<main>/.claude/worktrees/*/logs/`` and recurses into nested
-     ``.claude/worktrees/`` layers.
-  3. ``worktree_from_path`` resolves each session's worktree bucket from
-     the JSONL file path, so the Cost by Worktree panel populates.
+  2. Dual-write: sessions inside a worktree also write to the worktree's
+     own ``logs/`` for per-worktree cost attribution.
+
+(Tool-level cost-aggregation lives in ``tools/cost_gate_status.py`` and
+runs from ``.github/workflows/cost-flag.yml``; this test focuses on the
+capture pipeline itself.)
 
 Test layout (one tmpdir per test):
 
@@ -42,7 +43,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SAVE_LOG_PY = PROJECT_ROOT / "tools" / "save_log.py"
-ANALYZER_PY = PROJECT_ROOT / "tools" / "token_efficiency_analyzer.py"
 
 
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -107,16 +107,6 @@ class TestWorktreeCapturePipeline(unittest.TestCase):
             input=payload, capture_output=True, text=True, timeout=15,
         )
 
-    def _run_analyzer(self) -> subprocess.CompletedProcess:
-        out_html = self.tmp / "dashboard.html"
-        return subprocess.run(
-            [sys.executable, str(ANALYZER_PY), "--repo", "wt-fix-x",
-             "--days", "30", "--logs-dir", str(self.main / "logs"),
-             "--include-worktree-logs",
-             "--out", str(out_html)],
-            capture_output=True, text=True, timeout=30,
-            cwd=str(self.main),
-        )
 
     def test_worktree_capture_lands_in_main_logs(self):
         rc = self._run_save_log(self.wt, "sess-fix-x")
@@ -131,28 +121,6 @@ class TestWorktreeCapturePipeline(unittest.TestCase):
         self.assertTrue(wt_capture.exists(),
                         f"worktree logs/ missing dual-write copy at {wt_capture}")
 
-    def test_worktree_session_shows_in_cost_by_worktree_panel(self):
-        rc = self._run_save_log(self.wt, "sess-fix-x")
-        self.assertEqual(rc.returncode, 0, f"save_log failed: {rc.stderr}")
-
-        out_html = self.tmp / "dashboard.html"
-        ana = subprocess.run(
-            [sys.executable, str(ANALYZER_PY), "--repo", "wt-fix-x",
-             "--days", "30", "--logs-dir", str(self.main / "logs"),
-             "--include-worktree-logs",
-             "--out", str(out_html)],
-            capture_output=True, text=True, timeout=30,
-            cwd=str(self.main),
-        )
-        self.assertEqual(ana.returncode, 0,
-                         f"analyzer failed:\nstdout={ana.stdout}\nstderr={ana.stderr}")
-        # Pipeline assertion 2: HTML contains the worktree bucket row.
-        html = out_html.read_text()
-        self.assertIn("wt-fix-x", html,
-                      "Cost by Worktree panel missing the worktree bucket")
-        self.assertIn("(main)", html,
-                      "Cost by Worktree panel missing the main bucket")
-
     def test_nested_worktree_capture_lands_in_main_logs(self):
         # Worktree-of-a-worktree: wt-fix-x adds wt-fix-y underneath itself.
         nested_wt = self.wt / ".claude" / "worktrees" / "wt-fix-y"
@@ -165,19 +133,6 @@ class TestWorktreeCapturePipeline(unittest.TestCase):
         captured = self.main / "logs" / "claude-code" / "fix-y" / "sess-fix-y.jsonl"
         self.assertTrue(captured.exists(),
                         f"nested capture missing from MAIN logs at {captured}")
-        # And the analyzer's recursive walker must surface it.
-        out_html = self.tmp / "nested-dashboard.html"
-        ana = subprocess.run(
-            [sys.executable, str(ANALYZER_PY), "--repo", "wt-fix-y",
-             "--days", "30", "--logs-dir", str(self.main / "logs"),
-             "--include-worktree-logs",
-             "--out", str(out_html)],
-            capture_output=True, text=True, timeout=30,
-            cwd=str(self.main),
-        )
-        self.assertEqual(ana.returncode, 0, f"analyzer failed: {ana.stderr}")
-        self.assertIn("wt-fix-y", out_html.read_text(),
-                      "nested-worktree bucket missing from dashboard")
 
 
 if __name__ == "__main__":
