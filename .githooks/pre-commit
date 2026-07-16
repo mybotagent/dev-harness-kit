@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-# .githooks/pre-commit — sync .github/ci-review-provider.txt from local .env.
+# .githooks/pre-commit — currently a no-op.
 #
-# Why: CI (GitHub-hosted runners) can never read your local .env directly —
-# it only ever sees what's checked out on the branch being pushed. This
-# hook makes .env the single source of truth anyway: it reads
-# CI_REVIEW_PROVIDER from the *main checkout's* .env (resolved via
-# --git-common-dir so it works from any worktree) and, if it differs from
-# the committed .github/ci-review-provider.txt, rewrites and stages that
-# file into the commit you're about to make. You only ever edit .env;
-# the tracked file follows automatically on your next commit.
+# History: this hook used to auto-rewrite .github/ci-review-provider.txt
+# from .env:CI_REVIEW_PROVIDER on every commit. That behavior was removed
+# because it (a) silently inverted user intent — committing in a worktree
+# whose provider didn't match the main checkout's .env would flip the
+# tracked file with no abort and no clear failure surface, and (b) coupled
+# two files with different audiences (local .env is gitignored + user-
+# private; the tracked file is the contract with CI). When users reported
+# "why does it keep switching to deepseek", they were right: the silent
+# rewrite was the bug.
+#
+# New model: the tracked file is user-controlled. To switch provider,
+# run `bin/set-provider.sh <minimax|anthropic|deepseek>`, review the
+# diff it prints, then commit + push. CI_REVIEW_PROVIDER in .env is a
+# local convenience only; it does NOT auto-propagate.
 #
 # Version auto-bump lives in .githooks/pre-push, not here — pre-commit
 # fires on every commit (incl. amend / rebase), and bumping on each
@@ -17,32 +23,5 @@
 # a release-gated branch.
 #
 # Activation: git config core.hooksPath .githooks (same as pre-push).
-
-set -eo pipefail
-
-MAIN_ROOT="$(dirname "$(git rev-parse --git-common-dir)")"
-ENV_FILE="$MAIN_ROOT/.env"
-PROVIDER_FILE=".github/ci-review-provider.txt"
-
-# Nothing to sync if either side is missing (e.g. not this project's layout).
-if [ -f "$ENV_FILE" ] && [ -f "$PROVIDER_FILE" ]; then
-  desired="$(grep -E '^CI_REVIEW_PROVIDER=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- | tr -d '[:space:]')"
-  case "$desired" in
-      minimax|anthropic|deepseek)
-          current="$(tr -d '[:space:]' < "$PROVIDER_FILE")"
-          if [ "$desired" != "$current" ]; then
-              echo "$desired" > "$PROVIDER_FILE"
-              git add "$PROVIDER_FILE"
-              echo "[pre-commit] synced $PROVIDER_FILE -> $desired (from .env CI_REVIEW_PROVIDER)"
-          fi
-          ;;
-      "")
-          # CI_REVIEW_PROVIDER not set in .env — leave the tracked file alone.
-          ;;
-      *)
-          echo "[pre-commit] WARN: .env CI_REVIEW_PROVIDER='$desired' is not minimax/anthropic/deepseek; ignoring" >&2
-          ;;
-  esac
-fi
 
 exit 0
