@@ -47,7 +47,7 @@ No visible flags. No option prompts (MUST-NOT-13).
        ├── scripts/validate.py        → expect "OK: CI installation valid"
        └── scripts/ci-local.sh        → expect exit 0
        ↓
-[4] exit → pointer to /dev-kit:plan or /dev-kit:build (ci-config.json marker satisfies build's pre-flight gate)
+[4] exit → pointer to /dev-kit:plan, then /dev-kit:build (plan → build is the canonical sequence; ci-config.json marker satisfies build's pre-flight gate)
 ```
 
 ## Hook integration (stage=bootstrap)
@@ -86,6 +86,6 @@ Same matrix as `/dev-kit:bootstrap`. `active-hooks.json` SSOT auto-initialized (
 
 ## Next step
 
-After `/dev-kit:bootstrap-full`, the target repo is ready for `/dev-kit:build` (the `.dev-kit/ci-config.json` marker satisfies `skills/build/SKILL.md`'s pre-flight gate). `/dev-kit:plan` is opt-in and only for idea → PRD.md synthesis — it is NOT the default next stage.
+After `/dev-kit:bootstrap-full`, run `/dev-kit:plan` first to synthesize `PRD.md` + `phases/` from the user's idea, then `/dev-kit:build` (the `.dev-kit/ci-config.json` marker satisfies `skills/build/SKILL.md`'s pre-flight gate). This plan → build order is the canonical sequence; `/dev-kit:plan` is required when idea → PRD artifacts are not yet on disk.
 
 For incremental refresh, run `/dev-kit:ci-setup --force` (CI half) or `/dev-kit:bootstrap` (CLAUDE.md half) independently — both remain invocable.
