@@ -124,18 +124,6 @@ def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[st
             return {ax: float(data[ax]) for ax in target_axes if ax in data}
         except Exception:
             pass
-    # Last resort: pick axes that match regardless of the requested set,
-    # so callers can still see what the model emitted.
-    m2 = re.search(
-        r"\{[^{}]*?" + _AXIS_TOKEN_RE + r"[^{}]*?\}",
-        raw, re.DOTALL,
-    )
-    if m2:
-        try:
-            data = json.loads(m2.group(0))
-            return {ax: float(v) for ax, v in data.items() if ax in target_set}
-        except Exception:
-            pass
     return {}
 
 
