@@ -120,7 +120,7 @@ jobs:
           import pathlib
           skills = sorted(pathlib.Path('skills').glob('*/SKILL.md'))
           # Skill COUNT is asserted by tests/test_smoke.py:test_skills_count
-          # (SKILL_COUNT constant + 44 check); duplicating it here would
+          # (SKILL_COUNT constant check); duplicating it here would
           # create a second mirror that drifts on every skill add. The two
           # unique invariants this job owns are below.
           # flat: no nested SKILL.md
