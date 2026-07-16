@@ -37,6 +37,18 @@ Runs `lib/ci_doctor.py:audit()` against the current working directory (or `--tar
 
 Every FAIL row prints the exact remediation (`run: gh secret set NAME --repo OWNER/REPO`, etc.) so the discover path is `audit → paste commands → re-audit` rather than the current `push PR → CI red → read log → grep for the secret name`.
 
+## Source-repo mode (consumer-only checks skipped)
+
+When the target is the dev-kit plugin authoring source itself — detected by a `.claude-plugin/plugin.json` whose `name` is `dev-kit` — the consumer-install-only checks are reported as **SKIP**, not FAIL:
+
+| Check | Why skipped in source repo |
+|---|---|
+| `file present: .dev-kit/ci-config.json` | The marker gates `/dev-kit:build` in consumers; the source repo gitignores `.dev-kit/` and never builds itself through it |
+| `marker parseable` (+ payload rows) | No marker to parse |
+| `secret set: DEV_KIT_GITHUB_TOKEN` | The PAT lets consumer CI read the source; the source repo's own CI uses the default `GITHUB_TOKEN` (see `lib/ci_setup.py:DEV_KIT_CONSUMER_SECRET`) |
+
+The provider API-key secret (e.g. `DEEPSEEK_API_KEY`) is **still required** — the source repo's own `review.yml` uses it. An `INFO` row (`repo role: dev-kit source repo`) flags the mode. SKIP rows never flip the verdict, so a correctly-configured source repo audits as PASS instead of the spurious 3-FAIL it produced before.
+
 ## Body
 
 1. Parse `--target DIR` (default `$PWD`).
