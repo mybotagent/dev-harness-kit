@@ -31,6 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
 MAX_RETRIES = 3
 SCHEMA_VERSION = "1.0.0"
+# Sub-agent stdout marker. If the per-step `claude -p` emits this line, the
+# runner transitions the step to `blocked` (with reason) instead of `completed`
+# so the human gets unblocked instead of a silent zero-file PR (issue #221).
+BLOCKED_MARKER = "<!-- status: blocked -->"
+# Tools the per-step sub-agent needs to do anything useful. Required so a
+# restrictive parent Claude Code sandbox (issue #221 RC1: consumer project
+# does not pre-allow .worktrees/**) does not silently block all writes.
+SUBAGENT_ALLOWED_TOOLS = "Write,Edit,Bash"
 # Step lifecycle. Order roughly matches the typical progression; entries are
 # enforced by update_step_status() and indexed/queried by tests/CLI.
 VALID_STATUSES = (
@@ -212,6 +220,8 @@ def write_step_output(
     stdout: str,
     stderr: str,
     duration_seconds: float = 0.0,
+    blocked: bool = False,
+    blocked_reason: Optional[str] = None,
 ) -> Path:
     """Atomic write phases/<phase>/step<N>-output.json."""
     path = project_root / "phases" / phase / f"step{step}-output.json"
@@ -225,8 +235,58 @@ def write_step_output(
         "duration_seconds": duration_seconds,
         "timestamp": now_iso(),
     }
+    if blocked:
+        # Issue #221 RC3: surface the sub-agent's blocked verdict in the
+        # output JSON so audits can see WHY a step was held back instead of
+        # silently advancing to `completed` on exit_code==0.
+        data["blocked"] = True
+        data["blocked_reason"] = blocked_reason or ""
     atomic_write_json(path, data)
     return path
+
+
+def _extract_blocked_reason(stdout: str) -> Optional[str]:
+    """If BLOCKED_MARKER is in stdout, return the human-readable reason.
+
+    The convention is: the line(s) immediately BEFORE the marker are the
+    human-readable request (e.g. "i need an API key — cannot proceed"). After
+    the marker is meaningless chatter. We strip the marker itself and any
+    trailing content so the reason recorded in index.json is concise.
+    """
+    if BLOCKED_MARKER not in stdout:
+        return None
+    head, _, _ = stdout.partition(BLOCKED_MARKER)
+    reason = head.strip().rstrip(",").strip()
+    return reason or "sub-agent emitted <!-- status: blocked --> with no preceding reason"
+
+
+def _commit_step(wt: Path, msg: str) -> bool:
+    """Stage ALL writes in the per-step worktree, then commit only if dirty.
+
+    Issue #221 RC2: the previous `git commit --allow-empty` masked a chain of
+    failure modes — sub-agent writes blocked by sandbox, empty WorkTree, etc.
+    The new contract is: stage first (`git add -A`), then ask git whether there
+    is anything to commit (`git diff --cached --quiet`). If no diff, skip the
+    commit entirely and return False. Caller branches on the bool to set the
+    correct status (committed → continue; no-diff → block-on-marker-only is
+    enough; or surface as a step-level "no files written" anomaly).
+    """
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=str(wt), check=True, capture_output=True, text=True,
+    )
+    diff_check = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=str(wt), capture_output=True, text=True,
+    )
+    if diff_check.returncode == 0:
+        # Nothing staged → nothing to commit. Do NOT make an empty commit.
+        return False
+    subprocess.run(
+        ["git", "commit", "-m", msg],
+        cwd=str(wt), check=True, capture_output=True, text=True,
+    )
+    return True
 
 
 # ---------- CLI ----------
@@ -349,8 +409,15 @@ def _run_one_step(
     started_at_iso = now_iso()
 
     # 4. spawn one sub-agent (MUST-36)
+    #    Issue #221 RC1: --add-dir <wt> + --allowedTools so the sub-agent can
+    #    write into the per-step worktree even when the consumer's parent
+    #    Claude Code sandbox blocks ".worktrees/**" by default.
     proc = subprocess.run(
-        ["claude", "-p", "--workdir", str(wt), full_prompt],
+        ["claude", "-p",
+         "--add-dir", str(wt),
+         "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
+         "--workdir", str(wt),
+         full_prompt],
         cwd=str(root), capture_output=True, text=True,
     )
 
@@ -360,13 +427,28 @@ def _run_one_step(
         duration = max(0.0, (datetime.fromisoformat(now_iso()) - started).total_seconds())
     except Exception:
         duration = 0.0
+
+    # Issue #221 RC3: parse `<!-- status: blocked -->` BEFORE marking completed.
+    # stdout==0 + marker present → register as blocked (with reason) and bail rc=2.
+    blocked_reason = _extract_blocked_reason(proc.stdout or "")
     write_step_output(
         root, phase, step_num,
         exit_code=proc.returncode,
         stdout=proc.stdout or "",
         stderr=proc.stderr or "",
         duration_seconds=duration,
+        blocked=bool(blocked_reason),
+        blocked_reason=blocked_reason,
     )
+
+    # 5b. blocked marker wins — even on a clean exit_code==0, refuse to advance.
+    if blocked_reason is not None:
+        update_step_status(
+            root, phase, step_num,
+            status="blocked",
+            blocked_reason=blocked_reason,
+        )
+        return 2  # sentinel mirrored by _run_sequential("blocked" pre-existing) → bails the loop
 
     # 6. on failure → error status, return
     if proc.returncode != 0:
@@ -377,17 +459,16 @@ def _run_one_step(
         )
         return proc.returncode
 
-    # 7. 2-commit protocol (feat + chore) on the per-step branch
+    # 7. 2-commit protocol (feat + chore) on the per-step branch.
+    #    Issue #221 RC2: replace `git commit --allow-empty` with add-A +
+    #    conditional commit via _commit_step. If the sub-agent wrote nothing
+    #    (still a valid "the step has nothing to commit" outcome), the per-step
+    #    branch simply gets one fewer commit — NOT an empty commit with a fake
+    #    "feat:" stamp.
     feat_msg = f"feat({phase}): step {step_num}" + (f" — {step_name}" if step_name else "")
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", feat_msg],
-        cwd=str(wt), check=True, capture_output=True, text=True,
-    )
+    _commit_step(wt, feat_msg)
     chore_msg = f"chore({phase}): step {step_num} output"
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", chore_msg],
-        cwd=str(wt), check=True, capture_output=True, text=True,
-    )
+    _commit_step(wt, chore_msg)
 
     # 8. push
     if push:
@@ -509,8 +590,13 @@ class _SlotRunner:
         full_prompt = preamble + "\n\n---\nAC: see step file. 3-cycle self-fix max."
         update_step_status(self.root, self.phase, n, status="in_progress")
         self.started_at_iso = now_iso()
+        # Issue #221 RC1: same --add-dir + --allowedTools fix as sequential.
         self.proc = subprocess.Popen(
-            ["claude", "-p", "--workdir", str(self.wt), full_prompt],
+            ["claude", "-p",
+             "--add-dir", str(self.wt),
+             "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
+             "--workdir", str(self.wt),
+             full_prompt],
             cwd=str(self.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
 
@@ -529,31 +615,39 @@ class _SlotRunner:
             ) if started else 0.0
         except Exception:
             duration = 0.0
+        # Issue #221 RC3: parse the blocked marker first so a clean exit_code
+        # cannot silently advance a step the sub-agent explicitly held back.
+        blocked_reason = _extract_blocked_reason(stdout or "")
         write_step_output(
             self.root, self.phase, n,
             exit_code=self.exit_code,
             stdout=stdout or "",
             stderr=stderr or "",
             duration_seconds=duration,
+            blocked=bool(blocked_reason),
+            blocked_reason=blocked_reason,
         )
-        if self.exit_code != 0:
+        if blocked_reason is not None:
+            update_step_status(
+                self.root, self.phase, n,
+                status="blocked",
+                blocked_reason=blocked_reason,
+            )
+            self.exit_code = 2  # bail the whole parallel run on a blocked step
+        elif self.exit_code != 0:
             update_step_status(
                 self.root, self.phase, n,
                 status="error",
                 error_message=f"claude exited {self.exit_code}",
             )
         else:
+            # Issue #221 RC2: --allow-empty is GONE. add-A + conditional commit.
             feat_msg = f"feat({self.phase}): step {n}" + (
                 f" — {step.get('name', '')}" if step.get("name") else ""
             )
-            subprocess.run(
-                ["git", "commit", "--allow-empty", "-m", feat_msg],
-                cwd=str(self.wt), check=True, capture_output=True, text=True,
-            )
-            subprocess.run(
-                ["git", "commit", "--allow-empty", "-m",
-                 f"chore({self.phase}): step {n} output"],
-                cwd=str(self.wt), check=True, capture_output=True, text=True,
+            _commit_step(self.wt, feat_msg)
+            _commit_step(
+                self.wt, f"chore({self.phase}): step {n} output"
             )
             if self.push and self.branch:
                 subprocess.run(
