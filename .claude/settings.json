@@ -25,5 +25,17 @@
         "_loghooks_managed": true
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Write(.worktrees/**)",
+      "Edit(.worktrees/**)",
+      "Read(.worktrees/**)",
+      "Bash(git -C .worktrees/** *)",
+      "Bash(git -C .worktrees/* *)",
+      "Bash(cd .worktrees/* && git:*)"
+    ],
+    "deny": [],
+    "ask": []
   }
 }
