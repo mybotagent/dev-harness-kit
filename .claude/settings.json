@@ -28,7 +28,6 @@
   },
   "permissions": {
     "allow": [
-      "Write(.worktrees/**)",
       "Edit(.worktrees/**)",
       "Read(.worktrees/**)",
       "Bash(git -C .worktrees/** *)",
