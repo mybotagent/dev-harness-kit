@@ -111,21 +111,18 @@ in `run_eval(--live)`); until then a case without a transcript is
 - `eval/golden/<dim>-<name>-<hash>.json` — 12 new schema-2.0.0
   baselines (replacing 25 old asset-freshness baselines).
 
-### Skill count unchanged
+### Skill inventory is not part of this ADR
 
-`tests/test_smoke.py:21` pins `SKILL_COUNT = 29` and CI pins the same
-in `.github/workflows/ci.yml:89`. The new eval replaces the body of
-`skills/eval/SKILL.md` (same name, same `category: eval`, same
-`user-invocable: true`); no new skill added. `test_naming.py` and the
-CI `Validate skill count + flat layout` step pass unchanged.
+This ADR records the eval behavior change, not the current number or names of
+skills. The filesystem and each skill's frontmatter are the source of truth;
+the smoke test may enforce an internal inventory invariant, but documentation
+must not mirror a count that changes as skills evolve.
 
 ## Alternatives considered
 
 - **(a) New `skills/eval-behavior/SKILL.md` + new runner.** Clean
-  separation but requires bumping `SKILL_COUNT` from 29 to 30 in 3
-  places (`tests/test_smoke.py`, `.claude/rules/skill-authoring.md`,
-  `.github/workflows/ci.yml`). Rejected to keep the change surface
-  small.
+  separation but would add a new skill and its associated validation. Rejected
+  to keep the change surface small.
 - **(b) Live re-run only (no transcripts).** Highest signal but
   non-deterministic; CI becomes flaky; no way to grade an offline
   review. Replay-with-transcripts gives a stable CI signal; live

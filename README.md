@@ -67,7 +67,7 @@ The marketplace install pins a specific commit SHA. After a PR is merged to `mai
 - When `/dev-kit:*` skill output doesn't match the latest source
 - When a consumer repo's `/dev-kit:ci-setup` reports missing files (e.g. `scripts/branch-policy.sh: No such file or directory`) — the cache is stale
 
-**Three refresh paths, ordered by recommendation:**
+**Claude Code refresh paths:**
 
 ```bash
 # 1. devkit-refresh.sh (RECOMMENDED for maintainers + power users)
@@ -79,14 +79,36 @@ bin/devkit-refresh.sh
 #    Requires Node 22 (see CLI Node compatibility above).
 claude plugin update dev-kit
 
-# 3. Manual rsync (escape hatch when both above fail)
+# 2. Manual rsync (escape hatch when the updater fails)
 cd ~/.claude/plugins/marketplaces/dev-kit && git pull origin main --ff-only
 rsync -a --delete --exclude=.git \
   ~/.claude/plugins/marketplaces/dev-kit/ \
-  ~/.claude/plugins/cache/dev-kit/dev-kit/$(git -C ~/.claude/plugins/marketplaces/dev-kit rev-parse HEAD)/
+  ~/.claude/plugins/cache/dev-kit/dev-kit/<marketplace-commit>/
 ```
 
-After any of the three, run `/reload-plugins` in your session so the new SHA is picked up.
+For Codex, use the bundled updater from the repository root. It upgrades the
+marketplace checkout and synchronizes the matching versioned cache, including
+when the marketplace command reports that it is already current:
+
+```bash
+bash skills/codex-cache-update/scripts/update.sh
+
+# Inspect differences without changing the cache
+bash skills/codex-cache-update/scripts/update.sh --dry-run
+```
+
+The updater prints the marketplace path, manifest version, cache path, and a
+final `cache synchronized` line. Override paths when using a non-default Codex
+installation:
+
+```bash
+CODEX_MARKETPLACE_DIR="$HOME/.codex/.tmp/marketplaces/dev-kit" \
+CODEX_CACHE_ROOT="$HOME/.codex/plugins/cache/dev-kit/dev-kit" \
+bash skills/codex-cache-update/scripts/update.sh
+```
+
+After a refresh, restart the client or run `/reload-plugins` where supported so
+the new plugin files are loaded.
 
 **Why `devkit-refresh.sh` exists:** `claude plugin install dev-kit --force` and `claude plugin update dev-kit` both invoke the same CLI path that throws `TypeError: Cannot read properties of undefined (reading 'prototype')` from `cli.js:384` when called from inside a Claude Code session. A SessionStart hook that auto-ran the install was tried (PR #24) and reverted (PR #26) for the same reason. `devkit-refresh.sh` uses raw `git pull` + `rsync`, which works in every environment.
 
@@ -147,9 +169,12 @@ Typical next step: `/dev-kit:plan` for PRD + phases auto.
 /dev-kit:cost-gate               # live cost gate (current spend + threshold distance + commit footer)
 /dev-kit:bump [major|minor|patch] # explicit version bump + push of chore/bump-vX.Y.Z (race recovery / pre-PR)
 
+# Documentation and maintenance
+/dev-kit:docs-maintenance       # audit stale docs, refresh README, remove volatile facts
+
 # Shortcuts (urgent hotfix)
 /dev-kit:tdd-fast                # skip Bootstrap+Plan → straight to Build
-/dev-kit:quick-fix               # verify+debug on demand
+/dev-kit:shortcut-quick-fix      # verify+debug on demand
 ```
 
 Invoke with `/<skill-name>` or `dev-kit:<skill-name>`.
@@ -188,26 +213,9 @@ dev-harness-kit/
 
 The 3 new hooks (worktree-guard, task-detector, session-start-check) implement the worktree enforcement rule. The worktree-rule scripts (hooks + `lib/worktree-detect.sh`) also ship to consumer repos via `templates/ci/`.
 
-### Skill categories
-
-| Category | Skills |
-|---|---|
-| `bootstrap` | `bootstrap` (sanity + codebase-map + hook-matrix are inlined sub-stages), `bootstrap-full`, `ci-setup` |
-| `plan` | `plan` |
-| `design` | (deprecated — merged into `plan`) |
-| `build` | `build`, `build-debug`, `build-refactor`, `build-tdd`, `build-verify`, `adapt`, `feat-add`, `feat-fix`, `feat-remove`, `feat-revise`, `refactor`, `prune` (3-pass deletion sweep inlined into `prune`) |
-| `review` | `review` (3-dim, unified) |
-| `security` | `security` (10-dim OWASP, unified) |
-| `audit` | `audit` (slop + secret + outdated are inlined modes), `inspect` (whole-codebase health), `report` (HTML viewer), `token-analyzer` (token-efficiency dashboard), `cost-gate` (live cost gate) |
-| `eval` | `eval` |
-| `onboard` | `onboard` |
-| `repair` | `repair` |
-| `ship` | `ship`, `babysit-pr`, `bump` |
-| `config` | `config` |
-| `status` | `status` |
-| `shortcuts` | `log`, `shortcut-quick-fix`, `shortcut-tdd-fast` |
-
-Category is preserved in each SKILL.md `category:` frontmatter. Directory nesting is none (Claude Code plugin rule: `skills/<name>/SKILL.md`, one level).
+Skill metadata lives in each `skills/<skill-name>/SKILL.md` frontmatter. Use
+slash autocomplete or inspect that directory when you need the current
+inventory; the README intentionally does not duplicate a changing skill list.
 
 ## Worktree rule
 
@@ -459,11 +467,11 @@ $ python3 tools/cost_gate_status.py --html /tmp/cost.html
 
 Codex CLI's official plugin format ([openai/plugins](https://github.com/openai/plugins)) is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at a skills directory. The manifest points `"hooks"` at the bundled `.codex-plugin/hooks/hooks.json`; this copy mirrors the canonical `hooks/hooks.json` because Codex requires plugin-bundled hook files to remain inside the plugin root. Codex commands use `${PLUGIN_ROOT}`, while Claude Code commands use `${CLAUDE_PLUGIN_ROOT}`. Claude Code continues to load the canonical definition from `hooks/hooks.json`; a regression test keeps both event inventories synchronized.
 
-To update the Codex plugin marketplace snapshot and refresh the installed plugin cache after a merge, run:
+To update the Codex plugin marketplace snapshot after a merge, run the
+repository updater described in [Plugin cache refresh](#plugin-cache-refresh-when-and-how):
 
 ```bash
-codex plugin marketplace upgrade dev-kit
-codex plugin add dev-kit@dev-kit
+bash skills/codex-cache-update/scripts/update.sh
 ```
 
 After enabling the plugin, review and trust its hooks with `/hooks` in Codex. Codex marks new or changed non-managed hooks for review and skips them until trusted. Run the local status check from the repository root:
@@ -492,58 +500,16 @@ Not every skill appears in `/dev-kit:` slash autocomplete — only the user-faci
 
 **If a skill name doesn't autocomplete, it's an internal sub-skill — you can't (and shouldn't) invoke it directly.** Type the user-facing parent instead (e.g. type `/dev-kit:refactor`, not `/dev-kit:build-refactor`).
 
-### For you — type `/dev-kit:<name>`
+### Finding the current skill surface
 
-These appear in slash autocomplete. Run them when you have a job to do.
+Only skills whose `SKILL.md` frontmatter sets `user-invocable: true` appear in
+slash autocomplete. Internal skills set it to `false` and are dispatched by a
+parent skill. Inspect the frontmatter or use the client's autocomplete for the
+current surface; this README intentionally avoids duplicating a changing skill
+inventory.
 
-| Skill | When to use it |
-|---|---|
-| `/dev-kit:bootstrap` | Minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default. Use `/dev-kit:bootstrap-full` to also install CI templates. |
-| `/dev-kit:ci-setup` | Wire `.dev-kit/ci-config.json` + CI workflows. Re-run with `--force` to regenerate. |
-| `/dev-kit:plan` | Design a feature before coding. Emits `phases/<name>/step<N>.md` + index.json. |
-| `/dev-kit:build` | Main TDD cycle. Per-phase execution against the plan. |
-| `/dev-kit:review` | 3-dim review of the diff (correctness + security + architecture). |
-| `/dev-kit:security` | 10-dim OWASP audit. Independent of review. |
-| `/dev-kit:audit` | Batch slop + secret scan. |
-| `/dev-kit:inspect` | Read-only 8-dim code health audit. Outputs `.dev-kit/inspect-report.md`. |
-| `/dev-kit:eval` | Agent-behavior eval (judge a recorded transcript). |
-| `/dev-kit:report` | Render eval + inspect reports as a self-contained HTML page. |
-| `/dev-kit:refactor` | 3-phase refactor chain. **Rewrites** code (dead → dup → naming → coverage). Use when the code should be cleaner, not smaller. |
-| `/dev-kit:prune` | 3-phase deletion sweep. **Deletes** AI slop + dead features. Use when the codebase has accumulated cruft and you want it gone. |
-| `/dev-kit:feat-add` / `feat-fix` / `feat-revise` / `feat-remove` | One feature, one shape (add / fix / revise / remove). |
-| `/dev-kit:adapt` | Mid-build plan/spec amendment. Pauses the current step, diffs PRD + step file, proposes a minimal patch on user approval, resumes the per-step harness runner (`lib/execute.py`). |
-| `/dev-kit:onboard` | Newcomer onboarding tour of a project. |
-| `/dev-kit:repair` | Eval-Repair loop with Human Review terminal. For LLM-eval assets scored against a golden set. |
-| `/dev-kit:ship` | Emit the release tag. The human gate. |
-| `/dev-kit:status` | HOTL visualization of the running pipeline. |
-| `/dev-kit:config` | Skill + MCP + hook + methodology picker (multiSelect). |
-| `/dev-kit:tdd-fast` | Shortcut: skip Bootstrap+Plan → straight to Build. |
-| `/dev-kit:quick-fix` | Shortcut: verify + debug, no code changes. |
-| `/dev-kit:babysit-pr` | 0-arg PR babysitter loop. |
-| `/dev-kit:cost-gate` | Live cost gate status (current spend, threshold distance, and the commit-trailer block the PR aggregator needs). |
-| `/dev-kit:bump` | Explicit local version bump + push of `chore/bump-vX.Y.Z`. Mirrors the auto-bump workflow but user-triggered for race recovery or pre-PR cuts. |
-| `/dev-kit:token-analyzer` | Token-efficiency dashboard from `logs/{claude-code,codex}/**/*.jsonl` — 4-dim session scoring + 6 anti-pattern warnings + USD savings estimate. |
-
-### For Claude — internal sub-skills, hidden from slash autocomplete
-
-These skills have `user-invocable: false` in their SKILL.md frontmatter, so they **do not** appear in `/dev-kit:` slash autocomplete. Claude auto-invokes them when one of the user-facing skills above dispatches into the corresponding sub-step. You don't type these directly — and if you try, the CLI rejects the call.
-
-The naming convention tells you which parent owns each:
-
-| Prefix | Parent skill |
-|---|---|
-| `build-*` (`build-tdd`, `build-debug`, `build-verify`, `build-refactor`) | dispatched by `build` or `refactor` |
-
-The `Called by` column below names the specific parent for each one.
-
-| Skill | Called by | Purpose |
-|---|---|---|
-| `build-tdd` | `build` | Red-Green-Refactor cycle. |
-| `build-debug` | `build` (on failure) | 4-phase debug. |
-| `build-verify` | `build` (terminal) | Verify-before-completion gate. |
-| `build-refactor` | `refactor` | 4-pass refactor: dead → dup → naming → coverage. |
-
-> Note: the per-step harness runner (`lib/execute.py`), the methodology selector (`lib/methodology/`), and the 3-pass prune sweep (inlined into `prune/SKILL.md` as "Phase 2 — 3-pass deletion sweep") live as either library code or inlined parent-skill sections — not as separate model-use skills. Same for `bootstrap-*` sub-stages (now inlined into `bootstrap`) and `audit-*` modes (now inlined into `audit`). The `simplify` → `refactor` rename and `build-simplify` → `build-refactor` rename are kept here for the historical record only.
+The parent skill owns the workflow; inspect its `SKILL.md` when you need the
+internal dispatch details.
 
 **Mental model**: user-facing skills are verbs (the *what*). Model-use skills are the actual mutating machinery (the *how*). Slash autocomplete surfaces only the verbs; Claude fills in the machinery.
 
@@ -695,7 +661,7 @@ See `docs/adr/ADR-0022-eval-agent-behavior.md` for the full rationale, alternati
 
 The shipped `review.yml` is **self-aware**: it detects whether the checkout IS the dev-kit plugin (self-install, symlink) or a plain consumer repo (clones from public), so the same workflow file works in both contexts.
 
-**Switching the CI review provider** (MiniMax / Anthropic / DeepSeek): edit `CI_REVIEW_PROVIDER` in your local `.env`, then commit. `.githooks/pre-commit` reads it from the main checkout's `.env` (works from any worktree) and syncs the git-tracked `.github/ci-review-provider.txt` into that commit if it drifted — CI itself only ever reads the tracked file, since a GitHub-hosted runner can't see your local `.env`. Each provider needs its matching repo secret (`MINMAX_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`) pushed via `gh secret set` first. Note: a PR that itself edits `.github/workflows/review.yml` will always get skipped by `claude-code-action`'s own anti-tampering guard ("workflow file must match the default branch") — that's expected and resolves itself once such a PR is merged.
+**Switching the CI review provider** (MiniMax / Anthropic / DeepSeek): edit `CI_REVIEW_PROVIDER` in your local `.env`, then commit. `.githooks/pre-commit` reads it from the main checkout's `.env` (works from any worktree) and syncs the git-tracked `.github/ci-review-provider.txt` into that commit if it drifted — CI itself only ever reads the tracked file, since a GitHub-hosted runner can't see your local `.env`. Each provider needs its matching repo secret (`MINMAX_API_KEY`, `ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) pushed via `gh secret set` first. Note: a PR that itself edits `.github/workflows/review.yml` will always get skipped by `claude-code-action`'s own anti-tampering guard ("workflow file must match the default branch") — that's expected and resolves itself once such a PR is merged.
 
 After install, consumer repos get:
 - The branch strategy enforced

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Docs Maintenance"
+  short_description: "Audit and refresh repository documentation"
+  default_prompt: "Use $docs-maintenance to audit stale documentation, refresh the README, and remove volatile facts."
