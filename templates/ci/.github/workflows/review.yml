@@ -279,7 +279,13 @@ jobs:
           if [ "${{ steps.fallback.outputs.needs_fallback }}" = "true" ]; then
             echo "review_verdict=Approve (fallback: PR modifies workflow files)"
             echo "verdict=Approve" >> "$GITHUB_OUTPUT"
-            echo "agent_ran=true" >> "$GITHUB_OUTPUT"
+            # Issue #219 Bug 2: in the fallback branch, the agent never ran —
+            # claude-code-action@v1's workflow-validation guard refused it.
+            # The hardcoded agent_ran=true previously masked the skip as a
+            # silent pass, defeating the gate's agent_ran=false → exit 1
+            # hard-fail. Report the real state so the gate can surface the
+            # bootstrap-PR remediation message.
+            echo "agent_ran=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
@@ -505,7 +511,10 @@ jobs:
           if [ "${{ steps.fallback.outputs.needs_fallback }}" = "true" ]; then
             echo "security_verdict=Approve (fallback: PR modifies workflow files)"
             echo "verdict=Approve" >> "$GITHUB_OUTPUT"
-            echo "agent_ran=true" >> "$GITHUB_OUTPUT"
+            # Issue #219 Bug 2: same defect as the review extract step —
+            # report agent_ran=false so the severity gate can hard-fail
+            # with the bootstrap-PR remediation message.
+            echo "agent_ran=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \

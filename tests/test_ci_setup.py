@@ -384,6 +384,132 @@ class TestCiSetup(unittest.TestCase):
                 "lint=False must suppress findings",
             )
 
+    def test_lint_flags_hash_inside_if_block_scalar(self):
+        """Issue #219 Bug 1: `#`-prefixed lines inside `if: |` block scalars
+        break GitHub Actions' expression parser. The lint pass must flag this
+        pattern across all three installed workflow files. Synthesizes the
+        minimal broken file rather than mutating the live template, so the
+        test stays isolated from upstream template churn.
+        """
+        import tempfile
+        from pathlib import Path as _P
+        broken_yaml = (
+            "name: Auto-fix on review\n"
+            "on: {pull_request_review: {types: [submitted]}}\n"
+            "jobs:\n"
+            "  auto-fix:\n"
+            "    if: |\n"
+            "      # Fork-safety: this comment is INSIDE the if block.\n"
+            "      github.event.pull_request.head.repo.full_name == github.repository\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            target = _P(td)
+            wf = target / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (wf / "auto-fix-pr.yml").write_text(broken_yaml)
+            findings = self.ci_setup.lint_installed_workflows(target)
+            matches = [f for f in findings if "issue #219 Bug 1" in f]
+            self.assertTrue(
+                matches,
+                f"expected issue-219 hash-in-if-block finding, got {findings!r}",
+            )
+            self.assertTrue(
+                any("auto-fix-pr.yml" in m for m in matches),
+                f"expected auto-fix-pr.yml in finding path, got {matches!r}",
+            )
+
+    def test_lint_does_not_flag_run_blocks_with_shell_comments(self):
+        """The lint only flags `#` inside `if:` block scalars. `#` comments
+        inside `run:` shell-script blocks are normal bash comments and must
+        NOT be flagged — `step.run` values go through bash, not the GitHub
+        expression parser.
+        """
+        import tempfile
+        from pathlib import Path as _P
+        safe_yaml = (
+            "name: CI\n"
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: |\n"
+            "          # This is a normal bash comment inside a step.\n"
+            "          echo hello\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            target = _P(td)
+            wf = target / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (wf / "ci.yml").write_text(safe_yaml)
+            findings = self.ci_setup.lint_installed_workflows(target)
+            self.assertEqual(
+                findings, [],
+                f"shell `#`-comments in step.run must not lint, got {findings!r}",
+            )
+
+    def test_auto_fix_pr_template_has_no_hash_inside_if_block(self):
+        """Issue #219 Bug 1: the shipped auto-fix-pr.yml template must NOT
+        contain `#`-prefixed lines inside its `if:` block scalar. Guards
+        against regression of the bug that broke every consumer push.
+        """
+        import yaml
+        template = (
+            PROJECT_ROOT / "templates" / "ci" / ".github" / "workflows"
+            / "auto-fix-pr.yml"
+        )
+        self.assertTrue(template.is_file(), f"template missing: {template}")
+        data = yaml.safe_load(template.read_text())
+        if_value = data["jobs"]["auto-fix"]["if"]
+        bad = [
+            ln for ln in if_value.splitlines()
+            if ln.lstrip().startswith("#")
+        ]
+        self.assertEqual(
+            bad, [],
+            f"auto-fix-pr.yml if: block must not contain `#`-prefixed "
+            f"lines (issue #219 Bug 1); got {bad!r}",
+        )
+
+    def test_extract_verdict_fallback_reports_agent_ran_false(self):
+        """Issue #219 Bug 2: the `extract_verdict` fallback branch in
+        review.yml must write `agent_ran=false`, not `agent_ran=true`,
+        because the fallback's `gh pr comment` is a placeholder, NOT a
+        real agent review. Without this fix, the severity gate's
+        `agent_ran=false → exit 1` hard-fail is silently defeated.
+        Guards both the review and security job fallback branches.
+        """
+        import re
+        review_template = (
+            PROJECT_ROOT / "templates" / "ci" / ".github" / "workflows"
+            / "review.yml"
+        )
+        self.assertTrue(review_template.is_file(), f"missing: {review_template}")
+        text = review_template.read_text()
+        # Find every `if [ "${{ steps.fallback.outputs.needs_fallback }}" = "true" ]`
+        # fallback branch and assert it writes agent_ran=false (not =true).
+        branches = re.findall(
+            r'if \[ "\$\{\{ steps\.fallback\.outputs\.needs_fallback \}\}" = "true" \]; then'
+            r'.*?fi',
+            text,
+            re.DOTALL,
+        )
+        self.assertTrue(
+            branches,
+            "no extract_verdict fallback branches found in review.yml — "
+            "test invariant changed",
+        )
+        bad = []
+        for i, body in enumerate(branches):
+            # Inside the fallback body, the literal `echo "agent_ran=true" >> "$GITHUB_OUTPUT"`
+            # is the bug. `agent_ran=false` (or comments mentioning the old value) are fine.
+            if re.search(r'echo "agent_ran=true" >> "\$GITHUB_OUTPUT"', body):
+                bad.append(i)
+        self.assertEqual(
+            bad, [],
+            f"extract_verdict fallback branch(es) {bad} still write "
+            f"`agent_ran=true`; issue #219 Bug 2 requires `agent_ran=false`.",
+        )
+
     def test_print_checklist_kwarg_does_not_break_existing_callers(self):
         """install_ci_config(..., print_checklist=True) writes the marker and
         returns an InstallReport. Default (no kwarg) behavior unchanged."""
