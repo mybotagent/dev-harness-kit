@@ -17,7 +17,7 @@ The `<branch>` bucket is one of:
 - `detached-<short-sha>` — `git checkout <commit>` / CI checkout of a tag.
 - `no-git` — non-git cwd OR `git` binary missing on PATH.
 
-The branch is also recorded on each JSONL line's top-level `gitBranch` field (Claude Code sets this on every record). The directory layout (`<tool>/<branch>/<session>.jsonl`) is the SSOT; the in-record field is a secondary signal.
+The tokenizer reads the branch from each JSONL line's top-level `gitBranch` field (Claude Code sets this on every record), with a path-based fallback for legacy flat files. `/dev-kit:token-analyzer` filters with `--branch <name>` and renders a "Cost by Branch" panel.
 
 ## Why this exists
 

@@ -16,8 +16,9 @@ disable-model-invocation: true
 
 # /dev-kit:cost-gate -- read-only cost measurement
 
-Inspect the **live** cost state for the current session. The cost-gate
-is observed via this skill during the session itself; it is
+Inspect the **live** cost state for the current session. Distinct from
+`/dev-kit:token-analyzer` (which is post-hoc over historical JSONL logs).
+The cost-gate is observed via this skill during the session itself; it is
 **read-only** and never blocks tool calls. There is no cost hook.
 
 ## What it does
@@ -37,12 +38,14 @@ is observed via this skill during the session itself; it is
 The skill is read-only (`disallowed-tools: Write Edit`); the underlying
 CLI (`tools/cost_gate_status.py`) writes nothing on its own.
 
-## Why a separate skill
+## Why a separate skill, not a flag on `/dev-kit:token-analyzer`
 
-`/dev-kit:cost-gate` is the only live-cost surface. It reads the live
-ledger for the running session, prints a one-screen status, and emits
-the trailer block the PR workflow needs (`/dev-kit:cost-flag` job in
-`.github/workflows/cost-flag.yml`).
+`/dev-kit:token-analyzer` consumes captured JSONL transcripts and renders
+a multi-session, multi-day dashboard. `/dev-kit:cost-gate` reads the
+**live ledger** for the running session, prints a one-screen status,
+and emits the trailer block the PR workflow needs. They are different
+stages of the same pipeline (preemptive live vs. post-hoc historical),
+and the user expects distinct slash commands.
 
 ## Flags
 
@@ -102,7 +105,7 @@ the maximum cumulative value per session.
 - `tools/cost_gate_status.py` -- CLI driver (stdlib-only).
 - `lib/cost_gate.py` -- pricing table, transcript scanner, threshold
   evaluation, footer parsing, PR aggregation. Independent of
-  `lib/cost_gate.py`.
+  `tools/token_efficiency_analyzer.py`.
 - `.github/workflows/cost-flag.yml` -- PR-level aggregator that applies
   the `cost-flag` label when cumulative cost exceeds $20.
 

@@ -31,8 +31,8 @@ every session that makes tool calls, regardless of branch or task.
 5. **Match the model to the task.** Opus is reserved for design, spec
    authoring, and architectural judgement. Bug fixes, single-line edits,
    refactors, and ad-hoc Q&A run on Sonnet (default) or Haiku.
-   "Important" ≠ "Opus"; a typo fix on Opus shows up in cost telemetry
-   immediately and is the most common unnecessary-cost signal.
+   "Important" ≠ "Opus"; a typo fix on Opus shows up immediately in
+   `tools/token_efficiency_analyzer.py`'s per-session cost column.
 6. **Never re-inject cached context as a user message.** Repeating a
    tool result, file excerpt, or prior-turn output verbatim into the
    next user prompt double-bills input tokens *and* pushes useful
@@ -47,27 +47,22 @@ every session that makes tool calls, regardless of branch or task.
 - `/clear` resets billable input on the very next turn — a stealth
   cost double-count relative to `/compact`.
 - Model mismatch (Opus on a typo fix, Sonnet on a system-design
-  decision) is the most common unnecessary-cost signal in any
-  per-session cost dashboard.
+  decision) is the most common unnecessary-cost signal in
+  `tools/token_efficiency_analyzer.py` and `/dev-kit:token-analyzer`.
 
 ## Enforcement
 
-The Iron Laws above are guidelines; enforcement is currently
-human-driven (reviewers read PR summaries for cost anomalies). No
-automated hook enforces them — they exist as a shared vocabulary so
-that "Opus on a typo fix" is unambiguous across reviews.
-
 | Rule | Mechanism |
 |---|---|
-| 1 — model/CLAUDE.md swap | Reviewer reads PR summary's model column |
-| 2 — repeated full-file reads | Reviewer flags Read-heavy PRs |
-| 3 — volatile prefix | Reviewer flag on PR summary |
-| 4 — `/clear` reflex | Reviewer flag on PR summary |
-| 5 — model overspec | Reviewer flag on PR summary |
-| 6 — repeated user-message context | Reviewer flag on PR summary |
+| 1 — model/CLAUDE.md swap | `/dev-kit:token-analyzer` cache-hit column; flagged on `CACHE_HIT_LOW` |
+| 2 — repeated full-file reads | `/dev-kit:token-analyzer` `READ_HEAVY` warning + per-tool cost tile |
+| 3 — volatile prefix | `/dev-kit:token-analyzer` `CACHE_HIT_LOW` + per-session `input vs cache_read` |
+| 4 — `/clear` reflex | Reviewer flag on PR summary; no automated hook |
+| 5 — model overspec | `/dev-kit:token-analyzer` `MODEL_OVERSPEC` warning |
+| 6 — repeated user-message context | `/dev-kit:token-analyzer` `REPEATED_USER_MSG` warning |
 
 ## Related
 
-- `tools/cost_gate_status.py` — per-PR cost aggregator (CI-driven).
+- `tools/token_efficiency_analyzer.py` — per-session cost dashboard.
 - `.claude/rules/git-workflow.md` — branch + worktree protocol.
 - `CLAUDE.md` §1 — project Iron Laws (L1–L5).

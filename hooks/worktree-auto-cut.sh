@@ -6,7 +6,7 @@
 # this one (a) derives a slug from the prompt, (b) cuts the worktree
 # (with all preconditions checked first), and (c) bootstraps the
 # log-on scaffold inside the new worktree so the user's first session
-# in it is already captured by cost tooling.
+# in it is already captured by /dev-kit:token-analyzer.
 #
 # The hook never blocks. On any failure (network, dirty main, slug
 # derivation, etc.) it falls back to a manual-cut nudge so the user

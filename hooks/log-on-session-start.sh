@@ -5,7 +5,7 @@
 # every session start. log-on is idempotent (entry merge is sentinel-
 # keyed on the command string), so this never duplicates. Without
 # this hook, every new `git worktree add` cuts a session that is
-# invisible to cost tooling until the developer remembers
+# invisible to /dev-kit:token-analyzer until the developer remembers
 # to run `/dev-kit:log on` by hand.
 #
 # Discriminator (worktree-detect.sh):
@@ -66,7 +66,7 @@ esac
 #
 # Without either, the project has no dev-kit logging setup and we
 # refuse to fabricate one — a stub save_log.py would silently swallow
-# transcripts and break cost tooling's cost picture.
+# transcripts and break /dev-kit:token-analyzer's cost picture.
 if [ "$WORKTREE_DETECT" = "main" ]; then
   HAS_PROJECT_SAVE_LOG=0
   HAS_GLOBAL_SAVE_LOG=0
@@ -82,7 +82,7 @@ fi
 # try to copy it from the main checkout (the worktree's git-common-dir
 # parent holds it; same content because both checkouts share a single
 # git tree). Without this auto-copy, every fresh worktree stays
-# invisible to cost tooling until the user runs
+# invisible to /dev-kit:token-analyzer until the user runs
 # `/dev-kit:log setup` by hand. If main also lacks the file, stay
 # silent — the project has no logging setup at all and we won't
 # fabricate one.

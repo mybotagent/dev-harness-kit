@@ -3,7 +3,7 @@
 #
 # When `git worktree add ...` succeeds, auto-install /dev-kit:log hooks
 # (save_log.py + SessionEnd/Stop) into the NEW worktree so future sessions
-# in that worktree are captured by cost tooling.
+# in that worktree are captured by /dev-kit:token-analyzer.
 #
 # Why this exists: per-worktree cost tracking requires per-worktree hook
 # install. Manual `log setup --target <wt>` per worktree doesn't scale

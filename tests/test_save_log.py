@@ -222,6 +222,17 @@ class TestCodexRolloutEndToEnd(unittest.TestCase):
                 ["session_meta", "turn_context", "event_msg", "response_item"],
             )
 
+            sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+            from token_efficiency_analyzer import aggregate_session
+            session = aggregate_session(saved)
+            self.assertIsNotNone(session)
+            self.assertEqual(session["session_id"], "codex-e2e-session")
+            self.assertEqual(session["repo"], "dev-harness-kit")
+            self.assertEqual(session["model"], "gpt-5.6-luna")
+            self.assertEqual(session["input_tokens"], 100)
+            self.assertEqual(session["cache_read_tokens"], 400)
+            self.assertEqual(session["output_tokens"], 70)
+            self.assertEqual(session["tool_counts"]["Read"], 1)
 
 
 if __name__ == "__main__":
