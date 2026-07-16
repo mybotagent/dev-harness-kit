@@ -26,10 +26,13 @@ INPUT="$(cat)"
 # Source the shared worktree-detection helper.
 # shellcheck source=lib/worktree-detect.sh
 source "$(dirname "$0")/lib/worktree-detect.sh"
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
 
 # Fail CLOSED if jq is missing. Without jq we cannot parse the
 # PreToolUse payload — silent fail-open would disable this rule.
 if ! command -v jq >/dev/null 2>&1; then
+  # Hand-built printf here (not the deny() helper from payload-parse.sh)
+  # because deny() itself depends on jq. Self-contained fail-closed.
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"WORKTREE GUARD: jq is required by worktree-guard.sh but not installed. Install jq (apt/brew/apk) — without it, the worktree rule cannot be enforced."}}\n' >&2
   exit 2
 fi
@@ -54,8 +57,4 @@ esac
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
 MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden. Per rules/git-workflow.md: every task = new worktree + client handoff + new branch. Claude Code: open a new session in the worktree. Codex: spawn/hand off a subagent with its working directory set to the worktree. Run: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main."
 
-# Build JSON via jq so embedded quotes / backslashes are escaped safely.
-jq -nc --arg reason "$MSG" \
-  '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$reason}}' \
-  >&2
-exit 2
+  deny "WORKTREE GUARD" "$MSG"

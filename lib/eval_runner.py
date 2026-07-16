@@ -23,8 +23,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
 from atomic import atomic_write_json, now_iso  # noqa: E402
 
-GOLDEN_SCHEMA_VERSION = "2.0.0"
-CASE_SCHEMA_VERSION = "2.0.0"
 SUPPORTED_DIMS: tuple = ("review", "security", "plan")
 PROMPT_BY_DIM: Dict[str, str] = {
     "review": "judge-review.md",
@@ -141,6 +139,7 @@ def _judge_case(
         api_key=config["api_key"],
         model=config["model"],
         prompt=prompt,
+        axes=axes,
         base_url=config.get("base_url", "https://api.minimax.io/anthropic"),
     )
     scores = raw.get("scores") or {}
@@ -339,7 +338,7 @@ def run_eval(
                 results.append({
                     "case_id": c["case_id"],
                     "dim": c["dim"],
-                    "scores": {ax: 0 for ax in llm_judge.DIM_AXES[c["dim"]]},
+                    "scores": {ax: 0.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
                     "tokens_in": 0, "tokens_out": 0, "raw": str(e),
                     "verdict": "ROT", "score": 0.0,
                     "error": str(e),

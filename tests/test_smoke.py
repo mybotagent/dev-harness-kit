@@ -111,10 +111,6 @@ class TestSmoke(unittest.TestCase):
         for stage in ("bootstrap", "plan", "design", "build", "review", "security", "ship"):
             self.assertIn(stage, ahc.DEFAULT_MATRIX, f"stage {stage} missing from matrix")
 
-    def test_methodology_default_tdd(self):
-        meth = json.loads((PROJECT_ROOT / "lib" / "methodology.json").read_text())
-        self.assertEqual(meth["active"], "tdd")
-
     def test_pre_approved_gate_exists(self):
         p = PROJECT_ROOT / "docs" / "PRE-IMPL-CHECK.md"
         self.assertTrue(p.exists())

@@ -12,18 +12,7 @@ if [ -z "$category" ]; then
   exit 2
 fi
 
-case "$category" in
-  real-bugs)
-    files=("$category"/*.py)
-    ;;
-  traps|clean)
-    files=("$category"/*.py)
-    ;;
-  *)
-    echo "unknown category: $category" >&2
-    exit 2
-    ;;
-esac
+files=("$category"/*.py)
 
 if [ ! -f "${files[0]:-$category/none.py}" ] || [ ! -e "${files[0]}" ]; then
   echo "no fixture files in $category/"

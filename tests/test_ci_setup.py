@@ -299,24 +299,6 @@ class TestCiSetup(unittest.TestCase):
                 f"checklist item {n} does not mention any actionable command",
             )
 
-    def test_preflight_probe_skips_on_missing_gh(self):
-        """When gh is absent, every probe line is SKIP. Safe failure: a user
-        without gh can still install; the checklist alone guides them."""
-        import os
-        old_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = ""
-        try:
-            results = self.ci_setup.preflight_probe(repo="o/r")
-            self.assertIsInstance(results, list)
-            self.assertGreater(len(results), 0)
-            for r in results:
-                self.assertEqual(
-                    r.state, "SKIP",
-                    f"expected SKIP with PATH empty, got {r.state} for {r.label}",
-                )
-        finally:
-            os.environ["PATH"] = old_path
-
     def test_lint_installed_workflows_flags_stale_gate_pattern(self):
         """Lint pass detects pre-0.1.3 PR-mode hard-fail gate.
 

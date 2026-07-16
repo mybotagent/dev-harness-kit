@@ -82,8 +82,4 @@ STAGED_HAS_REVIEW_YML="$(printf '%s\n' "$STAGED" | awk -F/ '{print $NF}' | grep 
 OTHERS="$(printf '%s\n' "$STAGED" | grep -vF '/review.yml' | grep -vFx 'review.yml' | tr '\n' ' ' | sed 's/ $//')"
 REASON="REVIEW-YML ISOLATION: review.yml must be the ONLY file in this commit (currently staged alongside: ${OTHERS}). review.yml is the PR-review CI workflow — mixing it with unrelated changes makes the review/security gate verdict unreadable and blocks targeted revert. Either (a) split into two commits on the same branch (one review.yml-only + one for the others) so the PR groups them naturally, or (b) put the other changes on a separate branch and PR. See rules/git-workflow.md §'Review.yml PR isolation'."
 
-# Build deny JSON via jq so embedded quotes / backslashes are escaped.
-jq -nc --arg reason "$REASON" \
-  '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$reason}}' \
-  >&2
-exit 2
+  deny "REVIEW-YML ISOLATION" "$REASON"

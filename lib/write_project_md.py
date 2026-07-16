@@ -134,16 +134,6 @@ def write_codebase_map_doc(project_root: Path) -> Path:
     return path
 
 
-def render_full_section_3(project_root: Path) -> str:
-    """Deprecated alias for `render_codebase_map_doc`. Kept for back-compat.
-
-    The full codebase map is no longer inlined into CLAUDE.md §3 (lazy-loading
-    index). Use `render_codebase_map_doc` instead and write to
-    `docs/CODEBASE-MAP.md`.
-    """
-    return render_codebase_map_doc(project_root)
-
-
 # Credential redaction patterns for tree output (mask secrets in file/dir names)
 CREDENTIAL_PATTERNS = (
     re.compile(r"x-access-token:[^@/]+@"),

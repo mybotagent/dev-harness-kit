@@ -6,12 +6,21 @@ all with cwd under /tmp/fixture-repo so the --repo filter matches.
 """
 import json
 import os
+import tempfile
 from pathlib import Path
 
 FIXTURE_DIR = Path(__file__).parent / "logs" / "claude-code"
 FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
 
-CWD = "/tmp/fixture-repo"
+# Use the platform tempdir rather than hardcoded /tmp so the fixture
+# generator works on:
+#   * macOS where /tmp is a symlink to /private/tmp (avoids macOS clears)
+#   * CI runners where /tmp is mounted noexec
+#   * sandboxed mac apps with a private /tmp mount
+#   * Windows where /tmp does not exist
+# The cwd basename (`fixture-repo`) is what tests filter by via
+# `--repo fixture-repo`; changing the prefix does not break them.
+CWD = os.path.join(tempfile.gettempdir(), "fixture-repo")
 NOW = "2026-07-09T10:00:00.000Z"
 
 def make_assistant(session_id, idx, *, model, in_tok, out_tok, cache_write, cache_read,

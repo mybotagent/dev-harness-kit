@@ -30,15 +30,6 @@ case "$CMD" in
   *) exit 0 ;;
 esac
 
-# Helper: emit PreToolUse deny JSON and exit 2.
-deny() {
-  local reason="$1"
-  cat >&2 <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"GIT GUARD: $reason"}}
-EOF
-  exit 2
-}
-
 # Helper: current branch (empty if detached HEAD or not a git repo).
 current_branch() {
   git symbolic-ref --short HEAD 2>/dev/null || true
@@ -114,7 +105,7 @@ fi
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+commit'; then
   CUR=$(current_branch)
   if [ "$CUR" = "main" ] || [ "$CUR" = "master" ]; then
-    deny "direct commit to '$CUR' is forbidden. Cut a branch off origin/main first (see .claude/rules/git-workflow.md)."
+    deny "GIT GUARD" "direct commit to '$CUR' is forbidden. Cut a branch off origin/main first (see .claude/rules/git-workflow.md)."
   fi
 fi
 
@@ -125,7 +116,7 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   # `git push origin +main`, `git push --force origin main`,
   # `git push origin main:master`, `git -C /repo push origin main`.
   if printf '%s' "$CMD" | grep -qE '(^|[[:space:]:/])(origin[[:space:]]+)?(\+)?(HEAD:)?(main|master)([[:space:]:/.]|$)|:main\b|:master\b'; then
-    deny "pushing to main is forbidden. Push to your feature branch: \`git push -u origin <type>/<slug>\`."
+    deny "GIT GUARD" "pushing to main is forbidden. Push to your feature branch: \`git push -u origin <type>/<slug>\`."
   fi
   # Block force-push. m5: bash-guard.sh only blocks force-push in strict mode
   # (DEV_KIT_STRICT=1) and only the `force+main` pattern — git-guard is the
@@ -136,7 +127,7 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
       # if the push target is main (already caught above).
       :
     else
-      deny "force-push (-f/--force) is forbidden. Use --force-with-lease only on your own unmerged branch."
+      deny "GIT GUARD" "force-push (-f/--force) is forbidden. Use --force-with-lease only on your own unmerged branch."
     fi
   fi
 fi
@@ -148,14 +139,14 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]'; 
   if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+(-b|-c|-[0-9]+[[:space:]]|[a-f0-9]{7,}[[:space:]]|--)'; then
     :
   elif printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+(main|master)([[:space:]]|$)'; then
-    deny "switching to main in this checkout is forbidden. Use a worktree instead: \`git worktree add -b <type>/<slug> .worktrees/<slug> origin/main\`."
+    deny "GIT GUARD" "switching to main in this checkout is forbidden. Use a worktree instead: \`git worktree add -b <type>/<slug> .worktrees/<slug> origin/main\`."
   fi
 fi
 
 # 4. Block `git branch -D` on main (deleting the protection itself).
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D'; then
   if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D[[:space:]]+(main|master)([[:space:]]|$)'; then
-    deny "deleting main/master with -D is forbidden."
+    deny "GIT GUARD" "deleting main/master with -D is forbidden."
   fi
 fi
 

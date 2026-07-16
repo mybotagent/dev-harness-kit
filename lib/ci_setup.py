@@ -30,15 +30,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
-# Atomic write helper. We import from `atomic` (the canonical lib module)
-# rather than redefining it inline: `lib/install.sh` ships `atomic.py` to
-# `target/lib/` alongside `ci_setup.py` (see `lib/install.sh:53` for the
-# copy loop and `:94` for the install-verification assertion). Using a
-# single canonical implementation ensures future improvements to
-# `lib/atomic.atomic_write_json` (fsync-on-replace, mode preservation,
-# locale-safe tmp prefix, fallback `default=str`) automatically land in
-# the marker-write path here. See issue #90.
-from atomic import atomic_write_json
+# Atomic write helper. Dual-import supports both shapes:
+#   * source repo: `lib/__init__.py` makes `lib` a package, so intra-package
+#     `from .atomic import` resolves.
+#   * consumer repo: `lib/install.sh` copies `ci_setup.py` + `atomic.py` to
+#     `<target>/lib/` without `__init__.py`, so the package form fails and
+#     we fall back to a top-level `from atomic import` (works when
+#     `<target>/` is on sys.path, which the consumer-side invocations
+#     guarantee).
+try:
+    from .atomic import atomic_write_json  # type: ignore
+except ImportError:
+    from atomic import atomic_write_json  # type: ignore
 
 # Plugin root (resolved via __file__ so the module is location-independent).
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -188,52 +191,6 @@ def gh_secret_set_command(repo: str, secret_name: str) -> str:
     path goes through `print_checklist=True` and the post-install recap.
     """
     return f"gh secret set {secret_name} --repo {repo}"
-
-
-def set_repo_secret(repo: str, name: str, value: str, *, gh_path: str | None = None) -> ProbeResult:
-    """Run `gh secret set NAME --repo REPO` for one secret.
-
-    Reads from stdin; never logs the value. Returns a ProbeResult with
-    state OK | WARN. WARN is also returned when `gh` is absent so the
-    caller can skip without crashing.
-    """
-    gh = gh_path or shutil.which("gh")
-    if not gh:
-        return ProbeResult(f"{name} set", "WARN", "gh not on PATH")
-    try:
-        cp = subprocess.run(
-            [gh, "secret", "set", name, "--repo", repo],
-            input=value,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
-        return ProbeResult(f"{name} set", "WARN", f"gh CLI error: {e}")
-    if cp.returncode != 0:
-        err = (cp.stderr or "").strip().splitlines()[-1] if cp.stderr else ""
-        return ProbeResult(f"{name} set", "WARN", err or "gh secret set returned non-zero")
-    return ProbeResult(f"{name} set", "OK", "")
-
-
-def set_repo_secrets(
-    repo: str,
-    secrets: dict[str, str],
-    *,
-    gh_path: str | None = None,
-) -> list[ProbeResult]:
-    """Set multiple repo secrets in sequence.
-
-    `secrets` maps secret name → value. Returns one ProbeResult per secret
-    (in input order). Empty `secrets` returns an empty list (no probe).
-    Never raises — every error becomes a WARN ProbeResult.
-    """
-    out: list[ProbeResult] = []
-    for name, value in secrets.items():
-        out.append(set_repo_secret(repo, name, value, gh_path=gh_path))
-    return out
-
-
 def read_provider_file(target_dir: Path) -> str:
     """Read `.github/ci-review-provider.txt` from `target_dir`.
 
@@ -274,23 +231,6 @@ class InstallReport:
     @property
     def ok(self) -> bool:
         return not self.errors
-
-
-@dataclass
-class ProbeResult:
-    """One row of the pre-flight probe table.
-
-    `state` is one of:
-      - OK   : present and configured
-      - WARN : present but missing/partial (skill still proceeds)
-      - INFO : opt-in / informational (never blocks)
-      - SKIP : gh absent or unauthenticated; the probe is silently bypassed
-      - FAIL : fatal prerequisite (reserved; not currently emitted)
-    """
-
-    label: str
-    state: str
-    detail: str = ""
 
 
 def _now_utc_iso() -> str:
@@ -410,8 +350,6 @@ def _install_gitignore_fragment(src: Path, target_dir: Path, *, force: bool) -> 
     # (consumer lines outside the block are preserved) and idempotent
     # (re-running finds the markers and goes through Case 2).
     new = existing.rstrip("\n") + "\n\n" + block
-    if new == existing:
-        return "skipped"
     dst.write_text(new, encoding="utf-8")
     return "overwritten"
 
@@ -451,84 +389,6 @@ def plugin_version(plugin_root: Path | None = None) -> str:
     except (OSError, json.JSONDecodeError):
         pass
     return "0.0.0"  # sentinel — not a published release
-
-
-def _installed_snapshot_root() -> Path:
-    """Return the path the running skill should treat as the installed snapshot.
-
-    Defaults to the Claude Code plugin cache layout
-    (`~/.claude/plugins/cache/dev-kit/dev-kit/<version>/`), with a
-    marketplace-clone fallback (`~/.claude/plugins/marketplaces/dev-kit/`).
-    Override `DEV_KIT_INSTALLED_ROOT` to test or run offline.
-    """
-    override = os.environ.get("DEV_KIT_INSTALLED_ROOT")
-    if override:
-        return Path(override)
-    cache = Path.home() / ".claude" / "plugins" / "cache" / "dev-kit" / "dev-kit"
-    if cache.is_dir():
-        versions = sorted([p for p in cache.iterdir() if p.is_dir()])
-        if versions:
-            return versions[-1]  # semver-max / last created
-    marketplace = Path.home() / ".claude" / "plugins" / "marketplaces" / "dev-kit"
-    if marketplace.is_dir():
-        return marketplace
-    return Path()
-
-
-def per_skill_drift(plugin_root: Path) -> dict:
-    """Compare per-skill SKILL.md file content between HEAD and the installed snapshot.
-
-    No frontmatter parsing, no per-skill version metadata. We diff raw
-    content; if the bytes differ, the skill on the user's installed
-    snapshot is "behind HEAD." Drift detection at this resolution is
-    cheaper to maintain (no per-skill bookkeeping), honest (the user's
-    installed copy may differ from HEAD in ways a version number
-    doesn't capture), and good-enough (skill content diff is the ground
-    truth for "did this skill change?").
-
-    Args:
-        plugin_root: absolute path to the dev-harness-kit checkout
-            (the directory that contains `skills/`).
-
-    Returns:
-        dict[str, str] mapping skill name → drift tag:
-          - `"behind"` if the installed snapshot's SKILL.md bytes differ
-            from HEAD's (or the snapshot is missing the file)
-          - `"ahead"` if the snapshot has a SKILL.md that HEAD doesn't
-            (skill was deleted upstream — unusual)
-          - `"current"` if bytes match
-          - `"no_install"` if the snapshot root is missing (fresh
-            install pre-first-refresh — every skill is `"no_install"`)
-
-        Empty dict if `plugin_root/skills/` is missing.
-    """
-    skills_dir = plugin_root / "skills"
-    if not skills_dir.is_dir():
-        return {}
-    installed_root = _installed_snapshot_root()
-    has_install = bool(installed_root and installed_root.is_dir())
-    result: dict = {}
-    for child in sorted(skills_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        skill_md = child / "SKILL.md"
-        if not skill_md.exists():
-            continue
-        head_bytes = skill_md.read_bytes()
-        if not has_install:
-            result[child.name] = "no_install"
-            continue
-        installed_skill = installed_root / "skills" / child.name / "SKILL.md"
-        if not installed_skill.exists():
-            result[child.name] = "behind"
-            continue
-        if installed_skill.read_bytes() == head_bytes:
-            result[child.name] = "current"
-        else:
-            result[child.name] = "behind"
-    return result
-
-
 def _build_marker() -> dict:
     """Build the `.dev-kit/ci-config.json` payload.
 
@@ -772,117 +632,6 @@ def install_ci_config(
 
     return report
 
-
-def preflight_probe(repo: str = "") -> List[ProbeResult]:
-    """Run a 5-line `gh` probe against the consumer's environment.
-
-    All gh calls are read-only and never print secret values. When `gh`
-    is absent or unauthenticated, every probe returns SKIP and the skill
-    prints a one-line note -- the user can still install without gh.
-    """
-    import json as _json
-    import subprocess
-    import re as _re
-    results: List[ProbeResult] = []
-    gh = shutil.which("gh")
-    if not gh:
-        results.append(ProbeResult("gh CLI", "SKIP", "gh not on PATH"))
-        for label in (
-            "Repo reachable",
-            "DEV_KIT_GITHUB_TOKEN set",
-            "MINIMAX_API_KEY set",
-            "ANTHROPIC_API_KEY set (opt-in)",
-        ):
-            results.append(ProbeResult(label, "SKIP", "gh not on PATH"))
-        return results
-
-    def _run(args):
-        cp = subprocess.run(
-            [gh, *args], capture_output=True, text=True, timeout=10,
-        )
-        if cp.returncode == 0:
-            return ProbeResult("placeholder", "OK", "")
-        detail = ""
-        if cp.stderr:
-            detail = cp.stderr.strip().splitlines()[-1]
-        return ProbeResult("placeholder", "WARN", detail)
-
-    auth = _run(["auth", "status"])
-    auth = ProbeResult("gh auth status", auth.state, auth.detail)
-    if auth.state != "OK":
-        for label in (
-            "Repo reachable",
-            "DEV_KIT_GITHUB_TOKEN set",
-            "MINIMAX_API_KEY set",
-            "ANTHROPIC_API_KEY set (opt-in)",
-        ):
-            results.append(ProbeResult(label, "SKIP", "gh not authenticated"))
-        results.insert(0, auth)
-        return results
-    results.append(auth)
-
-    if not repo:
-        for label in (
-            "Repo reachable",
-            "DEV_KIT_GITHUB_TOKEN set",
-            "MINIMAX_API_KEY set",
-            "ANTHROPIC_API_KEY set (opt-in)",
-        ):
-            results.append(ProbeResult(label, "SKIP", "no repo context"))
-        return results
-
-    repo_view = _run(["repo", "view", repo, "--json", "name"])
-    repo_view = ProbeResult("Repo reachable", repo_view.state, repo_view.detail)
-    if repo_view.state != "OK":
-        results.append(repo_view)
-        for label in (
-            "DEV_KIT_GITHUB_TOKEN set",
-            "MINIMAX_API_KEY set",
-            "ANTHROPIC_API_KEY set (opt-in)",
-        ):
-            results.append(ProbeResult(label, "SKIP", "repo not reachable"))
-        return results
-    results.append(repo_view)
-
-    secrets_json = ""
-    secrets_degraded = ""
-    try:
-        cp = subprocess.run(
-            [gh, "secret", "list", "--repo", repo, "--json", "name"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if cp.returncode == 0:
-            secrets_json = cp.stdout
-    except (
-        subprocess.SubprocessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-        OSError,
-    ) as e:
-        # Surface the failure mode so the user can distinguish "secret
-        # not configured" from "probe could not run" (issue #92).
-        secrets_degraded = f"degraded: {type(e).__name__}: {e}"
-
-    secret_names = set()
-    if secrets_json:
-        try:
-            secret_names = {
-                row.get("name", "") for row in _json.loads(secrets_json)
-            }
-        except (_json.JSONDecodeError, ValueError, TypeError):
-            secret_names = set()
-
-    for secret, state_when_missing in (
-        ("DEV_KIT_GITHUB_TOKEN", "WARN"),
-        ("MINIMAX_API_KEY", "WARN"),
-        ("ANTHROPIC_API_KEY", "INFO"),
-    ):
-        present = secret in secret_names
-        results.append(ProbeResult(
-            label=f"{secret} set",
-            state="OK" if present else state_when_missing,
-            detail="" if present else secrets_degraded or "absent",
-        ))
 
     return results
 

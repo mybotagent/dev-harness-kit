@@ -52,8 +52,7 @@ read_stdin_json() {
   # want the hook to proceed on any structurally valid payload, not
   # only on objects.
   if ! printf '%s' "$input" | jq . >/dev/null 2>&1; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s: stdin payload is not valid JSON."}}\n' "$hook_name" >&2
-    exit 2
+    deny "$hook_name" "stdin payload is not valid JSON."
   fi
   INPUT_JSON="$input"
 }
@@ -82,4 +81,22 @@ extract_content() {
       (.tool_input.edits // [] | .[] | .new_string // "")
     ] | join("")
   ' 2>/dev/null || true)"
+}
+
+
+# deny HOOK_PREFIX REASON — emit PreToolUse deny JSON envelope to stderr and
+# exit 2. Single source of truth for the 6 hook sites that previously each
+# hand-built the envelope (3 different mechanisms: jq -nc --arg / heredoc /
+# printf / echo). Uses jq for proper JSON escaping of $REASON (which may
+# contain backticks / quotes / newlines / $variables from the call site).
+# Emits to stderr per Claude Code hook contract (deny JSON via stderr +
+# exit 2). Fails closed if jq is missing — callers must source this file
+# AFTER require_jq.
+deny() {
+    local hook_prefix="$1"
+    local reason="$2"
+    jq -nc --arg hp "$hook_prefix" --arg r "$reason" \
+        '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:($hp + ": " + $r)}}' \
+        >&2
+    exit 2
 }

@@ -108,7 +108,6 @@ def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[st
     Returns {} if both fail.
     """
     target_axes = tuple(axes) if axes is not None else JUDGE_AXES
-    target_set = set(target_axes)
     try:
         data = json.loads(raw)
         return {ax: float(data[ax]) for ax in target_axes if ax in data}
@@ -133,25 +132,34 @@ def call_judge(
     api_key: str,
     model: str,
     prompt: str,
+    axes: Tuple[str, ...] = JUDGE_AXES,
     base_url: str = "https://api.minimax.io/anthropic",
     max_tokens: int = 512,
     timeout: int = 30,
 ) -> Dict:
     """Call LLM judge and return {scores, tokens_in, tokens_out, raw}.
 
+    `axes` lists the per-dim axis names the caller expects back. The system
+    prompt is built from `axes` so it matches the per-dim user prompt the
+    eval_runner constructs (verdict_consistency / severity_calibration /
+    precision / recall / code_sanity_score for `review`; etc.). Without
+    this alignment the judge receives contradictory axis lists between
+    system and user and returns unreliable / axis-zero scores.
+
     provider is informational only — both 'minimax' and 'anthropic' use
     the Anthropic-compatible POST /v1/messages endpoint.
     """
     if not api_key:
         raise ValueError(f"api_key missing for provider={provider}")
+    axes_csv = ", ".join(axes)
     payload = {
         "model": model,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
         "system": (
-            "You are a code review judge. Respond ONLY with a JSON object "
-            "containing 4 axis scores (semantic_drift, completeness, "
-            "correctness, consistency), each 0-10. No other text."
+            f"You are a code review judge. Respond ONLY with a JSON object "
+            f"containing these {len(axes)} axis scores ({axes_csv}), "
+            f"each 0-10. No other text."
         ),
     }
     return _call_anthropic_compatible(

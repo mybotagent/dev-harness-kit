@@ -30,19 +30,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-# Lazy import of ci_setup to avoid a circular dep. The provider catalog +
-# reader live there; this module is read-only and never writes.
-def _ci_setup():
-    import importlib.util as ilu
-    name = "ci_setup"
-    spec = ilu.spec_from_file_location(
-        name, Path(__file__).resolve().parent / "ci_setup.py"
+# Dual-mode import for sibling ci_setup.py:
+#   * Source repo (this module loaded as `lib.ci_doctor`): the relative
+#     `from .ci_setup import` resolves inside the `lib` package.
+#   * Test harness / consumer invocation (this module loaded as a top-level
+#     module via importlib.util.spec_from_file_location, with `lib/` on
+#     sys.path): the absolute `from ci_setup import` resolves directly.
+try:
+    from .ci_setup import (  # type: ignore  # noqa: E402
+        PROVIDER_SECRETS,
+        read_provider_file,
+        required_secrets_for_provider,
+        gh_secret_set_command,
     )
-    mod = ilu.module_from_spec(spec)
-    import sys
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+except ImportError:
+    from ci_setup import (  # type: ignore  # noqa: E402
+        PROVIDER_SECRETS,
+        read_provider_file,
+        required_secrets_for_provider,
+        gh_secret_set_command,
+    )
 
 
 @dataclass
@@ -235,10 +242,9 @@ def _check_provider_file(target: Path) -> list[Check]:
     if not p.is_file():
         return [Check("provider file content", "FAIL", "file missing")]
     raw = p.read_text(encoding="utf-8").strip().lower()
-    cs = _ci_setup()
     if not raw:
         return [Check("provider file content", "FAIL", "empty")]
-    if raw not in cs.PROVIDER_SECRETS:
+    if raw not in PROVIDER_SECRETS:
         return [Check("provider file content", "FAIL", f"unknown provider '{raw}'")]
     return [Check("provider file content", "PASS", raw)]
 
@@ -251,9 +257,8 @@ def _check_secrets(target: Path, provider: str | None,
     secrets, degraded = _list_repo_secrets(repo)
     if degraded:
         return [Check("repo secrets", "SKIP", degraded)]
-    cs = _ci_setup()
-    provider = provider or cs.read_provider_file(target)
-    needed = cs.required_secrets_for_provider(provider)
+    provider = provider or read_provider_file(target)
+    needed = required_secrets_for_provider(provider)
     out: list[Check] = []
     for name in needed:
         if source_repo and name in CONSUMER_ONLY_SECRETS:
@@ -263,7 +268,7 @@ def _check_secrets(target: Path, provider: str | None,
             out.append(Check(f"secret set: {name}", "PASS", ""))
         else:
             out.append(Check(f"secret set: {name}", "FAIL",
-                             f"run: {cs.gh_secret_set_command(repo, name)}"))
+                             f"run: {gh_secret_set_command(repo, name)}"))
     return out
 
 

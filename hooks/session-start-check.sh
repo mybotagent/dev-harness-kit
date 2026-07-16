@@ -23,6 +23,7 @@ INPUT="$(cat)"
 # Source the shared worktree-detection helper.
 # shellcheck source=lib/worktree-detect.sh
 source "$(dirname "$0")/lib/worktree-detect.sh"
+source "${BASH_SOURCE[0]%/*}/lib/session-envelope.sh"
 
 # Warn (not fail) if jq is missing.
 if ! command -v jq >/dev/null 2>&1; then
@@ -30,12 +31,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# Prefer the cwd from the hook payload (more authoritative than $PWD),
-# fall back to PWD if missing.
-HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
-if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
-  cd "$HOOK_CWD" || exit 0
-fi
+extract_hook_cwd "session-start-check.sh"
 
 # Detect whether we are in the main checkout or a worktree.
 worktree_detect
@@ -46,9 +42,8 @@ case "$WORKTREE_DETECT" in
 esac
 
 # In main checkout → emit nudge.
-BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
+BRANCH="$(current_branch)"
 NUDGE="GIT-WORKFLOW REMINDER (rules/git-workflow.md): this session started in the main repo checkout (branch='$BRANCH'). For any new implementation task, the rule requires a new worktree + client handoff + new branch. The hard edit-block is hooks/worktree-guard.sh (PreToolUse). If the user is just investigating or asking questions, proceed; before any Edit/Write, cut a worktree with: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main. Claude Code then opens a new session in that path; Codex spawns/hand-offs a subagent with that path as its working directory."
 
-jq -nc --arg ctx "$NUDGE" \
-  '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+emit_worktree_nudge "SessionStart" "$NUDGE"
 exit 0
