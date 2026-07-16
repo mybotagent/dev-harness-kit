@@ -35,10 +35,10 @@ name: PR Review
 #
 # CI (a GitHub-hosted runner) can never read your local .env — it only
 # ever sees what's on the branch it checks out. `.githooks/pre-commit`
-# bridges that gap: it reads `CI_REVIEW_PROVIDER` from the *main
-# checkout's* `.env` on every local commit and auto-syncs this file to
-# match, so `.env` stays the single source of truth you actually edit —
-# see `.env.example` for the `CI_REVIEW_PROVIDER` key.
+# does NOT touch this file (the silent auto-rewrite from .env was removed
+# in #230). To switch provider, run `bin/set-provider.sh <provider>`,
+# review the printed diff, then commit + push yourself. `.env` does not
+# manage the provider — only this tracked file does.
 
 on:
   pull_request:
