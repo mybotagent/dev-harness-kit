@@ -698,9 +698,15 @@ class TestCiDoctor(unittest.TestCase):
             target = Path(td)
             self._install(target)
             # No `git remote` set up in the tmpdir → `_detect_owner_repo`
-            # returns "".
-            with patch.object(self.cd, "_detect_owner_repo", return_value=""):
-                r = self.cd.audit(target)
+            # returns "". Patch _check_gh_auth and _check_secrets so the
+            # audit's verdict is driven by the branch-policy row under
+            # test (CI runners have no gh auth → those checks would
+            # otherwise FAIL).
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "PASS", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    with patch.object(self.cd, "_detect_owner_repo", return_value=""):
+                        r = self.cd.audit(target)
             bp = self._diagnostic_rows(r, "branch policy")
             self.assertEqual(len(bp), 1)
             self.assertEqual(bp[0].state, "SKIP")
@@ -713,12 +719,15 @@ class TestCiDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
-            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
-                with patch.object(
-                    self.cd, "_fetch_required_status_checks",
-                    return_value=(set(), "gh not on PATH"),
-                ):
-                    r = self.cd.audit(target)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "PASS", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                        with patch.object(
+                            self.cd, "_fetch_required_status_checks",
+                            return_value=(set(), "gh not on PATH"),
+                        ):
+                            r = self.cd.audit(target)
             bp = self._diagnostic_rows(r, "branch policy")
             self.assertEqual(len(bp), 1)
             self.assertEqual(bp[0].state, "SKIP")
@@ -731,12 +740,15 @@ class TestCiDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
-            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
-                with patch.object(
-                    self.cd, "_fetch_required_status_checks",
-                    return_value=(set(), "gh not authenticated"),
-                ):
-                    r = self.cd.audit(target)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "PASS", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                        with patch.object(
+                            self.cd, "_fetch_required_status_checks",
+                            return_value=(set(), "gh not authenticated"),
+                        ):
+                            r = self.cd.audit(target)
             bp = self._diagnostic_rows(r, "branch policy")
             self.assertEqual(len(bp), 1)
             self.assertEqual(bp[0].state, "SKIP")
@@ -759,12 +771,15 @@ class TestCiDoctor(unittest.TestCase):
                 "  security:\n    name: security\n    runs-on: ubuntu-latest\n"
                 "    steps:\n      - run: echo\n"
             ))
-            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
-                with patch.object(
-                    self.cd, "_fetch_required_status_checks",
-                    return_value=({"lint"}, ""),
-                ):
-                    r = self.cd.audit(target)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "PASS", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                        with patch.object(
+                            self.cd, "_fetch_required_status_checks",
+                            return_value=({"lint"}, ""),
+                        ):
+                            r = self.cd.audit(target)
             bp = self._diagnostic_rows(r, "branch policy")
             self.assertEqual(len(bp), 1, f"unexpected rows: {bp}")
             self.assertEqual(bp[0].state, "WARN", bp[0].row())
@@ -785,12 +800,15 @@ class TestCiDoctor(unittest.TestCase):
                 "  security:\n    name: test (python 3.12)\n    runs-on: ubuntu-latest\n"
                 "    steps:\n      - run: echo\n"
             ))
-            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
-                with patch.object(
-                    self.cd, "_fetch_required_status_checks",
-                    return_value=({"lint", "test (python 3.12)"}, ""),
-                ):
-                    r = self.cd.audit(target)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "PASS", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                        with patch.object(
+                            self.cd, "_fetch_required_status_checks",
+                            return_value=({"lint", "test (python 3.12)"}, ""),
+                        ):
+                            r = self.cd.audit(target)
             bp = self._diagnostic_rows(r, "branch policy")
             self.assertEqual(len(bp), 1)
             self.assertEqual(bp[0].state, "PASS", bp[0].row())
