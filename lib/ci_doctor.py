@@ -672,9 +672,40 @@ def _trigger_check(path: Path, expected: frozenset[str]) -> Check:
                  f"triggers={sorted(shape.triggers)}")
 
 
-def _fork_pr_secret_gap(path: Path) -> Check:
-    """WARN if `pull_request:` is present but neither `pull_request_target:`
-    nor `workflow_run:` are — fork PRs lose repo secrets in that case."""
+# Fork-safety guard: a job/step `if:` that restricts execution to
+# same-repo PRs (`head.repo.full_name == github.repository`). When
+# present, fork PRs are skipped *before* any secret-consuming step runs,
+# so `pull_request` (not `pull_request_target`) is safe — the "fork PRs
+# lose secrets" concern never materializes because forks don't run at
+# all. The dev-kit consumer template (templates/ci/.github/workflows/
+# review.yml) ships this guard precisely so it can keep `pull_request`
+# and avoid the OIDC-401 failure `pull_request_target` causes in consumer
+# repos without org-level OIDC trust. Matched in either operand order.
+_FORK_GUARD_RE = re.compile(
+    r"head\.repo\.full_name\s*==\s*github\.repository"
+    r"|github\.repository\s*==\s*[\w.]*head\.repo\.full_name"
+)
+
+
+def _has_fork_guard(raw: str) -> bool:
+    """True iff the workflow text contains a same-repo fork guard that
+    skips fork PRs before any step executes."""
+    return bool(_FORK_GUARD_RE.search(raw))
+
+
+def _fork_pr_secret_gap(path: Path, source_repo: bool = False) -> Check:
+    """Diagnose whether `pull_request`-only workflows leak secrets to fork
+    PRs. Role- and guard-aware (issue: false-positive WARN on review.yml):
+
+      - `pull_request_target:` / `workflow_run:` present  → PASS (secrets
+        reach the run in a fork-safe context).
+      - `pull_request`-only **with** a same-repo fork guard → PASS: forks
+        are skipped before any step, so there is no gap. This is the
+        intended shape of the consumer review.yml template.
+      - `pull_request`-only, no guard, **source repo** → INFO: the dev-kit
+        source repo takes internal-branch PRs only; fork gap is N/A.
+      - `pull_request`-only, no guard, consumer repo → WARN (real gap).
+    """
     rel = path.name
     raw, shape, err = _read_workflow(path.parent, rel)  # type: ignore[arg-type]
     if raw is None:
@@ -686,17 +717,32 @@ def _fork_pr_secret_gap(path: Path) -> Check:
     pr = "pull_request" in shape.triggers
     tgt = "pull_request_target" in shape.triggers
     wr = "workflow_run" in shape.triggers
-    if pr and not (tgt or wr):
+    # Not a pull_request-only workflow → the trigger itself is fork-safe.
+    if not (pr and not (tgt or wr)):
         return Check(
-            f"fork-PR secret gap: {rel}", "WARN",
-            "uses pull_request; no pull_request_target / workflow_run — "
-            "fork PRs lose repo secrets",
+            f"fork-PR secret gap: {rel}", "PASS",
+            f"pull_request={'y' if pr else 'n'}  "
+            f"pull_request_target={'y' if tgt else 'n'}  "
+            f"workflow_run={'y' if wr else 'n'}",
+        )
+    # pull_request-only: a same-repo guard makes it fork-safe regardless.
+    if _has_fork_guard(raw):
+        return Check(
+            f"fork-PR secret gap: {rel}", "PASS",
+            "pull_request only, but fork PRs are skipped by a same-repo "
+            "guard (head.repo.full_name == github.repository)",
+        )
+    # No guard: the source repo takes internal-branch PRs only, so the
+    # gap is N/A there; a consumer repo has a real gap.
+    if source_repo:
+        return Check(
+            f"fork-PR secret gap: {rel}", "INFO",
+            "source repo: internal-branch PRs only — fork gap N/A",
         )
     return Check(
-        f"fork-PR secret gap: {rel}", "PASS",
-        f"pull_request={'y' if pr else 'n'}  "
-        f"pull_request_target={'y' if tgt else 'n'}  "
-        f"workflow_run={'y' if wr else 'n'}",
+        f"fork-PR secret gap: {rel}", "WARN",
+        "uses pull_request; no pull_request_target / workflow_run and no "
+        "same-repo fork guard — fork PRs lose repo secrets",
     )
 
 
@@ -821,7 +867,7 @@ def _check_workflow_diagnostics(target: Path, source_repo: bool) -> list[Check]:
         base = path.name
         expected = EXPECTED_PR_TRIGGERS.get(base, frozenset())
         out.append(_trigger_check(path, expected))
-        out.append(_fork_pr_secret_gap(path))
+        out.append(_fork_pr_secret_gap(path, source_repo))
         p = _paths_filter_check(path)
         if p is not None:
             out.append(p)

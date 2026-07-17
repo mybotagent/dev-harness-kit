@@ -45,7 +45,7 @@ For each `.github/workflows/*.yml` the install shipped, the audit emits diagnost
 | Diagnostic | State | Why |
 |---|---|---|
 | `workflow triggers: <file>` | WARN if no `pull_request*` / `workflow_run`; PASS otherwise | Missing trigger ⇒ review won't run on PRs |
-| `fork-PR secret gap: <file>` | WARN if `pull_request:` only; PASS otherwise | Fork PRs lose repo secrets without `pull_request_target` or `workflow_run` |
+| `fork-PR secret gap: <file>` | PASS if `pull_request_target`/`workflow_run`, OR `pull_request`-only **with** a same-repo fork guard (`head.repo.full_name == github.repository`); INFO in source-repo mode; WARN only for `pull_request`-only + no guard in a consumer repo | Fork PRs lose repo secrets under bare `pull_request`, but a same-repo guard skips forks before any step so the consumer template stays on `pull_request` (avoids the OIDC-401 that `pull_request_target` causes without org trust) |
 | `paths filter: <file>` / `branches filter: <file>` | INFO when present | User-visible so they can verify the filter includes their changes |
 | `concurrency: <file>` | WARN if `cancel-in-progress: true`; PASS otherwise | Mid-run cancellation can drop a long review verdict |
 | `job if: <file>/<job>` | INFO, verbatim `if:` string | User can audit why a job may be skipped |

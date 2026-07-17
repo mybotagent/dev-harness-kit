@@ -413,6 +413,62 @@ class TestCiDoctor(unittest.TestCase):
             self.assertEqual(len(gap), 1)
             self.assertEqual(gap[0].state, "PASS")
 
+    def test_workflow_diagnostics_passes_fork_gap_when_guard_present(self):
+        """`pull_request`-only but a same-repo fork guard is present →
+        PASS. This is the shipped consumer review.yml shape: it keeps
+        `pull_request` (to avoid the OIDC-401 that `pull_request_target`
+        causes without org trust) and skips fork PRs via the guard."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    name: review\n"
+                "    if: github.event.pull_request.head.repo.full_name == github.repository\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            gap = self._diagnostic_rows(r, "fork-PR secret gap: review.yml")
+            self.assertEqual(len(gap), 1)
+            self.assertEqual(gap[0].state, "PASS")
+            self.assertIn("same-repo guard", gap[0].detail)
+
+    def test_workflow_diagnostics_info_fork_gap_in_source_repo(self):
+        """`pull_request`-only, no guard, but the target is the dev-kit
+        source repo → INFO (internal-branch PRs only), not WARN."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._mark_source_repo(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    name: review\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            gap = self._diagnostic_rows(r, "fork-PR secret gap: review.yml")
+            self.assertEqual(len(gap), 1)
+            self.assertEqual(gap[0].state, "INFO")
+            self.assertIn("source repo", gap[0].detail)
+
     def test_workflow_diagnostics_info_paths_filter(self):
         """`pull_request.paths:` filter surfaces an INFO row."""
         import tempfile
