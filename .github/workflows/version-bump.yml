@@ -54,8 +54,19 @@ jobs:
           fi
 
           TAG="dev-kit--v${VERSION}"
-          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-            echo "tag ${TAG} already exists on origin; skipping"
+          # Check LOCAL refs/tags, not `git ls-remote --tags origin`.
+          # actions/checkout with fetch-depth: 0 fetches the full
+          # +refs/tags/*:refs/tags/* refspec, so the tag is in local
+          # refs the moment this step starts. ls-remote hits GitHub's
+          # tag-ref path, which is eventually consistent within seconds
+          # of a push — using it here lets a near-simultaneous second
+          # release slip through the guard and fall into `git tag -a`,
+          # which then dies on the locally-fetched tag with
+          # `fatal: tag '<X>' already exists` (exit 128). The local
+          # ref is authoritative for "has this tag been emitted yet on
+          # any commit reachable from origin/main?".
+          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            echo "tag ${TAG} already exists locally; skipping"
             exit 0
           fi
 
