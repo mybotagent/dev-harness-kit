@@ -53,6 +53,13 @@ FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
 # Claude/Codex sessions remain visible after the migration.
 WORKTREE_ROOT_NAMES = (".worktrees", ".claude/worktrees", ".codex/worktrees")
 
+#: Hard cap on how deep ``_walk_all_worktree_logs`` recurses into nested
+#: worktree roots. The production case is a single layer (sessions captured
+#: from inside any worktree-roots worktree). Depth 2 covers the test
+#: fixture that adds a worktree-of-a-worktree under ``.claude/worktrees/wt-x/.claude/worktrees/wt-y``.
+#: Going deeper than 2 on slow CI runners costs minutes per scanner.
+WORKTREE_LOG_WALK_DEPTH = 2
+
 
 def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
     for i, part in enumerate(parts):
@@ -308,13 +315,25 @@ def discover_logs(logs_dir: Path, *, repo_root: Path | None = None) -> list[Path
     return out
 
 
-def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
-    """Walk <wt_root>/logs/ and recurse into any nested worktree roots.
+def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None,
+                              _depth: int = 0) -> list:
+    """Walk ``<wt_root>/logs/`` and recurse into any nested worktree roots.
 
-    Sessions captured from inside a worktree-created-from-a-worktree (nested
-    layout like .claude/worktrees/A/.claude/worktrees/B/) are still real
-    sessions and must reach the dashboard. Symlink cycles are bounded by a
-    _seen set of resolved paths; the walk stops there instead of looping.
+    Sessions captured from inside a worktree-created-from-a-worktree
+    (nested layout like ``.claude/worktrees/A/.claude/worktrees/B/``) are
+    still real sessions and must reach the dashboard.
+
+    Two safety bounds keep this fast on slow shared CI filesystems:
+
+    1. **Symlink cycles** — a ``_seen`` set of resolved paths stops the
+       walk from looping when one worktree is symlinked from inside another.
+    2. **Depth cap** — ``WORKTREE_LOG_WALK_DEPTH`` (default 2) bounds the
+       recursion depth. The production case is a single ``.claude/worktrees/<wt>``
+       layer; nesting deeper than that is rare and adds seconds-to-minutes of
+       ``os.scandir`` calls on shared CI runners where each ``iterdir()`` is a
+       slow syscall. Tests live at depth 2 still works; deeper layers are
+       truncated and any capture that lives deeper would have to be moved
+       to a top-level worktree directory (a separate refactor).
     """
     seen = _seen if _seen is not None else set()
     real = wt_root.resolve()
@@ -322,11 +341,13 @@ def _walk_all_worktree_logs(wt_root: Path, _seen: set | None = None) -> list:
         return []
     seen.add(real)
     out: list = _discover_one_logs_dir(wt_root / "logs")
+    if _depth >= WORKTREE_LOG_WALK_DEPTH:
+        return out
     for root_name in WORKTREE_ROOT_NAMES:
         nested = wt_root / root_name
         if nested.exists():
             for sub in sorted(nested.iterdir()):
-                out.extend(_walk_all_worktree_logs(sub, seen))
+                out.extend(_walk_all_worktree_logs(sub, seen, _depth + 1))
     return out
 
 
@@ -2569,7 +2590,9 @@ def main(argv: list[str] | None = None) -> int:
     # double-counted or skewed by the stale main-side copy.
     files = _dedupe_by_session(files)
     if not files:
-        print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/", file=sys.stderr)
+        print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/"
+              f"{' (including sibling-worktree logs)' if repo_root else ''}",
+              file=sys.stderr)
         return 2
 
     unknown_models: set[str] = set()
