@@ -313,7 +313,8 @@ def _install_gitignore_fragment(src: Path, target_dir: Path, *, force: bool) -> 
     """Merge `templates/ci/.gitignore` into the target's `.gitignore`.
 
     Three cases:
-      1. Target `.gitignore` does not exist → copy the fragment as-is.
+      1. Target `.gitignore` does not exist → write the fragment wrapped in
+         the dev-kit marked block (no markers ≠ idempotent — see issue #202).
       2. Target `.gitignore` exists and already contains the dev-kit block
          → replace the block in place; preserve lines outside it.
       3. Target `.gitignore` exists without the dev-kit block → append
@@ -472,6 +473,53 @@ def _detect_drift(target_dir: Path, recorded_shas: dict[str, str]) -> List[str]:
     return out
 
 
+def _resolve_prior_marker(target: Path) -> Tuple[Path, dict]:
+    """Read prior marker (if any). Returns (marker_path, prior_dict).
+
+    Tolerates missing/malformed marker — returns {} in those cases so the
+    no-op and force=True paths can both reuse the call without crashing
+    on the first install or a corrupted prior marker.
+    """
+    marker_path = target / MARKER_REL
+    if not marker_path.is_file():
+        return marker_path, {}
+    try:
+        return marker_path, json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return marker_path, {}
+
+
+def _is_already_installed(target: Path, marker_path: Path, force: bool) -> bool:
+    """Presence-based no-op check: marker exists AND every EXPECTED_PATHS
+    file is present. With `force=True` always returns False.
+    """
+    if force or not marker_path.exists():
+        return False
+    return all((target / rel).exists() for rel in EXPECTED_PATHS)
+
+
+def _copy_all_templates(target: Path, force: bool, report: InstallReport) -> None:
+    """Copy each EXPECTED_PATHS template into target + chmod shell scripts.
+
+    Mutates `report.created` / `report.overwritten` / `report.skipped`
+    in place. Continues past per-file errors so a single bad template
+    doesn't fail the whole install.
+    """
+    for rel in EXPECTED_PATHS:
+        try:
+            outcome = _copy_template(rel, target, force=force)
+        except Exception as e:
+            report.errors.append(f"{rel}: {e}")
+            continue
+        if outcome == "created":
+            report.created.append(rel)
+        elif outcome == "overwritten":
+            report.overwritten.append(rel)
+        else:
+            report.skipped.append(rel)
+    _chmod_executable(EXECUTABLE_PATHS, target)
+
+
 def install_ci_config(
     target_dir: Path,
     *,
@@ -522,32 +570,25 @@ def install_ci_config(
     # `--force`. We always read the marker when present, even if `force`
     # is False, so the no-op idempotent re-install can still surface
     # drift findings from a *prior* `--force` cycle.
-    existing_marker = target / MARKER_REL
-    prior_marker: dict = {}
-    if existing_marker.is_file():
-        try:
-            prior_marker = json.loads(existing_marker.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            prior_marker = {}
+    existing_marker, prior_marker = _resolve_prior_marker(target)
 
     # Presence-based "already installed" detection: marker exists AND every
     # template file is present ⇒ nothing to copy. Phase 1 of the skill body
     # can still detect "already installed" via marker_path.
-    if existing_marker.exists() and not force:
-        if all((target / rel).exists() for rel in EXPECTED_PATHS):
-            report.skipped.extend(EXPECTED_PATHS)
-            report.marker_path = str(existing_marker)
-            report.elapsed_ms = int((time.monotonic() - started) * 1000)
-            # Drift detection still runs even on no-op re-installs: the
-            # consumer may have modified files locally since the last
-            # install, and we want the next `--force` invocation to
-            # surface that.
-            recorded_shas = prior_marker.get("installed_file_shas", {})
-            if isinstance(recorded_shas, dict):
-                report.warnings.extend(_detect_drift(target, recorded_shas))
-            if lint:
-                report.warnings.extend(lint_installed_workflows(target))
-            return report
+    if _is_already_installed(target, existing_marker, force):
+        report.skipped.extend(EXPECTED_PATHS)
+        report.marker_path = str(existing_marker)
+        report.elapsed_ms = int((time.monotonic() - started) * 1000)
+        # Drift detection still runs even on no-op re-installs: the
+        # consumer may have modified files locally since the last
+        # install, and we want the next `--force` invocation to
+        # surface that.
+        recorded_shas = prior_marker.get("installed_file_shas", {})
+        if isinstance(recorded_shas, dict):
+            report.warnings.extend(_detect_drift(target, recorded_shas))
+        if lint:
+            report.warnings.extend(lint_installed_workflows(target))
+        return report
 
     # Drift detection BEFORE the copy loop (issue #202). Only meaningful
     # when `force=True` AND a prior marker recorded SHAs — without those
@@ -558,21 +599,7 @@ def install_ci_config(
     if force and isinstance(recorded_shas, dict) and recorded_shas:
         report.warnings.extend(_detect_drift(target, recorded_shas))
 
-    for rel in EXPECTED_PATHS:
-        try:
-            outcome = _copy_template(rel, target, force=force)
-        except Exception as e:
-            report.errors.append(f"{rel}: {e}")
-            continue
-        if outcome == "created":
-            report.created.append(rel)
-        elif outcome == "overwritten":
-            report.overwritten.append(rel)
-        else:
-            report.skipped.append(rel)
-
-    # Set executable bit on shell-style files + validate.py.
-    _chmod_executable(EXECUTABLE_PATHS, target)
+    _copy_all_templates(target, force, report)
 
     # Write marker (overwrites on force, always succeeds idempotently).
     # Record SHA-256 of every EXPECTED_PATHS file so the next install's
@@ -633,10 +660,7 @@ def install_ci_config(
     return report
 
 
-    return results
-
-
-def _detect_owner_repo(target_dir: Path) -> str:
+def detect_owner_repo(target_dir: Path) -> str:
     """Best-effort `<OWNER>/<REPO>` from git remote.
 
     Returns `<OWNER>/<REPO>` on success. On failure (no git, no remote,
@@ -671,7 +695,7 @@ def _detect_owner_repo(target_dir: Path) -> str:
 
 def _print_post_install_checklist(target_dir: Path) -> None:
     """Print the post-install checklist to stdout. Best-effort; never raises."""
-    repo = _detect_owner_repo(target_dir) or "<OWNER>/<REPO>"
+    repo = detect_owner_repo(target_dir) or "<OWNER>/<REPO>"
     print()
     print("=== Post-install setup (do these IN ORDER) ===")
     for n, body in POST_INSTALL_CHECKLIST:

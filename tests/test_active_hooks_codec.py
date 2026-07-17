@@ -94,6 +94,16 @@ class TestActiveHooksCodec(unittest.TestCase):
         d2 = active_hooks_codec.read_matrix(self.root)
         self.assertEqual(d1["matrix"], d2["matrix"])
 
+    def test_load_matrix_on_missing_file_does_not_create_it(self):
+        """load_matrix is read-only — must not call atomic_write_json on miss."""
+        matrix_path = self.root / ".dev-kit" / ".active-hooks.json"
+        self.assertFalse(matrix_path.exists())
+        result = active_hooks_codec.load_matrix(self.root)
+        # In-memory default returned.
+        self.assertEqual(result["matrix"], active_hooks_codec.DEFAULT_MATRIX)
+        # No side effect: file still absent.
+        self.assertFalse(matrix_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

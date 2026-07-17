@@ -53,14 +53,6 @@ SKIPPABLE_STATUSES = ("completed", "unimplemented")
 
 # ---------- Phase / Step readers ----------
 
-def read_phases_index(project_root: Path) -> Dict:
-    """Read phases/index.json (top-level)."""
-    path = project_root / "phases" / "index.json"
-    if not path.exists():
-        return {"schema_version": SCHEMA_VERSION, "phases": []}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def parse_step_index(idx_path: Path) -> List[Dict]:
     """Parse phases/<phase>/index.json into the steps list."""
     return json.loads(idx_path.read_text(encoding="utf-8")).get("steps", [])
@@ -128,7 +120,7 @@ def update_step_status(
             to "completed" and not provided, computed from started_at.
 
     Side effects on the step entry in `phases/<phase>/index.json`:
-        pending → unimplemented: clears all timestamps (no-op)
+        pending → unimplemented: clears all timestamps
         unimplemented → pending: clears all timestamps
         pending → in_progress: sets started_at (idempotent — does NOT overwrite
                                if already present, so resume after crash keeps
@@ -184,22 +176,10 @@ def update_step_status(
                 s["blocked_reason"] = blocked_reason
             elif status == "pending":
                 # Resume retry — clear timestamps so duration recomputes cleanly.
-                s.pop("completed_at", None)
-                s.pop("failed_at", None)
-                s.pop("blocked_at", None)
-                s.pop("error_message", None)
-                s.pop("blocked_reason", None)
-                s.pop("started_at", None)
-                s.pop("duration_seconds", None)
+                _clear_step_timestamps(s)
             elif status == "unimplemented":
                 # Stub registration — no timestamps.
-                s.pop("completed_at", None)
-                s.pop("failed_at", None)
-                s.pop("blocked_at", None)
-                s.pop("error_message", None)
-                s.pop("blocked_reason", None)
-                s.pop("started_at", None)
-                s.pop("duration_seconds", None)
+                _clear_step_timestamps(s)
             break
     else:
         raise ValueError(f"step {step} not found in {phase}")
@@ -207,6 +187,21 @@ def update_step_status(
 
 
 # ---------- Step output writer ----------
+
+def _clear_step_timestamps(step: dict) -> None:
+    """Pop all per-step timestamp + error/blocked fields.
+
+    Shared between the `pending` (resume retry) and `unimplemented`
+    (stub registration) branches of `update_step_status` so adding a new
+    timestamp field lands in one place instead of two.
+    """
+    for key in (
+        "completed_at", "failed_at", "blocked_at",
+        "error_message", "blocked_reason",
+        "started_at", "duration_seconds",
+    ):
+        step.pop(key, None)
+
 
 def write_step_output(
     project_root: Path,

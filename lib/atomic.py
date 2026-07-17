@@ -1,4 +1,4 @@
-"""atomic.py — shared atomic-write + KST time helpers (5x dedup, 3x dedup).
+"""atomic.py — shared atomic-write + KST time helpers.
 
 Used by state_codec, active_hooks_codec, write_project_md, eval_runner,
 execute. POSIX-atomic via tempfile + os.replace.

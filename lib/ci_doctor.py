@@ -42,6 +42,7 @@ try:
         read_provider_file,
         required_secrets_for_provider,
         gh_secret_set_command,
+        detect_owner_repo,
     )
 except ImportError:
     from ci_setup import (  # type: ignore  # noqa: E402
@@ -49,6 +50,7 @@ except ImportError:
         read_provider_file,
         required_secrets_for_provider,
         gh_secret_set_command,
+        detect_owner_repo,
     )
 
 
@@ -144,22 +146,15 @@ def _is_source_repo(target_dir: Path) -> bool:
 
 
 def _detect_owner_repo(target_dir: Path) -> str:
-    """Mirror ci_setup._detect_owner_repo — duplicated here to avoid
-    importing the writer module for a read-only audit."""
-    try:
-        cp = subprocess.run(
-            ["git", "-C", str(target_dir), "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if cp.returncode != 0 or not cp.stdout.strip():
-            return ""
-        url = cp.stdout.strip()
-        m = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?/?$", url)
-        if m:
-            return f"{m.group(1)}/{m.group(2)}"
-    except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
-    return ""
+    """Re-export ci_setup.detect_owner_repo for backwards compat (issue #238).
+
+    ci_setup.detect_owner_repo returns a `<OWNER>/<REPO>` placeholder with
+    an error suffix when auto-detect fails; ci_doctor callers feed this
+    into `gh secret set --repo <OWNER>/<REPO>` which would emit a broken
+    command, so strip the placeholder back to empty.
+    """
+    result = detect_owner_repo(target_dir)
+    return "" if result.startswith("<OWNER>/<REPO>") else result
 
 
 def _list_repo_secrets(repo: str) -> tuple[set[str], str]:

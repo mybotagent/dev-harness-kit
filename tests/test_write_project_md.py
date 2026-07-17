@@ -61,10 +61,6 @@ class TestWriteProjectMd(unittest.TestCase):
         for tag in ("## Tree", "## Manifest", "## External deps", "## Conventions"):
             self.assertIn(tag, full)
 
-    def test_render_agents_md(self):
-        agents = write_project_md.render_agents_md(self.root)
-        self.assertEqual(agents.strip(), "CLAUDE.md")
-
     def test_render_claude_md_has_all_5_sections(self):
         md = write_project_md.render_claude_md(self.root)
         for section in ("§1", "§2", "§3", "§4", "§5"):

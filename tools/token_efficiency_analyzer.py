@@ -282,6 +282,24 @@ def cost_usd(model_id: str, *, input_tokens: int, output_tokens: int,
     )
 
 
+def session_cost(s: dict, *, model: str | None = None) -> float:
+    """Cost of a session dict in USD. Optional `model` overrides s['model'].
+
+    Pulls input/output/cache_read/cache_write_5m/cache_write_1h from the
+    session dict (with .get fallback to 0 for the cache buckets which are
+    not always present). Centralizes the kwargs shape so the dashboard's
+    10+ cost_usd call sites stay in lockstep when a new token bucket lands.
+    """
+    return cost_usd(
+        model if model is not None else s["model"],
+        input_tokens=s["input_tokens"],
+        output_tokens=s["output_tokens"],
+        cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+        cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+        cache_read_tokens=s["cache_read_tokens"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Log discovery + session aggregation
 # ---------------------------------------------------------------------------
@@ -383,22 +401,22 @@ def _dedupe_by_session(file_paths: list[Path]) -> list[Path]:
     if not file_paths:
         return file_paths
 
-    def _stats(path: Path) -> tuple[int, int]:
-        # (assistant_record_count, is_worktree_side)
+    # Single-pass scan: cache per-path stats so each JSONL is read at most
+    # once. Returns (assistants_count, is_worktree_side, has_sessionId,
+    # first_sessionId_or_None).
+    stats_cache: dict[int, tuple[int, int, bool, str | None]] = {}
+
+    def _scan(path: Path) -> tuple[int, int, bool, str | None]:
+        cached = stats_cache.get(id(path))
+        if cached is not None:
+            return cached
         assistants = 0
+        has_sid = False
+        sid: str | None = None
         try:
             for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                 if '"type":"assistant"' in line:
                     assistants += 1
-        except OSError:
-            pass
-        return (assistants, 1 if _worktree_marker(path.parts) else 0)
-
-    chosen: dict[str, Path] = {}
-    for p in file_paths:
-        sid = None
-        try:
-            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -406,15 +424,24 @@ def _dedupe_by_session(file_paths: list[Path]) -> list[Path]:
                     obj = json.loads(line)
                 except ValueError:
                     continue
-                sid = obj.get("sessionId") or obj.get("session_id")
-                if sid:
-                    break
+                line_sid = obj.get("sessionId") or obj.get("session_id")
+                if line_sid:
+                    has_sid = True
+                    if sid is None:
+                        sid = line_sid
         except OSError:
-            continue
-        if not sid:
+            pass
+        result = (assistants, 1 if _worktree_marker(path.parts) else 0, has_sid, sid)
+        stats_cache[id(path)] = result
+        return result
+
+    chosen: dict[str, Path] = {}
+    for p in file_paths:
+        _, _, has_sid, sid = _scan(p)
+        if not has_sid or sid is None:
             continue
         cur = chosen.get(sid)
-        if cur is None or _stats(p) > _stats(cur):
+        if cur is None or _scan(p)[:2] > _scan(cur)[:2]:
             chosen[sid] = p
 
     if not chosen:
@@ -427,22 +454,8 @@ def _dedupe_by_session(file_paths: list[Path]) -> list[Path]:
             keep_paths.add(p)
             continue
         # Keep legacy flat files (no sessionId in any line) untouched.
-        try:
-            any_sid = False
-            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except ValueError:
-                    continue
-                if obj.get("sessionId") or obj.get("session_id"):
-                    any_sid = True
-                    break
-            if not any_sid:
-                keep_paths.add(p)
-        except OSError:
+        _, _, has_sid, _ = _scan(p)
+        if not has_sid:
             keep_paths.add(p)
     return [p for p in file_paths if p in keep_paths]
 
@@ -1086,8 +1099,8 @@ def evaluate_warnings(s: dict, score: dict,
     total_input = s["input_tokens"] + s["cache_read_tokens"]
     cache_hit = score["cache_hit_ratio"]
 
-    # 1. Cache hit < 50% — prefix misalignment suspected.
-    if total_input > 0 and cache_hit < 0.50:
+    # 1. Cache hit < CACHE_HIT_WARN (50%) — prefix misalignment suspected.
+    if total_input > 0 and cache_hit < CACHE_HIT_WARN:
         warnings.append(Warning(
             level="critical",
             code="CACHE_HIT_LOW",
@@ -1112,7 +1125,7 @@ def evaluate_warnings(s: dict, score: dict,
     # break out per-tool spend, so this is the best approximation.
     tool_costs: dict[str, float] = {}
     for name, n in s["tool_counts"].items():
-        tool_costs[name] = n * 2000 * pricing_for(s["model"])["in"] / 1_000_000
+        tool_costs[name] = n * DEFAULT_DUP_READ_TOKENS * pricing_for(s["model"])["in"] / 1_000_000
     total_tool_cost = sum(tool_costs.values()) or 1.0
     read_share = tool_costs.get("Read", 0.0) / total_tool_cost
     if read_share >= 0.40 and s["tool_counts"].get("Read", 0) > 0:
@@ -1280,14 +1293,7 @@ def model_downgrade_reclaim(scored: list[tuple[dict, dict]]) -> list[float]:
         if not (is_opus and sc["density"] < 20.0 and s["output_tokens"] > 0):
             out.append(0.0)
             continue
-        opus_cost = cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_read_tokens=s["cache_read_tokens"],
-        )
+        opus_cost = session_cost(s)
         sonnet_cost = cost_usd(
             "sonnet",
             input_tokens=s["input_tokens"],
@@ -1332,14 +1338,7 @@ def enforce_cost_gate(scored: list[tuple[dict, dict]],
     violations: list[dict] = []
     for s, _ in scored:
         total_input = s["input_tokens"] + s["cache_read_tokens"]
-        cost = cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_read_tokens=s["cache_read_tokens"],
-        )
+        cost = session_cost(s)
         if total_input > gate_tokens:
             violations.append({
                 "session_id": s["session_id"],
@@ -2152,7 +2151,7 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
     tool_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
     for s, _ in scored:
         for name, n in s["tool_counts"].items():
-            est = n * 2000 * pricing_for(s["model"])["in"] / 1_000_000
+            est = n * DEFAULT_DUP_READ_TOKENS * pricing_for(s["model"])["in"] / 1_000_000
             tool_costs[name][0] += n
             tool_costs[name][1] += est
     total_tool_cost = sum(c[1] for c in tool_costs.values()) or 1.0

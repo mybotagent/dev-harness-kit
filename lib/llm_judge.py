@@ -206,7 +206,7 @@ def _call_anthropic_compatible(
 
 
 def _http_post(*, url: str, payload: Dict, api_key: str, timeout: int) -> Dict:
-    """Real HTTP POST. Wraps urllib.request.urlopen for test seam."""
+    """Real HTTP POST. Wraps urllib.request.urlopen."""
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),

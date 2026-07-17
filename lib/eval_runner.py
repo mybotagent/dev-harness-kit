@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -29,6 +30,58 @@ PROMPT_BY_DIM: Dict[str, str] = {
     "security": "judge-security.md",
     "plan": "judge-plan.md",
 }
+
+
+@dataclass
+class CaseResult:
+    """One case outcome from run_eval.
+
+    Mutable because _judge_case populates fields incrementally before
+    returning; converted to dict at the API boundary via asdict().
+    """
+    case_id: str = ""
+    dim: str = ""
+    scores: Dict[str, float] = field(default_factory=dict)
+    tokens_in: int = 0
+    tokens_out: int = 0
+    raw: str = ""
+    verdict: str = ""
+    score: float = 0.0
+    error: Optional[str] = None
+
+
+def mock_skipped(case: Dict, axes: tuple) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 0.0 for ax in axes},
+        raw="TRANSCRIPT_MISSING", verdict="SKIPPED", score=0.0,
+    )
+
+
+def mock_drift_warning(case: Dict, axes: tuple) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 7.0 for ax in axes},
+        raw="DRY_RUN", verdict="DRIFT_WARNING", score=7.0,
+    )
+
+
+def real_result(case: Dict, *, scores: Dict[str, float],
+                tokens_in: int, tokens_out: int,
+                raw: str, verdict: str, score: float) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores=scores, tokens_in=tokens_in, tokens_out=tokens_out,
+        raw=raw, verdict=verdict, score=score,
+    )
+
+
+def exception_rot(case: Dict, axes: tuple, exc: Exception) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 0.0 for ax in axes},
+        raw=str(exc), verdict="ROT", score=0.0, error=str(exc),
+    )
 
 
 # ---------- discovery ----------
@@ -97,9 +150,8 @@ def _judge_case(
     case: Dict,
     transcript: Optional[Dict],
     config: Dict,
-) -> Dict:
-    """Run the per-dim LLM-as-judge on a case. Returns
-    {scores, tokens_in, tokens_out, raw, verdict, score}.
+) -> CaseResult:
+    """Run the per-dim LLM-as-judge on a case. Returns a CaseResult.
 
     If `transcript` is None, the case is marked as SKIPPED (a setup gap,
     not a regression) with axis scores of 0.0 and verdict "SKIPPED".
@@ -107,14 +159,7 @@ def _judge_case(
     dim = case["dim"]
     axes = llm_judge.DIM_AXES[dim]
     if transcript is None:
-        return {
-            "scores": {ax: 0.0 for ax in axes},
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "raw": "TRANSCRIPT_MISSING",
-            "verdict": "SKIPPED",
-            "score": 0.0,
-        }
+        return mock_skipped(case, axes)
     prompt_name = PROMPT_BY_DIM[dim]
     substitutions = {
         "CASE_ID": case.get("case_id", ""),
@@ -148,14 +193,15 @@ def _judge_case(
     scores = {ax: float(scores.get(ax, 0.0)) for ax in axes}
     score = llm_judge.score_aggregate(scores) if scores else 0.0
     verdict = llm_judge.verdict_from_score(score) if score > 0 else "ROT"
-    return {
-        "scores": scores,
-        "tokens_in": raw.get("tokens_in", 0),
-        "tokens_out": raw.get("tokens_out", 0),
-        "raw": (raw.get("raw") or "")[:500],
-        "verdict": verdict,
-        "score": score,
-    }
+    return real_result(
+        case,
+        scores=scores,
+        tokens_in=raw.get("tokens_in", 0),
+        tokens_out=raw.get("tokens_out", 0),
+        raw=(raw.get("raw") or "")[:500],
+        verdict=verdict,
+        score=score,
+    )
 
 
 def _read_input(project_root: Path, case: Dict) -> str:
@@ -195,12 +241,16 @@ def judge_case(
     config: Optional[Dict] = None,
 ) -> Dict:
     """Score a single case. If `transcript` is None it is loaded from
-    `eval/transcripts/<dim>/<case_id>.json`."""
+    `eval/transcripts/<dim>/<case_id>.json`.
+
+    Returns a plain dict (asdict of CaseResult) for backward compatibility
+    with callers that subscript into the result.
+    """
     if config is None:
         config = llm_judge.load_config(project_root)
     if transcript is None:
         transcript = load_transcript(project_root, case["dim"], case["case_id"])
-    return _judge_case(project_root, case, transcript, config)
+    return asdict(_judge_case(project_root, case, transcript, config))
 
 
 # ---------- report ----------
@@ -304,52 +354,31 @@ def run_eval(
     if case is not None:
         cases = [c for c in cases if c["case_id"] == case]
 
-    results: List[Dict] = []
+    results: List[CaseResult] = []
     if dry_run or not config.get("api_key"):
         # Mock each case at 7.0 / DRIFT_WARNING, except SKIPPED for cases
         # with no transcript (a real setup gap).
         for c in cases:
             t = load_transcript(project_root, c["dim"], c["case_id"])
             if t is None:
-                results.append({
-                    "case_id": c["case_id"],
-                    "dim": c["dim"],
-                    "scores": {ax: 0.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
-                    "tokens_in": 0, "tokens_out": 0, "raw": "DRY_RUN_NO_TRANSCRIPT",
-                    "verdict": "SKIPPED", "score": 0.0,
-                })
+                results.append(mock_skipped(c, llm_judge.DIM_AXES[c["dim"]]))
                 continue
-            results.append({
-                "case_id": c["case_id"],
-                "dim": c["dim"],
-                "scores": {ax: 7.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
-                "tokens_in": 0, "tokens_out": 0, "raw": "DRY_RUN",
-                "verdict": "DRIFT_WARNING", "score": 7.0,
-            })
+            results.append(mock_drift_warning(c, llm_judge.DIM_AXES[c["dim"]]))
     else:
         for c in cases:
             t = load_transcript(project_root, c["dim"], c["case_id"])
             try:
-                r = _judge_case(project_root, c, t, config)
-                r["case_id"] = c["case_id"]
-                r["dim"] = c["dim"]
-                results.append(r)
+                results.append(_judge_case(project_root, c, t, config))
             except Exception as e:
-                results.append({
-                    "case_id": c["case_id"],
-                    "dim": c["dim"],
-                    "scores": {ax: 0.0 for ax in llm_judge.DIM_AXES[c["dim"]]},
-                    "tokens_in": 0, "tokens_out": 0, "raw": str(e),
-                    "verdict": "ROT", "score": 0.0,
-                    "error": str(e),
-                })
+                results.append(exception_rot(c, llm_judge.DIM_AXES[c["dim"]], e))
 
-    write_report(project_root, results, config)
+    results_dicts = [asdict(r) for r in results]
+    write_report(project_root, results_dicts, config)
     summary: Dict[str, int] = {v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED")}
     for r in results:
-        summary[r.get("verdict", "OK")] += 1
+        summary[r.verdict or "OK"] += 1
     return {
-        "results": results,
+        "results": results_dicts,
         "config": {k: v for k, v in config.items() if k != "api_key"},
         "summary": summary,
     }

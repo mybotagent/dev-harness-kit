@@ -43,49 +43,47 @@ def _state_path(explicit: Optional[str], cwd: str) -> Path:
     return cg.default_state_path(cwd)
 
 
+def _load_or_ephemeral_state(state_path: Path, *, add_default_warning: bool = False) -> dict:
+    """Load state.json or fall back to a fresh ephemeral state.
+
+    Centralizes the 4 CLI handlers' load-or-fallback dance so they don't
+    drift when cg.new_session_state gains a new required kwarg.
+    """
+    state = cg.load_state(state_path)
+    if state is not None:
+        return state
+    thresholds = cg.resolve_thresholds()
+    state = cg.new_session_state(
+        session_id="ephemeral", cwd=str(state_path.parent.parent),
+        branch="unknown", repository="unknown", model="",
+        thresholds=thresholds,
+    )
+    if add_default_warning:
+        state["warnings"] = ["no state file — showing defaults"]
+    return state
+
+
 # ---------------------------------------------------------------------------
 # CLI modes
 # ---------------------------------------------------------------------------
 
 def _cli_text(args: argparse.Namespace) -> int:
     state_path = _state_path(args.state, os.getcwd())
-    state = cg.load_state(state_path)
-    if state is None:
-        thresholds = cg.resolve_thresholds()
-        state = cg.new_session_state(
-            session_id="ephemeral", cwd=str(state_path.parent.parent),
-            branch="unknown", repository="unknown", model="",
-            thresholds=thresholds,
-        )
-        state["warnings"] = ["no state file — showing defaults"]
+    state = _load_or_ephemeral_state(state_path, add_default_warning=True)
     sys.stdout.write(cg.format_text(state, state_path) + "\n")
     return 0
 
 
 def _cli_json(args: argparse.Namespace) -> int:
     state_path = _state_path(args.state, os.getcwd())
-    state = cg.load_state(state_path)
-    if state is None:
-        thresholds = cg.resolve_thresholds()
-        state = cg.new_session_state(
-            session_id="ephemeral", cwd=str(state_path.parent.parent),
-            branch="unknown", repository="unknown", model="",
-            thresholds=thresholds,
-        )
+    state = _load_or_ephemeral_state(state_path)
     sys.stdout.write(cg.format_json(state, state_path) + "\n")
     return 0
 
 
 def _cli_html(args: argparse.Namespace) -> int:
     state_path = _state_path(args.state, os.getcwd())
-    state = cg.load_state(state_path)
-    if state is None:
-        thresholds = cg.resolve_thresholds()
-        state = cg.new_session_state(
-            session_id="ephemeral", cwd=str(state_path.parent.parent),
-            branch="unknown", repository="unknown", model="",
-            thresholds=thresholds,
-        )
+    state = _load_or_ephemeral_state(state_path)
     out_path = Path(args.html)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(cg.format_html(state, state_path), encoding="utf-8")
@@ -95,14 +93,7 @@ def _cli_html(args: argparse.Namespace) -> int:
 
 def _cli_footer(args: argparse.Namespace) -> int:
     state_path = _state_path(args.state, os.getcwd())
-    state = cg.load_state(state_path)
-    if state is None:
-        thresholds = cg.resolve_thresholds()
-        state = cg.new_session_state(
-            session_id="ephemeral", cwd=str(state_path.parent.parent),
-            branch="unknown", repository="unknown", model="",
-            thresholds=thresholds,
-        )
+    state = _load_or_ephemeral_state(state_path)
     sys.stdout.write(cg.format_footer(state) + "\n")
     return 0
 
