@@ -3,18 +3,17 @@
 #
 # History: this hook used to auto-rewrite .github/ci-review-provider.txt
 # from .env:CI_REVIEW_PROVIDER on every commit. That behavior was removed
-# because it (a) silently inverted user intent — committing in a worktree
+# in #230 because it silently inverted user intent — committing in a worktree
 # whose provider didn't match the main checkout's .env would flip the
-# tracked file with no abort and no clear failure surface, and (b) coupled
+# tracked file with no abort and no clear failure surface, and it coupled
 # two files with different audiences (local .env is gitignored + user-
-# private; the tracked file is the contract with CI). When users reported
-# "why does it keep switching to deepseek", they were right: the silent
-# rewrite was the bug.
+# private; the tracked file was the contract with CI).
 #
-# New model: the tracked file is user-controlled, and `.env` is no longer
-# consulted for provider selection at all. To switch provider, run
-# `bin/set-provider.sh <minimax|anthropic|deepseek>`, review the diff it
-# prints, then commit + push.
+# Current model: the tracked file was removed entirely. Provider selection
+# is now env-based: `.env:CI_REVIEW_PROVIDER` for local (managed via
+# `bin/set-provider.sh <provider>`), `vars.CI_REVIEW_PROVIDER` for CI
+# (per-repo). There is nothing to rewrite at commit time, so this hook
+# stays a no-op.
 #
 # Version auto-bump lives in .githooks/pre-push, not here — pre-commit
 # fires on every commit (incl. amend / rebase), and bumping on each

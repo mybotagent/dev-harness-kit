@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# set-provider.sh — switch the CI review/security provider explicitly.
+# set-provider.sh — switch the local CI review/security provider explicitly.
 #
-# Why: previous design auto-rewrote .github/ci-review-provider.txt from
-# .env on every commit (via .githooks/pre-commit). That behavior silently
-# inverted user intent: a worktree whose .env disagreed with the main
-# checkout's .env would flip the tracked file with no abort and no clear
-# signal. This helper replaces that with an explicit, user-initiated
-# switch — review the diff, then commit + push yourself.
+# Why: provider selection moved off the tracked file
+# `.github/ci-review-provider.txt` so the same repo can be used by
+# different operators with different providers (no committed default).
+# Local selection now lives in `.env:CI_REVIEW_PROVIDER` (gitignored,
+# per-user). CI selection lives in the GitHub repo variable
+# `vars.CI_REVIEW_PROVIDER` (per-repo). This script manages the local
+# half — `bin/set-provider.sh <provider>` upserts the key in `.env`,
+# prints a diff, and reminds the operator to set the matching GitHub
+# repo variable + API-key secret.
 #
 # Usage:
-#   bin/set-provider.sh                          # show current provider
-#   bin/set-provider.sh minimax                  # set provider
+#   bin/set-provider.sh                          # show current local provider
+#   bin/set-provider.sh minimax                  # switch local provider
 #   bin/set-provider.sh anthropic --dry-run      # show what would change
 #   bin/set-provider.sh --show                   # alias for no-arg form
 #   bin/set-provider.sh --help
@@ -23,12 +26,16 @@
 #   gh secret set MINIMAX_API_KEY    --body "<value>"
 #   gh secret set ANTHROPIC_API_KEY  --body "<value>"
 #   gh secret set DEEPSEEK_API_KEY   --body "<value>"
+# And the matching CI_REVIEW_PROVIDER repo variable so the workflow
+# knows which secret to read:
+#   gh variable set CI_REVIEW_PROVIDER --body "<provider>"
 
 set -euo pipefail
 
-PROVIDER_FILE=".github/ci-review-provider.txt"
+ENV_FILE=".env"
+ENV_EXAMPLE=".env.example"
+PROVIDER_KEY="CI_REVIEW_PROVIDER"
 ALLOWLIST=(minimax anthropic deepseek)
-DEFAULT_PROVIDER="minimax"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -36,22 +43,9 @@ show_help() {
   sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
 }
 
-# Initialize the file to default if it doesn't exist yet (first-time
-# setup). Idempotent — never overwrites an existing value.
-ensure_file() {
-  if [ ! -f "$PROVIDER_FILE" ]; then
-    echo "$DEFAULT_PROVIDER" > "$PROVIDER_FILE"
-    echo "created $PROVIDER_FILE with default: $DEFAULT_PROVIDER"
-  fi
-}
-
-current_provider() {
-  if [ -f "$PROVIDER_FILE" ]; then
-    tr -d '[:space:]' < "$PROVIDER_FILE"
-  else
-    echo "(unset)"
-  fi
-}
+# Resolve repo root (works in main checkout and worktrees alike).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repo"
+cd "$REPO_ROOT"
 
 is_allowed() {
   local p="$1"
@@ -59,6 +53,82 @@ is_allowed() {
     [ "$p" = "$a" ] && return 0
   done
   return 1
+}
+
+# Read CI_REVIEW_PROVIDER from .env (last occurrence wins; comments and
+# blanks ignored). Echoes the value, or empty string when unset.
+read_provider_from_env_file() {
+  local f="$1" line key val
+  [ -f "$f" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "#"*|"") continue ;;
+    esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    [ "$key" = "$PROVIDER_KEY" ] && printf '%s' "$val"
+  done < "$f"
+}
+
+# Echo the current effective provider: process env first, then .env.
+# Direct reference is intentional — `${!PROVIDER_KEY:-}` (indirect
+# expansion) would silently typo and echo the key name when the env
+# var is unset, which is exactly the bug this avoids.
+current_provider() {
+  local from_env="${CI_REVIEW_PROVIDER:-}"
+  if [ -z "$from_env" ] && [ -f "$ENV_FILE" ]; then
+    from_env="$(read_provider_from_env_file "$ENV_FILE")"
+  fi
+  printf '%s' "$from_env"
+}
+
+# Upsert CI_REVIEW_PROVIDER in .env, preserving all other lines verbatim.
+# Creates .env from .env.example when neither exists (so first-time
+# operators get a complete template). Idempotent on re-run.
+upsert_env_file() {
+  local new_value="$1" current_file saw_key line key val tmp
+  if [ -f "$ENV_FILE" ]; then
+    current_file="$ENV_FILE"
+  elif [ -f "$ENV_EXAMPLE" ]; then
+    current_file="$ENV_EXAMPLE"
+    echo "note: $ENV_FILE missing; bootstrapping from $ENV_EXAMPLE"
+  else
+    die "neither $ENV_FILE nor $ENV_EXAMPLE exists; cannot manage provider"
+  fi
+
+  tmp="$(mktemp)"
+  # Copy every line, replacing the CI_REVIEW_PROVIDER= line. Track whether
+  # we saw one so we can append if missing.
+  saw_key=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "#"*|"")
+        printf '%s\n' "$line" >> "$tmp"
+        continue
+        ;;
+    esac
+    key="${line%%=*}"
+    if [ "$key" = "$PROVIDER_KEY" ]; then
+      printf '%s=%s\n' "$PROVIDER_KEY" "$new_value" >> "$tmp"
+      saw_key=1
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$current_file"
+  if [ "$saw_key" = "0" ]; then
+    printf '%s=%s\n' "$PROVIDER_KEY" "$new_value" >> "$tmp"
+  fi
+
+  # If we bootstrapped from .env.example, write to .env (not back to
+  # .env.example — that's the tracked template).
+  if [ "$current_file" != "$ENV_FILE" ]; then
+    cp "$tmp" "$ENV_FILE"
+    rm -f "$tmp"
+    echo "wrote $ENV_FILE (new file)"
+  else
+    mv "$tmp" "$ENV_FILE"
+    echo "updated $ENV_FILE"
+  fi
 }
 
 # Parse args. Support provider as first positional, then flags.
@@ -80,14 +150,14 @@ else
   esac
 fi
 
-# Resolve repo root (works in main checkout and worktrees alike).
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repo"
-cd "$REPO_ROOT"
-
 if [ "$SHOW_ONLY" = "1" ]; then
-  ensure_file
-  echo "current: $(current_provider)"
-  echo "file:    $PROVIDER_FILE"
+  CUR="$(current_provider)"
+  if [ -z "$CUR" ]; then
+    echo "current: (unset) — no provider declared in $ENV_FILE or process env"
+  else
+    echo "current: $CUR"
+  fi
+  echo "source:  $ENV_FILE (local) + vars.CI_REVIEW_PROVIDER (CI)"
   echo "allowlist: ${ALLOWLIST[*]}"
   echo "to switch: bin/set-provider.sh <provider>"
   exit 0
@@ -104,39 +174,44 @@ if [ "$CURRENT" = "$NEW" ]; then
   exit 0
 fi
 
-echo "current: $CURRENT"
+echo "current: ${CURRENT:-(unset)}"
 echo "new:     $NEW"
 echo
 
 if [ "$DRY_RUN" = "1" ]; then
-  echo "[dry-run] would update $PROVIDER_FILE"
-  echo "[dry-run] would print this diff (vs HEAD):"
-  TMP="$(mktemp)"
-  trap 'rm -f "$TMP"' EXIT
-  echo "$NEW" > "$TMP"
-  git diff --no-index --no-color "$PROVIDER_FILE" "$TMP" 2>/dev/null | sed 's/^/[dry-run] /' || true
+  echo "[dry-run] would upsert $PROVIDER_KEY=$NEW in $ENV_FILE"
+  if [ -f "$ENV_FILE" ]; then
+    TMP="$(mktemp)"
+    trap 'rm -f "$TMP"' EXIT
+    awk -v key="$PROVIDER_KEY" -v val="$NEW" '
+      BEGIN { saw = 0 }
+      /^#/ || /^$/ { print; next }
+      {
+        k = $0; sub(/=.*/, "", k)
+        if (k == key) { print key"="val; saw = 1; next }
+        print
+      }
+      END { if (!saw) print key"="val }
+    ' "$ENV_FILE" > "$TMP"
+    diff -u "$ENV_FILE" "$TMP" | sed 's/^/[dry-run] /' || true
+    rm -f "$TMP"
+  else
+    echo "[dry-run] $ENV_FILE does not exist yet; would bootstrap from $ENV_EXAMPLE"
+  fi
   exit 0
 fi
 
-# Apply the change. Print the diff vs HEAD so the user reviews before
-# committing. Don't auto-commit or push — that's the user's call.
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-echo "$NEW" > "$TMP"
-mv "$TMP" "$PROVIDER_FILE"
-trap - EXIT
+# Apply. .env is gitignored so there's nothing to commit; just print the
+# effective diff for review.
+upsert_env_file "$NEW"
 
-echo "diff vs HEAD:"
-git diff --no-color "$PROVIDER_FILE" | sed 's/^/  /'
 echo
 echo "next steps:"
-echo "  git add $PROVIDER_FILE"
-echo "  git commit -m \"ci(provider): switch $CURRENT -> $NEW\""
-echo "  git push"
-echo
-echo "reminder: ensure $NEW's *_API_KEY is set as a GitHub repo secret:"
+echo "  # Local: nothing — .env is read by your tools on next run."
+echo "  # CI:    set the matching repo variable + secret:"
+echo "  gh variable set CI_REVIEW_PROVIDER --body '$NEW'"
 case "$NEW" in
-  minimax)   echo "  gh secret set MINIMAX_API_KEY   --body '<value>'" ;;
-  anthropic) echo "  gh secret set ANTHROPIC_API_KEY --body '<value>'" ;;
-  deepseek)  echo "  gh secret set DEEPSEEK_API_KEY  --body '<value>'" ;;
+  minimax)   echo "  gh secret   set MINIMAX_API_KEY   --body '<value>'" ;;
+  anthropic) echo "  gh secret   set ANTHROPIC_API_KEY --body '<value>'" ;;
+  deepseek)  echo "  gh secret   set DEEPSEEK_API_KEY  --body '<value>'" ;;
 esac

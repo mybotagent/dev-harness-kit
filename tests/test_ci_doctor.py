@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -47,13 +48,19 @@ class TestCiDoctor(unittest.TestCase):
         installed-but-unauthenticated (typical for CI runners). The
         audit correctly surfaces that as FAIL in production; the test
         asserts only that the install-shape rows (files / marker /
-        provider file) are PASS — secrets behavior is exercised by the
-        per-secret tests below.
+        provider declaration) are PASS — secrets behavior is exercised
+        by the per-secret tests below.
+
+        Seeds `.env.example` because a real consumer repo already has
+        it (standard convention); the ci-setup install doesn't ship it.
         """
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
+            (target / ".env.example").write_text(
+                "CI_REVIEW_PROVIDER=minimax\n", encoding="utf-8",
+            )
             r = self.cd.audit(target)
             install_shape_rows = [
                 c for c in r.checks
@@ -80,18 +87,24 @@ class TestCiDoctor(unittest.TestCase):
                 f"review.yml missing should FAIL; got: {labels}",
             )
 
-    def test_missing_provider_file_fails(self):
-        """`.github/ci-review-provider.txt` must exist (issue #212-A1)."""
+    def test_missing_provider_env_fails(self):
+        """No CI_REVIEW_PROVIDER anywhere (env, .env, .env.example) → FAIL."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
-            (target / ".github" / "ci-review-provider.txt").unlink()
-            r = self.cd.audit(target)
+            # No .env.example seeded here on purpose — this is the
+            # negative path. Ensure no env var, no .env, no .env.example.
+            old = os.environ.pop("CI_REVIEW_PROVIDER", None)
+            try:
+                r = self.cd.audit(target)
+            finally:
+                if old is not None:
+                    os.environ["CI_REVIEW_PROVIDER"] = old
             self.assertFalse(r.ok)
             self.assertTrue(
-                any("ci-review-provider.txt" in c.label for c in r.failing()),
-                "missing provider file should FAIL",
+                any("provider declared" in c.label for c in r.failing()),
+                "missing provider declaration should FAIL",
             )
 
     def test_corrupt_marker_fails(self):
@@ -108,34 +121,32 @@ class TestCiDoctor(unittest.TestCase):
                 "corrupt marker should FAIL the parseable check",
             )
 
-    def test_unknown_provider_in_file_fails(self):
-        """Provider selector holds a value not in the catalog ⇒ FAIL."""
+    def test_unknown_provider_in_env_fails(self):
+        """`.env` holds a value not in the catalog ⇒ FAIL."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
-            (target / ".github" / "ci-review-provider.txt").write_text("gpt5\n")
+            (target / ".env").write_text("CI_REVIEW_PROVIDER=gpt5\n", encoding="utf-8")
             r = self.cd.audit(target)
             self.assertFalse(r.ok)
             self.assertTrue(
-                any("provider file content" in c.label and c.state == "FAIL" for c in r.checks),
-                "unknown provider should FAIL the content check",
+                any("provider declared" in c.label and c.state == "FAIL" for c in r.checks),
+                "unknown provider should FAIL the declared check",
             )
 
     def test_provider_override_changes_required_secrets(self):
-        """`provider=anthropic` must require ANTHROPIC_API_KEY not MINIMAX_API_KEY."""
+        """`.env:CI_REVIEW_PROVIDER=anthropic` must drive the secrets check
+        toward ANTHROPIC_API_KEY not MINIMAX_API_KEY."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
-            (target / ".github" / "ci-review-provider.txt").write_text("anthropic\n")
+            (target / ".env").write_text("CI_REVIEW_PROVIDER=anthropic\n", encoding="utf-8")
             r = self.cd.audit(target)
-            # No gh in test env → secrets row is SKIP. We only assert the
-            # provider-file check + provider override was applied (the
-            # SKIP row carries the same degraded message either way).
-            provider_checks = [c for c in r.checks if "provider file content" in c.label]
-            self.assertEqual(provider_checks[0].state, "PASS")
-            self.assertIn("anthropic", provider_checks[0].detail)
+            declared = [c for c in r.checks if "provider declared" in c.label]
+            self.assertEqual(declared[0].state, "PASS")
+            self.assertIn("anthropic", declared[0].detail)
 
     def test_audit_summary_lines_renders_passes_and_fails(self):
         """`summary_lines()` output is suitable for stdout printing."""
@@ -276,21 +287,22 @@ class TestCiDoctor(unittest.TestCase):
     def _minimal_install(self, target: Path) -> None:
         """Minimal install shape that satisfies `_check_required_files`
         so the diagnostic rows dominate the report. Writes a marker +
-        provider file + stub workflows so file-present + marker rows
-        are PASS; only the diagnostic-under-test is exercising a path.
-        Each test that exercises a specific workflow's diagnostics
-        overwrites the stub with its own body via `_write_workflow`."""
+        provider declaration (.env.example stub) + stub workflows so
+        file-present + marker + provider rows are PASS; only the
+        diagnostic-under-test is exercising a path. Each test that
+        exercises a specific workflow's diagnostics overwrites the stub
+        with its own body via `_write_workflow`."""
         (target / ".github").mkdir(parents=True, exist_ok=True)
         (target / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
-        (target / ".github" / "ci-review-provider.txt").write_text(
-            "minimax\n", encoding="utf-8",
+        (target / ".env.example").write_text(
+            "CI_REVIEW_PROVIDER=minimax\n", encoding="utf-8",
         )
         (target / ".dev-kit").mkdir(parents=True, exist_ok=True)
         (target / ".dev-kit" / "ci-config.json").write_text(
             json.dumps({
                 "schema_version": 1,
                 "installed_at": "2026-01-01T00:00:00Z",
-                "ci_review_provider_file": ".github/ci-review-provider.txt",
+                "provider_env_key": "CI_REVIEW_PROVIDER",
             }),
             encoding="utf-8",
         )
@@ -818,6 +830,9 @@ class TestCiDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
+            (target / ".env.example").write_text(
+                "CI_REVIEW_PROVIDER=minimax\n", encoding="utf-8",
+            )
             # Replace review.yml with jobs whose names don't match the
             # required checks, so the diff is observable.
             self._write_workflow(target, "review.yml", (
@@ -849,6 +864,9 @@ class TestCiDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
+            (target / ".env.example").write_text(
+                "CI_REVIEW_PROVIDER=minimax\n", encoding="utf-8",
+            )
             self._write_workflow(target, "review.yml", (
                 "on:\n  pull_request:\njobs:\n"
                 "  review:\n    name: lint\n    runs-on: ubuntu-latest\n"
@@ -925,6 +943,9 @@ class TestCiDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             self._install(target)
+            (target / ".env.example").write_text(
+                "CI_REVIEW_PROVIDER=minimax\n", encoding="utf-8",
+            )
             with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
                 r = self.cd.audit(target)
             install_shape_rows = [
