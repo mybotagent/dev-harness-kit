@@ -254,5 +254,616 @@ class TestCiDoctor(unittest.TestCase):
             )
 
 
+# ------------------------------------------------------------------
+    # Workflow diagnostics (WARN/INFO only — verdict-neutral)
+    # ------------------------------------------------------------------
+
+    def _write_workflow(self, target: Path, name: str, body) -> Path:
+        """Write a hand-crafted workflow YAML to
+        `target/.github/workflows/<name>`. Returns the path. Used by the
+        diagnostic tests below to feed the scanner crafted shapes
+        without going through the full `install_ci_config` path.
+        Accepts `str` (utf-8) or `bytes` (raw, for unparseable-garbage tests).
+        """
+        p = target / ".github" / "workflows" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(body, bytes):
+            p.write_bytes(body)
+        else:
+            p.write_text(body, encoding="utf-8")
+        return p
+
+    def _minimal_install(self, target: Path) -> None:
+        """Minimal install shape that satisfies `_check_required_files`
+        so the diagnostic rows dominate the report. Writes a marker +
+        provider file + stub workflows so file-present + marker rows
+        are PASS; only the diagnostic-under-test is exercising a path.
+        Each test that exercises a specific workflow's diagnostics
+        overwrites the stub with its own body via `_write_workflow`."""
+        (target / ".github").mkdir(parents=True, exist_ok=True)
+        (target / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (target / ".github" / "ci-review-provider.txt").write_text(
+            "minimax\n", encoding="utf-8",
+        )
+        (target / ".dev-kit").mkdir(parents=True, exist_ok=True)
+        (target / ".dev-kit" / "ci-config.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "installed_at": "2026-01-01T00:00:00Z",
+                "ci_review_provider_file": ".github/ci-review-provider.txt",
+            }),
+            encoding="utf-8",
+        )
+        self._write_workflow(target, "review.yml", (
+            "on:\n  pull_request:\njobs:\n  review:\n"
+            "    name: review\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n"
+        ))
+        self._write_workflow(target, "auto-fix-pr.yml", (
+            "on:\n  pull_request_review:\n    types: [submitted]\njobs:\n"
+            "  auto-fix:\n    name: auto-fix\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: echo\n"
+        ))
+        self._write_workflow(target, "ci.yml", (
+            "on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n"
+            "  test:\n    name: test\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n"
+        ))
+
+    def _diagnostic_rows(self, r, label_substr: str) -> list:
+        """Filter `r.checks` to rows whose label contains `label_substr`."""
+        return [c for c in r.checks if label_substr in c.label]
+
+    def test_workflow_diagnostics_warns_on_missing_pull_request_trigger(self):
+        """review.yml with `on: workflow_dispatch` only — no PR-family
+        trigger — must WARN, and the verdict must remain PASS."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "name: review\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            trig = self._diagnostic_rows(r, "workflow triggers: review.yml")
+            self.assertEqual(len(trig), 1, f"expected 1 trigger row, got {trig}")
+            self.assertEqual(trig[0].state, "WARN", trig[0].row())
+            self.assertTrue(r.ok, f"verdict must remain PASS; failures={r.failing()}")
+            self.assertIn("pull_request", trig[0].detail)
+
+    def test_workflow_diagnostics_passes_when_pull_request_trigger_present(self):
+        """Standard review.yml with `pull_request:` → PASS row."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "    types: [opened]\n"
+                "jobs:\n"
+                "  review:\n"
+                "    name: review\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            trig = self._diagnostic_rows(r, "workflow triggers: review.yml")
+            self.assertEqual(len(trig), 1)
+            self.assertEqual(trig[0].state, "PASS")
+            self.assertIn("pull_request", trig[0].detail)
+
+    def test_workflow_diagnostics_warns_on_fork_pr_secret_gap(self):
+        """`pull_request:` only — must WARN about fork-PR secret gap."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            gap = self._diagnostic_rows(r, "fork-PR secret gap: review.yml")
+            self.assertEqual(len(gap), 1)
+            self.assertEqual(gap[0].state, "WARN")
+            self.assertIn("fork PRs lose repo secrets", gap[0].detail)
+
+    def test_workflow_diagnostics_passes_fork_gap_when_target_present(self):
+        """`pull_request_target:` flips the same row to PASS."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "  pull_request_target:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            gap = self._diagnostic_rows(r, "fork-PR secret gap: review.yml")
+            self.assertEqual(len(gap), 1)
+            self.assertEqual(gap[0].state, "PASS")
+
+    def test_workflow_diagnostics_info_paths_filter(self):
+        """`pull_request.paths:` filter surfaces an INFO row."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "    paths:\n"
+                "      - 'lib/**'\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            paths = self._diagnostic_rows(r, "paths filter: review.yml")
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].state, "INFO")
+            self.assertIn("lib/**", paths[0].detail)
+
+    def test_workflow_diagnostics_info_branches_filter(self):
+        """`pull_request.branches:` filter surfaces an INFO row."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "    branches:\n"
+                "      - main\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            br = self._diagnostic_rows(r, "branches filter: review.yml")
+            self.assertEqual(len(br), 1)
+            self.assertEqual(br[0].state, "INFO")
+            self.assertIn("main", br[0].detail)
+
+    def test_workflow_diagnostics_warns_on_concurrency_cancel(self):
+        """`concurrency.cancel-in-progress: true` → WARN."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "concurrency:\n"
+                "  group: ${{ github.event.pull_request.number }}\n"
+                "  cancel-in-progress: true\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            conc = self._diagnostic_rows(r, "concurrency: review.yml")
+            self.assertEqual(len(conc), 1)
+            self.assertEqual(conc[0].state, "WARN")
+            self.assertIn("cancel-in-progress=true", conc[0].detail)
+
+    def test_workflow_diagnostics_passes_concurrency_cancel_false(self):
+        """`cancel-in-progress: false` → PASS."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "concurrency:\n"
+                "  group: ${{ github.event.pull_request.number }}\n"
+                "  cancel-in-progress: false\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            conc = self._diagnostic_rows(r, "concurrency: review.yml")
+            self.assertEqual(len(conc), 1)
+            self.assertEqual(conc[0].state, "PASS")
+
+    def test_workflow_diagnostics_info_job_if(self):
+        """Job-level `if:` expression surfaces verbatim in an INFO row."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    if: \"github.event.pull_request.title != 'bot'\"\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            if_rows = self._diagnostic_rows(r, "job if: review.yml/review")
+            self.assertEqual(len(if_rows), 1)
+            self.assertEqual(if_rows[0].state, "INFO")
+            self.assertIn("bot", if_rows[0].detail)
+
+    def test_workflow_diagnostics_info_missing_job_name_review(self):
+        """review.yml job without `name:` emits an INFO row (not WARN —
+        review.yml jobs in the shipped template all have `name:`; INFO
+        is for user-customised variants)."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            name_rows = self._diagnostic_rows(r, "job name: review.yml/review")
+            self.assertEqual(len(name_rows), 1)
+            self.assertEqual(name_rows[0].state, "INFO")
+
+    def test_workflow_diagnostics_warns_missing_job_name_auto_fix(self):
+        """auto-fix-pr.yml's single job without `name:` is WARN — its
+        bare-key name is harder to match in branch-protection required
+        status checks."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "auto-fix-pr.yml", (
+                "on:\n"
+                "  pull_request_review:\n"
+                "    types: [submitted]\n"
+                "jobs:\n"
+                "  auto-fix:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            name_rows = self._diagnostic_rows(r, "job name: auto-fix-pr.yml/auto-fix")
+            self.assertEqual(len(name_rows), 1)
+            self.assertEqual(name_rows[0].state, "WARN")
+
+    def test_workflow_diagnostics_info_unparseable_yaml(self):
+        """Binary-garbage workflow file emits an INFO row (parse error)
+        — never FAIL. The file-present PASS row (from `_check_required_files`)
+        is still emitted."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", b"\x00\x01\x02\xffnot yaml")
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            # File-present row still PASS.
+            file_present = [
+                c for c in r.checks
+                if c.label == "file present: .github/workflows/review.yml"
+            ]
+            self.assertEqual(len(file_present), 1)
+            self.assertEqual(file_present[0].state, "PASS",
+                             "file-present PASS row must survive unparseable YAML")
+            # All diagnostic rows for review.yml are INFO, never FAIL.
+            diags = [
+                c for c in r.checks
+                if "review.yml" in c.label
+                and any(c.label.startswith(p) for p in (
+                    "workflow triggers:", "fork-PR secret gap:",
+                    "concurrency:", "paths filter:", "branches filter:",
+                    "job if:", "job name:", "action ref mutable:",
+                ))
+            ]
+            self.assertGreater(len(diags), 0)
+            for d in diags:
+                self.assertIn(d.state, {"INFO", "WARN"},
+                              f"diagnostic row must not be FAIL: {d.row()}")
+                # Either `parse_error` ("could not parse: ...") or a
+                # raw read failure ("read error: ...") is acceptable —
+                # both indicate we cannot introspect the workflow.
+                self.assertTrue(
+                    "parse" in d.detail or "read error" in d.detail,
+                    f"detail must indicate non-parseable: {d.row()}",
+                )
+
+    def test_workflow_diagnostics_handles_quoted_on_key(self):
+        """`\"on\": pull_request` (YAML keyword-quoted form) is recognised."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "\"on\": pull_request\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            trig = self._diagnostic_rows(r, "workflow triggers: review.yml")
+            self.assertEqual(len(trig), 1)
+            self.assertEqual(trig[0].state, "PASS")
+            self.assertIn("pull_request", trig[0].detail)
+
+    def test_workflow_diagnostics_info_action_pin_review(self):
+        """Third-party action ref (`claude-code-action@v1`) not pinned
+        to a 40-char SHA emits an INFO row listing the mutable refs."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._minimal_install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n"
+                "  pull_request:\n"
+                "jobs:\n"
+                "  review:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - uses: anthropics/claude-code-action@v1\n"
+            ))
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_secrets", return_value=[]):
+                    r = self.cd.audit(target)
+            pin = self._diagnostic_rows(r, "action ref mutable: review.yml")
+            self.assertEqual(len(pin), 1)
+            self.assertEqual(pin[0].state, "INFO")
+            self.assertIn("anthropics/claude-code-action@v1", pin[0].detail)
+
+    # ------------------------------------------------------------------
+    # Branch-protection (single-row check; WARN on mismatch, SKIP on
+    # degraded gh/repo, INFO in source repo).
+    # ------------------------------------------------------------------
+
+    def test_branch_protection_skip_when_no_repo(self):
+        """No git remote → SKIP."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            # No `git remote` set up in the tmpdir → `_detect_owner_repo`
+            # returns "".
+            with patch.object(self.cd, "_detect_owner_repo", return_value=""):
+                r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1)
+            self.assertEqual(bp[0].state, "SKIP")
+            self.assertIn("no GitHub remote", bp[0].detail)
+
+    def test_branch_protection_skip_when_gh_missing(self):
+        """`_fetch_required_status_checks` returns degraded → SKIP."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                with patch.object(
+                    self.cd, "_fetch_required_status_checks",
+                    return_value=(set(), "gh not on PATH"),
+                ):
+                    r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1)
+            self.assertEqual(bp[0].state, "SKIP")
+            self.assertIn("gh not on PATH", bp[0].detail)
+
+    def test_branch_protection_skip_when_gh_unauth(self):
+        """`gh api` returns degraded → SKIP."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                with patch.object(
+                    self.cd, "_fetch_required_status_checks",
+                    return_value=(set(), "gh not authenticated"),
+                ):
+                    r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1)
+            self.assertEqual(bp[0].state, "SKIP")
+            self.assertIn("gh not authenticated", bp[0].detail)
+
+    def test_branch_protection_warn_on_required_check_mismatch(self):
+        """Mock API returns `["lint"]` while review.yml emits
+        jobs named `review`/`security` → WARN on mismatch."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            # Replace review.yml with jobs whose names don't match the
+            # required checks, so the diff is observable.
+            self._write_workflow(target, "review.yml", (
+                "on:\n  pull_request:\njobs:\n"
+                "  review:\n    name: review\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: echo\n"
+                "  security:\n    name: security\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                with patch.object(
+                    self.cd, "_fetch_required_status_checks",
+                    return_value=({"lint"}, ""),
+                ):
+                    r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1, f"unexpected rows: {bp}")
+            self.assertEqual(bp[0].state, "WARN", bp[0].row())
+            self.assertIn("lint", bp[0].detail)
+            self.assertTrue(r.ok)
+
+    def test_branch_protection_pass_on_full_match(self):
+        """Mock API returns the same set as workflow job `name:`s → PASS."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            self._write_workflow(target, "review.yml", (
+                "on:\n  pull_request:\njobs:\n"
+                "  review:\n    name: lint\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: echo\n"
+                "  security:\n    name: test (python 3.12)\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: echo\n"
+            ))
+            with patch.object(self.cd, "_detect_owner_repo", return_value="example/repo"):
+                with patch.object(
+                    self.cd, "_fetch_required_status_checks",
+                    return_value=({"lint", "test (python 3.12)"}, ""),
+                ):
+                    r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1)
+            self.assertEqual(bp[0].state, "PASS", bp[0].row())
+            self.assertTrue(r.ok)
+
+    def test_branch_protection_info_in_source_repo(self):
+        """Source-repo mode → INFO (not audited)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            self._mark_source_repo(target)
+            r = self.cd.audit(target)
+            bp = self._diagnostic_rows(r, "branch policy")
+            self.assertEqual(len(bp), 1)
+            self.assertEqual(bp[0].state, "INFO")
+            self.assertIn("source repo", bp[0].detail)
+
+    # ------------------------------------------------------------------
+    # WARN state semantics
+    # ------------------------------------------------------------------
+
+    def test_summary_lines_shows_warn_count(self):
+        """summary_lines() includes `warnings: N` and verdict stays PASS
+        even with WARN rows present."""
+        r = self.cd.DoctorReport()
+        r.checks.append(self.cd.Check("a", "WARN", "x"))
+        r.checks.append(self.cd.Check("b", "WARN", "y"))
+        r.checks.append(self.cd.Check("c", "PASS", "z"))
+        lines = r.summary_lines()
+        self.assertTrue(lines[0].startswith("ci-doctor verdict: PASS"))
+        self.assertIn("warnings: 2", lines[1])
+        self.assertIn("failing: 0", lines[1])
+        self.assertTrue(r.ok)
+
+    def test_warn_rows_do_not_flip_ok(self):
+        """WARN rows do not flip `ok`. `r.warnings()` returns them."""
+        r = self.cd.DoctorReport()
+        r.checks.append(self.cd.Check("a", "WARN", "x"))
+        self.assertTrue(r.ok)
+        self.assertEqual(len(r.warnings()), 1)
+        self.assertEqual(r.failing(), [])
+
+    def test_info_rows_not_in_warnings(self):
+        """INFO rows are not in `warnings()` and not in `failing()`."""
+        r = self.cd.DoctorReport()
+        r.checks.append(self.cd.Check("a", "INFO", "x"))
+        r.checks.append(self.cd.Check("b", "WARN", "y"))
+        self.assertEqual(len(r.warnings()), 1)
+        self.assertEqual(r.failing(), [])
+        self.assertTrue(r.ok)
+
+    def test_no_fail_regression_in_fresh_install(self):
+        """Re-run the install-shape smoke after wiring; no NEW FAIL rows
+        beyond the pre-existing baseline."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self._install(target)
+            with patch.object(self.cd, "_check_gh_auth", return_value=self.cd.Check("gh auth", "SKIP", "")):
+                r = self.cd.audit(target)
+            install_shape_rows = [
+                c for c in r.checks
+                if not c.label.startswith(("gh auth", "repo context", "secret set:"))
+            ]
+            failing_shape = [c for c in install_shape_rows if c.state == "FAIL"]
+            self.assertEqual(
+                failing_shape, [],
+                f"unexpected FAIL rows after wiring diagnostics: {failing_shape}",
+            )
+            self.assertTrue(r.ok)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
