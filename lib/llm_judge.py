@@ -163,7 +163,11 @@ def call_judge(
         ),
     }
     return _call_anthropic_compatible(
-        payload, api_key, f"{base_url.rstrip('/')}/v1/messages", timeout
+        payload,
+        api_key,
+        f"{base_url.rstrip('/')}/v1/messages",
+        timeout,
+        axes=axes,
     )
 
 
@@ -172,8 +176,16 @@ def _call_anthropic_compatible(
     api_key: str,
     url: str,
     timeout: int,
+    axes: Optional[Iterable[str]] = None,
 ) -> Dict:
-    """POST to /v1/messages via _http_post (test seam)."""
+    """POST to /v1/messages via _http_post (test seam).
+
+    `axes` is forwarded to parse_scores_json so the parser only matches
+    the per-dim axis set the caller (eval_runner / call_judge) requested.
+    Without this, parse_scores_json falls back to the legacy JUDGE_AXES
+    tuple and returns {} for every per-dim response — silently dropping
+    all 12 agent-behavior eval cases to score=0 / verdict=ROT.
+    """
     response = _http_post(
         url=url,
         payload=payload,
@@ -186,7 +198,7 @@ def _call_anthropic_compatible(
     )
     usage = response.get("usage", {})
     return {
-        "scores": parse_scores_json(raw_text),
+        "scores": parse_scores_json(raw_text, axes=axes),
         "tokens_in": usage.get("input_tokens", 0),
         "tokens_out": usage.get("output_tokens", 0),
         "raw": raw_text,

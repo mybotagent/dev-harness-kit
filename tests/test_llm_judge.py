@@ -105,6 +105,37 @@ class TestLlmJudge(unittest.TestCase):
         self.assertEqual(result["scores"]["semantic_drift"], 8)
         self.assertEqual(result["tokens_in"], 100)
 
+    def test_call_judge_forwards_axes_to_parser(self):
+        # Regression: call_judge must forward its `axes` kwarg to
+        # parse_scores_json via _call_anthropic_compatible, so a per-dim
+        # response (e.g. plan axes) is parsed against the per-dim keys
+        # instead of falling back to the legacy JUDGE_AXES tuple (which
+        # forces every per-dim score to 0.0).
+        plan_response = json.dumps({
+            "spec_clarity": 9,
+            "step_atomicity": 8,
+            "ac_executability": 7,
+            "dependency_ordering": 10,
+        })
+        with patch.object(llm_judge, "_http_post", return_value={
+            "content": [{"type": "text", "text": plan_response}],
+            "usage": {"input_tokens": 42, "output_tokens": 31},
+        }):
+            result = llm_judge.call_judge(
+                provider="minimax",
+                api_key="test-key",
+                model="MiniMax-M3[1m]",
+                prompt="test prompt",
+                axes=llm_judge.DIM_AXES["plan"],
+            )
+        scores = result["scores"]
+        self.assertEqual(scores["spec_clarity"], 9)
+        self.assertEqual(scores["step_atomicity"], 8)
+        self.assertEqual(scores["ac_executability"], 7)
+        self.assertEqual(scores["dependency_ordering"], 10)
+        # No zero-default leakage from the legacy axes.
+        self.assertEqual(len(scores), len(llm_judge.DIM_AXES["plan"]))
+
 
 class TestDimAxes(unittest.TestCase):
     """Per-dim axis tuples for the new agent-behavior eval."""
