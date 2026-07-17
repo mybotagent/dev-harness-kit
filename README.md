@@ -56,6 +56,12 @@ covers the full delivery loop. Highlights:
   that works both inside this repo and in downstream consumer repos.
 - **Cost visibility** — a token-efficiency dashboard and a live cost gate,
   fed by opt-in session loghooks.
+- **Session monitor** — `/dev-kit:session-monitor` lists every Claude Code
+  and Codex session across this repo's worktrees with live / idle / stale
+  status; pick one with the harness arrow-key UI and the skill emits the
+  exact `cd <wt> && claude --resume <sid>` resume command for you to run
+  with `!`. A stdlib-only inline picker is also available over `ssh` /
+  from a plain shell.
 
 ---
 
@@ -285,6 +291,7 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 | `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair Human Review |
 | `/dev-kit:report` | HTML viewer for eval + inspect reports |
 | `/dev-kit:token-analyzer` | Token-efficiency dashboard from session logs |
+| `/dev-kit:session-monitor` | List every CC + Codex session across worktrees; arrow-key pick + `cd <wt> && claude --resume <sid>` |
 | `/dev-kit:cost-gate` | Live cost gate (spend + threshold + commit footer) |
 
 **Docs / shortcuts**
