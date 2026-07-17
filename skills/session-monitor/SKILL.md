@@ -7,6 +7,7 @@ when_to_use: |
   - User wants to see every running/stopped CC + Codex session across worktrees
   - User wants to resume a session and land in the correct worktree cwd
   - User mentions a specific session id and wants its resume command
+  - User types /dev-kit:session-monitor cli-setup (install a `session-monitor` shell alias)
 allowed-tools: Read Bash
 disallowed-tools: Write Edit
 model: haiku
@@ -126,10 +127,44 @@ resuming from inside a Claude Code session would fork-loop. The
 - `--days N` (default 30)
 - `--repo <name>` substring filter
 - `--logs-dir <path>` (default `<main-repo>/logs`)
-- `--list` plain stdout (debugging / non-TTY previews)
+- `--list` plain stdout (debugging / non-TTY previews). Each worktree
+  group prints a `STATUS SRC ID MODEL BRANCH AGE` column-label line above
+  its sessions.
 - `--json` machine-readable (this skill's primary input)
 - `--print-resume-command` print the cwd + argv for the first session,
   no picker
+- `--cli-setup` install a `session-monitor` shell alias into the user's
+  rc, then exit (see below). Add `--dry-run` to preview the block.
+
+## `cli-setup` -- install the shell alias
+
+When the user types `/dev-kit:session-monitor cli-setup` (or asks to "set
+up the session-monitor CLI / alias"), run the installer instead of the
+picker flow:
+
+```bash
+python3 tools/session_monitor.py --cli-setup
+```
+
+This appends a marker-wrapped managed block to the user's login rc
+(`~/.zshrc` for zsh, `~/.bashrc` for bash, else `~/.profile`) defining:
+
+```
+alias session-monitor='<python> <abs path to tools/session_monitor.py>'
+```
+
+It is idempotent -- re-running refreshes the block in place (no
+duplicates), and points at the current interpreter + script path. After
+it runs, tell the user to activate the alias in their current shell:
+
+```
+! source ~/.zshrc
+```
+
+Then `session-monitor` (arrow-key picker), `session-monitor --list`, and
+`session-monitor --days 90` work from any cwd; the tool resolves the
+repo it is invoked from. To preview without touching the rc file, run
+`python3 tools/session_monitor.py --cli-setup --dry-run`.
 
 ## Shell-only fallback (inline picker)
 

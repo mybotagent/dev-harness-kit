@@ -291,12 +291,13 @@ class TestPickerRows(unittest.TestCase):
 
     def test_build_rows_alternates_header_then_sessions(self):
         rows = sm.build_rows(self._model(), now=NOW)
-        self.assertEqual(len(rows), 2 + 3)
+        self.assertEqual(len(rows), 2 + 2 + 3)  # per wt: header + columns
         self.assertEqual([r["kind"] for r in rows],
-                         ["header", "session", "session",
-                          "header", "session"])
+                         ["header", "columns", "session", "session",
+                          "header", "columns", "session"])
         self.assertIn("alpha", rows[0]["text"])
-        self.assertEqual(rows[1]["session"].session_id, "a1")
+        self.assertIn("BRANCH", rows[1]["text"])
+        self.assertEqual(rows[2]["session"].session_id, "a1")
 
     def test_build_rows_skips_agt_marker_when_no_subagents(self):
         rows = sm.build_rows(self._model(), now=NOW)
@@ -308,42 +309,43 @@ class TestPickerRows(unittest.TestCase):
     def test_selectable_indices_contains_only_sessions(self):
         rows = sm.build_rows(self._model(), now=NOW)
         idx = sm._selectable_indices(rows)
-        self.assertEqual(idx, [1, 2, 4])
+        self.assertEqual(idx, [2, 3, 6])
         for i in idx:
             self.assertEqual(rows[i]["kind"], "session")
 
     def test_move_selectable_never_lands_on_header(self):
         rows = sm.build_rows(self._model(), now=NOW)
-        for start in (1, 2, 4):
+        for start in (2, 3, 6):
             for delta in (-3, -1, +1, +5):
                 moved = sm._move_selectable(rows, start, delta)
                 self.assertEqual(rows[moved]["kind"], "session")
 
     def test_move_selectable_clamps_at_edges(self):
         rows = sm.build_rows(self._model(), now=NOW)
-        self.assertEqual(sm._move_selectable(rows, 1, -10), 1)
-        self.assertEqual(sm._move_selectable(rows, 4, +10), 4)
+        self.assertEqual(sm._move_selectable(rows, 2, -10), 2)
+        self.assertEqual(sm._move_selectable(rows, 6, +10), 6)
 
     def test_move_selectable_from_header_lands_on_nearest_session(self):
         rows = sm.build_rows(self._model(), now=NOW)
-        # cursor on the "beta" header (row 3) moving down -> first beta session
-        self.assertEqual(sm._move_selectable(rows, 3, +1), 4)
+        # cursor on the "beta" header (row 4) moving down -> first beta session
+        self.assertEqual(sm._move_selectable(rows, 4, +1), 6)
         # cursor on the "beta" header moving up -> last alpha session
-        self.assertEqual(sm._move_selectable(rows, 3, -1), 2)
+        self.assertEqual(sm._move_selectable(rows, 4, -1), 3)
 
     def test_render_picker_writes_ansi_for_each_row(self):
         import io
         rows = sm.build_rows(self._model(), now=NOW)
         buf = io.StringIO()
-        sm._render_picker(buf, rows, cursor=1, scroll=0, max_x=80, max_y=10)
+        sm._render_picker(buf, rows, cursor=2, scroll=0, max_x=80, max_y=10)
         out = buf.getvalue()
         # header rendered, cursor row reverse-video'd
         self.assertIn("session-monitor", out)
+        self.assertIn("BRANCH", out)  # column-label row present
         self.assertIn("\x1b[7m", out)  # reverse video on cursor row
-        self.assertIn("\x1b[2m", out)  # dim worktree header
-        # 5 visible rows + body_h=8 => 3 padding clear-lines to pin the footer
-        self.assertEqual(out.count("\x1b[K"), 3)
-        self.assertGreaterEqual(out.count("\n"), 5)
+        self.assertIn("\x1b[2m", out)  # dim worktree header + columns row
+        # 7 visible rows + body_h=8 => 1 padding clear-line to pin the footer
+        self.assertEqual(out.count("\x1b[K"), 1)
+        self.assertGreaterEqual(out.count("\n"), 7)
 
     def test_render_picker_no_padding_when_body_filled(self):
         import io
@@ -497,6 +499,73 @@ class TestPrintJson(unittest.TestCase):
         self.assertEqual(payload["total_sessions"], 0)
         self.assertEqual(payload["live_sessions"], 0)
         self.assertEqual(payload["worktrees"], [])
+
+
+class TestCliAliasSetup(unittest.TestCase):
+    """--cli-setup managed-block renderer + installer."""
+
+    def test_shell_rc_picks_zshrc(self):
+        rc = sm._shell_rc({"SHELL": "/bin/zsh"})
+        self.assertEqual(rc.name, ".zshrc")
+
+    def test_shell_rc_picks_bashrc(self):
+        rc = sm._shell_rc({"SHELL": "/usr/bin/bash"})
+        self.assertEqual(rc.name, ".bashrc")
+
+    def test_shell_rc_falls_back_to_profile(self):
+        rc = sm._shell_rc({"SHELL": "/usr/bin/fish"})
+        self.assertEqual(rc.name, ".profile")
+
+    def test_render_rc_appends_block_to_existing(self):
+        block = sm._alias_block(Path("/repo/tools/session_monitor.py"), "python3")
+        out = sm._render_rc("export FOO=1\n", block)
+        self.assertIn("export FOO=1", out)
+        self.assertIn("alias session-monitor='python3 "
+                      "/repo/tools/session_monitor.py'", out)
+        self.assertTrue(out.endswith("\n"))
+
+    def test_render_rc_is_idempotent(self):
+        block = sm._alias_block(Path("/repo/tools/session_monitor.py"), "python3")
+        once = sm._render_rc("export FOO=1\n", block)
+        twice = sm._render_rc(once, block)
+        self.assertEqual(once, twice)
+
+    def test_render_rc_replaces_stale_block(self):
+        old = sm._alias_block(Path("/old/session_monitor.py"), "python2")
+        new = sm._alias_block(Path("/repo/tools/session_monitor.py"), "python3")
+        rc_text = sm._render_rc("export FOO=1\n", old)
+        out = sm._render_rc(rc_text, new)
+        self.assertNotIn("python2", out)
+        self.assertNotIn("/old/session_monitor.py", out)
+        self.assertEqual(out.count(sm._CLI_BEGIN), 1)
+
+    def test_render_rc_on_empty_file(self):
+        block = sm._alias_block(Path("/repo/tools/session_monitor.py"), "python3")
+        out = sm._render_rc("", block)
+        self.assertTrue(out.startswith(sm._CLI_BEGIN))
+        self.assertTrue(out.endswith("\n"))
+
+    def test_install_writes_and_refreshes(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc = Path(d) / ".zshrc"
+            rc.write_text("export FOO=1\n")
+            script = Path("/repo/tools/session_monitor.py")
+            rc_ = sm.install_cli_alias(script_path=script, python_exe="python3",
+                                       rc=rc)
+            self.assertEqual(rc_, 0)
+            first = rc.read_text()
+            self.assertIn("alias session-monitor=", first)
+            # second run must not duplicate the managed block
+            sm.install_cli_alias(script_path=script, python_exe="python3", rc=rc)
+            self.assertEqual(rc.read_text().count(sm._CLI_BEGIN), 1)
+
+    def test_install_dry_run_does_not_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc = Path(d) / ".zshrc"
+            rc.write_text("export FOO=1\n")
+            sm.install_cli_alias(script_path=Path("/repo/x.py"),
+                                 python_exe="python3", rc=rc, dry_run=True)
+            self.assertEqual(rc.read_text(), "export FOO=1\n")
 
 
 if __name__ == "__main__":

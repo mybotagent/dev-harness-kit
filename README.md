@@ -491,7 +491,15 @@ python3 tools/session_monitor.py --json --days 30 | jq '.total_sessions, .live_s
 # Debug the resume argv synthesis for the first session
 python3 tools/session_monitor.py --print-resume-command
 # -> cd /Users/sanghee/dev/dev-harness-kit && claude --resume <sid>
+
+# Install a `session-monitor` shell alias into your rc (idempotent)
+python3 tools/session_monitor.py --cli-setup
+# -> then: source ~/.zshrc   (now `session-monitor` works from any cwd)
 ```
+
+Both the `--list` output and the interactive picker group sessions by
+worktree and print a `STATUS SRC ID MODEL BRANCH AGE` column-label line
+under each group header, so `branch` reads as its own labeled column.
 
 The interactive picker is built directly on `termios` + ANSI escapes
 (stdlib only, no `curses`, no third-party deps). On `Enter` it restores
@@ -517,6 +525,8 @@ branch as a fallback.
 | `--list` | off | Plain stdout listing (previewable in any harness) |
 | `--json` | off | Machine-readable output for scripts / skill consumers |
 | `--print-resume-command` | off | Print the cwd + argv for the first session; exit |
+| `--cli-setup` | off | Install a `session-monitor` alias into `~/.zshrc`/`~/.bashrc` (idempotent); exit |
+| `--dry-run` | off | With `--cli-setup`, print the alias block without writing |
 
 **Status semantics**
 
