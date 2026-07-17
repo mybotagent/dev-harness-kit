@@ -550,6 +550,18 @@ def _src_tag(source: str) -> str:
     return "cx" if source == "codex" else "cc"
 
 
+def _column_header(indent: str) -> str:
+    """Column-label line aligned to the STATUS/SRC/ID/MODEL/BRANCH/AGE
+    fields shared by ``print_plain_listing`` and the inline picker.
+
+    Field widths mirror the data rows exactly: STATUS covers glyph + status
+    word (8), SRC (3), ID (9), MODEL (15), BRANCH (23), AGE right-justified
+    (9). ``indent`` differs per view (4 spaces for ``--list``, 2 for the
+    picker) but every column after it lines up."""
+    return (f"{indent}{'STATUS':<8}{'SRC':<4}{'ID':<9}"
+            f"{'MODEL':<15}{'BRANCH':<23}{'AGE':>9}")
+
+
 def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
     """Non-interactive listing for previewing inside a conversation (--list)."""
     now = datetime.now(timezone.utc)
@@ -562,10 +574,11 @@ def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
           f"({live} live)  logs={logs_dir}")
     for w in model:
         print(f"\n  {w.dirname}  [{w.state}]  ({len(w.sessions)} sessions)")
+        print(_column_header("    "))
         for s in w.sessions:
             sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
             print(f"    {_GLYPH[s.status]} {s.status.value:5} "
-                  f"{_src_tag(s.source)} {s.session_id[:8]} "
+                  f"{_src_tag(s.source):<3} {s.session_id[:8]} "
                   f"{s.model:14.14} {s.branch:22.22} "
                   f"{_rel_time(s.last_ts, now):>9}{sub}")
 
@@ -656,11 +669,13 @@ def build_rows(model: list[WorktreeInfo], *,
             "text": (f"  {w.dirname}  [{w.state}]  "
                      f"({len(w.sessions)} sessions)"),
         })
+        rows.append({"kind": "columns", "text": _column_header("  ")})
         for s in w.sessions:
             sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
             rows.append({
                 "kind": "session",
-                "text": (f"  {_GLYPH[s.status]} {_src_tag(s.source)} "
+                "text": (f"  {_GLYPH[s.status]} {s.status.value:5} "
+                         f"{_src_tag(s.source):<3} "
                          f"{s.session_id[:8]} {s.model[:14]:14} "
                          f"{s.branch[:22]:22} {_rel_time(s.last_ts, now):>9}"
                          f"{sub}"),
@@ -718,7 +733,7 @@ def _render_picker(out, rows: list[dict], cursor: int, scroll: int,
     for i in range(scroll, visible_end):
         r = rows[i]
         text = r["text"][: max_x - 1]
-        if r["kind"] == "header":
+        if r["kind"] in ("header", "columns"):
             out.write(_ANSI["dim"] + text.ljust(max_x) + _ANSI["reset"] + "\n")
             continue
         color = _STATUS_COLOR.get(r["session"].status)
@@ -834,6 +849,89 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
 
 
 # --------------------------------------------------------------------------
+# CLI alias setup (--cli-setup)
+# --------------------------------------------------------------------------
+CLI_ALIAS_NAME = "session-monitor"
+_CLI_BEGIN = "# >>> dev-harness-kit session-monitor alias >>>"
+_CLI_END = "# <<< dev-harness-kit session-monitor alias <<<"
+
+
+def _shell_rc(env=None) -> Path:
+    """Best-effort user rc file for the current login shell: ``~/.zshrc``
+    for zsh, ``~/.bashrc`` for bash, else ``~/.profile``."""
+    env = env if env is not None else os.environ
+    shell = env.get("SHELL", "")
+    home = Path.home()
+    if "zsh" in shell:
+        return home / ".zshrc"
+    if "bash" in shell:
+        return home / ".bashrc"
+    return home / ".profile"
+
+
+def _alias_block(script_path: Path, python_exe: str) -> str:
+    """The managed rc block (marker-wrapped) defining the alias."""
+    return (f"{_CLI_BEGIN}\n"
+            f"alias {CLI_ALIAS_NAME}='{python_exe} {script_path}'\n"
+            f"{_CLI_END}")
+
+
+def _strip_managed_block(text: str) -> str:
+    """Remove any prior managed alias block plus trailing blank lines so
+    re-running ``--cli-setup`` never duplicates or drifts."""
+    out: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        if line.strip() == _CLI_BEGIN:
+            skipping = True
+            continue
+        if skipping:
+            if line.strip() == _CLI_END:
+                skipping = False
+            continue
+        out.append(line)
+    while out and out[-1].strip() == "":
+        out.pop()
+    return "\n".join(out)
+
+
+def _render_rc(existing: str, block: str) -> str:
+    """Pure: rc contents with the managed block appended, replacing any
+    prior copy. Idempotent -- feeding its own output back yields the same
+    string. Always ends with a single trailing newline."""
+    base = _strip_managed_block(existing)
+    if base:
+        return f"{base}\n\n{block}\n"
+    return f"{block}\n"
+
+
+def install_cli_alias(*, script_path: Path | None = None,
+                      python_exe: str | None = None,
+                      rc: Path | None = None,
+                      dry_run: bool = False) -> int:
+    """Install (or refresh) the ``session-monitor`` shell alias in the
+    user's rc file. Idempotent via marker-wrapped managed block."""
+    script_path = script_path or Path(__file__).resolve()
+    python_exe = python_exe or sys.executable or "python3"
+    rc = rc or _shell_rc()
+    block = _alias_block(script_path, python_exe)
+
+    if dry_run:
+        print(f"[session-monitor] would write to {rc}:\n")
+        print(block)
+        print(f"\n[session-monitor] then activate with:  source {rc}")
+        return 0
+
+    existing = rc.read_text() if rc.exists() else ""
+    verb = "refreshed" if _CLI_BEGIN in existing else "installed"
+    rc.write_text(_render_rc(existing, block))
+    print(f"[session-monitor] {verb} '{CLI_ALIAS_NAME}' alias in {rc}")
+    print(f"  alias {CLI_ALIAS_NAME}='{python_exe} {script_path}'")
+    print(f"[session-monitor] activate now:  source {rc}")
+    return 0
+
+
+# --------------------------------------------------------------------------
 # Entrypoint
 # --------------------------------------------------------------------------
 def parse_args(argv=None) -> argparse.Namespace:
@@ -854,11 +952,21 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--print-resume-command", action="store_true",
                    help="print the cwd + argv that would be exec'd on Enter, "
                         "then exit (no picker, no exec)")
+    p.add_argument("--cli-setup", action="store_true",
+                   help="install a `session-monitor` shell alias into your rc "
+                        "(~/.zshrc or ~/.bashrc; idempotent), then exit")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --cli-setup, print the alias block without "
+                        "writing to the rc file")
     return p.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+
+    if args.cli_setup:
+        return install_cli_alias(dry_run=args.dry_run)
+
     repo_root = discover_repo_root()
     logs_dir = Path(args.logs_dir) if args.logs_dir else repo_root / "logs"
 
