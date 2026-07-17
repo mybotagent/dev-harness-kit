@@ -34,8 +34,26 @@ Runs `lib/ci_doctor.py:audit()` against the current working directory (or `--tar
 | `gh auth` | `gh secret list` requires `gh auth status` to pass |
 | `secret set: DEV_KIT_GITHUB_TOKEN` | Consumer-install precondition (issue #212-B1) |
 | `secret set: <provider-API-key>` | Provider-matching secret (B2). Default `minimax` ⇒ `MINIMAX_API_KEY` |
+| `workflow triggers` / `fork-PR secret gap` / `concurrency:` / `branch policy` | Root-cause diagnostics for *why* `ci github action review` might not run — always WARN or INFO, never FAIL, never flip the verdict (flexible review process) |
 
 Every FAIL row prints the exact remediation (`run: gh secret set NAME --repo OWNER/REPO`, etc.) so the discover path is `audit → paste commands → re-audit` rather than the current `push PR → CI red → read log → grep for the secret name`.
+
+## Workflow diagnostics (WARN/INFO only — verdict-neutral)
+
+For each `.github/workflows/*.yml` the install shipped, the audit emits diagnostic rows that surface the *reason* a PR might not get reviewed. Every diagnostic is hand-parsed from the workflow file (stdlib-only, no PyYAML). Unparseable YAML emits an INFO row, never a FAIL.
+
+| Diagnostic | State | Why |
+|---|---|---|
+| `workflow triggers: <file>` | WARN if no `pull_request*` / `workflow_run`; PASS otherwise | Missing trigger ⇒ review won't run on PRs |
+| `fork-PR secret gap: <file>` | WARN if `pull_request:` only; PASS otherwise | Fork PRs lose repo secrets without `pull_request_target` or `workflow_run` |
+| `paths filter: <file>` / `branches filter: <file>` | INFO when present | User-visible so they can verify the filter includes their changes |
+| `concurrency: <file>` | WARN if `cancel-in-progress: true`; PASS otherwise | Mid-run cancellation can drop a long review verdict |
+| `job if: <file>/<job>` | INFO, verbatim `if:` string | User can audit why a job may be skipped |
+| `job name: <file>/<job>` | INFO (`review.yml`) / WARN (`auto-fix-pr.yml`) when missing | Surfaces bare keys vs named jobs in the GitHub UI; matters for branch-protection matching |
+| `action ref mutable: <file>` | INFO listing non-SHA third-party `uses:` refs | Supply-chain hardening signal |
+| `branch policy` | WARN on required-status mismatch; SKIP if `gh` absent / unauth / no repo context; INFO in source-repo mode | Compares GitHub branch-protection required checks against workflow job `name:`s |
+
+WARN rows appear in the count line (`warnings: N`) and on screen; they never flip the verdict. INFO rows are advisory and never counted — same contract as the existing `repo role: dev-kit source repo` row.
 
 ## Source-repo mode (consumer-only checks skipped)
 
@@ -77,3 +95,9 @@ This skill ships:
 ## Iron Law (repeated, for emphasis)
 
 **Read-only. Verdict only. No writes, no PRs, no secrets printed.**
+
+## After this skill ships
+
+This skill is bundled into the dev-kit plugin cache. After a merge:
+- **Claude Code**: change is visible on the next session start.
+- **Codex**: run `/dev-kit:codex-cache-update` (or reload with `claude --plugin-dir .`).
