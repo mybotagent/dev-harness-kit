@@ -129,6 +129,7 @@ class WorktreeInfo:
     state: str
     path: Path | None
     sessions: list[Session]
+    last_commit_subject: str | None = None
 
 
 @dataclass
@@ -518,7 +519,90 @@ def build_model(repo_root: Path, logs_dir: Path, repo: str, days: int,
     attach_live_processes(sessions, pid_map)
     result = group_by_worktree(sessions, wt_meta, wt_paths)
     _enrich_branches_from_worktrees(sessions, runner=runner)
+    attach_last_commit_subjects(result, runner=runner)
     return result
+
+
+def get_last_commit_subject(wt_path: Path, *,
+                            runner=subprocess.run) -> str | None:
+    """Resolve the last commit's subject line from a worktree dir.
+
+    Returns ``None`` on any failure (no git, no commits, missing dir,
+    subprocess error) so the listing never crashes. The subject line
+    is read with ``%s`` so multi-line commit messages are truncated at
+    the first newline — only the headline fits in a column.
+    """
+    if wt_path is None or not Path(wt_path).is_dir():
+        return None
+    try:
+        out = runner(
+            ["git", "-C", str(wt_path), "log", "-1", "--pretty=%s"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    subj = out.stdout.strip()
+    return subj or None
+
+
+def attach_last_commit_subjects(model: list[WorktreeInfo],
+                                *, runner=subprocess.run) -> None:
+    """Populate each WorktreeInfo's ``last_commit_subject`` field.
+
+    Resolves the subject once per worktree dir (sessions in the same
+    worktree share HEAD) and is a no-op when the path is missing or
+    not a git repo. Mutates in place."""
+    for w in model:
+        w.last_commit_subject = get_last_commit_subject(w.path, runner=runner)
+
+
+def filter_model(model: list[WorktreeInfo], pattern: str) -> list[WorktreeInfo]:
+    """Substring filter (case-insensitive) against every visible session
+    field: session_id, branch, model, source, log_path, worktree
+    dirname, status. Empty pattern is identity. WorktreeInfo buckets
+    whose sessions all fail the filter are dropped entirely."""
+    pat = (pattern or "").strip().lower()
+    if not pat:
+        return list(model)
+    out: list[WorktreeInfo] = []
+    for w in model:
+        kept = [s for s in w.sessions if _session_matches(s, w, pat)]
+        if kept:
+            out.append(WorktreeInfo(
+                dirname=w.dirname, state=w.state, path=w.path,
+                sessions=kept, last_commit_subject=w.last_commit_subject,
+            ))
+    return out
+
+
+def _session_matches(s: Session, w: WorktreeInfo, pat: str) -> bool:
+    haystacks = (
+        s.session_id, s.branch, s.model, s.source, s.log_path,
+        w.dirname, s.status.value,
+    )
+    return any(pat in (h or "").lower() for h in haystacks)
+
+
+# Section labels for the structured listing. Order = display order, which
+# also encodes priority (live work first, archived work last). Keep in sync
+# with the bucket names emitted by ``group_by_state``.
+STATE_SECTIONS = ("live", "merged", "gone", "unknown")
+
+
+def group_by_state(model: list[WorktreeInfo]) -> list[tuple[str, list[WorktreeInfo]]]:
+    """Group worktrees into state sections for the structured listing.
+
+    Returns ``[(section_label, [WorktreeInfo...]), ...]`` in the fixed
+    order ``live -> merged -> gone -> unknown``. Sections with no
+    worktrees are omitted. Within a section the input ordering is
+    preserved (callers like ``group_by_worktree`` already sort by
+    recency, so this composes)."""
+    buckets: dict[str, list[WorktreeInfo]] = {k: [] for k in STATE_SECTIONS}
+    for w in model:
+        buckets.setdefault(w.state, []).append(w)
+    return [(k, buckets[k]) for k in STATE_SECTIONS if buckets[k]]
 
 
 # --------------------------------------------------------------------------
@@ -551,36 +635,57 @@ def _src_tag(source: str) -> str:
 
 
 def _column_header(indent: str) -> str:
-    """Column-label line aligned to the STATUS/SRC/ID/MODEL/BRANCH/AGE
+    """Column-label line aligned to the STATUS/SRC/ID/MODEL/BRANCH/AGE/COMMIT
     fields shared by ``print_plain_listing`` and the inline picker.
 
     Field widths mirror the data rows exactly: STATUS covers glyph + status
     word (8), SRC (3), ID (9), MODEL (15), BRANCH (23), AGE right-justified
-    (9). ``indent`` differs per view (4 spaces for ``--list``, 2 for the
-    picker) but every column after it lines up."""
+    (9), COMMIT (40, truncated). ``indent`` differs per view (4 spaces for
+    ``--list``, 2 for the picker) but every column after it lines up."""
     return (f"{indent}{'STATUS':<8}{'SRC':<4}{'ID':<9}"
-            f"{'MODEL':<15}{'BRANCH':<23}{'AGE':>9}")
+            f"{'MODEL':<15}{'BRANCH':<23}{'AGE':>9}  {'COMMIT':<40}")
+
+
+def _commit_cell(subject: str | None) -> str:
+    """Single-cell commit subject, 40-char truncated, '?' when absent."""
+    if not subject:
+        return "?"
+    return subject[:40].ljust(40)
 
 
 def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
-    """Non-interactive listing for previewing inside a conversation (--list)."""
+    """Non-interactive listing for previewing inside a conversation (--list).
+
+    Sessions are bucketed by worktree STATE first (live -> merged -> gone
+    -> unknown) so the structural picture reads top-down: active work on
+    top, archived work at the bottom. Each worktree header shows the
+    resolved ``last_commit_subject`` so you can see what each worktree's
+    tip is without dropping into git yourself.
+    """
     now = datetime.now(timezone.utc)
     total = sum(len(w.sessions) for w in model)
     if total == 0:
         print(f"[session-monitor] no sessions found under {logs_dir}")
         return
     live = sum(1 for w in model for s in w.sessions if s.status is Status.LIVE)
+    sections = group_by_state(model)
     print(f"[session-monitor] {total} sessions across {len(model)} worktrees "
           f"({live} live)  logs={logs_dir}")
-    for w in model:
-        print(f"\n  {w.dirname}  [{w.state}]  ({len(w.sessions)} sessions)")
-        print(_column_header("    "))
-        for s in w.sessions:
-            sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
-            print(f"    {_GLYPH[s.status]} {s.status.value:5} "
-                  f"{_src_tag(s.source):<3} {s.session_id[:8]} "
-                  f"{s.model:14.14} {s.branch:22.22} "
-                  f"{_rel_time(s.last_ts, now):>9}{sub}")
+    for label, wts in sections:
+        section_total = sum(len(w.sessions) for w in wts)
+        print(f"\n── {label.upper()}  ({len(wts)} worktrees, "
+              f"{section_total} sessions) " + "─" * max(0, 56 - len(label)))
+        for w in wts:
+            tag = f"last: \"{w.last_commit_subject}\"" if w.last_commit_subject else "last: ?"
+            print(f"  ▸ {w.dirname}  [{w.state}]  ({len(w.sessions)} sessions)  {tag}")
+            print(_column_header("    "))
+            for s in w.sessions:
+                sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
+                print(f"    {_GLYPH[s.status]} {s.status.value:5} "
+                      f"{_src_tag(s.source):<3} {s.session_id[:8]} "
+                      f"{s.model:14.14} {s.branch:22.22} "
+                      f"{_rel_time(s.last_ts, now):>9}  "
+                      f"{_commit_cell(w.last_commit_subject)}{sub}")
 
 
 def print_json(model: list[WorktreeInfo], logs_dir: Path) -> None:
@@ -604,6 +709,7 @@ def print_json(model: list[WorktreeInfo], logs_dir: Path) -> None:
                 "name": w.dirname,
                 "state": w.state,
                 "path": str(w.path) if w.path else None,
+                "last_commit_subject": w.last_commit_subject,
                 "has_live": any(s.status is Status.LIVE for s in w.sessions),
                 "sessions": [
                     {
@@ -656,31 +762,48 @@ def build_rows(model: list[WorktreeInfo], *,
                now: datetime | None = None) -> list[dict]:
     """Flatten a worktree model into header + session rows for the picker.
 
-    Pure function -- testable without a TTY. Header rows have kind
-    ``"header"`` and no ``session`` key; session rows have kind
-    ``"session"`` and a ``Session`` payload. The picker only ever lands
-    its cursor on session rows (see ``_move_selectable``).
+    Pure function -- testable without a TTY. Emits three row kinds:
+
+    - ``"section"`` — top-level bucket label ("LIVE", "MERGED", ...) with
+      no ``session`` key; not selectable.
+    - ``"header"``  — per-worktree title with state + commit subject; not
+      selectable.
+    - ``"columns"`` — column-label row beneath each header; not selectable.
+    - ``"session"`` — selectable row carrying a ``Session`` payload.
+
+    The picker only lands its cursor on session rows (see
+    ``_move_selectable``).
     """
     now = now or datetime.now(timezone.utc)
     rows: list[dict] = []
-    for w in model:
+    sections = group_by_state(model)
+    for label, wts in sections:
+        section_total = sum(len(w.sessions) for w in wts)
         rows.append({
-            "kind": "header",
-            "text": (f"  {w.dirname}  [{w.state}]  "
-                     f"({len(w.sessions)} sessions)"),
+            "kind": "section",
+            "text": (f"── {label.upper()}  ({len(wts)} worktrees, "
+                     f"{section_total} sessions) " + "─" * 30),
         })
-        rows.append({"kind": "columns", "text": _column_header("  ")})
-        for s in w.sessions:
-            sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
+        for w in wts:
+            tag = f"  last: \"{w.last_commit_subject}\"" if w.last_commit_subject else ""
             rows.append({
-                "kind": "session",
-                "text": (f"  {_GLYPH[s.status]} {s.status.value:5} "
-                         f"{_src_tag(s.source):<3} "
-                         f"{s.session_id[:8]} {s.model[:14]:14} "
-                         f"{s.branch[:22]:22} {_rel_time(s.last_ts, now):>9}"
-                         f"{sub}"),
-                "session": s,
+                "kind": "header",
+                "text": (f"  ▸ {w.dirname}  [{w.state}]  "
+                         f"({len(w.sessions)} sessions){tag}"),
             })
+            rows.append({"kind": "columns", "text": _column_header("  ")})
+            for s in w.sessions:
+                sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
+                rows.append({
+                    "kind": "session",
+                    "text": (f"  {_GLYPH[s.status]} {s.status.value:5} "
+                             f"{_src_tag(s.source):<3} "
+                             f"{s.session_id[:8]} {s.model[:14]:14} "
+                             f"{s.branch[:22]:22} "
+                             f"{_rel_time(s.last_ts, now):>9}  "
+                             f"{_commit_cell(w.last_commit_subject)}{sub}"),
+                    "session": s,
+                })
     return rows
 
 
@@ -733,7 +856,7 @@ def _render_picker(out, rows: list[dict], cursor: int, scroll: int,
     for i in range(scroll, visible_end):
         r = rows[i]
         text = r["text"][: max_x - 1]
-        if r["kind"] in ("header", "columns"):
+        if r["kind"] in ("section", "header", "columns"):
             out.write(_ANSI["dim"] + text.ljust(max_x) + _ANSI["reset"] + "\n")
             continue
         color = _STATUS_COLOR.get(r["session"].status)
@@ -952,6 +1075,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--print-resume-command", action="store_true",
                    help="print the cwd + argv that would be exec'd on Enter, "
                         "then exit (no picker, no exec)")
+    p.add_argument("--filter", metavar="PATTERN", default="",
+                   help="substring filter (case-insensitive) across "
+                        "session_id, branch, model, source, log_path, "
+                        "worktree, status; empty = show all")
     p.add_argument("--cli-setup", action="store_true",
                    help="install a `session-monitor` shell alias into your rc "
                         "(~/.zshrc or ~/.bashrc; idempotent), then exit")
@@ -971,6 +1098,14 @@ def main(argv=None) -> int:
     logs_dir = Path(args.logs_dir) if args.logs_dir else repo_root / "logs"
 
     model = build_model(repo_root, logs_dir, args.repo, args.days)
+
+    if args.filter:
+        before = sum(len(w.sessions) for w in model)
+        model = filter_model(model, args.filter)
+        after = sum(len(w.sessions) for w in model)
+        if before and not after:
+            print(f"[session-monitor] --filter {args.filter!r} matched "
+                  f"0 of {before} sessions", file=sys.stderr)
 
     if args.list:
         print_plain_listing(model, logs_dir)
