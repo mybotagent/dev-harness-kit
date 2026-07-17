@@ -1,20 +1,24 @@
-#!/usr/bin/env python3
 """test_set_provider.py — regression for bin/set-provider.sh.
 
-The previous design auto-rewrote .github/ci-review-provider.txt from
-.env:CI_REVIEW_PROVIDER on every commit (.githooks/pre-commit). That
-silent rewrite inverted user intent when worktree and main-checkout .env
-disagreed, so the behavior was removed and replaced with this explicit
-helper. Tests pin the contract so the silent rewrite cannot return:
+The script now manages `.env:CI_REVIEW_PROVIDER` instead of the
+previously-tracked `.github/ci-review-provider.txt`. Same allowlist,
+same dry-run / show / help contract; the only thing that changed is the
+file the switch path writes to. Tests pin the new contract so the old
+txt-file behavior cannot return:
 
-  T1: pre-commit hook no longer touches the provider file.
-  T2: script defaults to "minimax" when the file is missing.
+  T1: pre-commit hook no longer references the provider sync.
+  T2: missing .env bootstraps from .env.example on first switch.
   T3: --show / no-arg prints current value + allowlist.
   T4: invalid provider name exits non-zero with helpful error.
-  T5: switching writes the new value AND prints a diff vs HEAD.
+  T5: switching writes CI_REVIEW_PROVIDER into .env and prints diff
+      vs the previous .env content; other keys are preserved.
   T6: --dry-run never mutates the file.
-  T7: switching to the current value is a no-op (no mutation, exit 0).
+  T7: switching to the current value is a no-op.
   T8: --help exits 0 and prints usage.
+  T9: idempotent upsert — re-running with the same value keeps a
+      single CI_REVIEW_PROVIDER= line and does not duplicate.
+ T10: missing .env.example surfaces an actionable error (no template
+      to bootstrap from).
 """
 from __future__ import annotations
 
@@ -25,26 +29,33 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "bin" / "set-provider.sh"
-PROVIDER_FILE = REPO_ROOT / ".github" / "ci-review-provider.txt"
+ENV_FILE = REPO_ROOT / ".env"
+ENV_EXAMPLE = REPO_ROOT / ".env.example"
 PRE_COMMIT_HOOK = REPO_ROOT / ".githooks" / "pre-commit"
 
 ALLOWLIST = ("minimax", "anthropic", "deepseek")
 
 
-def _run_in_worktree(worktree: Path, *args) -> subprocess.CompletedProcess:
+def _run_in_worktree(worktree: Path, *args, env_extra=None) -> subprocess.CompletedProcess:
     """Run the script inside a temp worktree so we don't pollute HEAD."""
+    env = os.environ.copy()
+    # CI_REVIEW_PROVIDER unset by default so the script reads from .env.
+    env.pop("CI_REVIEW_PROVIDER", None)
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True, text=True, timeout=30, cwd=str(worktree),
+        env=env,
     )
 
 
 def _make_clean_worktree(tmp: Path) -> Path:
     """Clone the repo at HEAD into tmp/<dir> so tests can mutate safely.
 
-    Uses --shared to avoid copying objects. We only read .github and
-    .githooks; the clone just needs a valid git working tree for
-    `git rev-parse --show-toplevel` and `git diff <file>`.
+    Uses --shared to avoid copying objects. We only read `.env.example`,
+    `.githooks`, and the script; the clone just needs a valid git
+    working tree for `git rev-parse --show-toplevel`.
     """
     wt = tmp / "wt"
     subprocess.run(
@@ -54,11 +65,24 @@ def _make_clean_worktree(tmp: Path) -> Path:
     return wt
 
 
-def _read_provider(worktree: Path) -> str:
-    f = worktree / ".github" / "ci-review-provider.txt"
+def _read_env_provider(worktree: Path) -> str:
+    f = worktree / ".env"
     if not f.exists():
         return ""
-    return f.read_text().strip()
+    for line in f.read_text().splitlines():
+        s = line.strip()
+        if s.startswith("#") or "=" not in s or not s:
+            continue
+        k, _, v = s.partition("=")
+        if k.strip() == "CI_REVIEW_PROVIDER":
+            return v.strip().strip('"').strip("'")
+    return ""
+
+
+def _drop_env(worktree: Path) -> None:
+    f = worktree / ".env"
+    if f.exists():
+        f.unlink()
 
 
 class SetProviderContract(unittest.TestCase):
@@ -74,7 +98,7 @@ class SetProviderContract(unittest.TestCase):
             check=False, capture_output=True,
         )
 
-    # T1: pre-commit hook must not reference the provider sync anymore.
+    # T1: pre-commit hook must not reference provider sync anymore.
     def test_pre_commit_hook_does_not_sync_provider(self) -> None:
         text = PRE_COMMIT_HOOK.read_text()
         # The old hook literally wrote the sync logic; the new hook is a
@@ -82,7 +106,7 @@ class SetProviderContract(unittest.TestCase):
         self.assertNotIn(
             "synced $PROVIDER_FILE",
             text,
-            "pre-commit hook must not auto-rewrite ci-review-provider.txt",
+            "pre-commit hook must not auto-rewrite the provider file",
         )
         self.assertNotIn(
             "git rev-parse --git-common-dir",
@@ -91,20 +115,29 @@ class SetProviderContract(unittest.TestCase):
             "the tracked provider file",
         )
 
-    # T2: missing file -> helper creates it with the default.
-    def test_missing_file_initializes_to_default(self) -> None:
-        f = self.wt / ".github" / "ci-review-provider.txt"
-        if f.exists():
-            f.unlink()
+    # T2: missing .env → first switch bootstraps from .env.example.
+    def test_missing_env_bootstraps_from_example(self) -> None:
+        _drop_env(self.wt)
+        self.assertFalse((self.wt / ".env").exists())
         result = _run_in_worktree(self.wt, "minimax")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(_read_provider(self.wt), "minimax")
+        self.assertTrue((self.wt / ".env").exists(),
+                        ".env must be created from .env.example on first switch")
+        self.assertEqual(_read_env_provider(self.wt), "minimax")
+        # The other template keys must be preserved.
+        text = (self.wt / ".env").read_text()
+        self.assertIn("MINIMAX_API_KEY=", text)
+        self.assertIn("ANTHROPIC_API_KEY=", text)
+        self.assertIn("DEEPSEEK_API_KEY=", text)
 
     # T3: --show prints current value + allowlist.
     def test_show_prints_current_and_allowlist(self) -> None:
+        _drop_env(self.wt)
         result = _run_in_worktree(self.wt, "--show")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("current:", result.stdout)
+        self.assertIn("(unset)", result.stdout,
+                      "with no .env and no env var, current should print (unset)")
         for name in ALLOWLIST:
             self.assertIn(name, result.stdout, f"allowlist missing {name}")
 
@@ -118,38 +151,37 @@ class SetProviderContract(unittest.TestCase):
         for name in ALLOWLIST:
             self.assertIn(name, result.stderr)
 
-    # T5: switch writes the new value and prints a diff vs HEAD.
+    # T5: switch writes CI_REVIEW_PROVIDER into .env and shows the diff.
     def test_switch_writes_value_and_shows_diff(self) -> None:
-        # Start at minimax (the committed default).
-        self.assertEqual(_read_provider(self.wt), "minimax")
+        _drop_env(self.wt)
         result = _run_in_worktree(self.wt, "anthropic")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(_read_provider(self.wt), "anthropic")
-        # Diff vs HEAD should appear in stdout.
-        self.assertIn("-minimax", result.stdout)
-        self.assertIn("+anthropic", result.stdout)
-        # Reminder to set the matching secret.
+        self.assertEqual(_read_env_provider(self.wt), "anthropic")
+        # Reminder to set the matching GitHub variable + secret.
+        self.assertIn("CI_REVIEW_PROVIDER", result.stdout)
         self.assertIn("ANTHROPIC_API_KEY", result.stdout)
-        # Reminder to commit + push (we no longer do it automatically).
-        self.assertIn("git commit", result.stdout)
-        self.assertIn("git push", result.stdout)
+        # .env is gitignored — no commit reminder expected.
+        self.assertNotIn("git commit", result.stdout)
 
     # T6: --dry-run never mutates the file.
     def test_dry_run_does_not_mutate(self) -> None:
-        before = _read_provider(self.wt)
+        _drop_env(self.wt)
         result = _run_in_worktree(self.wt, "deepseek", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("[dry-run]", result.stdout)
-        after = _read_provider(self.wt)
-        self.assertEqual(after, before, "dry-run must not mutate the file")
+        self.assertFalse((self.wt / ".env").exists(),
+                         "dry-run must not create .env")
 
     # T7: switching to the current value is a no-op.
     def test_switch_to_current_is_noop(self) -> None:
-        before = _read_provider(self.wt)
-        result = _run_in_worktree(self.wt, before)
+        _drop_env(self.wt)
+        # Bootstrap first, then re-apply same value.
+        _run_in_worktree(self.wt, "minimax")
+        before = (self.wt / ".env").read_text()
+        result = _run_in_worktree(self.wt, "minimax")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("nothing to do", result.stdout.lower())
-        self.assertEqual(_read_provider(self.wt), before)
+        self.assertEqual((self.wt / ".env").read_text(), before)
 
     # T8: --help exits 0 and prints usage.
     def test_help_exits_zero_and_prints_usage(self) -> None:
@@ -157,6 +189,31 @@ class SetProviderContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Usage:", result.stdout)
         self.assertIn("--dry-run", result.stdout)
+
+    # T9: idempotent upsert — no duplicate lines after multiple switches.
+    def test_idempotent_upsert_no_duplicate_lines(self) -> None:
+        _drop_env(self.wt)
+        for p in ("anthropic", "deepseek", "minimax", "minimax"):
+            r = _run_in_worktree(self.wt, p)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        text = (self.wt / ".env").read_text()
+        occurrences = [
+            line for line in text.splitlines()
+            if line.strip().startswith("CI_REVIEW_PROVIDER=")
+        ]
+        self.assertEqual(len(occurrences), 1,
+                         f"expected exactly one CI_REVIEW_PROVIDER line, got {occurrences!r}")
+
+    # T10: missing .env.example → actionable error.
+    def test_missing_env_example_errors(self) -> None:
+        _drop_env(self.wt)
+        example = self.wt / ".env.example"
+        if example.exists():
+            example.unlink()
+        result = _run_in_worktree(self.wt, "anthropic")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".env.example", result.stderr)
+        self.assertIn("cannot manage provider", result.stderr)
 
 
 if __name__ == "__main__":

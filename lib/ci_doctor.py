@@ -23,6 +23,7 @@ Public surface:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -39,7 +40,8 @@ from pathlib import Path
 try:
     from .ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        read_provider_file,
+        read_provider,
+        _read_env_key,
         required_secrets_for_provider,
         gh_secret_set_command,
         detect_owner_repo,
@@ -47,7 +49,8 @@ try:
 except ImportError:
     from ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        read_provider_file,
+        read_provider,
+        _read_env_key,
         required_secrets_for_provider,
         gh_secret_set_command,
         detect_owner_repo,
@@ -120,12 +123,12 @@ class DoctorReport:
 
 
 # Files the install MUST leave behind (subset of ci_setup.EXPECTED_PATHS
-# that gates next-PR viability). Workflows + marker + provider selector.
+# that gates next-PR viability). Workflows + marker (provider selector is
+# env-based, not a file — see `_check_provider_declared`).
 REQUIRED_FILES: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/workflows/review.yml",
     ".github/workflows/auto-fix-pr.yml",
-    ".github/ci-review-provider.txt",
     ".dev-kit/ci-config.json",
 )
 
@@ -567,26 +570,46 @@ def _check_marker_payload(target: Path, source_repo: bool = False) -> list[Check
         out.append(Check("marker non-empty", "FAIL", "empty payload"))
     else:
         out.append(Check("marker non-empty", "PASS", f"{len(payload)} keys"))
-    if payload.get("ci_review_provider_file") != ".github/ci-review-provider.txt":
+    if payload.get("provider_env_key") != "CI_REVIEW_PROVIDER":
         out.append(Check(
-            "marker records provider file", "FAIL",
-            "expected `.github/ci-review-provider.txt`",
+            "marker records provider key", "FAIL",
+            "expected `provider_env_key: CI_REVIEW_PROVIDER`",
         ))
     else:
-        out.append(Check("marker records provider file", "PASS", ""))
+        out.append(Check("marker records provider key", "PASS", ""))
     return out
 
 
-def _check_provider_file(target: Path) -> list[Check]:
-    p = target / ".github" / "ci-review-provider.txt"
-    if not p.is_file():
-        return [Check("provider file content", "FAIL", "file missing")]
-    raw = p.read_text(encoding="utf-8").strip().lower()
-    if not raw:
-        return [Check("provider file content", "FAIL", "empty")]
-    if raw not in PROVIDER_SECRETS:
-        return [Check("provider file content", "FAIL", f"unknown provider '{raw}'")]
-    return [Check("provider file content", "PASS", raw)]
+def _check_provider_declared(target: Path) -> list[Check]:
+    """Confirm the provider is declared in env, .env, or .env.example.
+
+    Provider selection is now env-based (no committed file). The check
+    reports where the value came from so ci-doctor output is actionable
+    for operators on different sides of the local/CI boundary.
+    """
+    env_val = os.environ.get("CI_REVIEW_PROVIDER", "").strip().lower()
+    env_file_val = ""
+    if (target / ".env").is_file():
+        env_file_val = _read_env_key(target / ".env", "CI_REVIEW_PROVIDER").lower()
+    example_val = ""
+    if (target / ".env.example").is_file():
+        example_val = _read_env_key(target / ".env.example", "CI_REVIEW_PROVIDER").lower()
+
+    resolved = next(
+        (v for v in (env_val, env_file_val, example_val) if v in PROVIDER_SECRETS),
+        "",
+    )
+    if not resolved:
+        return [Check(
+            "provider declared", "FAIL",
+            "CI_REVIEW_PROVIDER not set in process env, .env, or .env.example",
+        )]
+    source = (
+        "process env" if env_val == resolved
+        else ".env" if env_file_val == resolved
+        else ".env.example"
+    )
+    return [Check("provider declared", "PASS", f"{resolved} (via {source})")]
 
 
 def _check_secrets(target: Path, provider: str | None,
@@ -597,7 +620,7 @@ def _check_secrets(target: Path, provider: str | None,
     secrets, degraded = _list_repo_secrets(repo)
     if degraded:
         return [Check("repo secrets", "SKIP", degraded)]
-    provider = provider or read_provider_file(target)
+    provider = provider or read_provider(target)
     needed = required_secrets_for_provider(provider)
     out: list[Check] = []
     for name in needed:
@@ -989,8 +1012,9 @@ def audit(target_dir: Path, *, provider: str | None = None) -> DoctorReport:
     Args:
         target_dir: repo root to audit (defaults to a fresh tmpdir would
             also work; pass the real consumer path for an honest answer).
-        provider: override the provider selection (default = read from
-            `.github/ci-review-provider.txt`). Used by tests.
+        provider: override the provider selection (default = resolve via
+            `read_provider(target)`: process env → `.env` → `.env.example`).
+            Used by tests.
 
     Returns:
         DoctorReport with one row per check.
@@ -1008,7 +1032,7 @@ def audit(target_dir: Path, *, provider: str | None = None) -> DoctorReport:
                                    "dev-kit source repo: consumer-only checks skipped"))
     report.checks.extend(_check_required_files(target, source_repo))
     report.checks.extend(_check_marker_payload(target, source_repo))
-    report.checks.extend(_check_provider_file(target))
+    report.checks.extend(_check_provider_declared(target))
     report.checks.append(_check_gh_auth())
     report.checks.extend(_check_secrets(target, provider, source_repo))
     report.checks.extend(_check_workflow_diagnostics(target, source_repo))

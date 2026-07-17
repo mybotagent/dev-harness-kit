@@ -558,11 +558,22 @@ The shipped `review.yml` is **self-aware**: it detects whether the checkout is
 the dev-kit plugin itself (self-install) or a plain consumer repo (clones from
 public source), so one workflow file works in both contexts.
 
-**Switching the CI review provider:** run `bin/set-provider.sh <provider>`. It
-edits the git-tracked `.github/ci-review-provider.txt`, prints the diff, then you
-commit + push. `.env` is **not** consulted (a GitHub-hosted runner can't read it
-anyway). Each provider needs its matching repo secret (`MINIMAX_API_KEY`,
-`ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) pushed via `gh secret set` first. A
+**Switching the CI review provider:** provider selection is env-based — no
+committed default, so the same repo can be used by different operators with
+different providers without conflicts.
+
+- **Local** (when running `/dev-kit:review` outside GitHub Actions): set in
+  `.env:CI_REVIEW_PROVIDER`. Manage via `bin/set-provider.sh <provider>` —
+  it upserts the key, prints the diff, and reminds you to set the matching
+  GitHub repo variable + secret. `.env` is gitignored, so this is per-user.
+- **CI** (`.github/workflows/review.yml`): read from the GitHub repo
+  variable `vars.CI_REVIEW_PROVIDER`, with the `workflow_dispatch`
+  `review_provider` input as a per-run override. Set via
+  `gh variable set CI_REVIEW_PROVIDER --body <minimax|anthropic|deepseek>`.
+  When neither is set, the workflow fails loud with a remediation hint.
+
+Each provider also needs its matching repo secret (`MINIMAX_API_KEY`,
+`ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) pushed via `gh secret set`. A
 PR that itself edits `.github/workflows/review.yml` is skipped by
 `claude-code-action`'s anti-tampering guard — expected, and it resolves once the
 PR merges.
