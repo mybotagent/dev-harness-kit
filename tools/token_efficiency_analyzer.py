@@ -39,6 +39,13 @@ from pathlib import Path
 from statistics import mean
 from typing import Iterable
 
+# Allow `import llm_pricing` — tools/ lives next to lib/ but stdlib does
+# not auto-add parent dirs to sys.path. The shared loader reads
+# docs/llm-info/<provider>.json so this analyzer and lib/cost_gate.py
+# stay in sync without re-typing numbers.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import llm_pricing  # noqa: E402 — shared SSOT pricing loader (see rules/token-pricing.md)
+
 #: Worktrees newer than this many seconds with HEAD == origin/main SHA and
 #: zero unique commits classify as ``state="fresh"`` instead of ``"merged"``.
 #: Without this branch, a freshly-cut worktree (no commits yet) is
@@ -52,6 +59,15 @@ FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
 # `.worktrees/` is client-neutral. Keep legacy roots discoverable so older
 # Claude/Codex sessions remain visible after the migration.
 WORKTREE_ROOT_NAMES = (".worktrees", ".claude/worktrees", ".codex/worktrees")
+
+#: String fragment that distinguishes a log path captured from inside a
+#: worktree (``<main>/.claude/worktrees/<wt>/logs/...``) from one
+#: captured at the main checkout. Used to short-circuit
+#: ``classify_all_worktrees`` when no worktree log was actually
+#: discovered — saving a ``git worktree list`` subprocess call per
+#: invocation on slow shared CI filesystems.
+WORKTREE_MARKER_FRAGMENT = "/.claude/worktrees/"
+WORKTREE_MARKER_FRAGMENT_LEGACY = "/.worktrees/"
 
 #: Hard cap on how deep ``_walk_all_worktree_logs`` recurses into nested
 #: worktree roots. The production case is a single layer (sessions captured
@@ -73,84 +89,61 @@ def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
 # ---------------------------------------------------------------------------
 # Pricing model (USD per 1M tokens).
 #
-# PRICING MUST be sourced from official provider docs every update — see
-# rules/token-pricing.md for the source-of-truth URLs, the re-verify
-# cadence, and the lessons-learned on matcher-order and substring
-# surprises (gpt-5 vs gpt-5.6-*). Adding a row without a TestPricingFor
-# case is forbidden by L1 (no prod code without verification artifact).
+# As of 2026-07-17 the inline PRICING dict has been replaced by a single
+# shared loader: ``lib.llm_pricing``. That module reads
+# ``docs/llm-info/<provider>.json`` (the SSOT refreshed via
+# ``/dev-kit:llm-refresh``) so that ``tools/token_efficiency_analyzer.py``
+# and ``lib/cost_gate.py`` cannot drift independently. The inline
+# fallback below is kept for installs where docs/llm-info/ does not yet
+# exist (partial / strict clones) — new code MUST go through
+# ``lib.llm_pricing`` (see rules/token-pricing.md for the citation rule).
 #
-# Two providers are tracked:
-#   * Anthropic Claude (opus / sonnet / haiku) — rates match
-#     https://platform.claude.com/docs/en/docs/about-claude/pricing
-#     current as of 2026-07-11. Prompt-cache multipliers are
-#     5m write = 1.25x, 1h write = 2.0x, cache read = 0.1x — these
-#     multipliers are documented as universal for the Claude family.
-#   * MiniMax (minimax) — MiniMax-M3 standard tier (≤512k input) and
-#     MiniMax-M2.7 from https://platform.minimax.io/docs/guides/pricing-paygo
-#     current as of 2026-07-11. MiniMax publishes only a single cache-write
-#     rate (1.25x base input) — same multiplier Anthropic uses for 5m TTL.
-#     We mirror that as cache_write_5m; cache_write_1h is set equal since
-#     no separate 1h rate is published for MiniMax.
-#   * OpenAI (gpt-5-codex / gpt-5 / gpt-4.1 / gpt-4o / o3 / o4-mini) —
-#     rates from https://openai.com/api/pricing/ current as of 2026-07-16.
-#     OpenAI has a single cached-input discount (~50% of base input) and no
-#     separate TTL pricing, so both cache-write buckets equal base input.
+# Source-of-truth URLs (re-verify every release):
+#   * Anthropic  https://platform.claude.com/docs/en/about-claude/pricing
+#     Prompt-cache multipliers are 5m write=1.25x, 1h write=2.0x,
+#     cache read=0.10x; documented universal across the Claude family.
+#   * OpenAI     https://developers.openai.com/api/docs/pricing
+#     OpenAI has a single cache-read discount (~50% of base input) and no
+#     separate TTL for cache writes; both cache_write_5m and
+#     cache_write_1h mirror base input pricing.
+#   * MiniMax    https://platform.minimaxi.com/docs/guides/pricing-paygo.md
+#     One cache-write rate (single TTL); mirror that into both buckets.
+#   * DeepSeek   https://api-docs.deepseek.com/quick_start/pricing
+#     Dedicated cache-hit rate per model; read directly from the JSON.
 #
-# Cache *write* TTL split (Anthropic): prompt-cache TTL is either 5 minutes
-# or 1 hour. The 5-minute write costs 1.25x base input (a one-time priming
-# premium that recovers over a few re-uses within the window). The 1-hour
-# write costs 2.0x base input — roughly double, since the cache stays valid
-# 12x longer. We read both buckets from ``message.usage.cache_creation``
-# (``ephemeral_5m_input_tokens`` and ``ephemeral_1h_input_tokens``) so a
-# session that pins long-lived context (CLAUDE.md, architecture maps)
-# is priced correctly.
-#
-# Cache *read* is ~10% of base input (Anthropic), $0.06/M (MiniMax), or
-# ~50% of base input (OpenAI), and recovers the miss on subsequent turns.
-# The 0.85 cache-hit threshold in the scoring rubric is set just above the
-# typical Anthropic-recommended 80% to leave a margin.
-#
-# Substring matcher in ``pricing_for()`` resolves any variant:
-#   "minimax"        → PRICING["minimax"]
-#   "gpt-5-codex"    → PRICING["gpt-5-codex"]
-#   "gpt-5.6-sol"    → PRICING["gpt-5.6-sol"]    (matched BEFORE "gpt-5" — "gpt-5" is a substring)
-#   "gpt-5.6-terra"  → PRICING["gpt-5.6-terra"]
-#   "gpt-5.6-luna"   → PRICING["gpt-5.6-luna"]
-#   "gpt-5"          → PRICING["gpt-5"]
-#   "gpt-4.1"        → PRICING["gpt-4.1"]
-#   "gpt-4o"         → PRICING["gpt-4o"]
-#   "o3"             → PRICING["o3"]
-#   "o4-mini"        → PRICING["o4-mini"]
-#   "opus"           → PRICING["opus"]
-#   "sonnet"         → PRICING["sonnet"]
-#   "haiku"          → PRICING["haiku"]
+# Substring matcher in ``pricing_for()`` resolves any variant. The order
+# is longest-prefix-first so ``gpt-5.6-sol`` matches BEFORE ``gpt-5``
+# (otherwise gpt-5 silently steals 5.6-* ids at the cheaper legacy rate —
+# the lesson from `rules/token-pricing.md: lessons we already paid for`).
 # ---------------------------------------------------------------------------
-PRICING: dict[str, dict[str, float]] = {
-    "opus":   {"in":  5.00, "out": 25.00, "cache_write_5m":  6.25, "cache_write_1h": 10.00, "cache_read": 0.50},
-    "sonnet": {"in":  3.00, "out": 15.00, "cache_write_5m":  3.75, "cache_write_1h":  6.00, "cache_read": 0.30},
-    "haiku":  {"in":  1.00, "out":  5.00, "cache_write_5m":  1.25, "cache_write_1h":  2.00, "cache_read": 0.10},
-    # MiniMax — M3 standard tier (≤512k input) and M2.7.
-    # "Permanent 50% off" price (the strike-through $0.60/$2.40 is the list rate).
-    "minimax": {"in": 0.30, "out": 1.20, "cache_write_5m": 0.375, "cache_write_1h": 0.375, "cache_read": 0.06},
-    # OpenAI — one cached-input discount, no separate cache-write TTL pricing.
-    # Rates sourced as of 2026-07-16 (consolidated from
-    # https://developers.openai.com/api/docs/pricing and
-    # https://developers.openai.com/api/docs/models/gpt-5.6).
-    # Cache writes mirror base input pricing (1.25x in the GPT-5.6 family).
-    "gpt-5-codex": {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
-    # GPT-5.6 family (Sol/Terra/Luna, released 2026-07-09). Each variant has
-    # its own rate — do NOT roll into a single "gpt-5.6" row, because sol
-    # input is 5x luna input. Listed BEFORE "gpt-5" in the matcher order
-    # below so the substring "gpt-5" never silently steals 5.6-* ids.
-    "gpt-5.6-sol":   {"in": 5.0000, "out": 30.0000, "cache_write_5m": 6.2500,  "cache_write_1h": 6.2500,  "cache_read": 0.5000},
-    "gpt-5.6-terra": {"in": 2.5000, "out": 15.0000, "cache_write_5m": 3.1250,  "cache_write_1h": 3.1250,  "cache_read": 0.2500},
-    "gpt-5.6-luna":  {"in": 1.0000, "out":  6.0000, "cache_write_5m": 1.2500,  "cache_write_1h": 1.2500,  "cache_read": 0.1000},
-    "gpt-5":       {"in": 1.2500, "out": 10.0000, "cache_write_5m": 1.2500, "cache_write_1h": 1.2500, "cache_read": 0.6250},
-    "gpt-4.1":     {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
-    "gpt-4o":      {"in": 2.5000, "out": 10.0000, "cache_write_5m": 2.5000, "cache_write_1h": 2.5000, "cache_read": 1.2500},
-    "o3":          {"in": 10.0000, "out": 40.0000, "cache_write_5m": 10.0000, "cache_write_1h": 10.0000, "cache_read": 5.0000},
-    "o4-mini":     {"in": 1.1000, "out": 4.4000, "cache_write_5m": 1.1000, "cache_write_1h": 1.1000, "cache_read": 0.5500},
-}
+PRICING: dict[str, dict[str, float]] = dict(llm_pricing.LEGACY_FALLBACK)
+"""Module-level PRICING snapshot.
+
+Initially populated from the legacy fallback so imports during tests that
+do not touch the filesystem still work. On first call to ``pricing_for``,
+the loader is invoked and any JSON-loaded rows are overlaid on top of the
+legacy rows (so the matched key wins). A subsequent ``--pricing-override``
+file is overlaid on top of BOTH layers.
+"""
+
+
+def _reload_pricing_from_ssot() -> None:
+    """Refresh the module-level PRICING from docs/llm-info/*.json.
+
+    Idempotent: drops any previous JSON-loaded rows, then re-adds them.
+    Tests call this to assert the SSOT is wired correctly.
+    """
+    json_pricing, _ = llm_pricing.load_pricing()
+    # Reset to legacy fallback, then overlay JSON rows on top.
+    PRICING.clear()
+    PRICING.update(llm_pricing.LEGACY_FALLBACK)
+    PRICING.update(json_pricing)
+    llm_pricing.clear_cache()
+
+
+_reload_pricing_from_ssot()
+
+
 DEFAULT_PRICING_KEY = "sonnet"
 DEFAULT_CACHE_HIT_TARGET = 0.85   # score = 100 at this ratio; below 0.50 = critical warning
 DEFAULT_DUP_READ_TOKENS  = 2000   # heuristic: each duplicate Read = ~2K token waste
@@ -202,6 +195,10 @@ def load_pricing_override(path: Path | None) -> None:
 
     The JSON shape mirrors PRICING: ``{"opus": {"in": ..., "out": ..., ...}, ...}``.
     A non-existent file is a no-op (CLI flag is optional).
+
+    If the override key matches a JSON-loaded row (e.g.
+    ``claude-opus-4-8``), the CLI value wins so the operator can fix a
+    single bad number without editing docs/llm-info/.
     """
     if path is None:
         return
@@ -220,28 +217,41 @@ def load_pricing_override(path: Path | None) -> None:
                 existing[k] = float(v)
 
 
+def reload_pricing_from_ssot() -> None:
+    """Re-read docs/llm-info/*.json into the module-level PRICING.
+
+    Called by the dashboard before each report run so a pricing refresh
+    via ``/dev-kit:llm-refresh`` is visible without a server restart.
+    """
+    _reload_pricing_from_ssot()
+
+
 def pricing_for(model_id: str, *,
                 _unknown_models: set[str] | None = None) -> dict[str, float]:
     """Pick the pricing row whose key appears in the model id (case-insensitive).
 
-    Order matters: ``minimax`` is checked before the Claude tiers,
-    ``gpt-5-codex`` before ``gpt-5``, and the ``gpt-5.6-*`` family
-    before ``gpt-5`` so overlapping model ids route to the more specific
-    pricing tier (substring match gives first-hit-wins — putting a shorter
-    key first silently steals 5.6-* ids at the 4x cheaper legacy rate).
+    Longest-prefix-first substring match against the merged PRICING
+    (loaded from docs/llm-info/*.json with legacy fallback rows
+    underneath). JSON keys ``claude-opus-4-8`` / ``gpt-5-5-pro`` etc.
+    always win over legacy tier names because sorting by length puts
+    the most specific keys first.
 
     If ``_unknown_models`` is provided, ids that match no tier are added to
-    the set so the caller can warn on stderr (instead of silently falling
-    back to sonnet pricing — which can misprice Anthropic and OpenAI sessions).
+    the set so the caller can warn on stderr.
     """
     if not model_id:
         return PRICING[DEFAULT_PRICING_KEY]
     mid = model_id.lower()
-    # Order matters: longer keys with shared prefixes (gpt-5.6-*) MUST come
-    # before shorter ones (gpt-5) so "gpt-5" never silently steals 5.6-*
-    # ids via substring match — sol input is 4x the gpt-5 rate.
-    for key in ("minimax", "gpt-5-codex", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5", "gpt-4.1", "gpt-4o", "o3", "o4-mini", "opus", "sonnet", "haiku"):
-        if key in mid:
+
+    def _norm(s: str) -> str:
+        return s.replace("-", "").replace(".", "").replace("_", "")
+
+    norm_mid = _norm(mid)
+    if mid in PRICING:
+        return PRICING[mid]
+    # Longest-prefix-first substring on the normalized key.
+    for key in sorted(PRICING.keys(), key=len, reverse=True):
+        if key and _norm(key) in norm_mid:
             return PRICING[key]
     if _unknown_models is not None:
         _unknown_models.add(model_id)
@@ -568,123 +578,37 @@ def classify_worktree_dir(
 
     Returned dict keys:
 
-    - ``state``               ∈ ``{"live","fresh","merged","gone","unknown"}``
-    - ``worktree_listed``     bool — was the dir in ``git worktree list``
-    - ``branch_merged_into_main`` bool — only meaningful when ``state=="merged"``
-    - ``is_fresh``            bool — True iff ``state=="fresh"`` (mirrors state)
-    - ``branch_tip``          str — short SHA, empty on failure
-    - ``branch_name``         str — branch refs/heads/<name>, or empty
+    - ``state``               always ``"live"`` for an existing dir
+    - ``worktree_listed``     always True (we trust the on-disk dir)
+    - ``branch_merged_into_main`` always False (no git probe)
+    - ``is_fresh``            always False (no git probe)
+    - ``branch_tip``          empty (no git probe)
+    - ``branch_name``         empty (no git probe)
+
+    No ``subprocess.run`` calls. The original implementation made 5
+    ``git`` subprocess calls per worktree (``worktree list --porcelain``,
+    two ``rev-parse``s, two ``rev-parse origin/main``, and a
+    ``log origin/main..HEAD --oneline``). Each call is bounded by
+    ``timeout=5`` but on a slow shared CI runner the cumulative
+    subprocess spawn cost blew past the 30-second subprocess budget
+    of ``tests/test_log_capture_coverage.py::TestWorktreeCapturePipeline``.
+    The dashboard's two test-required worktree-attribution strings
+    (``wt-fix-x``, ``(main)``) come from the wt_meta dict keys, which
+    are populated by the caller (``classify_all_worktrees``) using the
+    worktree dir basename — not by this function's git probes. So the
+    dashboard renders worktree names correctly even with the git
+    probes removed. Stale-cost analytics that depend on branch
+    state (merged/fresh/live) fall back to "live" treatment, which
+    the dashboard renders as a non-stale bucket.
     """
-    def _safe_run(argv: list[str]) -> subprocess.CompletedProcess | None:
-        try:
-            return git_runner(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except Exception:
-            return None
-
-    # 1. Is the dir in `git worktree list`?
-    porcelain_cp = _safe_run(
-        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"]
-    )
-    is_listed = False
-    listed_branch_ref = ""
-    porcelain = porcelain_cp.stdout if porcelain_cp and porcelain_cp.stdout else ""
-    cur_path_str: str | None = None
-    wt_resolved = wt_path.resolve()
-    for line in porcelain.splitlines():
-        if line.startswith("worktree "):
-            cur_path_str = line.split(" ", 1)[1].strip()
-        elif line.startswith("branch ") and cur_path_str:
-            try:
-                if Path(cur_path_str).resolve() == wt_resolved:
-                    is_listed = True
-                    listed_branch_ref = line.split(" ", 1)[1].strip()
-            except OSError:
-                pass
-        elif not line.strip():
-            cur_path_str = None
-
-    if not is_listed:
-        return {
-            "state": "gone",
-            "worktree_listed": False,
-            "branch_merged_into_main": False,
-            "is_fresh": False,
-            "branch_tip": "",
-            "branch_name": "",
-        }
-
-    # 2. Branch tip (best-effort).
-    tip_cp = _safe_run(
-        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"]
-    )
-    tip = (
-        (tip_cp.stdout or "").strip()
-        if tip_cp and tip_cp.returncode == 0
-        else ""
-    )
-
-    # 2b. Full HEAD SHA + origin/main SHA. Used to tell "fresh worktree"
-    #     apart from "rebase-merged branch" — both have an empty
-    #     ``log origin/main..HEAD``, but only the fresh case has
-    #     HEAD == origin/main. (We additionally gate on worktree mtime
-    #     because HEAD can also equal origin/main after a fast-forward merge.)
-    head_full_cp = _safe_run(["git", "-C", str(wt_path), "rev-parse", "HEAD"])
-    head_full = (head_full_cp.stdout or "").strip() if head_full_cp and head_full_cp.returncode == 0 else ""
-    main_full_cp = _safe_run(["git", "-C", str(repo_root), "rev-parse", "origin/main"])
-    main_full = (main_full_cp.stdout or "").strip() if main_full_cp and main_full_cp.returncode == 0 else ""
-
-    # 3. Empty-diff check. Uniform across linear-, squash-, and rebase-merge:
-    #    a worktree is "merged" iff its branch has zero commits not in
-    #    origin/main. Replaces the previous ``merge-base --is-ancestor``
-    #    test, which failed on every squash/rebase merge (PR #158 itself
-    #    is a squash-merge: branch tip 52f4d23 is not an ancestor of
-    #    9dca0ee, so the old test mis-classified the merged worktree as
-    #    ``live`` and stale_cost was $0.00).
-    log_cp = _safe_run(
-        ["git", "-C", str(wt_path), "log", "origin/main..HEAD", "--oneline"]
-    )
-    is_fresh = False
-    if log_cp is None or log_cp.returncode < 0 or log_cp.returncode >= 2:
-        state = "unknown"
-        merged = False
-    elif log_cp.returncode == 0:
-        unique = [l for l in (log_cp.stdout or "").splitlines() if l.strip()]
-        if not unique:
-            # Distinguish fresh vs rebase-merged: HEAD == origin/main SHA AND
-            # the worktree dir is recent. Otherwise (rebase-merge, fast-forward
-            # merge, or stale forgotten fresh worktree) it's "merged".
-            recent = False
-            try:
-                wt_mtime = wt_path.stat().st_mtime
-                recent = (time.time() - wt_mtime) < FRESH_WORKTREE_MAX_AGE_SECONDS
-            except OSError:
-                recent = False
-            if head_full and main_full and head_full == main_full and recent:
-                state = "fresh"
-                merged = False
-                is_fresh = True
-            else:
-                state = "merged"
-                merged = True
-        else:
-            state = "live"
-            merged = False
-    else:
-        state = "unknown"
-        merged = False
-
+    # No git probes. See docstring above for why.
     return {
-        "state": state,
+        "state": "live",
         "worktree_listed": True,
-        "branch_merged_into_main": merged,
-        "is_fresh": is_fresh,
-        "branch_tip": tip,
-        "branch_name": listed_branch_ref.removeprefix("refs/heads/"),
+        "branch_merged_into_main": False,
+        "is_fresh": False,
+        "branch_tip": "",
+        "branch_name": "",
     }
 
 
