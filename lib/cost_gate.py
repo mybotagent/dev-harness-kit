@@ -15,13 +15,9 @@ State lives at `<cwd>/.dev-kit/.cost-gate/state.json`. Atomic writes via
 lib.atomic.atomic_write_json. Transcript scans use a byte-offset cursor
 to dedupe records.
 
-Pricing tiers (USD per 1M tokens):
-
-    Tier    in    out   cw5   cw1h  cr
-    opus    5.00  25.00 6.25  10.00 0.50
-    sonnet  3.00  15.00 3.75   6.00 0.30
-    haiku   1.00   5.00 1.25   2.00 0.10
-    minimax 0.30   1.20 0.375  0.375 0.06
+Pricing tiers (USD per 1M tokens): see PRICING dict below. SSOT:
+`lib/llm_pricing.py` loads `docs/llm-info/<provider>.json` (refreshed via
+`/dev-kit:llm-refresh`). Source-of-truth rules in `rules/token-pricing.md`.
 
 Heuristic tool-token estimates (when transcript usage is absent):
 

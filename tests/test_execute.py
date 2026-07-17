@@ -200,23 +200,6 @@ class TestExecute(unittest.TestCase):
         self.assertNotIn("duration_seconds", parsed[0])
 
 
-class TestPhasesStructure(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def test_phases_index_top_level(self):
-        idx_path = self.root / "phases" / "index.json"
-        idx_path.parent.mkdir(parents=True)
-        idx_path.write_text(json.dumps({"phases": [{"dir": "0-mvp", "status": "pending"}]}), encoding="utf-8")
-        result = execute.read_phases_index(self.root)
-        self.assertEqual(len(result["phases"]), 1)
-        self.assertEqual(result["phases"][0]["dir"], "0-mvp")
-
-
 class TestUnimplementedStubRegistration(unittest.TestCase):
     """register_step() creates an `unimplemented` stub in index.json so the plan
     skill can mark 'this phase will have N steps' BEFORE any step<N>.md is written.

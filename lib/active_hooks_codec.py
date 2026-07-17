@@ -70,8 +70,11 @@ DEFAULT_MATRIX: Dict[str, Dict[str, object]] = {
 }
 
 
-def init_matrix(project_root: Path) -> Dict:
-    """Initialize .dev-kit/.active-hooks.json with default matrix."""
+def ensure_matrix(project_root: Path) -> Dict:
+    """Initialize .dev-kit/.active-hooks.json with default matrix if missing.
+
+    Caller MUST intend to write — `load_matrix` is the read-only path.
+    """
     path = project_root / ".dev-kit" / ".active-hooks.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
@@ -87,16 +90,36 @@ def init_matrix(project_root: Path) -> Dict:
     return data
 
 
-def read_matrix(project_root: Path) -> Dict:
+def load_matrix(project_root: Path) -> Dict:
+    """Read .dev-kit/.active-hooks.json. Returns in-memory DEFAULT_MATRIX on miss.
+
+    Read-only — does NOT call `atomic_write_json`. Callers needing to
+    mutate should use `ensure_matrix` first.
+    """
     path = project_root / ".dev-kit" / ".active-hooks.json"
     if not path.exists():
-        return init_matrix(project_root)
+        return {
+            "schema_version": "1.0.0",
+            "matrix": DEFAULT_MATRIX,
+            "override": {
+                "disabled_hooks": [],
+                "strict_mode": False,
+                "env_override": {},
+            },
+        }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# Back-compat alias: read_matrix historically returned a fresh init on miss.
+# Existing callers (set_stage / disable_override / __main__) want write
+# semantics; load_matrix is the canonical read-only path.
+read_matrix = load_matrix
+init_matrix = ensure_matrix
 
 
 def is_hook_active(project_root: Path, stage: str, hook_name: str) -> bool:
     """Return True if hook should fire in this stage."""
-    data = read_matrix(project_root)
+    data = load_matrix(project_root)
     if hook_name in data.get("override", {}).get("disabled_hooks", []):
         return False
     env_off = os.environ.get("DEV_KIT_HOOK_OFF", "")

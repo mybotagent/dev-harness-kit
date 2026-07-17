@@ -51,7 +51,7 @@ def status(root: Path) -> dict[str, object]:
     codex_registered = False
     try:
         codex_registered = codex_hooks_json.is_file()
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         pass
 
     return {
