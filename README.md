@@ -469,6 +469,70 @@ git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
 files, and transcript scanners fully independent of the analyzer — a regression
 test asserts no cross-import.
 
+### Session monitor (`tools/session_monitor.py`)
+
+The skill form (`/dev-kit:session-monitor`, see the Eval / cost / reporting
+table above) drives an `AskUserQuestion` picker inside Claude Code — useful
+when you're already in a session. The CLI form is the same data layer
+exposed for plain-shell use: over `ssh`, in CI, in a quick `Terminal.app`
+window, or anywhere you want a single keystroke to land back inside a
+specific worktree's conversation.
+
+```bash
+# Interactive inline picker (real TTY required — arrow keys + Enter)
+python3 tools/session_monitor.py
+
+# Plain listing (works without a TTY; safe to run from any harness)
+python3 tools/session_monitor.py --list --days 30
+
+# Machine-readable JSON for scripting / non-Claude-Code callers
+python3 tools/session_monitor.py --json --days 30 | jq '.total_sessions, .live_sessions'
+
+# Debug the resume argv synthesis for the first session
+python3 tools/session_monitor.py --print-resume-command
+# -> cd /Users/sanghee/dev/dev-harness-kit && claude --resume <sid>
+```
+
+The interactive picker is built directly on `termios` + ANSI escapes
+(stdlib only, no `curses`, no third-party deps). On `Enter` it restores
+the original `termios` mode, `cd`s into the session's worktree, and
+`exec`s `claude --resume <sid>` (Claude Code) or `codex resume <sid>`
+(Codex) — `exec` replaces the Python process so the user lands directly
+in the resumed session. If the worktree is gone or merged, the picker
+falls back to the main checkout and prints a warning.
+
+Each session's `branch` is overridden with the worktree's current
+`git rev-parse --abbrev-ref HEAD` so the picker shows the branch the
+worktree is *actually* on, not the one captured at save-log time. Stale
+worktrees (merged/gone) and detached-HEAD worktrees keep the log-captured
+branch as a fallback.
+
+**Common flags**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--days N` | `30` | Look-back window; older sessions are dropped |
+| `--repo <name>` | (none) | Substring filter on the repo basename |
+| `--logs-dir <path>` | `<main-repo>/logs` | Root for `claude-code/` and `codex/` subdirs |
+| `--list` | off | Plain stdout listing (previewable in any harness) |
+| `--json` | off | Machine-readable output for scripts / skill consumers |
+| `--print-resume-command` | off | Print the cwd + argv for the first session; exit |
+
+**Status semantics**
+
+| Glyph | Status | Meaning |
+|:---:|---|---|
+| `●` | `live` | A running `claude`/`codex` process is cwd'd into the session's worktree, OR the last turn landed within the 180 s recency window |
+| `○` | `idle` | Captured and within `--days`, but not recently active |
+| `⌀` | `stale` | Worktree is merged into `main` or gone; resume falls back to the main checkout |
+
+**Why a tool alongside a skill:** the skill needs the harness (to render
+`AskUserQuestion`); the CLI needs a TTY (to render the picker). They share
+one data layer — `discover → aggregate → group → enrich → render` — and
+the skill's `--json` mode is literally the CLI's JSON output piped into
+the model. No LLM sits in the loop for either; both are pure consumers of
+the `/dev-kit:log` transcripts.
+
 ---
 
 ## Consumer CI install
