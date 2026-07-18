@@ -2,6 +2,7 @@
 name: report
 category: audit
 description: 0-arg HTML renderer for the latest eval + inspect markdown reports. One self-contained .dev-kit/report.html. No options, no JS, no external assets.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:report
   - User wants to share eval + inspect results with non-technical reviewers

@@ -2,6 +2,7 @@
 name: review
 category: review
 description: "Parallel multi-dimension code review with a false-positive filter. Fans out to per-dim experts (correctness, security, architecture) that run in parallel and return evidence-backed findings; a verifier pass confirms/rejects each candidate before rendering per-line inline comments plus a PR-style summary with a verdict."
+alpha: analysis
 when_to_use:
   - User types /dev-kit:review [paths] [--diff] [--diff --staged] [--fast]
   - User asks to review code, the diff, or the PR

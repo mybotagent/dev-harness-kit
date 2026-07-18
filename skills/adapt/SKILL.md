@@ -2,6 +2,7 @@
 name: adapt
 category: build
 description: Mid-build plan/spec amendment. Pauses the current step, diffs PRD.md + step file against actual output, proposes a minimal patch, writes it on user approval, and resumes the per-step harness runner (lib/execute.py).
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:adapt
   - A build step is in_progress and the plan/spec is discovered to be wrong

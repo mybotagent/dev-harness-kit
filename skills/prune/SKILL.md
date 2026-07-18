@@ -2,6 +2,7 @@
 name: prune
 category: build
 description: 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring).
+alpha: analysis
 when_to_use:
   - User types /dev-kit:prune
   - User types "remove AI slop" / "delete dead code" / "sweep the codebase for cruft"

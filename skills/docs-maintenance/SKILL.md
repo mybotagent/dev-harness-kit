@@ -2,6 +2,7 @@
 name: docs-maintenance
 category: audit
 description: Audit repository documentation, remove superseded guidance, and refresh the README without recording volatile inventory facts.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:docs-maintenance
   - User asks to clean outdated docs or bring the README up to date

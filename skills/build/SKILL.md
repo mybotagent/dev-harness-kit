@@ -2,6 +2,7 @@
 name: build
 category: build
 description: 0-arg. Per-step sub-agent delegation + self-fix loop (MUST-36~38). Uses harness-runner engine. TDD + verify + debug integrated.
+alpha: state
 when_to_use: |
   - User types /dev-kit:build
   - After plan+design (PRD.md + phases/<name>/ exist)

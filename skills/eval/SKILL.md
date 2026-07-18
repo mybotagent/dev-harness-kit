@@ -2,6 +2,7 @@
 name: eval
 category: eval
 description: Agent-behavior eval across 3 dimensions (review / security / plan) with a 20-checkbox code-sanity rubric. Replays recorded transcripts and judges against per-dim rubrics. /dev-kit:eval [--dim review|security|plan] [--case <id>] [--dry-run].
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:eval
   - nightly cron auto-call (per-dim rotated)

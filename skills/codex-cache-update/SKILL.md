@@ -2,6 +2,7 @@
 name: codex-cache-update
 category: shortcuts
 description: Refresh the dev-kit Codex marketplace checkout and synchronize the versioned plugin cache. Use when Codex reports the marketplace is current but the installed cache may be stale, or after a dev-kit merge.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:codex-cache-update
   - User asks to update or refresh the Codex dev-kit plugin cache

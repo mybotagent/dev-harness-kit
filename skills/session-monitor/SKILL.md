@@ -2,6 +2,7 @@
 name: session-monitor
 category: audit
 description: Pick a Claude Code or Codex session across this repo's worktrees and emit the exact `cd <wt> && claude --resume <sid>` resume command. The skill drives the picker via `AskUserQuestion`; the tool also ships an inline arrow-key picker for shell users.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:session-monitor
   - User wants to see every running/stopped CC + Codex session across worktrees
