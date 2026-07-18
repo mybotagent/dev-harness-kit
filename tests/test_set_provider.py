@@ -133,11 +133,16 @@ class SetProviderContract(unittest.TestCase):
     # T3: --show prints current value + allowlist.
     def test_show_prints_current_and_allowlist(self) -> None:
         _drop_env(self.wt)
+        # Remove .env.example too so the test exercises the truly-unset
+        # path (otherwise m1's .env.example fallback would supply a value).
+        example = self.wt / ".env.example"
+        if example.exists():
+            example.unlink()
         result = _run_in_worktree(self.wt, "--show")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("current:", result.stdout)
         self.assertIn("(unset)", result.stdout,
-                      "with no .env and no env var, current should print (unset)")
+                      "with no .env, no .env.example, and no env var, current should print (unset)")
         for name in ALLOWLIST:
             self.assertIn(name, result.stdout, f"allowlist missing {name}")
 
@@ -214,6 +219,78 @@ class SetProviderContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(".env.example", result.stderr)
         self.assertIn("cannot manage provider", result.stderr)
+
+    # T11 (m1 regression): --show falls back to .env.example when neither
+    # process env nor .env has the key — matches lib/ci_setup.read_provider()
+    # precedence so the two sides never disagree about the active value.
+    def test_show_falls_back_to_env_example(self) -> None:
+        _drop_env(self.wt)
+        # Rewrite .env.example to a known value (the shipped default is
+        # `minimax`, but tests must not depend on shipped content).
+        (self.wt / ".env.example").write_text(
+            "CI_REVIEW_PROVIDER=deepseek\n", encoding="utf-8",
+        )
+        result = _run_in_worktree(self.wt, "--show")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("current: deepseek", result.stdout,
+                      "--show must read from .env.example when .env is absent")
+
+    # T12 (m2 regression): when .env has multiple CI_REVIEW_PROVIDER lines,
+    # the parser keeps only the last value (matches the docstring claim
+    # "last occurrence wins"). Without this fix the values concatenate.
+    def test_parser_keeps_last_value_on_duplicates(self) -> None:
+        _drop_env(self.wt)
+        (self.wt / ".env").write_text(
+            "OTHER=keep\n"
+            "CI_REVIEW_PROVIDER=minimax\n"
+            "CI_REVIEW_PROVIDER=deepseek\n",
+            encoding="utf-8",
+        )
+        result = _run_in_worktree(self.wt, "--show")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("current: deepseek", result.stdout,
+                      f"expected last-occurrence-wins, got: {result.stdout!r}")
+        # No concatenation.
+        self.assertNotIn("minimaxdeepseek", result.stdout)
+        self.assertNotIn("deepseekminimax", result.stdout)
+
+    # T13 (m3 regression): upsert collapses pre-existing duplicates to one
+    # line. T9 only covers the case where the script is the sole writer;
+    # this covers manual edits that left multiple lines.
+    def test_upsert_dedupes_pre_existing_duplicates(self) -> None:
+        _drop_env(self.wt)
+        (self.wt / ".env").write_text(
+            "OTHER=keep\n"
+            "CI_REVIEW_PROVIDER=old1\n"
+            "CI_REVIEW_PROVIDER=old2\n",
+            encoding="utf-8",
+        )
+        result = _run_in_worktree(self.wt, "anthropic")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.wt / ".env").read_text()
+        key_lines = [
+            line for line in text.splitlines()
+            if line.strip().startswith("CI_REVIEW_PROVIDER=")
+        ]
+        self.assertEqual(len(key_lines), 1,
+                         f"upsert must collapse duplicates to one line, got {key_lines!r}")
+        self.assertEqual(key_lines[0], "CI_REVIEW_PROVIDER=anthropic")
+        # The non-key lines must survive.
+        self.assertIn("OTHER=keep", text)
+
+    # T14 (m4 regression): surrounding single/double quotes on the value
+    # are stripped so a hand-edited `CI_REVIEW_PROVIDER="anthropic"` reads
+    # the same as `CI_REVIEW_PROVIDER=anthropic` — parity with
+    # lib/ci_setup._read_env_key which already strips.
+    def test_parser_strips_quotes(self) -> None:
+        _drop_env(self.wt)
+        (self.wt / ".env").write_text(
+            'CI_REVIEW_PROVIDER="anthropic"\n', encoding="utf-8",
+        )
+        result = _run_in_worktree(self.wt, "--show")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("current: anthropic", result.stdout,
+                      f"expected stripped value, got: {result.stdout!r}")
 
 
 if __name__ == "__main__":

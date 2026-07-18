@@ -57,8 +57,10 @@ is_allowed() {
 
 # Read CI_REVIEW_PROVIDER from .env (last occurrence wins; comments and
 # blanks ignored). Echoes the value, or empty string when unset.
+# Strips surrounding single/double quotes from the value to match
+# `lib/ci_setup._read_env_key()` so the two sides agree on quoted inputs.
 read_provider_from_env_file() {
-  local f="$1" line key val
+  local f="$1" line key val last=""
   [ -f "$f" ] || return 0
   while IFS= read -r line; do
     case "$line" in
@@ -66,18 +68,29 @@ read_provider_from_env_file() {
     esac
     key="${line%%=*}"
     val="${line#*=}"
-    [ "$key" = "$PROVIDER_KEY" ] && printf '%s' "$val"
+    if [ "$key" = "$PROVIDER_KEY" ]; then
+      last="${val%\"}"
+      last="${last#\"}"
+      last="${last%\'}"
+      last="${last#\'}"
+    fi
   done < "$f"
+  printf '%s' "$last"
 }
 
-# Echo the current effective provider: process env first, then .env.
-# Direct reference is intentional — `${!PROVIDER_KEY:-}` (indirect
-# expansion) would silently typo and echo the key name when the env
-# var is unset, which is exactly the bug this avoids.
+# Echo the current effective provider: process env → .env → .env.example
+# (mirrors `lib/ci_setup.read_provider()` so `bin/set-provider.sh --show`
+# and `ci-doctor` never disagree about the active value). Direct
+# reference is intentional — `${!PROVIDER_KEY:-}` (indirect expansion)
+# would silently typo and echo the key name when the env var is unset,
+# which is exactly the bug this avoids.
 current_provider() {
   local from_env="${CI_REVIEW_PROVIDER:-}"
   if [ -z "$from_env" ] && [ -f "$ENV_FILE" ]; then
     from_env="$(read_provider_from_env_file "$ENV_FILE")"
+  fi
+  if [ -z "$from_env" ] && [ -f "$ENV_EXAMPLE" ]; then
+    from_env="$(read_provider_from_env_file "$ENV_EXAMPLE")"
   fi
   printf '%s' "$from_env"
 }
@@ -97,8 +110,10 @@ upsert_env_file() {
   fi
 
   tmp="$(mktemp)"
-  # Copy every line, replacing the CI_REVIEW_PROVIDER= line. Track whether
-  # we saw one so we can append if missing.
+  # Copy every line. The first CI_REVIEW_PROVIDER= match is rewritten
+  # with the new value; any subsequent matches are dropped so a manual
+  # edit that left duplicates collapses to one line on next switch.
+  # Track whether we saw one so we can append if missing.
   saw_key=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -109,8 +124,11 @@ upsert_env_file() {
     esac
     key="${line%%=*}"
     if [ "$key" = "$PROVIDER_KEY" ]; then
-      printf '%s=%s\n' "$PROVIDER_KEY" "$new_value" >> "$tmp"
-      saw_key=1
+      if [ "$saw_key" = "0" ]; then
+        printf '%s=%s\n' "$PROVIDER_KEY" "$new_value" >> "$tmp"
+        saw_key=1
+      fi
+      # Subsequent matches: drop the line (do not write).
     else
       printf '%s\n' "$line" >> "$tmp"
     fi
@@ -169,7 +187,11 @@ is_allowed "$PROVIDER_ARG" || die "invalid provider '$PROVIDER_ARG'; allowed: ${
 CURRENT="$(current_provider)"
 NEW="$PROVIDER_ARG"
 
-if [ "$CURRENT" = "$NEW" ]; then
+# Noop check is gated on `.env` actually existing — current_provider()
+# falls back to .env.example, so a fresh clone with no .env would
+# otherwise report "already <whatever-template-says>" and skip the
+# bootstrap. Bootstrap must run on a missing .env regardless.
+if [ -f "$ENV_FILE" ] && [ "$CURRENT" = "$NEW" ]; then
   echo "already $NEW; nothing to do."
   exit 0
 fi

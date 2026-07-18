@@ -111,7 +111,7 @@ edit it. The checklist NEVER blocks -- it is guidance only.
 
 When `--setup-secrets` is passed, after the marker is written the skill:
 
-1. Reads the provider from `.github/ci-review-provider.txt` (default `minimax`).
+1. Reads the provider from `CI_REVIEW_PROVIDER` via `lib/ci_setup.read_provider()` — process env → `.env` → `.env.example` fallback chain, default `minimax`.
 2. Calls `lib/ci_setup.py:required_secrets_for_provider()` to enumerate the secrets required for that provider (`DEV_KIT_GITHUB_TOKEN` + the provider's API key).
 3. Prompts the user, one secret at a time, using AskUserQuestion. Reads the value from stdin (no echo). Never writes the value to disk or logs it.
 4. Calls `lib/ci_setup.py:set_repo_secrets()` to invoke `gh secret set NAME --repo OWNER/REPO` for each. Reports `OK` / `WARN` per secret.
