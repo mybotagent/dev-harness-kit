@@ -2,6 +2,7 @@
 name: feat-fix
 category: build
 description: Reproduce-first fix for a single named feature. MUST-L2 enforces a quoted failing case before any fix proposal lands.
+alpha: state
 when_to_use: |
   - User types /dev-kit:feat-fix <feature>
   - User knows which feature is broken (vs /dev-kit:build-debug for unknown bugs)

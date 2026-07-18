@@ -1,0 +1,21 @@
+{
+  "case_id": "review-v1",
+  "dim": "review",
+  "category": "real-bug",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:abcdef000001",
+  "captured_at": "2026-07-09T19:00:00+09:00",
+  "expected_behavior": "Stable review baseline for golden-diff tests (fixture only).",
+  "iron_law_refs": ["CLAUDE.md §1 L1"],
+  "code_refs": [],
+  "expected": {
+    "verdict": "Blocked",
+    "scores": {
+      "verdict_consistency": 9.0,
+      "severity_calibration": 9.0,
+      "precision": 8.5,
+      "recall": 9.0,
+      "code_sanity_score": 8.0
+    }
+  }
+}

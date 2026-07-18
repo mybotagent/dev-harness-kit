@@ -2,6 +2,7 @@
 name: refactor
 category: build
 description: 0-arg cleanup chain. One slash wraps inspect -> build-refactor -> review. 3 gated phases with quoted exit codes between each.
+alpha: analysis
 when_to_use:
   - User types /dev-kit:refactor
   - User types "clean up the codebase" / "refactor everything" / "simplify the whole project"

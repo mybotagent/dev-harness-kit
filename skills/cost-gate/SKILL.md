@@ -2,6 +2,7 @@
 name: cost-gate
 category: audit
 description: 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost flag can aggregate.
+alpha: enforcement
 when_to_use:
   - User types /dev-kit:cost-gate
   - User wants to know the running session's cost before it hits the warn threshold

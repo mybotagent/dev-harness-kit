@@ -2,6 +2,7 @@
 name: ci-doctor
 category: audit
 description: Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?"
+alpha: enforcement
 when_to_use:
   - User types /dev-kit:ci-doctor
   - User asks "is my CI set up correctly?" / "would the next PR be green?"

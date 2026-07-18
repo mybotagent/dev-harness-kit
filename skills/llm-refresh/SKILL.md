@@ -2,6 +2,7 @@
 name: llm-refresh
 category: shortcuts
 description: Refresh docs/llm-info/<provider>.json from each vendor's official pricing page. Diff-then-commit; manual like set-provider.sh.
+alpha: analysis
 when_to_use:
   - User types /dev-kit:llm-refresh
   - User asks to update / sync Claude/Codex/MiniMax/DeepSeek pricing or model lists

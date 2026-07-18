@@ -2,6 +2,7 @@
 name: eval
 category: eval
 description: Agent-behavior eval across 3 dimensions (review / security / plan) with a 20-checkbox code-sanity rubric. Replays recorded transcripts and judges against per-dim rubrics. /dev-kit:eval [--dim review|security|plan] [--case <id>] [--dry-run].
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:eval
   - nightly cron auto-call (per-dim rotated)
@@ -85,27 +86,52 @@ Per sub-score = `(items_flagged / items_present_in_input) * 10`. A reviewer that
 - **Code-sanity rubric prompt**: `eval/prompts/judge-code-sanity.md` is the shared 20-checkbox rubric the `review` judge invokes for the `code_sanity_score` axis.
 - **Output**: `.dev-kit/eval-report.md` with a per-dim table (axis means + verdict counts).
 
+## Opt-in flags (default OFF)
+
+The session-log judge and golden-diff paths are **never auto-invoked**.
+They cost extra LLM calls and only fire when the user explicitly passes
+the flag (or the `tools/session_monitor.py` handshake emits a request).
+Wire them from a script, not from CI.
+
+| Flag | What it does | Output |
+|---|---|---|
+| `--session-log <path>` | Judge one session log on the 8-axis session rubric (`eval/prompts/judge-session.md`). 1 LLM call, cached by `session_id`. | JSON summary to stdout; `--write-session-report` also writes `.dev-kit/session-eval-report.md`. |
+| `--golden-diff` | Diff the current `run_eval` result against `eval/golden/*.json` (schema 2.0.0 baselines) and emit regression markers per axis. | JSON summary to stdout; `--write-regression-report` also writes `.dev-kit/regression-report.md`. |
+
+These flags are independent: `--session-log` short-circuits the
+case-based path (the session is the unit of judgment, not a case),
+and `--golden-diff` only runs after a case-based `run_eval` completes.
+
 ## CLI
 
 ```
 python lib/eval_runner.py --project-root . [--dry-run] [--dim review|security|plan] [--case <id>]
+python lib/eval_runner.py --project-root . --session-log logs/cc/<sid>.jsonl [--write-session-report]
+python lib/eval_runner.py --project-root . --golden-diff [--write-regression-report]
 ```
 
 - `--dry-run` — skip LLM calls; mock each case at 7.0/DRIFT_WARNING (no API key required).
 - `--dim` — restrict to one dimension. Default: all 3.
 - `--case` — restrict to a single `case_id`.
+- `--session-log` — opt-in: judge one session log on the 8-axis rubric. Default: OFF.
+- `--golden-diff` — opt-in: diff the run_eval result against `eval/golden/*.json`. Default: OFF.
+- `--write-session-report` — emit `.dev-kit/session-eval-report.md` from a `--session-log` run.
+- `--write-regression-report` — emit `.dev-kit/regression-report.md` from a `--golden-diff` run.
 
 ## Failure modes
 
 - Missing transcript for a case -> that case is **skipped** (logged in report), not failed. A new case without a transcript is a setup gap, not a regression.
 - Judge API error -> case marked **ROT** with `error` field, loop continues. One bad case does not abort the eval.
 - LLM returns malformed JSON -> `parse_scores_json` falls back to regex extract; if still empty -> score 0 -> ROT.
+- Empty / unreadable session log under `--session-log` -> report marked **ROT** with `error="empty or unreadable session log"`; no LLM call.
+- Missing `eval/golden/` under `--golden-diff` -> empty regression report (`summary.markers=0`); never errors.
 
 ## Rules
 
 - DRIFT_WARNING -> log + continue. Do not auto-repair.
 - ROT -> log + continue. `/dev-kit:repair` may pick up the case if the eval is wired to the repair loop.
 - Adding a case: drop a JSON into `eval/cases/<dim>/<name>.json` + a recorded transcript into `eval/transcripts/<dim>/<name>.json`. No code change required.
+- `--session-log` and `--golden-diff` are **opt-in only**: no CI wiring, no cron, no auto-trigger from `tools/session_monitor.py` (the monitor only emits a handshake pointer — it does not call the judge itself).
 
 ## Hook integration (Stage Eval)
 

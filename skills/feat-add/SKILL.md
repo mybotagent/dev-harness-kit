@@ -2,6 +2,7 @@
 name: feat-add
 category: build
 description: Add a new feature under TDD. Reads plan artifacts, writes a failing test first, drives the minimum green implementation, then refactors.
+alpha: state
 when_to_use: |
   - User types /dev-kit:feat-add <feature>
   - After /dev-kit:plan defines the feature boundary

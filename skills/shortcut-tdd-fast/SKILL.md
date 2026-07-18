@@ -2,6 +2,7 @@
 name: shortcut-tdd-fast
 category: shortcuts
 description: Bootstrap+Plan bypass → straight to Build. Marks hand-off stub. For urgent hotfix.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:tdd-fast
   - urgent hotfix
