@@ -33,6 +33,7 @@ from lib.analysis_core.fp_filter import (  # noqa: E402
     dedupe,
     apply_verifier,
     threshold_by_mode,
+    Verifier,
 )
 
 
@@ -259,6 +260,33 @@ class TestCrossDimDedupePreservesStronger(unittest.TestCase):
         out = dedupe(items)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0].dim, "smell")
+
+
+
+class TestVerdictIdentityStable(unittest.TestCase):
+    """Verifier.new_id is the SSOT for verdict identity — the same
+    (verifier, evidence_id, voter) triple always hashes to the same ID.
+    Different triples give different IDs. This lets downstream logs
+    dedupe by ID instead of by positional list index (which is fragile
+    under reorderings and filter changes).
+    """
+
+    def test_verdict_ids_are_stable(self):
+        a1 = Verifier.new_id("llm-judge", "ev-1", "voter-A")
+        a2 = Verifier.new_id("llm-judge", "ev-1", "voter-A")
+        self.assertEqual(a1, a2, "same input triple must hash to same ID")
+        # Different verifier → different ID.
+        b = Verifier.new_id("static-rules", "ev-1", "voter-A")
+        self.assertNotEqual(a1, b, "different verifier must give different ID")
+        # Different evidence → different ID.
+        c = Verifier.new_id("llm-judge", "ev-2", "voter-A")
+        self.assertNotEqual(a1, c, "different evidence must give different ID")
+        # Different voter → different ID.
+        d = Verifier.new_id("llm-judge", "ev-1", "voter-B")
+        self.assertNotEqual(a1, d, "different voter must give different ID")
+        # Format: 16-char hex.
+        self.assertEqual(len(a1), 16)
+        self.assertTrue(all(ch in "0123456789abcdef" for ch in a1))
 
 
 if __name__ == "__main__":

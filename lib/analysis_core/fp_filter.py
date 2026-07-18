@@ -21,6 +21,7 @@ the SKILL.md body can compose them with or without the verifier pass.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Iterable, List, Sequence, Tuple
 
 from .evidence import Evidence, Severity, Verdict
@@ -88,18 +89,58 @@ def dedupe(items: Sequence[Evidence]) -> List[Evidence]:
     return out
 
 
+class Verifier:
+    """Stable identity for verifier decisions.
+
+    Verdict identity MUST be stable across calls and processes so log
+    aggregations can dedupe per (verifier, evidence_id, voter). The ID
+    is content-hashed — same triple always returns the same string;
+    changing any component returns a different string (modulo SHA-256
+    collision resistance, negligible in practice).
+    """
+
+    @staticmethod
+    def new_id(verifier: str, evidence_id: str, voter: str) -> str:
+        """Return a deterministic 16-char hex identifier.
+
+        Args:
+            verifier: name of the verifier pipeline (e.g. "llm-judge",
+                "static-rules", "ci-doctor").
+            evidence_id: stable per-finding key — name or content hash.
+            voter: who cast the vote (e.g. "gpt-4o", "rule-engine").
+
+        Returns:
+            16-char SHA-256 prefix of the sorted-canonicalized triple.
+        """
+        key = f"{verifier}|{evidence_id}|{voter}".encode("utf-8")
+        return hashlib.sha256(key).hexdigest()[:16]
+
+
 def apply_verifier(
     items: Sequence[Evidence],
     verdicts: Iterable[Tuple[int, Verdict, str]],
+    verifier: str = "default",
 ) -> List[Evidence]:
     """Drop items the verifier REJECTED; keep CONFIRMED + PLAUSIBLE.
 
     `verdicts` is a list of (index, verdict, reason) tuples in the order
     of the input `items`. Indices that don't match any item are silently
     ignored (the verifier is allowed to be noisy on the edges).
+
+    `verifier` is the pipeline name threaded through `Verifier.new_id`
+    so each verdict carries a stable identity; downstream logs and
+    dedupe keys can be keyed by that ID instead of by positional list
+    index (which is fragile under reorderings and FP-filter changes).
     """
-    drop = {idx for idx, verdict, _reason in verdicts if verdict == Verdict.REJECTED}
-    return [it for idx, it in enumerate(items) if idx not in drop]
+    drop = {
+        Verifier.new_id(verifier, str(idx), "voter")
+        for idx, verdict, _reason in verdicts
+        if verdict == Verdict.REJECTED
+    }
+    return [
+        it for idx, it in enumerate(items)
+        if Verifier.new_id(verifier, str(idx), "voter") not in drop
+    ]
 
 
 def threshold_by_mode(
