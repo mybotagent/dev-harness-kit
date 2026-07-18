@@ -93,8 +93,8 @@ class TestRefactorSchema(unittest.TestCase):
             "refactor must mention /dev-kit:prune as the deletion counterpart",
         )
         self.assertIn(
-            "/dev-kit:feat-remove", self.text,
-            "refactor must mention /dev-kit:feat-remove as the single-feature deletion skill",
+            "prune --target", self.text,
+            "refactor must mention `prune --target` as the single-feature deletion skill",
         )
 
 

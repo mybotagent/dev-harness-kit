@@ -18,7 +18,7 @@ Whole-pipeline refactor. `/dev-kit:inspect` baseline → `/dev-kit:build-refacto
 (4-pass: dead → dup → naming → coverage) → `/dev-kit:review`. Phases are
 **separate calls**, each gating the next on a quoted exit code + test count.
 This skill does **not delete** features; for deletion use `/dev-kit:prune`.
-For one named feature end-to-end, use `/dev-kit:feat-remove <feature>`.
+For one named feature end-to-end, use `prune --target <feature>`.
 
 ## 3 phases (separate calls)
 
