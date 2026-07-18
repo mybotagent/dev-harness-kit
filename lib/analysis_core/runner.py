@@ -40,6 +40,36 @@ from .fp_filter import (
 from .evidence import Verdict  # noqa: F401  (re-export for callers)
 
 
+# ---- Bucket SSOT -----------------------------------------------------------
+# The HIGH/MED/LOW bucket assigned to a single Evidence is computed in one
+# place only: `_bucket_for(sev)`. Both the per-dim summary table and the
+# section header dispatcher call this so the two render paths agree on
+# classification for the same evidence.
+#
+# Mapping (locked):
+#   CRITICAL → HIGH
+#   MAJOR    → HIGH
+#   MINOR    → MED
+#   NIT      → LOW
+_BUCKET_BY_SEVERITY = {
+    Severity.CRITICAL: "HIGH",
+    Severity.MAJOR: "HIGH",
+    Severity.MINOR: "MED",
+    Severity.NIT: "LOW",
+}
+
+
+def _bucket_for(sev: Severity) -> str:
+    """Return the bucket label (HIGH/MED/LOW) for an evidence severity.
+
+    Single source of truth — both `render_markdown`'s section header
+    dispatcher and its per-dim table aggregator route through here so
+    a MAJOR finding always lands in HIGH (not in the table's MED column)
+    regardless of which renderer wrote it.
+    """
+    return _BUCKET_BY_SEVERITY[sev]
+
+
 # Well-known secret patterns that must be masked at the engine boundary
 # before any expert free-text hits the report or the suggested diff.
 # Pattern set is the SSOT required by the `secret` dimension charter
@@ -225,23 +255,14 @@ def render_markdown(result: AnalysisResult) -> str:
 
     for d in result.dimensions:
         items = by_dim.get(d.name, [])
-        high = sum(1 for f in items if f.severity == Severity.CRITICAL)
-        med = sum(1 for f in items if f.severity == Severity.MAJOR)
-        low = sum(
-            1 for f in items if f.severity in (Severity.MINOR, Severity.NIT)
+        counts = {"HIGH": 0, "MED": 0, "LOW": 0}
+        for f in items:
+            counts[_bucket_for(f.severity)] += 1
+        out.append(
+            f"| {d.name} | {counts['HIGH']} | {counts['MED']} | {counts['LOW']} |"
         )
-        out.append(f"| {d.name} | {high} | {med} | {low} |")
 
     out.append("")
-
-    def _bucket(sev: Severity) -> str:
-        # Dispatch keys for `lib/render_report_html.py:_parse_sections`
-        # dispatch (HIGH/MED/LOW prefix match at line 387-393).
-        if sev in (Severity.CRITICAL, Severity.MAJOR):
-            return "HIGH"
-        if sev == Severity.MINOR:
-            return "MED"
-        return "LOW"
 
     def _render_finding(f: Evidence) -> List[str]:
         # Mask secrets at the engine boundary so secret-dim findings
@@ -278,9 +299,11 @@ def render_markdown(result: AnalysisResult) -> str:
 
     # Bucket findings by HIGH/MED/LOW so the HTML consumer's dispatch
     # in `lib/render_report_html.py:387-393` can reach every block.
+    # The per-dim table above uses the SAME `_bucket_for` so the table
+    # and the section headers agree on classification for each evidence.
     by_bucket: Dict[str, List[Evidence]] = {"HIGH": [], "MED": [], "LOW": []}
     for f in result.findings:
-        by_bucket[_bucket(f.severity)].append(f)
+        by_bucket[_bucket_for(f.severity)].append(f)
     for header, items in by_bucket.items():
         out.append(f"## {header} ({len(items)})")
         out.append("")

@@ -770,5 +770,63 @@ class TestDeleteModePromotesLineEvidence(unittest.TestCase):
         self.assertIsNone(diffs[0].line)
 
 
+
+class TestBucketAssignmentIsSingleSource(unittest.TestCase):
+    """The HIGH/MED/LOW bucket assigned to a single Evidence must be
+    computed by ONE function and used by BOTH render paths (the per-dim
+    summary table AND the section header dispatcher). Previously the
+    table and the sections disagreed for any MAJOR finding (table=Med
+    vs section=High).
+    """
+
+    def test_bucket_assignment_is_single_ssource(self):
+        from lib.analysis_core.runner import _bucket_for
+        from lib.analysis_core.evidence import Severity
+        # Same evidence: both severities bucket identically through
+        # the same helper.
+        for sev, expected in [
+            (Severity.CRITICAL, "HIGH"),
+            (Severity.MAJOR, "HIGH"),
+            (Severity.MINOR, "MED"),
+            (Severity.NIT, "LOW"),
+        ]:
+            self.assertEqual(
+                _bucket_for(sev), expected,
+                f"{sev.value} must bucket to {expected}",
+            )
+
+    def test_render_table_and_sections_agree_on_major(self):
+        # A MAJOR finding is the contradiction case: under the old code
+        # the table counted it as MED while the section header counted
+        # it as HIGH. After the SSOT, both agree.
+        repo = _build_synth_repo()
+        candidates = {
+            "dead": [
+                {
+                    "file": str(repo / "a.py"),
+                    "line": 1,
+                    "severity": "major",
+                    "confidence": "high",
+                    "title": "dead m",
+                    "tldr": "t",
+                    "failure_scenario": "s",
+                },
+            ],
+        }
+        md = render_markdown(run_analysis(
+            dimensions=["dead"],
+            mode="read-only",
+            paths=[repo],
+            candidates=candidates,
+        ))
+        # Per-dim table row for `dead` should show HIGH=1, MED=0, LOW=0
+        # (because MAJOR buckets to HIGH under the SSOT).
+        self.assertIn("| dead | 1 | 0 | 0 |", md,
+                      "table row for a single MAJOR finding must show HIGH=1 (SSOT)")
+        # Section header: a single MAJOR finding goes to the HIGH section.
+        self.assertIn("## HIGH (1)", md,
+                      "section header for a single MAJOR must show HIGH (1) (SSOT)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
