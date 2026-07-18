@@ -368,13 +368,17 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
                 )
             )
         elif result.mode == "rewrite":
-            hint = f.fix_hint or "see scenario"
+            # Schema boundary: emit `f.fix` (verbatim code/patch) into
+            # the diff stream. NEVER emit `f.fix_hint` into a diff —
+            # `fix_hint` is for reports only. Fall back to `fix_hint`
+            # only when `f.fix` is absent (legacy data path).
+            patch_text = f.fix if f.fix else (f.fix_hint or "see scenario")
             out.append(
                 SuggestedDiff(
                     file=_mask_secrets(f.file),
                     line=f.line,
                     dim=f.dim,
-                    command=f"# rewrite: {_mask_secrets(hint)}",
+                    command=f"# rewrite: {_mask_secrets(patch_text)}",
                     reason=_mask_secrets(f.failure_scenario),
                 )
             )

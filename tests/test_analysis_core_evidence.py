@@ -289,5 +289,80 @@ class TestVerdictIdentityStable(unittest.TestCase):
         self.assertTrue(all(ch in "0123456789abcdef" for ch in a1))
 
 
+
+class TestFixVsFixHintSchemaSeparation(unittest.TestCase):
+    """The schema boundary MUST keep `fix` (verbatim code/patch) and
+    `fix_hint` (human-readable suggestion) independent. Setting one
+    never pollutes the other; `fix_hint` never enters the diff stream.
+    """
+
+    def test_fix_vs_fix_hint_separation(self):
+        # Both fields exist independently.
+        e = parse_candidate(_cand(
+            fix="def foo():\n    return 42\n",  # verbatim patch
+            fix_hint="add a foo() helper that returns 42",  # prose hint
+        ))
+        self.assertEqual(e.fix, "def foo():\n    return 42\n")
+        self.assertEqual(
+            e.fix_hint,
+            "add a foo() helper that returns 42",
+            "fix_hint must hold human-readable prose, separate from fix",
+        )
+        # Either can be set without the other.
+        e_only_fix = parse_candidate(_cand(fix="x = 1"))
+        self.assertEqual(e_only_fix.fix, "x = 1")
+        self.assertIsNone(e_only_fix.fix_hint)
+        e_only_hint = parse_candidate(_cand(fix_hint="explain"))
+        self.assertIsNone(e_only_hint.fix)
+        self.assertEqual(e_only_hint.fix_hint, "explain")
+
+    def test_diff_stream_does_not_pollute_with_fix_hint(self):
+        # When the evidence carries BOTH `fix` and a non-empty
+        # `fix_hint`, the rewrite-mode diff must contain `fix` only —
+        # never the human-readable `fix_hint` prose.
+        from lib.analysis_core import (
+            run_analysis,
+            emit_suggested_diffs,
+        )
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="ac-fix-hint-")
+        root = Path(tmp)
+        (root / "m.py").write_text("x = 0\n", encoding="utf-8")
+        candidates = {
+            "smell": [
+                {
+                    "file": str(root / "m.py"),
+                    "line": 1,
+                    "severity": "major",
+                    "confidence": "high",
+                    "title": "long method",
+                    "tldr": "too big",
+                    "failure_scenario": "unmaintainable",
+                    "fix": "def helper():\n    pass\n",
+                    "fix_hint": "consider extracting the body into helper() for readability",
+                },
+            ],
+        }
+        result = run_analysis(
+            dimensions=["smell"],
+            mode="rewrite",
+            paths=[root],
+            candidates=candidates,
+        )
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        # Diff contains the verbatim fix code …
+        self.assertIn("def helper()", diffs[0].command)
+        # … but NOT the fix_hint prose.
+        self.assertNotIn(
+            "consider extracting", diffs[0].command,
+            "fix_hint prose must never enter the diff stream",
+        )
+        self.assertNotIn(
+            "readability", diffs[0].command,
+            "fix_hint prose must never enter the diff stream",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

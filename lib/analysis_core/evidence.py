@@ -10,8 +10,20 @@ One parsed finding is one Evidence object. The shape is locked so:
 
 The schema is deliberately conservative: required keys are the ones
 the precision-over-recall contract demands (failure_scenario +
-severity + confidence). Optional keys (fix_hint, good) are surfaced
-when present.
+severity + confidence). Optional keys are surfaced when present:
+
+  - `fix`       — verbatim code/patch to apply (no commentary). When the
+                  engine emits suggested diffs, only `fix` flows into
+                  the diff stream. Empty if the expert has no concrete
+                  patch.
+  - `fix_hint`  — human-readable suggestion. May include prose, an
+                  explanation of *why* the fix matters, or a recap of
+                  the failure scenario. Surface in REPORTS only;
+                  never emit into actual diffs.
+  - `good`      — counter-example the expert considered but rejected.
+
+`fix` and `fix_hint` are independent. Setting one never pollutes the
+other's sink.
 """
 from __future__ import annotations
 
@@ -45,6 +57,21 @@ class Evidence:
 
     All fields are populated by `parse_candidate`; downstream code
     never has to guard against None for required keys.
+
+    Schema boundary contract — `fix` vs `fix_hint`:
+
+      - `fix`      — verbatim code/patch to apply. NO prose, no
+                     explanation, no commentary. Code-only.
+                     This is the field the diff emitter reads.
+      - `fix_hint` — human-readable suggestion for a report. MAY
+                     contain prose, an explanation of the rationale,
+                     or a recap of the failure scenario.
+                     Surface in REPORTS only; never emit into actual
+                     diffs.
+
+    Both fields are independent. The split is enforced at the schema
+    boundary so a future expert prompt that fills `fix_hint` cannot
+    silently pollute the diff stream.
     """
 
     file: str
@@ -55,7 +82,8 @@ class Evidence:
     title: str
     tldr: str
     failure_scenario: str
-    fix_hint: Optional[str] = None
+    fix: Optional[str] = None        # verbatim patch (code-only)
+    fix_hint: Optional[str] = None   # human-readable suggestion text
     spans: Optional[Tuple[int, int]] = None
     good: Optional[str] = None
 
@@ -102,6 +130,7 @@ def parse_candidate(
     dim = candidate.get("dim", "") or dim_fallback
 
     fix_hint = candidate.get("fix_hint")
+    fix_raw = candidate.get("fix")
     good = candidate.get("good")
     spans_raw = candidate.get("spans")
     spans: Optional[Tuple[int, int]] = None
@@ -120,6 +149,11 @@ def parse_candidate(
         title=title,
         tldr=tldr,
         failure_scenario=failure_scenario,
+        # `fix` is the verbatim code/patch (code-only). `fix_hint` is the
+        # human-readable suggestion text. The two are kept independent so
+        # a future expert that fills `fix_hint` cannot pollute the diff
+        # stream — diffs only read `f.fix`.
+        fix=fix_raw if isinstance(fix_raw, str) else None,
         fix_hint=fix_hint if isinstance(fix_hint, str) else None,
         spans=spans,
         good=good if isinstance(good, str) else None,
