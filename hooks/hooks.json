@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "Personal hooks (auto-on at user install). Team hooks (prettier-format, block-dangerous-commands, eslint-fix) are NOT in this plugin — see docs/team-adoption.md for the opt-in pattern; each project copies them into its own .claude/settings.json. Cost measurement is read-only via /dev-kit:cost-gate — no cost hook is wired in.",
+  "_comment": "Personal hooks (auto-on at user install). Team hooks (prettier-format, block-dangerous-commands, eslint-fix) are NOT in this plugin \u2014 see docs/team-adoption.md for the opt-in pattern; each project copies them into its own .claude/settings.json. Cost measurement is read-only via /dev-kit:cost-gate \u2014 no cost hook is wired in.",
   "hooks": {
     "PreToolUse": [
       {
@@ -71,6 +71,15 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-on-session-start.sh",
             "timeout": 8
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/provider-divergence-check.sh",
+            "timeout": 3
           }
         ]
       }
