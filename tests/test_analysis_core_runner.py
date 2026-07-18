@@ -732,5 +732,43 @@ class TestSecretMasking(unittest.TestCase):
         )
 
 
+
+class TestDeleteModePromotesLineEvidence(unittest.TestCase):
+    """mode == "delete" means delete the WHOLE FILE, never a single line.
+    A line-level evidence (e.g. line=42) promoted to file-level so the
+    suggested diff anchors on the file, not on a line that might
+    misread as "delete line N of X".
+    """
+
+    def test_delete_mode_promotes_line_evidence_to_file_level(self):
+        repo = _build_synth_repo()
+        candidates = {
+            "dead": [
+                {
+                    "file": str(repo / "a.py"),
+                    "line": 42,  # explicitly line-level
+                    "severity": "major",
+                    "confidence": "high",
+                    "title": "dead import",
+                    "tldr": "no callers",
+                    "failure_scenario": "line 42 never reached",
+                    "fix_hint": "rm a.py",
+                },
+            ],
+        }
+        result = run_analysis(
+            dimensions=["dead"],
+            mode="delete",
+            paths=[repo],
+            candidates=candidates,
+        )
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        # Delete-mode emits `git rm <file>`, NOT `rm -line=42 ...`.
+        self.assertIn("git rm", diffs[0].command)
+        # The diff anchor is file-level (None), not the original line.
+        self.assertIsNone(diffs[0].line)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

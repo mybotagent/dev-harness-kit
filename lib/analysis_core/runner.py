@@ -305,6 +305,13 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
     rewrite-only dims (dup, smell, overeng, overarch, cleancode).
     Letting delete-mode emit `git rm` for a refactoring smell would
     destroy a valid source file. The per-dim mode is the gate.
+
+    Mode-intent — "delete" means delete the WHOLE FILE, not a single
+    line. When mode == "delete" and the evidence is line-level (a set
+    line or a spans tuple), the engine promotes the evidence to
+    file-level by clearing the line anchor before recording the diff.
+    The rendered diff therefore always reads as "delete the file", never
+    as "delete line N of X".
     """
     if result.mode == "read-only":
         return []
@@ -318,13 +325,20 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
         if d.mode != result.mode:
             continue  # dim does not support this mutation mode
         if result.mode == "delete":
+            # Mode-intent guard: promote line-level evidence to file-level.
+            # Any non-zero line OR a spans tuple = line-level evidence.
+            promoted_line: Optional[int] = None
+            if f.line == 0 and f.spans is None:
+                # Already file-level: keep the original (cleared) line.
+                promoted_line = None
+            # else: leave promoted_line=None (file-level delete).
             if f.file in seen_files:
                 continue
             seen_files.add(f.file)
             out.append(
                 SuggestedDiff(
                     file=_mask_secrets(f.file),
-                    line=f.line,
+                    line=promoted_line,
                     dim=f.dim,
                     command=f"git rm {_mask_secrets(f.file)}",
                     reason=_mask_secrets(f.failure_scenario),
