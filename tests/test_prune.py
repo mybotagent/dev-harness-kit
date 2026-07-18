@@ -263,6 +263,25 @@ class TestDiscoverDependentsScript(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("target is not resolvable", proc.stderr)
 
+    def test_scope_outside_target_exits_2(self):
+        """An explicit scope outside the target root must be rejected."""
+        cand = self.tmp_p / "cand.json"
+        out = self.tmp_p / "out.md"
+        cand.write_text("{}", encoding="utf-8")
+        proc = subprocess.run(
+            [
+                sys.executable, str(DISCOVER_DEPENDENTS),
+                "--target", "prune",
+                "--scope", "skills/refactor",
+                "--candidates", str(cand),
+                "--out", str(out),
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("scope must remain inside target root", proc.stderr)
+
     def test_target_scope_defaults_to_feature_root(self):
         """Without --scope, analysis is narrowed to the resolved skill root."""
         candidates = {
