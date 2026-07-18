@@ -1,0 +1,240 @@
+"""babysit_pr_reliability.py -- reliability helpers for /dev-kit:babysit-pr.
+
+Two pure-function primitives consumed by the babysit-pr skill
+(`skills/babysit-pr/SKILL.md`):
+
+  is_stale_lock(path, ttl_seconds=1800)
+      Detect a stale babysit.lock left behind by a SIGKILL / OOM /
+      network-partition during a previous run. Stale locks wedge every
+      future babysit-pr iteration. Returns True when EITHER
+        (a) the lock file mtime is older than ttl_seconds ago, OR
+        (b) the recorded pid= field names a process that no longer
+            exists (Linux: pid absent from /proc; macOS: kill(0)
+            fails with ESRCH).
+
+  classify_check(check, now_epoch, ghost_threshold_seconds=300)
+      Classify a single `gh pr checks` entry. Returns one of
+        approved  -- conclusion in {success, skipped, neutral}
+        failing   -- conclusion in {failure, cancelled, timed_out,
+                                    stale, error}
+        pending   -- conclusion is None and the check looks alive
+                     (startedAt or updatedAt within ghost_threshold_seconds)
+        ghost     -- conclusion is None, no startedAt/updatedAt within
+                     ghost_threshold_seconds, OR explicit databaseId is
+                     missing entirely (GitHub's signal that the workflow
+                     run has been pruned from the checks table).
+                     The skill should stop waiting on a ghost check and
+                     surface it as a recovery-required failure.
+      The function never raises: malformed inputs return "pending" (the
+      most conservative non-alarming default).
+
+Both helpers are deterministic (no time-of-day randomness -- callers
+pass `now_epoch`) so regression tests can reproduce ghost / fresh-lock
+states without sleeping.
+
+This module is the exclusive home for babysit-pr reliability
+primitives. It does not touch `lib/analysis_core/*` or
+`tools/skill_usage.py`.
+"""
+from __future__ import annotations
+
+import calendar
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any, Mapping, Union
+
+PathLike = Union[str, os.PathLike]
+
+# Outcome strings observed by `gh pr checks --json name,state,conclusion`
+# in the wild (union of GitHub Actions conclusion vocabulary).
+APPROVED_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
+FAILING_CONCLUSIONS = frozenset({
+    "failure", "failures", "cancelled", "timed_out", "stale", "error",
+})
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True when `pid` refers to a running process on this host.
+
+    Linux: a running pid has an entry under /proc/<pid>.
+    macOS: kill(pid, 0) succeeds when the pid exists, fails ESRCH when
+    not, EPERM when the pid exists but we do not own it (treat as alive
+    so we do not falsely classify the lock as stale).
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _parse_pid_from_lock(content: str) -> int | None:
+    """Best-effort parse of `pid=<int>` from a lock file body.
+
+    Returns the first integer after `pid=` on any line, or None.
+    Tolerates surrounding whitespace and arbitrary trailing characters
+    -- the babysit-pr format is `<ISO> pid=<n> branch=<x>`.
+    """
+    for line in content.splitlines():
+        m = re.search(r"pid=(\d+)", line)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def is_stale_lock(
+    path: PathLike,
+    ttl_seconds: int = 1800,
+    *,
+    now_epoch: float | None = None,
+) -> bool:
+    """Return True when the lock file at `path` is stale.
+
+    A lock is stale when it is older than `ttl_seconds` (default 30
+    minutes, generous for babysit-pr's per-iteration push cycle), OR the
+    recorded pid no longer exists.
+
+    Missing `path` returns False -- there is nothing to be stale -- so
+    callers can short-circuit without a try/except dance:
+
+        if not is_stale_lock(".dev-kit/babysit.lock"):
+            return already_running_error
+
+    The `now_epoch` parameter is for tests only.
+    """
+    p = Path(path)
+    try:
+        st = p.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+    now = now_epoch if now_epoch is not None else time.time()
+    age = now - st.st_mtime
+    if age > ttl_seconds:
+        return True
+
+    try:
+        body = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        # Read failure on a lock we just stat()'d: be conservative and
+        # call it non-stale. The next babysit-pr run can re-evaluate.
+        return False
+
+    pid = _parse_pid_from_lock(body)
+    if pid is not None and not _pid_alive(pid):
+        return True
+
+    return False
+
+
+def _epoch_from_iso(s: Any) -> float | None:
+    """Convert an ISO-8601-ish timestamp to epoch seconds (UTC).
+
+    Accepts the shapes GitHub emits in `startedAt` / `updatedAt`:
+        2026-07-18T14:23:45Z
+        2026-07-18T14:23:45.123Z
+        2026-07-18T14:23:45+00:00
+    Returns None on unparseable input. Never raises.
+
+    Uses `calendar.timegm` so the result is a UTC epoch (not local-
+    time-dependent) -- callers compare against their own UTC `now_epoch`.
+    """
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    base = s.split(".")[0]
+    if base.endswith("Z"):
+        base = base[:-1]
+    # Drop trailing "+HH:MM" / "-HH:MM" timezone marker if present.
+    # Date-only strings or naive timestamps stay as-is.
+    for marker in ("+", "-"):
+        idx = base.rfind(marker)
+        if idx > 10:
+            base = base[:idx]
+    base = base[:19]
+    try:
+        return calendar.timegm(time.strptime(base, "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def classify_check(
+    check: Mapping[str, Any],
+    now_epoch: float,
+    *,
+    ghost_threshold_seconds: int = 300,
+) -> str:
+    """Classify a `gh pr checks` entry.
+
+    Returns one of: "approved" | "failing" | "pending" | "ghost".
+
+    `ghost` is the recovery contract: a check that has been pending long
+    enough that no live workflow will ever resolve it (worktree removed,
+    workflow file renamed or deleted, OR the run was cancelled at the
+    GitHub side and never reported back). The babysit-pr loop should
+    stop blocking on ghost checks and surface them as recovery-required
+    failures.
+    """
+    if not isinstance(check, Mapping):
+        return "pending"
+
+    conclusion = check.get("conclusion")
+    state = (check.get("state") or "").lower()
+
+    # Terminal conclusions: never ghost.
+    if isinstance(conclusion, str):
+        c = conclusion.lower()
+        if c in APPROVED_CONCLUSIONS:
+            return "approved"
+        if c in FAILING_CONCLUSIONS:
+            return "failing"
+        # Unknown conclusion string -- treat as pending rather than ghost
+        # so the babysit does not silence a check the gateway may yet
+        # report on.
+        return "pending"
+
+    # No conclusion yet. Distinguish live-pending from ghost.
+    raw_db = check.get("databaseId")
+    database_id_present = (
+        isinstance(raw_db, int)
+        or (isinstance(raw_db, str) and raw_db.strip().isdigit())
+    )
+    started_epoch = _epoch_from_iso(check.get("startedAt"))
+    updated_epoch = _epoch_from_iso(check.get("updatedAt"))
+
+    last_seen_candidates = [t for t in (started_epoch, updated_epoch) if t is not None]
+    last_seen = max(last_seen_candidates) if last_seen_candidates else None
+
+    if not database_id_present:
+        # No databaseId is GitHub's "this run has been pruned from the
+        # checks table" signal. Ghost regardless of state.
+        return "ghost"
+
+    if last_seen is None:
+        # No timestamp to anchor against. "expected" / "waiting" /
+        # "queued" / "requested" states mean a check that has never
+        # started -- they ghost out only after the threshold; otherwise
+        # we leave them pending so the first run sees them.
+        if state in {"expected", "waiting", "queued", "requested"}:
+            return "ghost"
+        return "pending"
+
+    age = now_epoch - last_seen
+    if age > ghost_threshold_seconds:
+        return "ghost"
+    return "pending"

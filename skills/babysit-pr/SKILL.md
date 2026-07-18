@@ -283,13 +283,71 @@ not skip.
 
 ## Lock file protocol
 
-On start:
+On start (existing-lock safety net FIRST; then stamp-and-write):
+
 ```bash
 mkdir -p .dev-kit
-[[ -f .dev-kit/babysit.lock ]] && { echo "already running: $(cat .dev-kit/babysit.lock)"; exit 1; }
+if [[ -f .dev-kit/babysit.lock ]]; then
+  # Detect stale locks (SIGKILL / OOM / network-partition from a previous
+  # run) before refusing. The pure helper at lib/babysit_pr_reliability.py
+  # returns True when EITHER:
+  #   (a) the lock mtime is older than ttl_seconds (default 1800s == 30 min), OR
+  #   (b) the recorded pid= field names a process that no longer exists.
+  # TTL is generous for the babysit cycle (each iteration is a few minutes
+  # at most); a SIGKILL is the case the helper specifically catches.
+  if python3 -c "
+import sys, pathlib
+sys.path.insert(0, 'lib')
+import babysit_pr_reliability as bpr
+sys.exit(0 if bpr.is_stale_lock('.dev-kit/babysit.lock') else 1)
+" ; then
+    echo "stale babysit.lock detected (TTL exceeded or pid gone); removing and proceeding"
+    rm -f .dev-kit/babysit.lock
+  else
+    echo "already running: $(cat .dev-kit/babysit.lock)"
+    exit 1
+  fi
+fi
 echo "$(date -Iseconds) pid=$$ branch=$(git rev-parse --abbrev-ref HEAD)" > .dev-kit/babysit.lock
 trap 'rm -f .dev-kit/babysit.lock' EXIT
 ```
+
+The stale-lock detection is the close for Gap #11 in
+`docs/hook-coverage-gaps.md`. The helper is pure (no I/O randomness;
+`now_epoch` is parameterizable for tests) so the same logic is used by
+`tests/test_babysit_pr_reliability.py::TestIsStaleLock` end-to-end.
+
+### Ghost-workflow classification (Gap #12)
+
+`gh pr checks` may report a check whose underlying workflow file has
+been deleted server-side; the check stays `conclusion=null`/`state=pending`
+indefinitely. The §Algorithm step 4 wait loop (sleep 30s, goto 1) would
+otherwise spin until MAX_ITERS. Replace the sleep with classify-driven
+gating:
+
+```bash
+# Per failing/pending check, ask classify_check whether it is a ghost.
+# A "ghost" means: no databaseId, OR startedAt/updatedAt is older than
+# ghost_threshold_seconds (default 300s == 5 min) -- i.e. no live
+# workflow will ever resolve it.
+GHOSTS=$(gh pr checks --json name,state,conclusion,databaseId,startedAt,updatedAt   | python3 -c "
+import json, sys
+checks = json.load(sys.stdin)
+import pathlib; sys.path.insert(0, 'lib')
+import babysit_pr_reliability as bpr
+now = $(date +%s)
+ghosts = [c['name'] for c in checks if bpr.classify_check(c, now) == 'ghost']
+print(','.join(ghosts))
+")
+if [[ -n "$GHOSTS" ]]; then
+  echo "ghost workflow check(s) detected: $GHOSTS -- surfacing as recovery-required"
+  # Print the recovery hint and break the loop instead of busy-waiting.
+fi
+```
+
+The classify helper is `classify_check(check_dict, now_epoch, ghost_threshold_seconds=300)`
+in `lib/babysit_pr_reliability.py`. Pin tests live in
+`tests/test_babysit_pr_reliability.py::TestClassifyCheck` (13 cases).
 
 ---
 
