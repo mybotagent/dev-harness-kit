@@ -206,7 +206,7 @@ jobs:
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{sub(/^\*\*Verdict:\*\*[[:space:]]*/, ""); print}' || true)"
+            | awk '{print $NF}' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
@@ -347,7 +347,7 @@ jobs:
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
             | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{sub(/^\*\*Verdict:\*\*[[:space:]]*/, ""); print}' || true)"
+            | awk '{print $NF}' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
 
