@@ -55,6 +55,13 @@ esac
 
 # In main checkout → deny with actionable reason.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden. Per rules/git-workflow.md: every task = new worktree + client handoff + new branch. Claude Code: open a new session in the worktree. Codex: spawn/hand off a subagent with its working directory set to the worktree. Run: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main."
+MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden.
+Pick a routing:
+  1. Client:        claude | codex
+  2. Concurrency:   single | parallel
+  3. Action:
+     - claude + single   → worktree add -b <type>/<slug> .worktrees/<slug> origin/main, then open a Claude session in that path
+     - codex + parallel  → spawn N sub-agents, each cwd=<worktree>, branch=<branch>, with the task prompt explicitly
+Existing rule: every task = new worktree + client handoff + new branch (rules/git-workflow.md)."
 
   deny "WORKTREE GUARD" "$MSG"
