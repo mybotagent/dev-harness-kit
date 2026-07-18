@@ -47,11 +47,12 @@ def dedupe(items: Sequence[Evidence]) -> List[Evidence]:
     """Collapse identical anchors, keeping the strongest severity.
 
     Anchor key = (file, line, dim). On collision, the higher-severity
-    finding wins. Cross-dim duplicates at the same (file, line) collapse
-    to the entry that surfaced first; the second is dropped.
+    finding wins. Cross-dim duplicates at the same (file, line) keep
+    the *stronger* finding regardless of arrival order — never silently
+    drop a CRITICAL because a MINOR surfaced first.
     """
     by_anchor: dict = {}
-    seen_file_line: set = set()
+    fl_index: dict = {}  # (file, line) -> index in `out`
     out: List[Evidence] = []
     for it in items:
         key = (it.file, it.line, it.dim)
@@ -64,13 +65,24 @@ def dedupe(items: Sequence[Evidence]) -> List[Evidence]:
                 for idx, e in enumerate(out):
                     if (e.file, e.line, e.dim) == key:
                         out[idx] = it
+                        fl_index[(it.file, it.line)] = idx
                         break
             continue
         # Cross-dim root-cause collapse: same (file, line) but different dim.
         fl_key = (it.file, it.line)
-        if fl_key in seen_file_line:
+        if fl_key in fl_index:
+            existing_idx = fl_index[fl_key]
+            existing = out[existing_idx]
+            # Keep the stronger of the two — never drop CRITICAL behind MINOR.
+            if list(Severity).index(it.severity) < list(Severity).index(existing.severity):
+                # Replace: pop old dim's anchor, register new one.
+                old_key = (existing.file, existing.line, existing.dim)
+                by_anchor.pop(old_key, None)
+                by_anchor[key] = it
+                out[existing_idx] = it
+                fl_index[fl_key] = existing_idx
             continue
-        seen_file_line.add(fl_key)
+        fl_index[fl_key] = len(out)
         by_anchor[key] = it
         out.append(it)
     return out

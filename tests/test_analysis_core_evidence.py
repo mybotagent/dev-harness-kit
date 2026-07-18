@@ -201,5 +201,65 @@ class TestParseCandidateOptionalFields(unittest.TestCase):
             Verdict("maybe")
 
 
+class TestDimFallback(unittest.TestCase):
+    """When expert JSON contracts omit `dim`, the outer loop's dim name
+    must be inherited so findings render with correct attribution and
+    do not collide during dedupe.
+    """
+
+    def test_missing_dim_inherits_fallback(self):
+        bad = _cand()
+        bad.pop("dim", None)
+        e = parse_candidate(bad, dim_fallback="dead")
+        self.assertEqual(e.dim, "dead")
+
+    def test_present_dim_overrides_fallback(self):
+        # Caller-provided dim wins over fallback so per-item dim is honored.
+        e = parse_candidate(_cand(dim="smell"), dim_fallback="dead")
+        self.assertEqual(e.dim, "smell")
+
+    def test_empty_dim_falls_back(self):
+        bad = _cand()
+        bad["dim"] = ""
+        e = parse_candidate(bad, dim_fallback="dead")
+        self.assertEqual(e.dim, "dead")
+
+
+class TestCrossDimDedupePreservesStronger(unittest.TestCase):
+    """Cross-dim dedupe MUST keep the stronger finding regardless of
+    arrival order — never silently drop a CRITICAL behind a MINOR.
+    """
+
+    def test_minor_then_critical_keeps_critical(self):
+        items = [
+            parse_candidate(_cand(line=1, dim="smell", severity="minor")),
+            parse_candidate(_cand(line=1, dim="dead", severity="critical")),
+        ]
+        out = dedupe(items)
+        sevs = [e.severity for e in out]
+        self.assertIn(Severity.CRITICAL, sevs)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].dim, "dead")
+
+    def test_critical_then_minor_keeps_critical(self):
+        items = [
+            parse_candidate(_cand(line=2, dim="dead", severity="critical")),
+            parse_candidate(_cand(line=2, dim="smell", severity="minor")),
+        ]
+        out = dedupe(items)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].severity, Severity.CRITICAL)
+
+    def test_same_severity_keeps_first(self):
+        # Deterministic tie-break: arrival order wins.
+        items = [
+            parse_candidate(_cand(line=3, dim="smell", severity="major")),
+            parse_candidate(_cand(line=3, dim="dead", severity="major")),
+        ]
+        out = dedupe(items)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].dim, "smell")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

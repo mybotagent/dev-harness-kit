@@ -24,6 +24,7 @@ parent skill expects.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -37,6 +38,60 @@ from .fp_filter import (
     threshold_by_mode,
 )
 from .evidence import Verdict  # noqa: F401  (re-export for callers)
+
+
+# Well-known secret patterns that must be masked at the engine boundary
+# before any expert free-text hits the report or the suggested diff.
+# Each pattern matches a public, vendor-published key shape so false-
+# positives stay rare in normal source text.
+_SECRET_PATTERNS = (
+    re.compile(r"AKIA[0-9A-Z]{16}"),                  # AWS access key id
+    re.compile(r"AIza[0-9A-Za-z\-_]{35}"),            # GCP API key
+    re.compile(r"ghp_[0-9A-Za-z]{36}"),               # GitHub personal access token
+    re.compile(r"sk-[0-9A-Za-z]{32,}"),               # OpenAI-style secret key
+    re.compile(r"xox[baprs]-[0-9A-Za-z\-]{10,}"),     # Slack token
+)
+_SECRET_PLACEHOLDER = "[REDACTED]"
+
+
+def _mask_secrets(text: str) -> str:
+    """Mask any well-known secret-shape strings in free-text fields.
+
+    Applied at the engine boundary (render_markdown + emit_suggested_diffs)
+    so the secret-dimension charter's "never echo a real key" invariant
+    survives regardless of how the parent skill uses the output.
+    """
+    if not text:
+        return text
+    out = text
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub(_SECRET_PLACEHOLDER, out)
+    return out
+
+
+def _is_in_scope(file: str, scope_paths: Sequence[Path]) -> bool:
+    """True iff file resolves under any of the scope paths.
+
+    When `scope_paths` is empty, accept everything (no scope filter).
+    Files that fail to resolve are treated as out-of-scope.
+    """
+    if not scope_paths:
+        return True
+    try:
+        f = Path(file).resolve()
+    except (OSError, ValueError):
+        return False
+    for sp in scope_paths:
+        try:
+            sp_resolved = sp.resolve()
+        except (OSError, ValueError):
+            continue
+        try:
+            f.relative_to(sp_resolved)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 @dataclass
@@ -97,11 +152,16 @@ def run_analysis(
     for d in dims:
         for raw_item in raw.get(d.name, []) or []:
             try:
-                parsed.append(parse_candidate(dict(raw_item)))
+                ev = parse_candidate(dict(raw_item), dim_fallback=d.name)
             except (ValueError, TypeError):
                 # Malformed item from a per-dim expert is dropped silently.
                 # Verifier pass would catch this; deterministic mode skips it.
                 continue
+            # Enforce path scope at parse time so out-of-scope findings
+            # never reach the filter pipeline (or downstream mutation).
+            if not _is_in_scope(ev.file, paths_t):
+                continue
+            parsed.append(ev)
 
     pre_filter_count = len(parsed)
     filtered = deterministic_filter(parsed)
@@ -164,12 +224,24 @@ def render_markdown(result: AnalysisResult) -> str:
     out.append("## Findings")
     out.append("")
     for f in result.findings:
-        out.append(f"- **[{f.severity.value.upper()}] {f.title}** — "
-                   f"{f.file}:{f.line} (dim: {f.dim})")
-        out.append(f"  TL;DR: {f.tldr}")
-        out.append(f"  Scenario: {f.failure_scenario}")
-        if f.fix_hint:
-            out.append(f"  Fix: {f.fix_hint}")
+        # Mask secrets at the engine boundary so secret-dim findings
+        # never echo a real key in the rendered report.
+        title = _mask_secrets(f.title)
+        tldr = _mask_secrets(f.tldr)
+        scenario = _mask_secrets(f.failure_scenario)
+        fix_hint = _mask_secrets(f.fix_hint) if f.fix_hint else None
+        # Bullet shape is locked to match `lib/render_report_html.py`'s
+        # _parse_inspect_findings regex so the HTML report consumer keeps
+        # working. Field keys must stay in {Dim, TL;DR, Scenario, Fix}.
+        out.append(
+            f"- [{f.severity.value.upper()} | {f.confidence.upper()}] "
+            f"{title} -- {f.file}:{f.line}"
+        )
+        out.append(f"  Dim: {f.dim}")
+        out.append(f"  TL;DR: {tldr}")
+        out.append(f"  Scenario: {scenario}")
+        if fix_hint:
+            out.append(f"  Fix: {fix_hint}")
         out.append("")
     if not result.findings:
         out.append("(no findings)")
@@ -181,14 +253,30 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
     """Translate kept findings into mutation commands per the mode.
 
     - delete:    `rm <file>` / `git rm <file>` for each non-zero finding
-    - rewrite:   `# rewrite: <fix_hint>` per finding
+                 whose Dimension.mode == "delete". Rewrite-only dims
+                 never get a `git rm`, even when the engine is asked
+                 to surface suggestions in delete mode.
+    - rewrite:   `# rewrite: <fix_hint>` per finding whose
+                 Dimension.mode == "rewrite". Delete-only dims are
+                 skipped — their mutations belong to `delete` mode.
     - read-only: empty list (no mutation surfaced)
+
+    Rationale: group("inspect") mixes delete-only dims (dead) with
+    rewrite-only dims (dup, smell, overeng, overarch, cleancode).
+    Letting delete-mode emit `git rm` for a refactoring smell would
+    destroy a valid source file. The per-dim mode is the gate.
     """
     if result.mode == "read-only":
         return []
+    dim_by_name = {d.name: d for d in result.dimensions}
     out: List[SuggestedDiff] = []
     seen_files: set = set()
     for f in result.findings:
+        d = dim_by_name.get(f.dim)
+        if d is None:
+            continue
+        if d.mode != result.mode:
+            continue  # dim does not support this mutation mode
         if result.mode == "delete":
             if f.file in seen_files:
                 continue
@@ -198,19 +286,19 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
                     file=f.file,
                     line=f.line,
                     dim=f.dim,
-                    command=f"git rm {f.file}",
-                    reason=f.failure_scenario,
+                    command=f"git rm {_mask_secrets(f.file)}",
+                    reason=_mask_secrets(f.failure_scenario),
                 )
             )
         elif result.mode == "rewrite":
             hint = f.fix_hint or "see scenario"
             out.append(
                 SuggestedDiff(
-                    file=f.file,
+                    file=_mask_secrets(f.file),
                     line=f.line,
                     dim=f.dim,
-                    command=f"# rewrite: {hint}",
-                    reason=f.failure_scenario,
+                    command=f"# rewrite: {_mask_secrets(hint)}",
+                    reason=_mask_secrets(f.failure_scenario),
                 )
             )
     return out

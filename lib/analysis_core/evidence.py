@@ -64,12 +64,17 @@ _KNOWN_SEVERITIES = {s.value for s in Severity}
 _ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 
 
-def parse_candidate(candidate: Dict[str, Any]) -> Evidence:
+def parse_candidate(
+    candidate: Dict[str, Any], dim_fallback: str = ""
+) -> Evidence:
     """Coerce one expert JSON item into an Evidence.
 
     Raises ValueError on missing required fields or invalid enums.
     Missing `confidence` defaults to "medium" so a malformed expert
     output never trips the verifier — it just gets the medium floor.
+    Missing `dim` falls back to `dim_fallback` (the outer Dimension
+    name supplied by the engine loop) so expert JSON contracts can
+    omit the redundant per-item dim field without rendering empty.
     """
     try:
         file = str(candidate["file"])
@@ -94,7 +99,7 @@ def parse_candidate(candidate: Dict[str, Any]) -> Evidence:
     failure_scenario = candidate.get("failure_scenario", "") or ""
     title = candidate.get("title", "") or ""
     tldr = candidate.get("tldr", "") or ""
-    dim = candidate.get("dim", "") or ""
+    dim = candidate.get("dim", "") or dim_fallback
 
     fix_hint = candidate.get("fix_hint")
     good = candidate.get("good")
