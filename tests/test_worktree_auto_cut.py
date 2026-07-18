@@ -207,7 +207,7 @@ class TestWorktreeAutoCutDirtyMain(unittest.TestCase):
         ctx = doc["hookSpecificOutput"]["additionalContext"]
         self.assertIn("main checkout is dirty", ctx)
         self.assertIn("stash or commit", ctx)
-        self.assertFalse((Path(self._main.name) / ".worktrees").exists())
+        self.assertFalse((Path(self._main.name) / ".workspace").exists())
 
 
 class TestWorktreeAutoCutFires(unittest.TestCase):
@@ -224,7 +224,7 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
     def tearDown(self):
         # Clean up any worktree the hook may have created.
         root = Path(self._main.name)
-        wt_root = root / ".worktrees"
+        wt_root = root / ".workspace"
         if wt_root.exists():
             for child in wt_root.iterdir():
                 subprocess.run(
@@ -275,9 +275,9 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
             f"worktree path does not exist: {wt_path}",
         )
         self.assertIn(
-            f"{os.sep}.worktrees{os.sep}",
+            f"{os.sep}.workspace{os.sep}",
             wt_path,
-            f"new worktree must use the client-neutral .worktrees root: {wt_path}",
+            f"new worktree must use the client-neutral .workspace root: {wt_path}",
         )
         # Worktree must be a real git worktree (HEAD on a branch).
         branch_ref = subprocess.run(
@@ -325,7 +325,7 @@ class TestWorktreeAutoCutFires(unittest.TestCase):
         wt_path = Path(re.search(r"path:\s+(\S+)", ctx).group(1))
         self.assertEqual(
             wt_path.parent.resolve(),
-            (Path(self._main.name) / ".worktrees").resolve(),
+            (Path(self._main.name) / ".workspace").resolve(),
         )
         self.assertTrue(wt_path.is_dir())
 

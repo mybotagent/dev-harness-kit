@@ -217,7 +217,7 @@ fi
 # first so a session started from a subdirectory still shares the canonical
 # worktree root with Claude Code and Codex.
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-WT_PARENT="$REPO_ROOT/.worktrees"
+WT_PARENT="$REPO_ROOT/.workspace"
 mkdir -p "$WT_PARENT"
 WT_PATH="$WT_PARENT/$DIRNAME"
 

@@ -539,7 +539,7 @@ class TestDiscoverLogsWorktree(unittest.TestCase):
     def test_canonical_worktree_logs_are_included(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            wt_file = self._touch(root / ".worktrees" / "wt" / "logs" / "codex" / "w.jsonl")
+            wt_file = self._touch(root / ".workspace" / "wt" / "logs" / "codex" / "w.jsonl")
             self.assertIn(wt_file, discover_logs(root / "logs", repo_root=root))
 
     def test_no_repo_root_does_not_walk_worktrees(self):

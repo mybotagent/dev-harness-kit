@@ -169,9 +169,11 @@ else
 fi
 
 if [[ "$ALL_WORKTREES" -eq 1 ]]; then
-    # .worktrees is the shared canonical root. Keep the two historical roots
-    # discoverable so upgrading does not strand existing worktrees.
+    # .workspace is the shared canonical root (issue #272). Keep the three
+    # historical roots discoverable so upgrading does not strand existing
+    # worktrees.
     WT_ROOTS=(
+        "$TARGET_DIR/.workspace"
         "$TARGET_DIR/.worktrees"
         "$TARGET_DIR/.claude/worktrees"
         "$TARGET_DIR/.codex/worktrees"
