@@ -31,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 HOOK = ROOT / "hooks" / "acp-tier-assert.sh"
 HOOKS_JSON = ROOT / "hooks" / "hooks.json"
+CODEX_HOOKS_JSON = ROOT / ".codex-plugin" / "hooks" / "hooks.json"
 
 
 def _init_throwaway_repo() -> "tempfile.TemporaryDirectory":
@@ -93,6 +94,36 @@ class WiringTests(unittest.TestCase):
             self.assertNotEqual(matcher, "Bash", "Bash-only matcher misses Edit/Write/MultiEdit")
             self.assertNotEqual(matcher, "Edit", "Edit-only matcher misses Bash")
         # At least one entry uses the universal '*' matcher.
+        self.assertIn("*", matchers, "tier-assert hook must use matcher='*'")
+
+    def test_codex_hooks_json_wires_pretooluse_star_to_acp_tier_assert(self) -> None:
+        # Regression for review finding: Codex sessions bypassed the
+        # tier guard because the Codex manifest pointed at
+        # .codex-plugin/hooks/hooks.json which had no acp-tier-assert
+        # entry. The two runtimes must keep parity.
+        self.assertTrue(
+            CODEX_HOOKS_JSON.is_file(),
+            f"missing Codex hooks manifest: {CODEX_HOOKS_JSON}",
+        )
+        config = json.loads(CODEX_HOOKS_JSON.read_text(encoding="utf-8"))
+        groups = config.get("hooks", {}).get("PreToolUse", [])
+        wired = []
+        for group in groups:
+            matcher = group.get("matcher", "")
+            for entry in group.get("hooks", []):
+                cmd = entry.get("command", "")
+                if "acp-tier-assert.sh" in cmd:
+                    wired.append((matcher, cmd))
+        self.assertTrue(
+            wired,
+            ".codex-plugin/hooks/hooks.json does not wire acp-tier-assert.sh "
+            "into any PreToolUse group. Add an entry with matcher='*' so "
+            "Codex sessions enforce the same tier guard as Claude sessions.",
+        )
+        matchers = sorted({m for m, _ in wired})
+        for matcher in matchers:
+            self.assertNotEqual(matcher, "Bash", "Bash-only matcher misses Edit/Write/MultiEdit")
+            self.assertNotEqual(matcher, "Edit", "Edit-only matcher misses Bash")
         self.assertIn("*", matchers, "tier-assert hook must use matcher='*'")
 
 

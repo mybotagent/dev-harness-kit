@@ -123,31 +123,48 @@ class DispatchResult:
 # ---------------------------------------------------------------------------
 
 
-def parse_pr_spec(spec: str) -> tuple[str, str]:
-    """Parse a `"PR-<index>:<slug>"` CLI string into `(branch, task)`.
+def parse_pr_spec(spec: str) -> tuple[int, str, str]:
+    """Parse a `"PR-<index>:<slug>"` CLI string into `(index, branch, slug)`.
 
-    The dispatcher's `dispatch()` method takes `list[tuple[str, str]]`
-    so this is the public shim that turns the CLI's comma-separated
-    `PR-3:l6-alpha,PR-2:launcher` shorthand into the same shape.
+    The dispatcher's `dispatch()` method takes
+    `list[tuple[int, str, str]]` so the documented `PR-<index>` is
+    preserved verbatim. Renumbering by input order would corrupt the
+    merge-order / version-slot hand-off metadata whenever specs are
+    decomposed or passed out of order (the documented example is
+    `"PR-3:l6-alpha,PR-2:launcher"`, where the first result MUST come
+    back as PR-3, not PR-1).
 
     Returns
     -------
-    (branch, task) : tuple[str, str]
+    (pr_index, branch, slug) : tuple[int, str, str]
+        `pr_index` is the 1-based `PR-<index>` integer; the M's
+        `bin/version-slot compute <PR_INDEX>` reads this directly.
         `branch` is `feat/<slug>` (default type — the M can rename
         before commit per `rules/git-workflow.md`).
-        `task` is the slug used as a one-line `<TASK>` summary.
+        `slug` is the kebab-case identifier used to name the
+        dispatch envelope file and to derive the worktree dir.
     """
     if ":" not in spec:
         raise ValueError(f"PR spec must be 'PR-<index>:<slug>' (got {spec!r})")
     head, slug = spec.split(":", 1)
     if not head.startswith("PR-"):
         raise ValueError(f"PR spec must start with 'PR-' (got {head!r})")
+    index_str = head[3:]
+    if not index_str.isdigit():
+        raise ValueError(
+            f"PR spec must have a numeric index after 'PR-' (got {head!r})"
+        )
+    pr_index = int(index_str)
+    if pr_index < 1:
+        raise ValueError(
+            f"PR index must be 1-based (got {pr_index!r})"
+        )
     if not re.match(r"^[a-z0-9-]{2,40}$", slug):
         raise ValueError(
             f"PR slug must be kebab-case 2-40 chars per rules/git-workflow.md "
             f"(got {slug!r})"
         )
-    return f"feat/{slug}", slug
+    return pr_index, f"feat/{slug}", slug
 
 
 def _utc_iso() -> str:
@@ -276,7 +293,7 @@ class ACPDispatcher:
     def dispatch(
         self,
         round: str,  # noqa: A002 — match the dispatch contract signature
-        prs: list[tuple[str, str]],
+        prs: list[tuple[int, str, str]],
     ) -> list[DispatchResult]:
         """Read the canonical template, fill the 7 placeholders, and cut worktrees.
 
@@ -285,8 +302,12 @@ class ACPDispatcher:
         round : str
             The round descriptor. Mirrors `round_slug`; kept in the
             signature so the CLI and the library share one entry point.
-        prs : list[tuple[str, str]]
-            `[(branch, task_slug), ...]` — one tuple per PR to dispatch.
+        prs : list[tuple[int, str, str]]
+            `[(pr_index, branch, task_slug), ...]` — one tuple per PR
+            to dispatch. `pr_index` is the 1-based `PR-<index>` integer
+            preserved verbatim from `parse_pr_spec`; the dispatcher
+            never renumbers it, so the M's merge-order / version-slot
+            metadata survives reordering or decomposition.
             `branch` is the full `<type>/<slug>` form, `task_slug` is
             the short slug used to name the dispatch envelope file and
             to derive the worktree dir.
@@ -306,8 +327,17 @@ class ACPDispatcher:
         template = self._get_template()
         results: list[DispatchResult] = []
         round_dir = self.repo_root / ".dev-kit" / f"round-{self.round_slug}"
-        for index, (branch, task_slug) in enumerate(prs, start=1):
-            spec = DispatchSpec(pr_index=index, branch=branch, task=task_slug)
+        version_target = self.plugin_version_target or self._resolve_default_version()
+        if not version_target:
+            raise RuntimeError(
+                "plugin_version_target is required when no fallback can be "
+                "derived from .claude-plugin/plugin.json. Pre-compute the "
+                "slot via `bin/version-slot compute <PR_INDEX>` and pass "
+                "it via --plugin-version-target, or land a plugin.json "
+                "manifest at the repo root before dispatching."
+            )
+        for pr_index, branch, task_slug in prs:
+            spec = DispatchSpec(pr_index=pr_index, branch=branch, task=task_slug)
             worktree_path = self.repo_root / ".worktrees" / task_slug
             envelope_path = round_dir / "dispatches" / f"{branch.replace('/', '-')}.md"
             values = {
@@ -315,7 +345,7 @@ class ACPDispatcher:
                 "BRANCH": branch,
                 "WORKTREE_PATH": str(worktree_path),
                 "CWD": str(worktree_path),
-                "PLUGIN_VERSION_TARGET": self.plugin_version_target or "0.3.75",
+                "PLUGIN_VERSION_TARGET": version_target,
                 "LOCK_FILE": str(round_dir / "locks" / f"{branch.split('/')[-1]}.lock"),
                 "PARENT_SESSION_CWD": str(self.parent_session_cwd),
             }
@@ -359,6 +389,77 @@ class ACPDispatcher:
             f"- rules/git-workflow.md (worktree + branch protocol)\n"
         )
 
+    def _resolve_default_version(self) -> str | None:
+        """Read the plugin version from the orch-worktree's plugin.json.
+
+        Used as the fallback for `<PLUGIN_VERSION_TARGET>` when the
+        caller did not supply one explicitly. Reading the local
+        manifest keeps the fallback in lockstep with the branch the
+        M is actually dispatching from — no more hard-coded "0.3.75"
+        drifting behind origin/main or behind the local bump.
+
+        Returns None when the manifest is missing or unparseable so
+        `dispatch()` can fail closed rather than embed a stale default.
+        """
+        candidate = self.repo_root / ".claude-plugin" / "plugin.json"
+        if not candidate.is_file():
+            return None
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        version = data.get("version") if isinstance(data, dict) else None
+        if not isinstance(version, str) or not version:
+            return None
+        return version
+
+    def _branch_exists(self, branch: str) -> bool:
+        """Return True when `branch` already exists as a local ref.
+
+        Used by `_cut_worktree` to decide whether a failed
+        `git worktree add -b` is allowed to `git branch -D` the slot
+        during cleanup — only branches this dispatch created are
+        safe to remove; pre-existing branches must survive a failed
+        dispatch so the M never silently destroys another T's work.
+        """
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.repo_root),
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{branch}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return completed.returncode == 0
+
+    def _remove_worktree_dir(self, worktree_path: Path) -> None:
+        """Best-effort removal of a worktree directory after a failed cut.
+
+        Uses `git worktree remove --force` first so git's metadata
+        stays consistent, then falls back to `shutil.rmtree` for the
+        rare case where the worktree was never registered (e.g.
+        `git worktree add` failed before git could open the dir).
+        """
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.repo_root),
+                "worktree",
+                "remove",
+                "--force",
+                str(worktree_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0 and worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
+
     def _cut_worktree(self, branch: str, worktree_path: Path) -> None:
         """Run `git worktree add -b <branch> <path> origin/main`.
 
@@ -366,12 +467,17 @@ class ACPDispatcher:
         worktree dir already exists or when the branch is already
         tracked, so a misconfigured dispatch does not silently overwrite
         another T's branch.
+
+        On failure, only branches created by THIS dispatch are
+        removed — pre-existing branches are preserved (regression
+        guard for the 🔴 Critical review finding).
         """
         if worktree_path.exists():
             raise FileExistsError(
                 f"worktree path already exists: {worktree_path}. "
                 f"Pick a unique slug or remove the stale dir."
             )
+        pre_existing_branch = self._branch_exists(branch)
         completed = subprocess.run(
             [
                 "git",
@@ -389,12 +495,18 @@ class ACPDispatcher:
         )
         if completed.returncode != 0:
             # Mirror the hook's cleanup-on-failure pattern so a failed
-            # cut does not leave a half-initialized worktree behind.
-            shutil.rmtree(worktree_path, ignore_errors=True)
-            subprocess.run(
-                ["git", "-C", str(self.repo_root), "branch", "-D", branch],
-                capture_output=True,
-            )
+            # cut does not leave a half-initialized worktree behind,
+            # but ONLY remove the branch when this dispatch actually
+            # created it. A pre-existing branch must survive a failed
+            # cut (regression: review finding flagged that
+            # `git branch -D` could destroy a valid feature branch
+            # with its commits).
+            self._remove_worktree_dir(worktree_path)
+            if not pre_existing_branch:
+                subprocess.run(
+                    ["git", "-C", str(self.repo_root), "branch", "-D", branch],
+                    capture_output=True,
+                )
             raise RuntimeError(
                 f"git worktree add failed for branch {branch!r}: "
                 f"{completed.stderr.strip() or completed.stdout.strip()}"
@@ -438,7 +550,9 @@ def _build_cli_parser() -> argparse.ArgumentParser:
         "--plugin-version-target",
         default=None,
         help="pre-computed plugin version slot (e.g. 0.3.84). "
-             "Defaults to 0.3.75 when omitted.",
+             "Falls back to the version in .claude-plugin/plugin.json "
+             "when omitted; the dispatcher fails closed if neither is "
+             "available so a stale default never reaches a T.",
     )
     parser.add_argument(
         "--template",

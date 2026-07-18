@@ -81,11 +81,30 @@ def _init_throwaway_repo() -> "tempfile.TemporaryDirectory":
 
 class ParsePrSpec(unittest.TestCase):
     def test_accepts_canonical_shorthand(self) -> None:
-        self.assertEqual(parse_pr_spec("PR-3:l6-alpha"), ("feat/l6-alpha", "l6-alpha"))
+        # parse_pr_spec returns (pr_index, branch, slug) so the M's
+        # merge-order/slot metadata survives reordering. PR-3 must come
+        # back as index 3 even when it's first in the list.
+        self.assertEqual(parse_pr_spec("PR-3:l6-alpha"), (3, "feat/l6-alpha", "l6-alpha"))
+
+    def test_preserves_index_for_first_position(self) -> None:
+        # Regression for review finding: documented input
+        # "PR-3:l6-alpha,PR-2:launcher" must NOT be renumbered to
+        # PR-1/PR-2 when the order changes.
+        self.assertEqual(parse_pr_spec("PR-3:l6-alpha"), (3, "feat/l6-alpha", "l6-alpha"))
+        self.assertEqual(parse_pr_spec("PR-2:launcher"), (2, "feat/launcher", "launcher"))
 
     def test_rejects_missing_index(self) -> None:
         with self.assertRaises(ValueError):
             parse_pr_spec("l6-alpha")
+
+    def test_rejects_non_numeric_index(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_pr_spec("PR-X:l6-alpha")
+
+    def test_rejects_zero_index(self) -> None:
+        # 1-based per the contract; 0 is reserved.
+        with self.assertRaises(ValueError):
+            parse_pr_spec("PR-0:l6-alpha")
 
     def test_rejects_non_kebab_slug(self) -> None:
         with self.assertRaises(ValueError):
@@ -152,18 +171,22 @@ class DispatchDryRun(unittest.TestCase):
             plugin_version_target="0.3.84",
             dry_run=True,
         )
+        # dispatch() takes (pr_index, branch, slug) triples so the
+        # caller's explicit PR-3:... ordering is preserved (regression
+        # for the "PR-3 becomes PR-1" review finding).
         results = dispatcher.dispatch(
             round="t",
             prs=[
-                ("feat/l6-alpha", "l6-alpha"),
-                ("feat/acp-launcher", "acp-launcher"),
-                ("feat/version-slot", "version-slot"),
+                (3, "feat/l6-alpha", "l6-alpha"),
+                (2, "feat/acp-launcher", "acp-launcher"),
+                (1, "feat/version-slot", "version-slot"),
             ],
         )
         self.assertEqual(len(results), 3)
-        for idx, result in enumerate(results, start=1):
+        expected_indices = [3, 2, 1]
+        for result, expected_idx in zip(results, expected_indices):
             self.assertIsInstance(result, DispatchResult)
-            self.assertEqual(result.spec.pr_index, idx)
+            self.assertEqual(result.spec.pr_index, expected_idx)
             self.assertTrue(result.dry_run)
         # No worktrees, no envelopes written.
         for slug in ("l6-alpha", "acp-launcher", "version-slot"):
@@ -187,16 +210,16 @@ class DispatchFullCut(unittest.TestCase):
             plugin_version_target="0.3.84",
         )
         prs = [
-            ("feat/l6-alpha", "l6-alpha"),
-            ("feat/acp-launcher", "acp-launcher"),
-            ("feat/version-slot", "version-slot"),
+            (3, "feat/l6-alpha", "l6-alpha"),
+            (2, "feat/acp-launcher", "acp-launcher"),
+            (1, "feat/version-slot", "version-slot"),
         ]
         results = dispatcher.dispatch(round="t", prs=prs)
 
         self.assertEqual(len(results), 3)
-        for idx, (result, (branch, slug)) in enumerate(zip(results, prs), start=1):
+        for result, (expected_idx, branch, slug) in zip(results, prs):
             self.assertEqual(result.spec.branch, branch)
-            self.assertEqual(result.spec.pr_index, idx)
+            self.assertEqual(result.spec.pr_index, expected_idx)
             # macOS resolves /tmp -> /private/tmp symlink, so compare
             # resolved paths to avoid the spurious mismatch.
             self.assertEqual(
@@ -238,21 +261,43 @@ class DispatchFullCut(unittest.TestCase):
             dry_run=True,
         )
         with self.assertRaises(ValueError):
-            dispatcher.dispatch(round="other", prs=[("feat/x", "x")])
+            dispatcher.dispatch(round="other", prs=[(1, "feat/x", "x")])
 
-    def test_missing_plugin_version_defaults(self) -> None:
+    def test_missing_plugin_version_falls_back_to_local_manifest(self) -> None:
+        # Regression for review finding: hard-coded "0.3.75" was
+        # behind origin/main's "0.3.86" and the local bump to "0.3.87".
+        # The dispatcher must derive the fallback from the local
+        # .claude-plugin/plugin.json so the T's version-slot check
+        # never downgrades the branch's manifest.
+        plugin_dir = self.root / ".claude-plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "plugin.json").write_text(
+            '{"name":"dev-kit","version":"0.3.84"}', encoding="utf-8"
+        )
         dispatcher = ACPDispatcher(
             repo_root=self.root,
             round_slug="t",
             parent_session_cwd=self.root,
             dry_run=True,
         )
-        results = dispatcher.dispatch(round="t", prs=[("feat/x", "x")])
-        # When plugin_version_target is not set, the dispatcher falls
-        # back to 0.3.75 (the documented fallback per
-        # docs/acp-harness.md §4.2). The T can re-pin via
-        # `bin/version-slot pin <PR_INDEX>` before push.
-        self.assertIn("0.3.75", results[0].envelope)
+        results = dispatcher.dispatch(round="t", prs=[(1, "feat/x", "x")])
+        self.assertIn("0.3.84", results[0].envelope)
+        # Hard-coded "0.3.75" must NOT appear anywhere — it was the
+        # old fallback and would have downgraded the manifest.
+        self.assertNotIn("0.3.75", results[0].envelope)
+
+    def test_missing_plugin_version_fails_closed_without_manifest(self) -> None:
+        # Regression: when there is no .claude-plugin/plugin.json to
+        # read, the dispatcher must refuse rather than ship a
+        # default-version envelope that breaks the slot check.
+        dispatcher = ACPDispatcher(
+            repo_root=self.root,
+            round_slug="t",
+            parent_session_cwd=self.root,
+            dry_run=True,
+        )
+        with self.assertRaises(RuntimeError):
+            dispatcher.dispatch(round="t", prs=[(1, "feat/x", "x")])
 
     def test_repeated_dispatch_refuses_existing_worktree(self) -> None:
         # Cutting the same worktree twice must raise, never silently
@@ -263,9 +308,52 @@ class DispatchFullCut(unittest.TestCase):
             parent_session_cwd=self.root,
             plugin_version_target="0.3.84",
         )
-        dispatcher.dispatch(round="t", prs=[("feat/l6-alpha", "l6-alpha")])
+        dispatcher.dispatch(round="t", prs=[(1, "feat/l6-alpha", "l6-alpha")])
         with self.assertRaises(FileExistsError):
-            dispatcher.dispatch(round="t", prs=[("feat/l6-alpha", "l6-alpha")])
+            dispatcher.dispatch(round="t", prs=[(1, "feat/l6-alpha", "l6-alpha")])
+
+    def test_failed_cut_preserves_pre_existing_branch(self) -> None:
+        # Regression for the 🔴 Critical finding: a failed
+        # `git worktree add -b` must NOT delete a branch that existed
+        # before the dispatch ran. Seed the throwaway repo with a
+        # pre-existing branch and a stale worktree dir so the cut
+        # fails; the pre-existing branch must still exist afterward.
+        # The worktree path is also pre-existing, so FileExistsError
+        # fires before git even runs. Drop the dir, then make the
+        # cut fail because the branch already exists.
+        seed_branch = "feat/l6-alpha"
+        # Pre-create the branch on origin/main so it pre-exists.
+        subprocess.run(
+            ["git", "-C", str(self.root), "branch", seed_branch], check=True
+        )
+        # Confirm pre-existence.
+        exists = subprocess.run(
+            ["git", "-C", str(self.root), "rev-parse", "--verify", f"refs/heads/{seed_branch}"],
+            capture_output=True,
+        )
+        self.assertEqual(exists.returncode, 0, "seed branch should pre-exist")
+        # Drop the worktree dir so the cut actually attempts git worktree add.
+        wt_dir = self.root / ".worktrees" / "l6-alpha"
+        if wt_dir.exists():
+            shutil.rmtree(wt_dir)
+        dispatcher = ACPDispatcher(
+            repo_root=self.root,
+            round_slug="t",
+            parent_session_cwd=self.root,
+            plugin_version_target="0.3.84",
+        )
+        with self.assertRaises(RuntimeError):
+            dispatcher.dispatch(round="t", prs=[(1, seed_branch, "l6-alpha")])
+        # Pre-existing branch MUST still be there.
+        still_exists = subprocess.run(
+            ["git", "-C", str(self.root), "rev-parse", "--verify", f"refs/heads/{seed_branch}"],
+            capture_output=True,
+        )
+        self.assertEqual(
+            still_exists.returncode,
+            0,
+            f"pre-existing branch {seed_branch!r} was deleted by the failed dispatch — this is the regression",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover
