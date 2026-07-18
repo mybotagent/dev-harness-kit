@@ -317,7 +317,6 @@ the `.claude/rules` compatibility symlink; Codex reads the same file through
 Enforced by four hooks:
 
 - `worktree-guard.sh` — hard-blocks any Edit/Write in the main checkout.
-- `task-detector.sh` — early warning on new-task prompts ("implement X", …).
 - `worktree-auto-cut.sh` — on a new-task prompt in the main checkout, derives a
   slug, cuts the worktree, and hands the task off; falls back to a manual-cut
   nudge on any failure.
@@ -667,7 +666,6 @@ git config core.hooksPath .githooks
 | `git-guard.sh` | PreToolUse (Bash) | Branch strategy enforcement | hard-block |
 | `worktree-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | Block edits in main checkout | hard-block |
 | `review-yml-isolation.sh` | PreToolUse (Bash) | Force `review.yml` changes into their own commit/PR | hard-block |
-| `task-detector.sh` | UserPromptSubmit | Nudge new tasks to a worktree | advisory |
 | `worktree-auto-cut.sh` | UserPromptSubmit | Auto-cut a worktree for a new-task prompt in main | advisory (fails open) |
 | `session-start-check.sh` | SessionStart | Remind about the worktree rule | advisory |
 | `log-on-session-start.sh` | SessionStart | Auto-install loghooks each session (idempotent) | advisory |

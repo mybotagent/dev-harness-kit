@@ -78,7 +78,6 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # + new branch). Source is canonical rules/; destination remains
     # .claude/rules/ for Claude Code discovery.
     "hooks/worktree-guard.sh",
-    "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
     # Shared stdin / JSON / content-extraction helper sourced by every PreToolUse
@@ -89,8 +88,8 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # `deny: command not found` on first Edit.
     "hooks/lib/payload-parse.sh",
     # Shared `extract_hook_cwd` + nudge-envelope helper sourced by
-    # task-detector.sh + session-start-check.sh (the two `additionalContext`
-    # hooks). Issue #277 is the same shape as #273: helper was added to the
+    # session-start-check.sh (the remaining `additionalContext` hook).
+    # Issue #277 is the same shape as #273: helper was added to the
     # plugin tree + the plugin's own hooks but never catalogued for install,
     # so consumers shipped hooks that crashed with
     # `extract_hook_cwd: command not found`.
@@ -116,7 +115,6 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "scripts/extract-verdict.py",
     "scripts/validate.py",
     "hooks/worktree-guard.sh",
-    "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
     "hooks/lib/payload-parse.sh",
@@ -474,7 +472,6 @@ def _build_marker() -> dict:
         "githooks": [".githooks/pre-push"],
         "hooks": [
             "hooks/worktree-guard.sh",
-            "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/review-yml-isolation.sh",
             "hooks/lib/payload-parse.sh",

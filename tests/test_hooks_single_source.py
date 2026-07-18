@@ -37,7 +37,6 @@ LEGACY_TEMPLATES_HOOKS_DIR = REPO_ROOT / "templates" / "ci" / "hooks"
 # EXPECTED_PATHS in lib/ci_setup.py).
 _HOOK_RELPATHS: tuple[str, ...] = (
     "hooks/worktree-guard.sh",
-    "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
     "hooks/lib/worktree-detect.sh",

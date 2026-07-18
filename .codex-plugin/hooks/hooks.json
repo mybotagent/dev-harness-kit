@@ -43,11 +43,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/task-detector.sh",
-            "timeout": 3
-          },
-          {
-            "type": "command",
             "command": "bash ${PLUGIN_ROOT}/hooks/worktree-auto-cut.sh",
             "timeout": 30
           }

@@ -3,7 +3,7 @@
 # every-task-new-worktree rule.
 #
 # Sourced (not executed) by hooks/worktree-guard.sh,
-# hooks/task-detector.sh, and hooks/session-start-check.sh.
+# hooks/session-start-check.sh.
 # Duplication has been a maintenance trap — keep this file as the
 # single source of truth for the discriminator.
 #
@@ -13,7 +13,7 @@
 #                                    leaves it empty on jq-less no-op.
 #   worktree_detect_jq_missing_warn — emit a stderr warning to stdout
 #                                    then echo 0 (advisory). Used by
-#                                    advisory hooks (task-detector,
+#                                    advisory hooks (session-start-check,
 #                                    session-start-check) which can't
 #                                    hard-block on missing jq.
 
@@ -78,7 +78,7 @@ abspath() {
 }
 
 # worktree_detect_jq_missing_warn — emit a stderr warning when jq is
-# missing. Used by the advisory hooks (task-detector,
+# missing. Used by the advisory hooks (session-start-check,
 # session-start-check) which can't hard-block on missing jq. The
 # hard-block hook (worktree-guard) fails closed (exit 2) instead.
 worktree_detect_jq_missing_warn() {

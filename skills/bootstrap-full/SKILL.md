@@ -84,7 +84,7 @@ Same matrix as `/dev-kit:bootstrap`. `active-hooks.json` SSOT auto-initialized (
 
 ## Files installed (CI half — see `skills/ci-setup/SKILL.md` for the full 15-row table)
 
-`.github/workflows/{ci,auto-fix-pr,review}.yml`, `.githooks/pre-push`, `scripts/{validate.py,test.sh,branch-policy.sh,ci-local.sh}`, `hooks/{worktree-guard.sh,task-detector.sh,session-start-check.sh,lib/worktree-detect.sh,hooks.json}`, `.claude/rules/git-workflow.md`, `tests/test_worktree_guard.py`.
+`.github/workflows/{ci,auto-fix-pr,review}.yml`, `.githooks/pre-push`, `scripts/{validate.py,test.sh,branch-policy.sh,ci-local.sh}`, `hooks/{worktree-guard.sh,session-start-check.sh,lib/worktree-detect.sh,hooks.json}`, `.claude/rules/git-workflow.md`, `tests/test_worktree_guard.py`.
 
 ## Next step
 

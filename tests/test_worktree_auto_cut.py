@@ -392,13 +392,9 @@ class TestWorktreeAutoCutWiring(unittest.TestCase):
                 f"timeout too low for git fetch + cut: {h}",
             )
 
-    def test_task_detector_still_wired(self):
-        """Regression: the nudge hook must remain alongside the new one."""
+    def test_worktree_auto_cut_wired(self):
+        """Regression: the auto-cut hook must remain in UserPromptSubmit."""
         hooks = self._hooks_under("UserPromptSubmit")
-        self.assertTrue(
-            any("task-detector.sh" in h.get("command", "") for h in hooks),
-            f"task-detector.sh missing from UserPromptSubmit: {hooks}",
-        )
         self.assertTrue(
             any("worktree-auto-cut.sh" in h.get("command", "") for h in hooks),
             f"worktree-auto-cut.sh missing from UserPromptSubmit: {hooks}",
