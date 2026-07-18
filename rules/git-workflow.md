@@ -9,7 +9,7 @@ paths:
 
 # Git workflow rules (dev-harness-kit)
 
-The canonical worktree root is `.worktrees/`. This path is shared by Claude
+The canonical worktree root is `.workspace/`. This path is shared by Claude
 Code and Codex; `.claude/worktrees/` and `.codex/worktrees/` are legacy paths
 that remain readable but must not be used for new worktrees.
 
@@ -58,7 +58,7 @@ git checkout main
 git pull --ff-only origin main
 
 # 2. Cut a fresh worktree for the new task (auto-creates branch from origin/main)
-git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
+git worktree add -b fix/<slug> .workspace/fix-<slug> origin/main
 
 # 2a. (Recommended) Verify the worktree is in sync with HEAD.
 # `git worktree add` does NOT overwrite a pre-existing file at the target
@@ -71,7 +71,7 @@ git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
 #
 # Run after every cut (manual or auto-cut):
 #
-#   bash hooks/worktree-verify-clean.sh .worktrees/fix-<slug>
+#   bash hooks/worktree-verify-clean.sh .workspace/fix-<slug>
 #
 # Output: `checked=<N> repaired=<N>`. Anything other than
 # `repaired=0` means a stale file was found and force-restored from
@@ -92,7 +92,7 @@ git push -u origin fix/<slug>
 gh pr create --base main --head fix/<slug> --title "..." --body "Closes #N"
 
 # 5. After PR is merged (or abandoned), remove the worktree
-git worktree remove .worktrees/fix-<slug>
+git worktree remove .workspace/fix-<slug>
 git branch -d fix/<slug>        # local branch gone
 ```
 

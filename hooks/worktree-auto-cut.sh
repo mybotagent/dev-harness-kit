@@ -49,7 +49,7 @@ fallback_context() {
   local ctx="worktree auto-cut unavailable
   reason:  $reason
   action:  do not edit the main checkout; resolve the reason, then run:
-           git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main
+           git fetch origin main && git worktree add -b <type>/<slug> .workspace/<slug> origin/main
   Codex:   after the worktree exists, spawn a subagent with that path as cwd and pass the original task prompt"
   jq -nc --arg ctx "$ctx" \
     '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
