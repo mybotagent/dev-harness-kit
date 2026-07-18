@@ -220,12 +220,14 @@ class TestCiSetup(unittest.TestCase):
     # === Worktree-rule rollout (PR #22 + this PR) ===
 
     def test_worktree_rule_files_are_in_expected_paths(self):
-        """EXPECTED_PATHS includes the 7 worktree-rule files added in PR #22."""
+        """EXPECTED_PATHS includes the 7 worktree-rule files added in PR #22 +
+        the shared payload-parse helper (PR #78 / issue #273)."""
         expected_new = {
             "hooks/worktree-guard.sh",
             "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
+            "hooks/lib/payload-parse.sh",
             "hooks/hooks.json",
             ".claude/rules/git-workflow.md",
             "tests/test_worktree_guard.py",
@@ -237,7 +239,7 @@ class TestCiSetup(unittest.TestCase):
         )
 
     def test_worktree_hooks_have_executable_bit_in_target(self):
-        """All 4 new .sh files end up executable in the installed target."""
+        """All 5 new .sh files end up executable in the installed target."""
         import tempfile
         import stat
         new_sh = (
@@ -245,6 +247,7 @@ class TestCiSetup(unittest.TestCase):
             "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
+            "hooks/lib/payload-parse.sh",
         )
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
@@ -271,6 +274,7 @@ class TestCiSetup(unittest.TestCase):
                 self.assertIn(key, marker, f"marker missing key: {key}")
                 self.assertTrue(len(marker[key]) > 0, f"marker.{key} should be non-empty")
             self.assertIn("hooks/worktree-guard.sh", marker["hooks"])
+            self.assertIn("hooks/lib/payload-parse.sh", marker["hooks"])
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
@@ -825,6 +829,101 @@ class TestCiSetup(unittest.TestCase):
             self.assertNotIn(
                 "ci_review_provider_file", payload,
                 "old file-pointer key must not reappear in the marker",
+            )
+
+    # === Issue #273: hooks/lib/payload-parse.sh must ship to consumers ===
+
+    def test_payload_parse_in_expected_paths(self):
+        """EXPECTED_PATHS must list hooks/lib/payload-parse.sh so consumers
+        don't ship a hook tree whose deny() helper is missing."""
+        self.assertIn(
+            "hooks/lib/payload-parse.sh",
+            self.ci_setup.EXPECTED_PATHS,
+            "EXPECTED_PATHS is missing hooks/lib/payload-parse.sh — fix #273",
+        )
+
+    def test_payload_parse_in_executable_paths(self):
+        """The helper is sourced at runtime; +x bit must be set after install
+        so consumers can also invoke it as a CLI guard if they want."""
+        self.assertIn(
+            "hooks/lib/payload-parse.sh",
+            self.ci_setup.EXECUTABLE_PATHS,
+            "EXECUTABLE_PATHS is missing hooks/lib/payload-parse.sh — fix #273",
+        )
+
+    def test_ci_setup_installs_payload_parse(self):
+        """install_ci_config(force=True) lands payload-parse.sh under
+        hooks/lib/ with the executable bit set (issue #273 reproduction)."""
+        import tempfile
+        import stat
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r = self.ci_setup.install_ci_config(target, force=True)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            helper = target / "hooks" / "lib" / "payload-parse.sh"
+            self.assertTrue(
+                helper.exists(),
+                f"hooks/lib/payload-parse.sh missing from install target "
+                f"(created={r.created}, overwritten={r.overwritten})",
+            )
+            self.assertTrue(
+                helper.stat().st_mode & stat.S_IXUSR,
+                f"hooks/lib/payload-parse.sh must be +x (mode={oct(helper.stat().st_mode)})",
+            )
+            # Marker must list the helper so ci-doctor / drift-detection see it
+            marker = json.loads(
+                (target / ".dev-kit" / "ci-config.json").read_text()
+            )
+            self.assertIn("hooks/lib/payload-parse.sh", marker["hooks"])
+
+    def test_payload_parse_installed_into_already_partial_consumer(self):
+        """A consumer repo that already has the pre-#273 install (marker +
+        every old EXPECTED_PATHS file) gets payload-parse.sh on the next
+        non-force install. This is the natural marker-pin: the new path
+        flips `_is_already_installed` to False because the file isn't
+        present, so the install re-runs copy+chmod and the consumer
+        transitions to green without manual intervention."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            # Seed a pre-#273 install (everything except payload-parse.sh).
+            # Iterating EXPECTED_PATHS minus the new helper gives a faithful
+            # snapshot of what consumer repos currently have on disk.
+            pre_273_paths = [
+                p for p in self.ci_setup.EXPECTED_PATHS
+                if p != "hooks/lib/payload-parse.sh"
+            ]
+            for rel in pre_273_paths:
+                src = (
+                    Path(__file__).parent.parent / "hooks" / rel[len("hooks/"):]
+                    if rel.startswith("hooks/")
+                    else Path(__file__).parent.parent / "templates" / "ci" / rel
+                )
+                self.assertTrue(src.is_file(), f"seed source missing: {rel}")
+                dst = target / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(src.read_bytes())
+            # Seed a minimal marker so the no-op detection has something to test.
+            (target / ".dev-kit").mkdir()
+            seed_marker = target / ".dev-kit" / "ci-config.json"
+            seed_marker.write_text(json.dumps({
+                "schema_version": self.ci_setup.MARKER_SCHEMA_VERSION,
+                "installed_at": "2026-07-01T00:00:00Z",
+                "installed_by": "dev-kit:ci-setup",
+                "hooks": [p for p in pre_273_paths if p.startswith("hooks/")],
+            }))
+            # Sanity: pre-state has no payload-parse.sh.
+            self.assertFalse(
+                (target / "hooks" / "lib" / "payload-parse.sh").exists(),
+                "seed must NOT contain payload-parse.sh — that's the bug",
+            )
+            # A plain (force=False) install must now refresh and ship the helper.
+            r = self.ci_setup.install_ci_config(target)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            helper = target / "hooks" / "lib" / "payload-parse.sh"
+            self.assertTrue(
+                helper.exists(),
+                "non-force install must add the helper that was missing pre-#273",
             )
 
 
