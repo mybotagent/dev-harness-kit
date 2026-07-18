@@ -731,6 +731,10 @@ def print_json(model: list[WorktreeInfo], logs_dir: Path,
     command without re-running the tool. Stable shape: top-level keys
     ``logs_dir``, ``generated_at``, ``total_sessions``, ``live_sessions``,
     ``worktrees`` (list of worktree records with ``sessions`` list nested).
+
+    The ``eval_handshake`` block carries the per-session log paths the
+    ``--session-log`` judge consumes. The monitor only emits the
+    handshake — it never invokes the LLM judge itself.
     """
     now = datetime.now(timezone.utc)
     payload = {
@@ -770,8 +774,58 @@ def print_json(model: list[WorktreeInfo], logs_dir: Path,
             for w in model
         ],
         "skill_usage_total": (skill_usage_agg or {}),
+        "eval_handshake": build_eval_handshake(model),
     }
     print(json.dumps(payload, indent=2, sort_keys=False))
+
+
+EVAL_AXES: tuple = (
+    "intent_alignment", "ambiguity_unresolved", "repeated_mistakes",
+    "rule_adherence", "inefficiency", "structural_improvement",
+    "over_engineering", "thoroughness",
+)
+"""The 8 axes the --session-log judge consumes (eval_runner.SESSION_AXES).
+
+Mirrored here so tools/session_monitor.py can advertise the contract in
+its JSON handshake without importing lib/ (which would pull in the LLM
+judge deps). Keep in sync with eval/prompts/judge-session.md."""
+
+
+def build_eval_handshake(model: list[WorktreeInfo]) -> Dict:
+    """Per-session payload for the /dev-kit:eval `--session-log` judge.
+
+    The monitor never calls the judge itself — it surfaces the contract
+    (axes + per-session log path) so an external script can pipe
+    ``--session-log <log_path>`` into ``lib/eval_runner.py`` for any
+    session in the model. ``opt_in=True`` flags the user that the
+    judge is never auto-invoked.
+    """
+    sessions: List[Dict] = []
+    for w in model:
+        for s in w.sessions:
+            if not s.log_path:
+                continue
+            sessions.append({
+                "session_id": s.session_id,
+                "worktree": w.dirname,
+                "source": s.source,
+                "log_path": s.log_path,
+                "judge_command": (
+                    f"python3 lib/eval_runner.py --project-root . "
+                    f"--session-log {s.log_path}"
+                ),
+                "axes": list(EVAL_AXES),
+            })
+    return {
+        "opt_in": True,
+        "axes": list(EVAL_AXES),
+        "sessions": sessions,
+        "notes": (
+            "Pass --session-log <log_path> to lib/eval_runner.py to "
+            "judge a session on the 8-axis rubric. NEVER auto-invoked; "
+            "the monitor only emits this handshake."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------
