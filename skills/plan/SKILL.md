@@ -5,7 +5,7 @@ description: 0-arg plan stage. Take 1-line idea → PRD.md + phases/<name>/{inde
 when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
-  - Resume from .prd/decision-log.md (HOLD after pause)
+  - Resume from .dev-kit/decision-log.md (HOLD after pause)
 allowed-tools: Read Write Glob AskUserQuestion
 disallowed-tools: Bash Edit NotebookEdit WebFetch
 model: opus
@@ -57,7 +57,7 @@ gates in one Ralph loop → emit `PRD.md` + `phases/<name>/{index.json, step<N>.
   - `PRD.md` — 6-section plan
   - `phases/<name>/index.json` — phase state machine (see "Phase JSON schema")
   - `phases/<name>/step<N>.md` — one per step (N=0..K-1)
-  - `.prd/decision-log.md` — accumulated Q&A + score deltas
+  - `.dev-kit/decision-log.md` — accumulated Q&A + score deltas
   - `.dev-kit/loop-log.json` — narrowing per cycle (MUST-16)
   - `.dev-kit/hand-off/plan→build.md`
 - **Cumulative**: every iteration appends to `decision-log.md` + `loop-log.json`.
@@ -89,7 +89,7 @@ Ask the user (single message, in order):
 | 3 | **situation** | one sentence: where the user is today, before this exists |
 
 Accept whatever the user types. If any field is empty, ask once, then proceed
-with `"<unspecified>"`. Write all 3 fields to `.prd/decision-log.md` under
+with `"<unspecified>"`. Write all 3 fields to `.dev-kit/decision-log.md` under
 `# frame`. No exit code, no test count — this is input capture, not work.
 
 ## Gate 2/5 — validate (evidence + value + ambiguity loop)
@@ -359,11 +359,11 @@ Then:
 
 - 5-field loop declared (MUST-15): `safety_valve=8`, composite convergence,
   `narrowed_delta`, `dedup_metric`, `user_interrupt`.
-- No artifacts other than PRD.md, phases/<name>/, .prd/, .dev-kit/hand-off/.
+- No artifacts other than PRD.md, phases/<name>/, .dev-kit/decision-log.md, .dev-kit/hand-off/.
 - No code, no `package.json`, no `Dockerfile`, no test code.
 - "Just write the code" before PRD.md is complete → still no code.
 - After HOLD, user re-invokes `/dev-kit:plan` to resume from
-  `.prd/decision-log.md`.
+  `.dev-kit/decision-log.md`.
 - `loop-log.json` appends narrowing per cycle (MUST-16).
 
 ## Hook alignment

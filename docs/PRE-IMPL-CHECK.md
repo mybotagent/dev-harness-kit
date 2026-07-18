@@ -21,7 +21,7 @@
 | 1 | **WHETHER** — Is it really needed? | ✅ | User explicit: "merge 5 repos into one plugin" |
 | 2 | **PROBLEM** — Is the pain measurable? | ✅ | (a) 5 install cost (b) broken hand-off (c) Iron Law × 5 duplicates |
 | 3 | **CHEAPER ALT** — Simpler way? | ✅ | "Keep 5 repos as-is" reviewed — consistency breaks. Integration is the only path |
-| 4 | **REVERT COST** — Cost to remove? | ✅ | |
+| 4 | **REVERT COST** — Cost to remove? | ✅ | Low — code is dead, directory removed |
 | 5 | **VALUE/COST** — Is value 3× cost? | ✅ | Value $15K/year ≥ cost $9.6K (build) |
 
 ## §C. 8-Dimension Cost/Risk
