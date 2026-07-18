@@ -15,6 +15,8 @@
 - **L3**: No completion claim without quoted exit code / test count / build log
 - **L4**: No TODO/FIXME/'we'll extend later'/'this is a starting point'
 - **L5**: No option/alternative list when not asked. One answer.
+- **L6**: New skills must declare `alpha: state|enforcement|analysis` in frontmatter. Reasoning-only `analysis` skills are tolerated only for distinct user intents — minimize new instances.
+- **L7**: A skill's alpha is the part the model can't self-impose (deterministic enforcement, stateful processes, audit artifacts). Don't spend alpha on reasoning the next-gen model will absorb.
 
 (hooks emit "Iron Law #N violation" stderr only. Bodies not duplicated.)
 
