@@ -24,6 +24,7 @@ parent skill expects.
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -160,13 +161,24 @@ class AnalysisResult:
 
     @property
     def verdict(self) -> str:
-        """Block / Drift / Healthy bucket per parent skill convention."""
+        """Inspect verdict per parent skill convention.
+
+        Rules:
+          - empty       → Healthy
+          - >= 1 HIGH   → Critical (any CRITICAL/MAJOR present)
+          - >= 3 MED    → Major drift
+          - else        → Minor drift
+
+        The HIGH/MED/LOW buckets come from `_bucket_for` so the verdict
+        matches the per-dim table and the section header dispatcher.
+        """
         if not self.findings:
             return "Healthy"
-        severities = {f.severity for f in self.findings}
-        if Severity.CRITICAL in severities:
+        high = sum(1 for f in self.findings if _bucket_for(f.severity) == "HIGH")
+        med = sum(1 for f in self.findings if _bucket_for(f.severity) == "MED")
+        if high >= 1:
             return "Critical"
-        if Severity.MAJOR in severities:
+        if med >= 3:
             return "Major drift"
         return "Minor drift"
 
@@ -176,7 +188,7 @@ def run_analysis(
     mode: str,
     paths: Iterable[Path | str],
     candidates: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
-    verdicts: Optional[Sequence[Tuple[int, Verdict, str]]] = None,
+    verdicts: Optional[Sequence[Tuple[Any, Any, str]]] = None,
 ) -> AnalysisResult:
     """Deterministic engine. See module docstring for full semantics.
 
@@ -194,11 +206,20 @@ def run_analysis(
     for d in dims:
         for raw_item in raw.get(d.name, []) or []:
             try:
-                ev = parse_candidate(dict(raw_item), dim_fallback=d.name)
+                payload = dict(raw_item)
+                ev = parse_candidate(payload, dim_fallback=d.name)
             except (ValueError, TypeError):
                 # Malformed item from a per-dim expert is dropped silently.
                 # Verifier pass would catch this; deterministic mode skips it.
                 continue
+            # The candidate-map dimension is AUTHORITATIVE: a non-empty
+            # inner `dim` that disagrees with the outer map key is
+            # rewritten to the outer name so a `smell` expert returning
+            # `dim: dead` cannot route a rewrite suggestion through the
+            # delete-only dimension and surface a `git rm` for a live
+            # module.
+            if ev.dim != d.name:
+                ev = dataclasses.replace(ev, dim=d.name)
             # Enforce path scope at parse time so out-of-scope findings
             # never reach the filter pipeline (or downstream mutation).
             if not _is_in_scope(ev.file, paths_t):
@@ -208,7 +229,8 @@ def run_analysis(
     pre_filter_count = len(parsed)
     filtered = deterministic_filter(parsed)
     deduped = dedupe(filtered)
-    thresholded = threshold_by_mode(deduped, mode)
+    floor_by_dim = {d.name: d.severity_floor for d in dims}
+    thresholded = threshold_by_mode(deduped, mode, floor_by_dim=floor_by_dim)
     if verdicts is not None:
         thresholded = apply_verifier(thresholded, verdicts)
     thresholded = _sort(thresholded)
@@ -232,8 +254,14 @@ def _sort(items: Sequence[Evidence]) -> List[Evidence]:
 
 
 def render_markdown(result: AnalysisResult) -> str:
-    """Markdown report for the kept findings. Deterministic + parent-friendly."""
-    scope = ", ".join(str(p) for p in result.paths) or "(no paths)"
+    """Markdown report for the kept findings. Deterministic + parent-friendly.
+
+    Every rendered/exported field — including the scope header — is
+    passed through `_mask_secrets` so a secret-shaped path the user
+    explicitly audited can never echo back into the report header.
+    """
+    raw_scope = ", ".join(str(p) for p in result.paths) or "(no paths)"
+    scope = _mask_secrets(raw_scope) if raw_scope else raw_scope
     out: List[str] = [
         "# Analysis Report",
         "",
@@ -348,20 +376,46 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
         if d.mode != result.mode:
             continue  # dim does not support this mutation mode
         if result.mode == "delete":
-            # Mode-intent guard: promote line-level evidence to file-level.
-            # Any non-zero line OR a spans tuple = line-level evidence.
-            promoted_line: Optional[int] = None
-            if f.line == 0 and f.spans is None:
-                # Already file-level: keep the original (cleared) line.
-                promoted_line = None
-            # else: leave promoted_line=None (file-level delete).
+            # Whole-file proof is REQUIRED before emitting `git rm`. A
+            # `dead` / `tokenbudget` / `slop` finding may legitimately
+            # describe ONE unused export, a comment block, or a verbose
+            # docstring — none of those justify deleting the whole file.
+            proof = f.deletion_proof or {}
+            if f.deletion_scope != "whole-file":
+                # Line-level delete: emit a `# delete-line:` patch anchored
+                # on the original line so the human reviewer knows the
+                # suggestion is a removal of that line, not the file.
+                out.append(
+                    SuggestedDiff(
+                        file=_mask_secrets(f.file),
+                        line=f.line,
+                        dim=f.dim,
+                        command=f"# delete-line {f.line} in {_mask_secrets(f.file)}",
+                        reason=_mask_secrets(f.failure_scenario),
+                    )
+                )
+                continue
+            if not (proof.get("no_importers") and proof.get("no_callers")):
+                out.append(
+                    SuggestedDiff(
+                        file=_mask_secrets(f.file),
+                        line=None,
+                        dim=f.dim,
+                        command=(
+                            "# delete-blocked: requires no_importers AND no_callers "
+                            f"proof (got {proof or '{}'})"
+                        ),
+                        reason=_mask_secrets(f.failure_scenario),
+                    )
+                )
+                continue
             if f.file in seen_files:
                 continue
             seen_files.add(f.file)
             out.append(
                 SuggestedDiff(
                     file=_mask_secrets(f.file),
-                    line=promoted_line,
+                    line=None,
                     dim=f.dim,
                     command=f"git rm {_mask_secrets(f.file)}",
                     reason=_mask_secrets(f.failure_scenario),

@@ -30,6 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
+import hashlib
+import json
 
 
 class Severity(Enum):
@@ -72,6 +74,29 @@ class Evidence:
     Both fields are independent. The split is enforced at the schema
     boundary so a future expert prompt that fills `fix_hint` cannot
     silently pollute the diff stream.
+
+    Identity / verifier surface:
+
+      - `evidence_id` — stable content-hashed identifier derived from
+        the candidate payload. The reviewer / verifier / log pipeline
+        dedupe by this id; positional list indices are not stable.
+      - `verifier`    — name of the verifier pipeline that voted on
+        this finding (e.g. "llm-judge", "static-rules").
+      - `verdict`     — verifier decision (CONFIRMED | PLAUSIBLE |
+        REJECTED). `None` until the verifier has run.
+      - `verdict_reason` — human-readable rationale returned alongside
+        the verdict. Engine surfaces it in Layer-2 PR summaries.
+
+    Whole-file deletion contract:
+
+      - `deletion_scope`    — "line" (default) or "whole-file".
+        A delete-mode dim emits `git rm <file>` ONLY when scope is
+        "whole-file" AND the dim charter allows delete.
+      - `deletion_root_cause` — why the whole file is safe to remove
+        (orphan module, dead export cluster, etc.). Optional.
+      - `deletion_proof`   — dict of booleans (no_importers, no_callers,
+        no_references, no_runtime_calls). Engine requires
+        `no_importers AND no_callers` for a `git rm` to fire.
     """
 
     file: str
@@ -86,6 +111,13 @@ class Evidence:
     fix_hint: Optional[str] = None   # human-readable suggestion text
     spans: Optional[Tuple[int, int]] = None
     good: Optional[str] = None
+    evidence_id: str = ""
+    verifier: Optional[str] = None
+    verdict: Optional["Verdict"] = None
+    verdict_reason: Optional[str] = None
+    deletion_scope: str = "line"
+    deletion_root_cause: Optional[str] = None
+    deletion_proof: Optional[Dict[str, bool]] = None
 
 
 _KNOWN_SEVERITIES = {s.value for s in Severity}
@@ -140,6 +172,25 @@ def parse_candidate(
         except (TypeError, ValueError):
             spans = None
 
+    evidence_id = candidate.get("id") or _derive_evidence_id(
+        file=file,
+        line=line,
+        dim=dim,
+        title=title,
+        failure_scenario=failure_scenario,
+        candidate=candidate,
+    )
+    deletion_scope = candidate.get("deletion_scope", "line")
+    if deletion_scope not in {"line", "whole-file"}:
+        deletion_scope = "line"
+    deletion_root_cause = candidate.get("deletion_root_cause")
+    proof_raw = candidate.get("deletion_proof")
+    if not isinstance(proof_raw, dict):
+        proof_raw = None
+    deletion_proof: Optional[Dict[str, bool]] = None
+    if proof_raw is not None:
+        deletion_proof = {str(k): bool(v) for k, v in proof_raw.items()}
+
     return Evidence(
         file=file,
         line=line,
@@ -157,15 +208,68 @@ def parse_candidate(
         fix_hint=fix_hint if isinstance(fix_hint, str) else None,
         spans=spans,
         good=good if isinstance(good, str) else None,
+        evidence_id=evidence_id,
+        deletion_scope=deletion_scope,
+        deletion_root_cause=deletion_root_cause if isinstance(deletion_root_cause, str) else None,
+        deletion_proof=deletion_proof,
     )
 
 
+def _derive_evidence_id(
+    *,
+    file: str,
+    line: int,
+    dim: str,
+    title: str,
+    failure_scenario: str,
+    candidate: Dict[str, Any],
+) -> str:
+    """Stable id derived from the candidate content.
+
+    Falls back to a content hash when the expert JSON omits `id`.
+    The hash is over the canonical JSON of the candidate minus the
+    ephemeral fields (dim fallback, etc.) so two semantically identical
+    candidates resolve to the same id even if dim arrives via a
+    different code path.
+    """
+    payload = {
+        "file": file,
+        "line": line,
+        "dim": dim,
+        "title": title,
+        "failure_scenario": failure_scenario,
+    }
+    for key in ("spans", "fix", "fix_hint", "good"):
+        if key in candidate:
+            payload[key] = candidate[key]
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def to_dict(ev: Evidence) -> Dict[str, Any]:
-    """Lossless JSON-ready dict. Severity stored as its string value."""
+    """Lossless JSON-ready dict. Severity stored as its string value.
+
+    The stable identity lives on the dict as `id` so a downstream
+    JSON-only consumer can round-trip without inventing a new hash.
+    `verdict` (when present) is stored as its string value; `None`
+    becomes `null`.
+    """
     d = asdict(ev)
     d["severity"] = ev.severity.value
+    if "evidence_id" in d:
+        d["id"] = d["evidence_id"]
+    if d.get("verdict") is not None and hasattr(d["verdict"], "value"):
+        d["verdict"] = d["verdict"].value
     return d
 
 
 def from_dict(d: Dict[str, Any]) -> Evidence:
-    return parse_candidate(d)
+    # Accept the legacy `id` field on the dict; the parser already
+    # looks up `candidate["id"]` for evidence_id.
+    payload = dict(d)
+    if "id" in payload and "evidence_id" not in payload:
+        payload["evidence_id"] = payload["id"]
+    verdict_raw = payload.get("verdict")
+    if verdict_raw is not None:
+        payload["verdict"] = Verdict(verdict_raw)
+    return parse_candidate(payload)

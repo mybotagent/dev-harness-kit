@@ -210,6 +210,9 @@ class TestEmitSuggestedDiffs(unittest.TestCase):
                     "title": "unused file",
                     "tldr": "no importers",
                     "failure_scenario": "no callers",
+                    "deletion_scope": "whole-file",
+                    "deletion_root_cause": "orphan module",
+                    "deletion_proof": {"no_importers": True, "no_callers": True},
                     "fix_hint": "rm a.py",
                 },
             ],
@@ -358,6 +361,26 @@ class TestScopeEnforcement(unittest.TestCase):
         )
         self.assertEqual(result.kept_count, 1)
 
+    def test_candidate_dimension_cannot_spoof_outer_dimension(self):
+        repo = _build_synth_repo()
+        candidates = {"smell": [{
+            "file": str(repo / "a.py"), "line": 1, "dim": "dead",
+            "severity": "major", "confidence": "high", "title": "long method",
+            "tldr": "too big", "failure_scenario": "unmaintainable",
+        }]}
+        result = run_analysis(["smell"], "delete", [repo], candidates)
+        self.assertEqual(result.findings[0].dim, "smell")
+        self.assertEqual(emit_suggested_diffs(result), [])
+
+    def test_dimension_severity_floor_is_enforced(self):
+        repo = _build_synth_repo()
+        result = run_analysis(["owasp-a05"], "read-only", [repo], {"owasp-a05": [{
+            "file": str(repo / "a.py"), "line": 1, "severity": "nit",
+            "confidence": "high", "title": "noise", "tldr": "noise",
+            "failure_scenario": "not actionable",
+        }]})
+        self.assertEqual(result.findings, ())
+
 
 class TestPerDimModeRespect(unittest.TestCase):
     """`emit_suggested_diffs` MUST skip dims whose `Dimension.mode`
@@ -404,6 +427,9 @@ class TestPerDimModeRespect(unittest.TestCase):
                     "title": "unused",
                     "tldr": "no importers",
                     "failure_scenario": "no callers",
+                    "deletion_scope": "whole-file",
+                    "deletion_root_cause": "orphan module",
+                    "deletion_proof": {"no_importers": True, "no_callers": True},
                     "fix_hint": "rm b.py",
                 },
             ],
@@ -753,6 +779,9 @@ class TestDeleteModePromotesLineEvidence(unittest.TestCase):
                     "tldr": "no callers",
                     "failure_scenario": "line 42 never reached",
                     "fix_hint": "rm a.py",
+                    "deletion_scope": "whole-file",
+                    "deletion_root_cause": "orphan module",
+                    "deletion_proof": {"no_importers": True, "no_callers": True},
                 },
             ],
         }
@@ -764,11 +793,85 @@ class TestDeleteModePromotesLineEvidence(unittest.TestCase):
         )
         diffs = emit_suggested_diffs(result)
         self.assertEqual(len(diffs), 1)
-        # Delete-mode emits `git rm <file>`, NOT `rm -line=42 ...`.
+        # With deletion_proof in place, delete-mode emits `git rm <file>`,
+        # NOT a `delete-line N` patch — the human reviewer can still tell
+        # the suggestion is file-level because line=None is the anchor.
         self.assertIn("git rm", diffs[0].command)
-        # The diff anchor is file-level (None), not the original line.
         self.assertIsNone(diffs[0].line)
 
+
+
+class TestDeleteModeRequiresWholeFileProof(unittest.TestCase):
+    def test_line_finding_never_emits_git_rm_without_proof(self):
+        repo = _build_synth_repo()
+        result = run_analysis(["dead"], "delete", [repo], {"dead": [{
+            "file": str(repo / "a.py"), "line": 4, "severity": "major",
+            "confidence": "high", "title": "unused export", "tldr": "line only",
+            "failure_scenario": "one export is unused", "fix_hint": "remove export",
+        }]})
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        self.assertNotIn("git rm", diffs[0].command)
+        self.assertEqual(diffs[0].line, 4)
+
+    def test_whole_file_requires_no_importer_and_no_caller_proof(self):
+        repo = _build_synth_repo()
+        result = run_analysis(["dead"], "delete", [repo], {"dead": [{
+            "file": str(repo / "a.py"), "line": 0, "severity": "major",
+            "confidence": "high", "title": "orphan module", "tldr": "unused",
+            "failure_scenario": "module is unreachable", "deletion_scope": "whole-file",
+            "deletion_root_cause": "orphan module",
+            "deletion_proof": {"no_importers": True, "no_callers": False},
+        }]})
+        self.assertNotIn("git rm", emit_suggested_diffs(result)[0].command)
+
+
+class TestResultContracts(unittest.TestCase):
+    def test_verifier_matches_stable_candidate_id_and_preserves_metadata(self):
+        repo = _build_synth_repo()
+        candidates = {"correctness": [
+            {"id": "major-id", "file": str(repo / "a.py"), "line": 1,
+             "severity": "major", "confidence": "high", "title": "major",
+             "tldr": "major", "failure_scenario": "major"},
+            {"id": "critical-id", "file": str(repo / "b.py"), "line": 1,
+             "severity": "critical", "confidence": "high", "title": "critical",
+             "tldr": "critical", "failure_scenario": "critical"},
+        ]}
+        result = run_analysis(["correctness"], "read-only", [repo], candidates,
+            verdicts=[("critical-id", "REJECTED", "not reproducible"),
+                      ("major-id", "CONFIRMED", "reproduced")])
+        self.assertEqual([f.evidence_id for f in result.findings], ["major-id"])
+        self.assertEqual(result.findings[0].verdict.value, "CONFIRMED")
+        self.assertEqual(result.findings[0].verdict_reason, "reproduced")
+
+    def test_scope_header_masks_secret_shaped_path(self):
+        repo = _build_synth_repo()
+        secret_root = repo / "sk-ant-abcdefghijklmnopqrstuvwxyz123456"
+        secret_root.mkdir()
+        source = secret_root / "a.py"
+        source.write_text("x = 1\n", encoding="utf-8")
+        result = run_analysis(["correctness"], "read-only", [secret_root], {"correctness": [{
+            "file": str(source), "line": 1, "severity": "major", "confidence": "high",
+            "title": "x", "tldr": "x", "failure_scenario": "y"
+        }]})
+        md = render_markdown(result)
+        self.assertNotIn("sk-ant-abcdefghijklmnopqrstuvwxyz123456", md)
+        self.assertIn("[REDACTED]", md)
+
+    def test_verdict_uses_legacy_high_and_medium_thresholds(self):
+        repo = _build_synth_repo()
+        def candidate(line, severity):
+            return {"file": str(repo / "a.py"), "line": line, "severity": severity,
+                    "confidence": "high", "title": severity, "tldr": severity,
+                    "failure_scenario": severity}
+        self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
+            {"correctness": [candidate(1, "major")]}).verdict, "Critical")
+        self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
+            {"correctness": [candidate(1, "minor"), candidate(2, "minor")] }).verdict,
+            "Minor drift")
+        self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
+            {"correctness": [candidate(1, "minor"), candidate(2, "minor"), candidate(3, "minor")] }).verdict,
+            "Major drift")
 
 
 class TestBucketAssignmentIsSingleSource(unittest.TestCase):
