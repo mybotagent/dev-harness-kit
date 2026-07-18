@@ -44,6 +44,47 @@ fi
 FILE_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
 [ -z "$FILE_PATH" ] && exit 0
 
+# Orchestration branches (orch/*) are routing/analysis-only worktrees.
+# Edits to protected paths (code, hooks, tests, manifests, plugins,
+# and source extensions) are denied here so any code change still
+# flows through a non-orchestration worktree
+# (fix/|feat/|docs/|chore/|test/|refactor/|perf/|hotfix/). User
+# handoff temp notes under .dev-kit/round-*/** remain writable so
+# the orchestrator can leave round-N notes for the receiving client.
+#
+# B — branch detection goes via file_path extraction (NOT the
+# parent-session cwd), because sub-agents running inside a nested
+# worktree still inherit the parent's `git symbolic-ref --short HEAD`
+# output of `main` — see the parent-cwd misfire notes. The previous
+# version of this hook therefore always saw `main` and never fired
+# the orch branch check; the file_path extraction below closes that
+# gap by reading the branch from the worktree the file_path points
+# into (the worktree IS a git linkfile, so `git -C <path>` resolves
+# the correct branch without cd).
+ORCH_BRANCH=""
+if [[ "$FILE_PATH" =~ (\.worktrees/)([^/]+) ]]; then
+  WT_NAME="${BASH_REMATCH[2]}"
+  # Resolve the worktree dir relative to the main checkout, which
+  # always owns the `.worktrees/<name>/` sibling directories.
+  if [ -d ".worktrees/${WT_NAME}" ]; then
+    ORCH_BRANCH="$(git -C ".worktrees/${WT_NAME}" symbolic-ref --short HEAD 2>/dev/null || echo detached)"
+  fi
+fi
+if [[ "$ORCH_BRANCH" == orch/* ]]; then
+  # .dev-kit/round-*/** hand-off tmp notes are the ONLY writable paths
+  # on an orchestration branch — short-circuit before main-deny so the
+  # orchestrator can leave round-N notes even if cwd is main checkout.
+  # Matches .dev-kit/round-* at the start OR after any slash segment.
+  if [[ "$FILE_PATH" =~ (^|/)\.dev-kit/round- ]]; then
+    exit 0
+  fi
+  case "$FILE_PATH" in
+    *lib/*|*lib|*skills/*|*skills|*hooks/*|*hooks|*tests/*|*tests|*templates/*|*templates|*bin/*|*bin|*.codex-plugin*|*.claude-plugin*|*.py|*.sh|*.ts|*.js)
+      deny "ORCH ISOLATION" "code edits are forbidden in orch/* worktree. Allowed paths only are .dev-kit/round-*/**. Move the change to a feature worktree."
+      ;;
+  esac
+fi
+
 # Detect whether we are in the main checkout or a worktree. The lib
 # function never returns 1 here because we just verified jq exists.
 worktree_detect
@@ -53,15 +94,35 @@ case "$WORKTREE_DETECT" in
   *) exit 0 ;;
 esac
 
-# In main checkout → deny with actionable reason.
+# In main checkout → deny with actionable reason. The case statement
+# and the deny() call below are byte-identical to the pre-PR-270
+# version — only the MSG string content is updated to the
+# deterministic env-var checklist + Iron Laws recap.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-MSG="WORKTREE GUARD: editing in the main checkout (branch='$BRANCH') is forbidden.
-Pick a routing:
-  1. Client:        claude | codex
-  2. Concurrency:   single | parallel
-  3. Action:
-     - claude + single   → worktree add -b <type>/<slug> .worktrees/<slug> origin/main, then open a Claude session in that path
-     - codex + parallel  → spawn N sub-agents, each cwd=<worktree>, branch=<branch>, with the task prompt explicitly
-Existing rule: every task = new worktree + client handoff + new branch (rules/git-workflow.md)."
+MSG="WORKTREE GUARD: editing in main checkout (branch='$BRANCH') is forbidden.
+
+REQUIRED environment setup before retrying:
+  git config --global dev-kit.orch.client=claude   # or codex
+  git config --global dev-kit.orch.concurrency=single   # or parallel
+
+Without these, abort this edit. Re-running without setting them will be denied.
+
+Routing (after config is set):
+  claude  + single   -> git worktree add -b <type>/<slug> .worktrees/<slug> origin/main
+                        cd .worktrees/<slug>
+                        open a Claude session there
+  claude  + parallel -> same worktree, then fan out sub-agents via the Agent tool
+  codex   + single   -> git worktree add ..., then spawn one sub-agent with cwd=<worktree>
+  codex   + parallel -> spawn N sub-agents each with cwd=<worktree> and explicit task prompt
+
+Hard rules (Iron Laws §1):
+  L1: no prod code without verification artifact (test/contract/domain)
+  L3: no completion claim without quoted exit codes / test counts
+  L4: no TODO/FIXME/later/starting-point
+  L5: no option list when not asked
+  M push / commit / PR to main: forbidden
+  M edit of code files in any worktree: forbidden (Tier 1 = orchestrator)
+  Other worktrees are private to their T; entry is allowed ONLY for hand-off docs
+   in .dev-kit/round-*/**."
 
   deny "WORKTREE GUARD" "$MSG"

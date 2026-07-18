@@ -81,6 +81,30 @@ def _init_main_with_worktree() -> tuple:
     return main_tmp, wt_parent, wt_path
 
 
+def _init_orch_worktree() -> tuple:
+    """Build a throwaway repo with one .worktrees/orch-test worktree on
+    branch orch/test. Returns (main_tmp, orch_path). The orch worktree
+    is a real git worktree on an orchestration branch so the hook's
+    file_path-extracted branch detection (B) actually fires.
+    """
+    main_tmp = tempfile.TemporaryDirectory()
+    main_root = Path(main_tmp.name)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main_root)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(main_root), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(main_root), "config", "user.name", "Test"], check=True)
+    (main_root / "lib").mkdir()
+    (main_root / "lib" / "placeholder.py").write_text("# placeholder")
+    (main_root / "README.md").write_text("init")
+    subprocess.run(["git", "-C", str(main_root), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(main_root), "commit", "-q", "-m", "init"], check=True, capture_output=True)
+    orch_path = main_root / ".worktrees" / "orch-test"
+    subprocess.run(
+        ["git", "-C", str(main_root), "worktree", "add", "-b", "orch/test", str(orch_path)],
+        check=True, capture_output=True,
+    )
+    return main_tmp, orch_path
+
+
 class TestWorktreeGuardBlocks(unittest.TestCase):
     """worktree-guard.sh must DENY (exit 2) Edit/Write/MultiEdit in the main checkout."""
 
@@ -138,6 +162,133 @@ class TestWorktreeGuardBlocks(unittest.TestCase):
         finally:
             main_tmp.cleanup()
 
+
+    def test_main_deny_msg_includes_route_question(self):
+        """Regression for PR #270: main-deny MSG must include the
+        deterministic env-var checklist + Iron Laws recap + routing actions AND the .dev-kit/round-*/** exception. Mirrors the harness
+        used by test_blocks_edit_in_main_checkout: jq missing -> skip;
+        jq present -> run hook in main checkout, parse the deny JSON,
+        and assert every required literal appears in
+        permissionDecisionReason.
+        """
+        if not shutil.which("jq"):
+            self.skipTest("jq not available")
+        main_tmp, _, _ = _init_main_with_worktree()
+        try:
+            r = _run_hook(
+                "worktree-guard.sh",
+                _edit_payload("/some/file.py"),
+                cwd=Path(main_tmp.name),
+            )
+            self.assertEqual(r.returncode, 2, f"expected deny, got rc={r.returncode}, stderr={r.stderr}")
+            combined = r.stdout + r.stderr
+            deny_lines = [ln for ln in combined.splitlines()
+                          if ln.strip().startswith("{")]
+            self.assertTrue(
+                deny_lines,
+                f"no JSON line in output: stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+            reason = ""
+            for line in deny_lines:
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rsn = doc.get("hookSpecificOutput", {}).get(
+                    "permissionDecisionReason", ""
+                )
+                if "WORKTREE GUARD" in rsn:
+                    reason = rsn
+                    break
+            self.assertTrue(
+                reason,
+                f"WORKTREE GUARD deny JSON not found in output: {combined!r}",
+            )
+            for needle in (
+                # routing literals
+                "claude", "codex", "single", "parallel",
+                "worktree add -b",
+                "a Claude session", "spawn",
+                # deterministic env-var checklist
+                "REQUIRED environment setup",
+                "git config --global",
+                "dev-kit.orch.client=claude",
+                "dev-kit.orch.concurrency=single",
+                # Iron Laws recap
+                "Iron Laws",
+                "abort this edit",
+                # round-* exception
+                ".dev-kit/round-*/**",
+            ):
+                self.assertIn(
+                    needle, reason,
+                    f"missing {needle!r} in deny reason: {reason!r}",
+                )
+        finally:
+            main_tmp.cleanup()
+
+    def test_orch_branch_denies_code_path(self):
+        """Regression for PR #270 (B): when file_path points inside a
+        .worktrees/<name>/... tree AND that worktree's branch is
+        orch/*, the hook must DENY protected paths with the ORCH
+        ISOLATION reason. .dev-kit/round-*/** paths must be ALLOWED
+        (exit 0) so the orchestrator can leave round-N hand-off notes
+        even if cwd is the main checkout. jq missing -> skip.
+        """
+        if not shutil.which("jq"):
+            self.skipTest("jq not available")
+        main_tmp, orch_path = _init_orch_worktree()
+        main_root = Path(main_tmp.name)
+        try:
+            # Sanity: orch worktree is on orch/test branch
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(orch_path), "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True, text=True, check=True,
+                ).stdout.strip(),
+                "orch/test",
+            )
+            # DENY sub-case: protected path inside orch worktree.
+            r = _run_hook(
+                "worktree-guard.sh",
+                _edit_payload(str(orch_path / "lib" / "foo.py")),
+                cwd=main_root,
+            )
+            self.assertEqual(r.returncode, 2, f"expected deny, got rc={r.returncode}, stderr={r.stderr}")
+            deny_lines = [ln for ln in (r.stdout + r.stderr).splitlines()
+                          if ln.strip().startswith("{")]
+            self.assertTrue(deny_lines, f"no JSON line in output: stdout={r.stdout!r} stderr={r.stderr!r}")
+            reason = ""
+            for line in deny_lines:
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rsn = doc.get("hookSpecificOutput", {}).get(
+                    "permissionDecisionReason", ""
+                )
+                if "ORCH ISOLATION" in rsn:
+                    reason = rsn
+                    break
+            self.assertTrue(
+                reason,
+                f"ORCH ISOLATION deny not found: stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+            self.assertIn("orch/*", reason)
+            self.assertIn(".dev-kit/round-*/**", reason)
+            self.assertIn("feature worktree", reason)
+            # ALLOW sub-case: .dev-kit/round-*/** hand-off tmp note.
+            r2 = _run_hook(
+                "worktree-guard.sh",
+                _edit_payload(str(orch_path / ".dev-kit" / "round-foo" / "note.md")),
+                cwd=main_root,
+            )
+            self.assertEqual(
+                r2.returncode, 0,
+                f"expected allow on .dev-kit/round-*/**, got rc={r2.returncode}, stderr={r2.stderr}",
+            )
+        finally:
+            main_tmp.cleanup()
 
 class TestWorktreeGuardAllows(unittest.TestCase):
     """worktree-guard.sh must ALLOW (exit 0) edits inside a worktree."""
