@@ -71,36 +71,70 @@ def _within_window(ts: _dt.datetime | None, cutoff: _dt.datetime | None) -> bool
     return ts >= cutoff
 
 
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand a single ``{a,b,c}`` alternative group into multiple patterns.
+
+    Only one group is expanded per call; nested braces are not handled (the
+    current call sites use exactly one group). Returns ``[pattern]``
+    unchanged when no group is present.
+    """
+    open_idx = pattern.find("{")
+    if open_idx < 0:
+        return [pattern]
+    close_idx = pattern.find("}", open_idx)
+    if close_idx < 0:
+        return [pattern]
+    prefix = pattern[:open_idx]
+    suffix = pattern[close_idx + 1:]
+    alts = pattern[open_idx + 1:close_idx].split(",")
+    return [prefix + alt + suffix for alt in alts]
+
+
+def _cwd_matches(cwd: str, prefix: str) -> bool:
+    """True iff ``cwd`` equals ``prefix`` or starts with ``prefix + '/'``.
+
+    Prevents over-matching: ``/repo/a`` must not match ``/repo/a-old``
+    when ``prefix`` is ``/repo/a``.
+    """
+    norm = prefix.rstrip("/")
+    if not norm:
+        return True
+    return cwd == norm or cwd.startswith(norm + "/")
+
+
 def _iter_logs(logs_glob: str) -> Iterable[Path]:
     """Yield every .jsonl matching the glob. Handles both:
 
     * ``logs/claude-code/**/*.jsonl`` -- recursive bash glob pattern.
+    * ``logs/{claude-code,codex}/**/*.jsonl`` -- brace alternative.
     * A literal file path (one log).
 
     Bash globs are expanded by the shell before the Python process sees
     them, so the literal-file fallback only matters when the caller
-    passed a single path without shell expansion.
+    passed a single path without shell expansion. Braces are not
+    expanded by ``Path.rglob``, so they are handled explicitly.
     """
-    p = Path(logs_glob)
-    if p.is_file():
-        yield p
-        return
-    if any(ch in logs_glob for ch in "*?["):
-        # Resolve to a concrete directory tree; ``glob.glob`` would not
-        # honour ``**`` without ``recursive=True`` so we walk manually.
-        anchor = logs_glob.split("*", 1)[0].rstrip("/")
-        anchor_path = Path(anchor) if anchor else Path(".")
-        if anchor_path.is_dir():
-            for path in anchor_path.rglob("*.jsonl"):
+    for pat in _expand_braces(logs_glob):
+        p = Path(pat)
+        if p.is_file():
+            yield p
+            continue
+        if any(ch in pat for ch in "*?["):
+            # Resolve to a concrete directory tree; ``glob.glob`` would not
+            # honour ``**`` without ``recursive=True`` so we walk manually.
+            anchor = pat.split("*", 1)[0].rstrip("/")
+            anchor_path = Path(anchor) if anchor else Path(".")
+            if anchor_path.is_dir():
+                for path in anchor_path.rglob("*.jsonl"):
+                    if path.is_file():
+                        yield path
+            continue
+        # Treat as a directory.
+        base = Path(pat)
+        if base.is_dir():
+            for path in base.rglob("*.jsonl"):
                 if path.is_file():
                     yield path
-        return
-    # Treat as a directory.
-    base = Path(logs_glob)
-    if base.is_dir():
-        for path in base.rglob("*.jsonl"):
-            if path.is_file():
-                yield path
 
 
 def _ensure_skill(skills: dict, name: str, *, include_per_cwd: bool) -> dict:
@@ -172,7 +206,7 @@ def aggregate_skill_usage(logs_glob: str,
                     continue
 
                 cwd = obj.get("cwd") or ""
-                if cwd_prefix and not cwd.startswith(cwd_prefix):
+                if cwd_prefix and not _cwd_matches(cwd, cwd_prefix):
                     continue
 
                 ts_str = obj.get("timestamp") or ""
@@ -221,16 +255,15 @@ def aggregate_skill_usage(logs_glob: str,
 
 
 def format_table(skills: dict[str, dict],
-                 *, top: int | None = None,
-                 now: _dt.datetime | None = None) -> str:
+                 *, top: int | None = None) -> str:
     """Render the aggregate as a fixed-width text table.
 
-    Sorted by ``turns`` descending, ties broken by ``invocations`` desc.
-    Skill name is truncated at 40 chars -- actual names are
-    ``<plugin>:<skill>`` (typically <30 chars). ``last_seen`` is
-    truncated to the minute precision to keep rows scannable.
+    Sorted by ``turns`` descending, ties broken by ``invocations`` desc,
+    then by skill name (stable order). Skill name is truncated at 40
+    chars -- actual names are ``<plugin>:<skill>`` (typically <30 chars).
+    ``last_seen`` is truncated to the minute precision to keep rows
+    scannable.
     """
-    now = now or _dt.datetime.now(_dt.timezone.utc)
     rows = sorted(skills.items(),
                   key=lambda kv: (-kv[1]["turns"], -kv[1]["invocations"],
                                   kv[0]))
@@ -255,7 +288,8 @@ def format_json(skills: dict[str, dict]) -> str:
     """Emit the aggregate as JSON (sorted by turns desc for stable diffs)."""
     ordered = dict(sorted(skills.items(),
                           key=lambda kv: (-kv[1]["turns"],
-                                          -kv[1]["invocations"])))
+                                          -kv[1]["invocations"],
+                                          kv[0])))
     return json.dumps(ordered, indent=2, sort_keys=False)
 
 
@@ -283,7 +317,7 @@ def filter_by_cwd_prefix(skills: dict[str, dict], cwd_prefix: str) -> dict[str, 
             continue
         merged = {"turns": 0, "invocations": 0, "last_seen": None}
         for cwd, bucket in cwds.items():
-            if not cwd.startswith(cwd_prefix):
+            if not _cwd_matches(cwd, cwd_prefix):
                 continue
             merged["turns"] += bucket.get("turns", 0)
             merged["invocations"] += bucket.get("invocations", 0)
