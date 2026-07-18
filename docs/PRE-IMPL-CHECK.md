@@ -21,7 +21,7 @@
 | 1 | **WHETHER** — Is it really needed? | ✅ | User explicit: "merge 5 repos into one plugin" |
 | 2 | **PROBLEM** — Is the pain measurable? | ✅ | (a) 5 install cost (b) broken hand-off (c) Iron Law × 5 duplicates |
 | 3 | **CHEAPER ALT** — Simpler way? | ✅ | "Keep 5 repos as-is" reviewed — consistency breaks. Integration is the only path |
-| 4 | **REVERT COST** — Cost to remove? | ✅ | `DEPRECATED.md` 1 line. Old repo code preserved |
+| 4 | **REVERT COST** — Cost to remove? | ✅ | |
 | 5 | **VALUE/COST** — Is value 3× cost? | ✅ | Value $15K/year ≥ cost $9.6K (build) |
 
 ## §C. 8-Dimension Cost/Risk
@@ -33,7 +33,7 @@
 | 3 | **Legal Risk** | All 5 repos MIT/Apache2 compatible. GDPR non-PII. **LOW** |
 | 4 | **Maintenance Risk** | 1 maintainer + 4 ADRs + CHANGELOG + 1 onboard command. **MEDIUM** (mitigated) |
 | 5 | **Opportunity Cost** | Not building = 5 plugins × 2.5 day/month × 12 × $100/h × 5 people = **$15K/year loss** = HIGH VALUE |
-| 6 | Compatibility Risk | `DEPRECATED.md` + opt-in provider. No conflict with existing review workflow. **LOW** |
+| 6 | Compatibility Risk | Opt-in provider. No conflict with existing review workflow. **LOW** |
 | 7 | Security Risk | Hook bypass possible (opt-in `DEV_KIT_HOOK_OFF`). Secret scan automated. **LOW** |
 | 8 | Operational Risk | CI dependency + provider down → manual `/dev-kit:eval`. **MEDIUM** |
 
@@ -65,7 +65,6 @@
 - [ ] A2A typed schemas (Phase 3)
 - [ ] `lib/install.sh --team` (Phase 3)
 - [ ] `docs/COST-ANALYSIS.md` attached (already excerpted in §C, body separate)
-- [ ] Each legacy repo `DEPRECATED.md` (Phase 4)
 
 ## §F. User review (1×, HOTL)
 
