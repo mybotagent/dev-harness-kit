@@ -6,14 +6,15 @@ alpha: analysis
 when_to_use: |
   - User types /dev-kit:tdd-fast
   - urgent hotfix
-allowed-tools: Read Write Bash
-disallowed-tools: WebFetch Agent
-model: sonnet
+alpha: state
 ---
 
-# shortcut-tdd-fast — Bypass to Build
+## Invocation
+
+Arguments: `$ARGUMENTS` — pass an identifier or short scope so the hand-off stub records the bypass reason.
 
 ## Iron Law
+
 **Only when user explicitly expresses bypass intent.** Urgent hotfix / prototype scenarios.
 
 ## Behavior

@@ -5,14 +5,15 @@ description: verify+debug instant call. No code writing. Quick build verificatio
 alpha: analysis
 when_to_use: |
   - User types /dev-kit:quick-fix
-allowed-tools: Read Bash
-disallowed-tools: Write Edit WebFetch
-model: sonnet
+alpha: enforcement
 ---
 
-# shortcut-quick-fix — Verify + Debug Fast-Path
+## Invocation
+
+Arguments: `$ARGUMENTS` — optional scope or target path for the verify+debug pass.
 
 ## Iron Law
+
 **build/fix ✕ / verify + debug ◯.** No code changes ❌.
 
 ## Behavior
