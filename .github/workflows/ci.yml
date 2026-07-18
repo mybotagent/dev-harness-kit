@@ -47,6 +47,12 @@ jobs:
       && !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 so tests/test_skill_governance.py can resolve
+          # origin/main as the L6 baseline (new-skill set is local - origin/main).
+          # Default fetch-depth: 1 leaves only the PR ref, so the test falls
+          # through all 3 fallback tiers and reports "source='none'".
+          fetch-depth: 0
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

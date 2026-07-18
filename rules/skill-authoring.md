@@ -96,3 +96,79 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 
 - `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
 - `tests/test_smoke.py` enforces the repository's internal skill-layout invariant. Update its test fixture when adding a skill, but do not copy the resulting count into documentation.
+
+## L6 skill gate — the alpha must be enforceable
+
+**L6 rule.** Every `SKILL.md` added to `skills/<name>/` MUST declare an
+`alpha:` frontmatter field. The value MUST be one of:
+
+| `alpha:` | Meaning | Example skills |
+|---|---|---|
+| `state` | Drives the harness state machine — moves between stages, persists progress, gates transitions. | `plan`, `build`, `bootstrap`, `ship`, `onboard`, `shortcut-tdd-fast` |
+| `enforcement` | Deterministic guard — runs hooks, scanners, validators, gates. The user can't talk their way past it. | `audit`, `repair`, `eval`, `security-when-guard` |
+| `analysis` | Pure reasoning over a corpus — review, inspect, prune, refactor. **Tolerated** only because distinct human intents drive distinct slash entrypoints. | `review`, `inspect`, `prune`, `refactor` |
+
+`analysis` is the *easy* one to write and the easiest for next-gen models to
+absorb (Noam Brown / Logan Kilpatrick thesis: harness functionality gets
+sucked into the model). New `analysis` skills therefore require a
+justification: what distinct user intent does this slash serve that the
+existing `analysis` set doesn't? Consolidate onto the shared
+`lib/analysis-core` engine (#261) wherever possible; do not fork a new
+analysis engine per slash.
+
+### Why this gate exists
+
+The repo's 39 skills over-invested in stateless reasoning surfaces that
+next-gen models will absorb. Codifying the rule stops re-accumulating new
+wrappers without forcing every existing skill through a migration sweep —
+the gate applies only to skills added *after* `origin/main`. See
+`CLAUDE.md` §1 L6 + L7.
+
+### Lint: `tests/test_skill_governance.py`
+
+- Computes the baseline from `origin/main`'s `skills/` tree
+  (`git ls-tree -d --name-only origin/main skills/`).
+- For any skill directory present locally but NOT in the baseline (i.e.
+  added by the current PR), asserts the SKILL.md's frontmatter has
+  `alpha:` ∈ {`state`, `enforcement`, `analysis`}.
+- Fails with the offending skill name when violated.
+- Falls back to the local `main` branch, then to `git log
+  --diff-filter=A --name-only main -- skills/`, if `origin/main` is
+  unreachable (offline CI, fresh clone). The source label is surfaced in
+  the failure message so a reviewer can see which tier was used.
+- Passes vacuously on a clean branch (zero added skills).
+
+Run: `python3 -m pytest tests/test_skill_governance.py -v`.
+
+### Skill-creator / plugin-creator interview (forward spec)
+
+The future `skill-creator` and `plugin-creator` interviews MUST ask the
+following question *before* emitting SKILL.md frontmatter, and the
+answer MUST be reflected in the `alpha:` field:
+
+> **(a)** Does this skill drive a stage of the harness state machine,
+> enforce a deterministic guard, or run pure analysis over a corpus?
+>
+> **(b)** If the answer is *analysis*: what distinct user intent does this
+> slash serve that the existing `analysis` set doesn't, and why does it
+> need its own entrypoint instead of being a flag on an existing one?
+> *(no `analysis` skill ships without a written justification in its PR body.)*
+
+Neither creator exists in this repo today. This spec is pinned in the rule
+so when they land they inherit the gate by construction, not by retrofit.
+
+### Out of scope (honest failure modes)
+
+- **Renames / moves**: the lint compares directory *names*, so a skill
+  renamed `foo` → `bar` in the same PR appears as a removed skill + a
+  new skill (the new one must declare `alpha:`). This is intentional —
+  the gate should not bless a rename that silently rotates the alpha.
+- **Sub-skill splits**: when a skill is split into `foo` + `foo-sub`,
+  both new directories must declare `alpha:` independently. Sub-skills
+  inherit no alpha from their parent.
+- **Documentation-only**: a SKILL.md whose frontmatter contains no
+  `alpha:` because the directory is "just docs" is still a violation. The
+  gate does not distinguish skill-shaped docs from real skills; the
+  latter are the only kind allowed under `skills/`.
+- **Existing 39 skills**: out of the gate's scope. Migration is a
+  separate effort and is intentionally not bundled into this PR.
