@@ -15,7 +15,6 @@
 |---|---|---|
 | `bootstrap` | `<category>-<instrument>` | `bootstrap` (sanity / codebase-map / hook-matrix are inlined sub-stages), `ci-setup` (slash brevity; lives under `bootstrap` category in frontmatter but is referenced as `/dev-kit:ci-setup`, not `/dev-kit:bootstrap-ci-setup`) |
 | `plan` | (none — `plan` is standalone) | — |
-| `design` | `design-<instrument>` | (deprecated — merged into plan) |
 | `build` | `build-<discipline>` | `build-tdd`, `build-debug`, `build-verify`, `build-refactor` |
 | `review` | `review-<subject>` | (none — `review` is standalone) |
 | `security` | `security-<subject>` | (none — `security` is standalone) |

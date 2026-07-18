@@ -46,7 +46,7 @@ Single maintainer risk mitigated by:
 
 ## 6. Compatibility Risk
 
-`DEPRECATED.md` 1-line for legacy users. Opt-in provider switch. **LOW**.
+Opt-in provider switch. **LOW**.
 
 ## 7. Security Risk
 
