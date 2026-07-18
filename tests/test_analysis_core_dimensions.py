@@ -22,7 +22,8 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from lib.analysis_core import dimensions as dim_mod  # noqa: E402
+from lib.analysis_core import dimensions as dim_mod  # noqa: E402import dataclasses
+
 
 
 # Names that the 6 SKILL.md bodies reference; if any are removed the
@@ -163,6 +164,44 @@ class TestDimensionPromptContract(unittest.TestCase):
             self.assertIn(
                 "confidence", dim.contract_fields,
                 f"{name}: must require confidence",
+            )
+
+
+
+class TestDimensionImmutability(unittest.TestCase):
+    """Dimension must be a frozen dataclass — the runner MUST NEVER try
+    to mutate one in place; use `dataclasses.replace` to derive variants.
+    Mutation attempts must raise `dataclasses.FrozenInstanceError`.
+    """
+
+    def test_dimension_is_frozen(self):
+        import dataclasses
+        dim = dim_mod.get("correctness")
+        # Assignment to a frozen dataclass field raises FrozenInstanceError.
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            dim.name = "other"
+        # dataclasses.replace still works (returns a fresh instance).
+        replaced = dataclasses.replace(dim, name="renamed")
+        self.assertEqual(replaced.name, "renamed")
+        self.assertIsNot(replaced, dim)
+        # Original is unchanged.
+        self.assertEqual(dim.name, "correctness")
+
+    def test_all_dimensions_are_frozen(self):
+        # Every dimension in the registry must carry `__dataclass_params__.frozen=True`,
+        # not just the one we touched in test_dimension_is_frozen. Spoofing
+        # would otherwise silently bypass the mutation gate.
+        import dataclasses
+        for name, dim in dim_mod.REGISTRY.items():
+            self.assertTrue(
+                hasattr(dim, "__dataclass_params__") and dim.__dataclass_params__.frozen,
+                f"{name}: dimension must be a frozen dataclass",
+            )
+        # Spot-check slots=True too so memory invariants are explicit.
+        for name, dim in dim_mod.REGISTRY.items():
+            self.assertTrue(
+                dim.__dataclass_params__.slots,
+                f"{name}: dimension must declare slots=True",
             )
 
 

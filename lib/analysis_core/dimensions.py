@@ -17,9 +17,20 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Tuple, Union
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Dimension:
     """One named analysis dimension.
+
+    Invariants — enforced by `@dataclass(frozen=True, slots=True)`:
+      - every instance is hashable and immutable; assignment raises
+        `dataclasses.FrozenInstanceError` (the runner MUST NOT try to
+        mutate a Dimension in place; use `dataclasses.replace` instead)
+      - construction is the only way to set a value; if a derived
+        value is needed, expose it via a `@property` on a subclass
+        or wrapper, not by mutation
+      - `name` is the identity key for the registry; never mutate it
+        (would break `apply_verifier`'s stable-ID contract — see
+        patch #3 of this PR).
 
     Attributes:
         name: kebab-case identifier the SKILL.md body references.
