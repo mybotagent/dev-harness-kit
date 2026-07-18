@@ -143,8 +143,6 @@ class TestProviderDivergenceHook(unittest.TestCase):
         for d in os.environ.get("PATH", "").split(":"):
             if d and shutil.which("jq", path=d) is None:
                 keep_dirs.append(d)
-            elif d and shutil.which("bash", path=d) == bash_abs:
-                keep_dirs.append(d)
         env_no_jq["PATH"] = ":".join(keep_dirs)
         # Defensive: confirm jq still absent.
         self.assertIsNone(shutil.which("jq", path=env_no_jq["PATH"]),
