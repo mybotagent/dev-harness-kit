@@ -543,6 +543,35 @@ the skill's `--json` mode is literally the CLI's JSON output piped into
 the model. No LLM sits in the loop for either; both are pure consumers of
 the `/dev-kit:log` transcripts.
 
+### Skill usage (`tools/skill_usage.py`)
+
+Per-skill telemetry over the same `/dev-kit:log` transcripts: aggregates
+two distinct signals - `attributionSkill` turn-count (depth / work done
+by the skill) and explicit `Skill` tool-use blocks (distinct human
+kicks). High turns + low invocations reads as a babysitter loop; both
+low is prune-eligible; high turns + high invocations is a heavy hitter.
+Workspace attribution is captured per `cwd` so target-project usage is
+separable from self-dev.
+
+```bash
+# Top skills (default 30-day window) - markdown table to stdout
+python3 tools/skill_usage.py
+
+# Narrow to one workspace, fresh window
+python3 tools/skill_usage.py --cwd /path/to/project --days 7
+
+# Machine-readable, e.g. piped into a plan or eval script
+python3 tools/skill_usage.py --json | jq '.[0:5]'
+
+# Same data scoped to one worktree's session list
+python3 tools/session_monitor.py --skill-usage --skill-days 30
+```
+
+Stdlib only; `--days 0` disables the time window; `--cwd <prefix>` filters
+to a single workspace. The `--skill-usage` / `--skill-days` flags on
+`tools/session_monitor.py` reuse the same aggregator to print per-skill
+totals next to the per-worktree session listing.
+
 ---
 
 ## Consumer CI install
