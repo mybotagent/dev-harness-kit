@@ -322,10 +322,10 @@ Enforced by three hooks:
 - `task-detector.sh` — early warning on new-task prompts ("implement X", …).
 - `session-start-check.sh` — gentle reminder at session start.
 
-The canonical worktree path is the client-neutral `.worktrees/<slug>/` at the
+The canonical worktree path is the client-neutral `.workspace/<slug>/` at the
 repo root, so Claude Code and Codex open the same checkout for a branch. Legacy
 `.claude/worktrees/` and `.codex/worktrees/` checkouts stay discoverable for log
-analysis, but new automatic cuts use `.worktrees/`. These worktree-rule files
+analysis, but new automatic cuts use `.workspace/`. These worktree-rule files
 also ship to consumer repos via `templates/ci/`.
 
 ### Skills by audience

@@ -56,9 +56,10 @@ import llm_pricing  # noqa: E402 — shared SSOT pricing loader (see rules/token
 #: degrades to ``merged`` the next day.
 FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
 
-# `.worktrees/` is client-neutral. Keep legacy roots discoverable so older
-# Claude/Codex sessions remain visible after the migration.
-WORKTREE_ROOT_NAMES = (".worktrees", ".claude/worktrees", ".codex/worktrees")
+# `.workspace/` is the new client-neutral canonical (issue #272). Keep the
+# legacy `.worktrees/`, `.claude/worktrees/`, and `.codex/worktrees/` roots
+# discoverable so sessions captured before the migration stay visible.
+WORKTREE_ROOT_NAMES = (".workspace", ".worktrees", ".claude/worktrees", ".codex/worktrees")
 
 #: String fragment that distinguishes a log path captured from inside a
 #: worktree (``<main>/.claude/worktrees/<wt>/logs/...``) from one
@@ -79,7 +80,7 @@ WORKTREE_LOG_WALK_DEPTH = 2
 
 def _worktree_marker(parts: tuple[str, ...]) -> tuple[str, int] | None:
     for i, part in enumerate(parts):
-        if part == ".worktrees" and i + 1 < len(parts):
+        if part in {".workspace", ".worktrees"} and i + 1 < len(parts):
             return parts[i + 1], i
         if part in {".claude", ".codex"} and i + 2 < len(parts) and parts[i + 1] == "worktrees":
             return parts[i + 2], i
@@ -504,7 +505,7 @@ def _codex_nested_field(record: dict, field: str):
 def repo_from_cwd(cwd: str | None) -> str:
     """Derive the project root label from ``cwd``.
 
-    For a session running inside a worktree (``.worktrees/<name>/`` or a legacy root)
+    For a session running inside a worktree (``.workspace/<name>/`` or a legacy root)
     the project's logical name is the segment immediately above that
     marker, not the worktree dir itself. Walking up lets a single
     ``--repo <project>`` invocation surface sessions from every checkout
@@ -522,7 +523,7 @@ def repo_from_cwd(cwd: str | None) -> str:
 def worktree_from_cwd(cwd: str | None) -> str:
     """Derive the git worktree dir name from ``cwd``.
 
-    A worktree in this repo lives under ``<repo>/.worktrees/<name>/``
+    A worktree in this repo lives under ``<repo>/.workspace/<name>/`` (legacy: ``.worktrees/``, ``.claude/worktrees/``, ``.codex/worktrees/``)
     (project convention enforced by ``.claude/rules/git-workflow.md``).
     Returns ``(main)`` when ``cwd`` is the main checkout, the worktree
     basename when ``cwd`` sits under a canonical or legacy worktree root, and
@@ -2481,7 +2482,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--logs-dir", default="logs", help="Logs root directory (default: ./logs).")
     parser.add_argument("--include-worktree-logs", action=argparse.BooleanOptionalAction,
                         default=True,
-                        help="Auto-discover logs from .worktrees/*/logs/ and legacy worktree roots (default: True). "
+                        help="Auto-discover logs from .workspace/*/logs/ and legacy worktree roots (.worktrees/, .claude/worktrees/, .codex/worktrees/) (default: True). "
                              "Pass --no-include-worktree-logs to disable.")
     parser.add_argument("--out", default=None, help="Output HTML path (default: token-dashboard-<repo>-<days>d.html).")
     parser.add_argument("--cost-gate-tokens", type=int, default=DEFAULT_COST_GATE_TOKENS,

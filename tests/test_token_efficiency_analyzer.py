@@ -969,7 +969,7 @@ class TestWorktreeAwareness(unittest.TestCase):
             "feat-per-branch-log",
         )
         self.assertEqual(
-            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.worktrees/fix-x"),
+            worktree_from_cwd("/Users/sanghee/dev/dev-harness-kit/.workspace/fix-x"),
             "fix-x",
         )
 
@@ -1024,7 +1024,7 @@ class TestWorktreeAwareness(unittest.TestCase):
         )
         self.assertEqual(
             worktree_from_path(
-                "/Users/sanghee/dev/dev-harness-kit/.worktrees/fix-x"
+                "/Users/sanghee/dev/dev-harness-kit/.workspace/fix-x"
                 "/logs/codex/main/x.jsonl"
             ),
             "fix-x",
@@ -2068,7 +2068,7 @@ class TestZeroTurnSessionSuppressed(unittest.TestCase):
 
         # ... but the Transcript Index (which iterates `scored`, not the
         # filtered pairs) DOES list their worktree rows. The worktree stub
-        # is "(main)" (no .worktrees/ ancestor), so we only assert the html
+        # is "(main)" (no .workspace/ ancestor), so we only assert the html
         # renders at all without error.
 
     def test_is_zero_turn_helper_unit(self) -> None:

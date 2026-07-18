@@ -33,7 +33,7 @@ SCHEMA_VERSION = "1.0.0"
 BLOCKED_MARKER = "<!-- status: blocked -->"
 # Tools the per-step sub-agent needs to do anything useful. Required so a
 # restrictive parent Claude Code sandbox (issue #221 RC1: consumer project
-# does not pre-allow .worktrees/**) does not silently block all writes.
+# does not pre-allow .workspace/**) does not silently block all writes.
 SUBAGENT_ALLOWED_TOOLS = "Write,Edit,Bash"
 # Step lifecycle. Order roughly matches the typical progression; entries are
 # enforced by update_step_status() and indexed/queried by tests/CLI.
@@ -402,7 +402,7 @@ def _run_one_step(
     # 4. spawn one sub-agent (MUST-36)
     #    Issue #221 RC1: --add-dir <wt> + --allowedTools so the sub-agent can
     #    write into the per-step worktree even when the consumer's parent
-    #    Claude Code sandbox blocks ".worktrees/**" by default.
+    #    Claude Code sandbox blocks ".workspace/**" by default.
     proc = subprocess.run(
         ["claude", "-p",
          "--add-dir", str(wt),

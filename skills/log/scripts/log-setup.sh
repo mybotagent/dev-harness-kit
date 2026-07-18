@@ -28,7 +28,7 @@ Creates the target project's logging scaffold:
 Idempotent: re-running refreshes save_log.py to the current source version.
 --force overwrites even if the local copy SHA matches.
 --all-worktrees also runs setup + hook install for every existing sibling
-                     worktree under <target>/.worktrees/*/. Legacy
+                     worktree under <target>/.workspace/*/. Legacy
                      <target>/.claude/worktrees/*/ and
                      <target>/.codex/worktrees/*/ roots are also scanned for
                      backwards compatibility. Use this once after --target

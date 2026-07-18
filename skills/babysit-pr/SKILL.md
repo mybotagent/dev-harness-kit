@@ -92,8 +92,8 @@ The parent runs these steps in order, BEFORE spawning the sub-agent.
    Match the line whose second field equals `<pr>.headRefOid`.
 6. If no local worktree owns the candidate branch → create one and verify:
    ```bash
-   git worktree add -b <headRefName> .worktrees/<headRefName> origin/<headRefName>
-   cd .worktrees/<headRefName>
+   git worktree add -b <headRefName> .workspace/<headRefName> origin/<headRefName>
+   cd .workspace/<headRefName>
    [[ "$(git rev-parse HEAD)" == "<headRefOid>" ]] \
      || { echo "HEAD mismatch after worktree add"; exit 1; }
    ```
