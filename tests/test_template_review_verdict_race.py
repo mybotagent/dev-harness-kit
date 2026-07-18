@@ -137,6 +137,47 @@ class TestTemplateVerdictExtractionOrdering(unittest.TestCase):
             )
 
 
+class TestLocalCommentVerdictExtraction(unittest.TestCase):
+    """Pins the local workflow's multi-word verdict parser contract."""
+
+    def setUp(self):
+        self.text = LOCAL_PATH.read_text()
+
+    def _job_body(self, job_name: str) -> str:
+        match = re.search(
+            rf"^  {job_name}:\n(?P<body>.*?)(?=^  [a-z_]+:\n|\Z)",
+            self.text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match, f"{job_name}: job block not found in local workflow")
+        return match.group("body")
+
+    def _comment_pipeline(self, job_name: str) -> str:
+        body = self._job_body(job_name)
+        match = re.search(
+            r'verdict="\$\(gh api .*?\n(?P<pipeline>\s+\| grep -E .*?\|\| true)\)"',
+            body,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match, f"{job_name}: comment verdict pipeline not found")
+        pipeline = "\n".join(line.strip() for line in match.group("pipeline").splitlines())
+        return pipeline.removeprefix("| ")
+
+    def test_comment_parser_preserves_changes_requested(self):
+        sample = "**Verdict:** Approve\n**Verdict:** Changes Requested\n"
+        for job_name in ("review", "security"):
+            with self.subTest(job=job_name):
+                result = subprocess.run(
+                    ["bash", "-o", "pipefail", "-c", self._comment_pipeline(job_name)],
+                    input=sample,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "Changes Requested")
+
+
 def _extract_gate_bash(text: str) -> str:
     """Extract the bash body of the `Combined verdict gate` step."""
     lines = text.splitlines()
