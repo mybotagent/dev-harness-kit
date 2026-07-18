@@ -52,3 +52,72 @@ The hook payloads come from `${HOME}/dev/loghooks` (override with `LOGHOOKS_DIR`
 ```bash
 git rm -rf tools/save_log.py logs/
 ```
+
+## Per-skill usage telemetry
+
+`tools/skill_usage.py` and the `--skill-usage` flag on `tools/session_monitor.py`
+turn the two distinct signals in every captured JSONL into a standing
+data feed, so future cut/merge calls don't have to re-aggregate by hand.
+
+### Two signals
+
+| Signal | Source field | What it counts |
+|---|---|---|
+| `turns` | top-level `attributionSkill` on each assistant message | Depth / work done by the skill — one `/dev-kit:foo` kick that orchestrates 14 sub-agents adds 14 turns. |
+| `invocations` | `tool_use` block with `name == "Skill"`, `input.skill == "<name>"` | Distinct human (or skill-driven) kicks — the user explicitly asked for the skill to run. |
+
+Both are tracked separately. The same skill can have many turns and few
+invocations (a babysitter / maintenance loop) or many of both (a heavy
+hitter). `last_seen` is the maximum `timestamp` observed per skill.
+
+### CLI
+
+```bash
+# Top 20 skills, 30-day window, default logs dir
+python3 tools/skill_usage.py
+
+# Just self-dev (cwd-prefix scoped to this repo)
+python3 tools/skill_usage.py --cwd /Users/.../dev-harness-kit
+
+# One target project (separates target-project usage from self-dev)
+python3 tools/skill_usage.py --cwd /Users/.../my-target
+
+# All-time, JSON for piping into other tools
+python3 tools/skill_usage.py --days 0 --json
+
+# Per-cwd breakdown (every distinct cwd that touched each skill)
+python3 tools/skill_usage.py --json --per-cwd
+```
+
+Output is sorted by `turns` desc, ties broken by `invocations` desc.
+The default window is 30 days; pass `--days 0` to disable.
+
+### session_monitor integration
+
+`tools/session_monitor.py --list --skill-usage` adds a per-worktree
+`TOP SKILLS:` line (3 skills) and a global top-10 panel at the bottom:
+
+```text
+  ▸ feat/p5  [live]  (2 sessions)  last: "feat: p5 telemetry"
+    TOP SKILLS: dev-kit:feat-fix:14 inv:3  dev-kit:inspect:5 inv:1
+```
+
+The `--skill-usage` flag aggregates once per `--skill-days N` window
+(default 30); pass `--skill-days 0` to disable the window.
+
+### Interpretation
+
+* **High turns + low invocations** — babysitter or maintenance loop.
+  The skill does a lot of work per kick. Often worth keeping (e.g.
+  `dev-kit:babysit-pr`).
+* **Both low** — prune candidate. Few turns *and* few distinct kicks.
+  Remove without much regret.
+* **High turns + high invocations** — heavy hitter. Verify it's actually
+  shipping value per invocation, not just absorbing cycles.
+* **High turns, zero invocations** — likely auto-attributed by a
+  pre-tool hook (e.g. an agent that names the skill in its output). Not
+  a kick but worth tracking.
+
+The `dont-cut-heavily-used-skills` rule (see `MEMORY.md`) gates removal
+on the `turns` number, not the `invocations` count — a babysitter with
+zero kicks but thousands of turns is still load-bearing.

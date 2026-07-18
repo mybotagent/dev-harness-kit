@@ -14,7 +14,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import io
 import json
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -463,9 +465,11 @@ class TestPrintJson(unittest.TestCase):
             shutil.copy(FIXTURES / "cc-subagents.jsonl",
                         logs / "claude-code" / "feat-x" / "cc-subagents.jsonl")
             payload = self._run(root, logs)
-        self.assertEqual(set(payload.keys()),
-                         {"logs_dir", "generated_at", "total_sessions",
-                          "live_sessions", "worktrees"})
+        self.assertTrue(
+            {"logs_dir", "generated_at", "total_sessions",
+             "live_sessions", "worktrees",
+             "skill_usage_total"}.issubset(payload.keys()),
+            f"missing expected keys: {[k for k in ('logs_dir', 'generated_at', 'total_sessions', 'live_sessions', 'worktrees', 'skill_usage_total') if k not in payload]}; got {sorted(payload.keys())}")
         self.assertEqual(payload["total_sessions"], 1)
         # Without a real worktree in the tempdir, worktree_from_path falls
         # back to the (main) sentinel. The exact mapping is verified by
@@ -883,6 +887,55 @@ class TestSearchFlag(unittest.TestCase):
                         logs / "claude-code" / "feat-x" / "cc-subagents.jsonl")
             payload = self._run(root, logs, "zzz-no-match")
         self.assertEqual(payload["total_sessions"], 0)
+
+
+class TestSkillUsageFlag(unittest.TestCase):
+    """Smoke test for ``--skill-usage``: confirms the flag is wired into
+    ``main`` without breaking existing flows, and the additive JSON key
+    carries the aggregate when the flag is on.
+    """
+
+    def _run(self, root: Path, logs: Path, *extra: str) -> tuple[int, str]:
+        original = sm.discover_repo_root
+        sm.discover_repo_root = lambda: root
+        buf = io.StringIO()
+        try:
+            with redirect_stdout(buf):
+                rc = sm.main(["--logs-dir", str(logs), "--days", "3650",
+                              "--json", *extra])
+        finally:
+            sm.discover_repo_root = original
+        return rc, buf.getvalue()
+
+    def test_default_no_skill_usage_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            logs = root / "logs"
+            (logs / "claude-code" / "feat-x").mkdir(parents=True)
+            shutil.copy(FIXTURES / "cc-subagents.jsonl",
+                        logs / "claude-code" / "feat-x" / "cc-subagents.jsonl")
+            rc, out = self._run(root, logs)
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        # Additive-only contract: with no --skill-usage flag, the new key
+        # is present but empty so downstream consumers can rely on its
+        # existence without an extra ``if``.
+        self.assertIn("skill_usage_total", payload)
+        self.assertEqual(payload["skill_usage_total"], {})
+
+    def test_skill_usage_with_empty_logs_returns_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            logs = root / "logs"
+            (logs / "claude-code" / "feat-x").mkdir(parents=True)
+            shutil.copy(FIXTURES / "cc-subagents.jsonl",
+                        logs / "claude-code" / "feat-x" / "cc-subagents.jsonl")
+            rc, out = self._run(root, logs, "--skill-usage", "--skill-days", "1")
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        # Fixture has no attributionSkill -> aggregate is empty.
+        self.assertEqual(payload["skill_usage_total"], {})
+
 
 
 if __name__ == "__main__":
