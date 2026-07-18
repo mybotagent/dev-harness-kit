@@ -50,11 +50,12 @@ on:
   workflow_dispatch:
     inputs:
       review_provider:
-        description: "Provider for this run (default: minimax)"
+        description: "Provider for this run (overrides vars.CI_REVIEW_PROVIDER)"
         required: false
-        default: "minimax"
+        default: ""
         type: choice
         options:
+          - ""
           - minimax
           - anthropic
       pr_number:
@@ -142,13 +143,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "provider=${{ github.event.inputs.review_provider }}" >> "$GITHUB_OUTPUT"
+            provider="${{ github.event.inputs.review_provider }}"
             [ -z "${{ github.event.inputs.pr_number }}" ] && { echo "::error::pr_number required"; exit 1; }
             echo "pr_number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           else
-            echo "provider=minimax" >> "$GITHUB_OUTPUT"
+            provider="${{ vars.CI_REVIEW_PROVIDER }}"
             echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           fi
+          if [ -z "$provider" ]; then
+            echo "::error::No provider resolved. Set the GitHub repo variable:"
+            echo "  gh variable set CI_REVIEW_PROVIDER --body anthropic"
+            echo "or pass review_provider on a manual workflow_dispatch run."
+            exit 1
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
       - name: Run /dev-kit:review via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
@@ -404,13 +412,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "provider=${{ github.event.inputs.review_provider }}" >> "$GITHUB_OUTPUT"
+            provider="${{ github.event.inputs.review_provider }}"
             [ -z "${{ github.event.inputs.pr_number }}" ] && { echo "::error::pr_number required"; exit 1; }
             echo "pr_number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           else
-            echo "provider=minimax" >> "$GITHUB_OUTPUT"
+            provider="${{ vars.CI_REVIEW_PROVIDER }}"
             echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           fi
+          if [ -z "$provider" ]; then
+            echo "::error::No provider resolved. Set the GitHub repo variable:"
+            echo "  gh variable set CI_REVIEW_PROVIDER --body anthropic"
+            echo "or pass review_provider on a manual workflow_dispatch run."
+            exit 1
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
       - name: Run /dev-kit:security via MiniMax
         if: steps.provider.outputs.provider == 'minimax'

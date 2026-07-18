@@ -21,24 +21,24 @@ name: PR Review
 #   gh secret delete MINMAX_API_KEY
 #   gh secret set   MINIMAX_API_KEY --body "<new value>"
 #
-# Provider selection (pull_request events): controlled by the git-tracked
-# file `.github/ci-review-provider.txt` (one of `minimax` / `anthropic` /
-# `deepseek` on its own line, defaults to `minimax` if the file is missing
-# or empty). This is a plain local file — edit it, commit, push, and the
-# very next PR-triggered run picks it up. No GitHub Settings UI, no
-# workflow_dispatch, no automatic fallback chain to reason about: whatever
-# is committed on the PR's branch (checked out by `actions/checkout` below)
-# is what runs. workflow_dispatch still accepts an explicit
-# `review_provider` input that overrides the file for a single manual run.
+# Provider selection (pull_request events): resolved from the GitHub
+# repo variable `vars.CI_REVIEW_PROVIDER` (one of `minimax` /
+# `anthropic` / `deepseek`). Set it per repo via:
+#   gh variable set CI_REVIEW_PROVIDER --body anthropic
+# workflow_dispatch still accepts an explicit `review_provider` input
+# that overrides the repo variable for a single manual run. When
+# neither is set the workflow fails loud with a remediation hint —
+# there is no committed default, because the same repo can be used
+# by different operators with different providers (local `.env` is the
+# per-user selector; the repo variable is the per-repo CI selector).
 # Each provider requires its matching secret to be configured:
 # `MINIMAX_API_KEY`, `ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`.
 #
-# CI (a GitHub-hosted runner) can never read your local .env — it only
-# ever sees what's on the branch it checks out. `.githooks/pre-commit`
-# does NOT touch this file (the silent auto-rewrite from .env was removed
-# in #230). To switch provider, run `bin/set-provider.sh <provider>`,
-# review the printed diff, then commit + push yourself. `.env` does not
-# manage the provider — only this tracked file does.
+# Local provider selection lives in `.env:CI_REVIEW_PROVIDER` (managed
+# via `bin/set-provider.sh <provider>`), which is gitignored and per-
+# user. `.githooks/pre-commit` no longer rewrites anything — that
+# silent `.env -> tracked-file` sync was removed in #230, and the
+# tracked file itself was removed in this change.
 
 on:
   pull_request:
@@ -46,7 +46,7 @@ on:
   workflow_dispatch:
     inputs:
       review_provider:
-        description: "Provider for this run (default: .github/ci-review-provider.txt, else minimax)"
+        description: "Provider for this run (overrides vars.CI_REVIEW_PROVIDER)"
         required: false
         default: ""
         type: choice
@@ -106,10 +106,16 @@ jobs:
             [ -z "${{ github.event.inputs.pr_number }}" ] && { echo "::error::pr_number required"; exit 1; }
             echo "pr_number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           else
-            provider="$(tr -d '[:space:]' < .github/ci-review-provider.txt 2>/dev/null || true)"
+            provider="${{ vars.CI_REVIEW_PROVIDER }}"
             echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           fi
-          echo "provider=${provider:-minimax}" >> "$GITHUB_OUTPUT"
+          if [ -z "$provider" ]; then
+            echo "::error::No provider resolved. Set the GitHub repo variable:"
+            echo "  gh variable set CI_REVIEW_PROVIDER --body anthropic"
+            echo "or pass review_provider on a manual workflow_dispatch run."
+            exit 1
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
       - name: Run /dev-kit:review via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
@@ -242,10 +248,16 @@ jobs:
             [ -z "${{ github.event.inputs.pr_number }}" ] && { echo "::error::pr_number required"; exit 1; }
             echo "pr_number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           else
-            provider="$(tr -d '[:space:]' < .github/ci-review-provider.txt 2>/dev/null || true)"
+            provider="${{ vars.CI_REVIEW_PROVIDER }}"
             echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           fi
-          echo "provider=${provider:-minimax}" >> "$GITHUB_OUTPUT"
+          if [ -z "$provider" ]; then
+            echo "::error::No provider resolved. Set the GitHub repo variable:"
+            echo "  gh variable set CI_REVIEW_PROVIDER --body anthropic"
+            echo "or pass review_provider on a manual workflow_dispatch run."
+            exit 1
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
       - name: Run /dev-kit:security via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
