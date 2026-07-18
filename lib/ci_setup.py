@@ -81,6 +81,13 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
+    # Shared stdin / JSON / content-extraction helper sourced by every PreToolUse
+    # + PostToolUse hook. `deny()` lives here so the 4 hook sites can emit a
+    # consistent PreToolUse deny envelope (issue #78 — extracted from inline
+    # payloads); missing from EXPECTED_PATHS was the bug at issue #273 where
+    # consumer repos shipped broken hooks that crashed with
+    # `deny: command not found` on first Edit.
+    "hooks/lib/payload-parse.sh",
     "hooks/lib/worktree-detect.sh",
     "hooks/hooks.json",
     ".claude/rules/git-workflow.md",
@@ -105,6 +112,7 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/task-detector.sh",
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
+    "hooks/lib/payload-parse.sh",
     "hooks/lib/worktree-detect.sh",
 )
 
@@ -461,6 +469,7 @@ def _build_marker() -> dict:
             "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/review-yml-isolation.sh",
+            "hooks/lib/payload-parse.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/hooks.json",
         ],
