@@ -48,6 +48,7 @@ from pathlib import Path
 # session_monitor`` from the test suite (which inserts ``tools/`` on the path).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import token_efficiency_analyzer as tea  # noqa: E402  (path set up above)
+import skill_usage  # noqa: E402  (path set up above)
 
 # A session with no running process is still "LIVE" if its most recent turn
 # landed within this window -- the Stop/SessionEnd hooks fire per turn, so a
@@ -653,7 +654,29 @@ def _commit_cell(subject: str | None) -> str:
     return subject[:40].ljust(40)
 
 
-def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
+def _per_worktree_top_skills(agg: dict, top_n: int = 3) -> str:
+    """Format the top-N skills whose ``cwd`` falls under this worktree.
+
+    Empty string when the worktree has no path or no skill lines land
+    under it. Output is the form ``skill:turns inv:invocations`` pairs
+    for grep-friendly column alignment, e.g.
+    ``dev-kit:inspect:3 inv:0 dev-kit:feat-fix:2 inv:2``.
+    """
+    if not agg:
+        return ""
+    rows = sorted(
+        agg.items(),
+        key=lambda kv: (-kv[1].get("turns", 0), -kv[1].get("invocations", 0), kv[0]),
+    )[:top_n]
+    parts = []
+    for name, rec in rows:
+        parts.append(f"{name}:{rec.get('turns', 0)} inv:{rec.get('invocations', 0)}")
+    return "  ".join(parts)
+
+
+def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path,
+                         *, skill_usage_agg: dict | None = None,
+                         skill_top_n: int = 3) -> None:
     """Non-interactive listing for previewing inside a conversation (--list).
 
     Sessions are bucketed by worktree STATE first (live -> merged -> gone
@@ -678,6 +701,12 @@ def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
         for w in wts:
             tag = f"last: \"{w.last_commit_subject}\"" if w.last_commit_subject else "last: ?"
             print(f"  ▸ {w.dirname}  [{w.state}]  ({len(w.sessions)} sessions)  {tag}")
+            if skill_usage_agg and w.path is not None:
+                wt_skills = skill_usage.filter_by_cwd_prefix(
+                    skill_usage_agg, str(w.path))
+                top = _per_worktree_top_skills(wt_skills, top_n=skill_top_n)
+                if top:
+                    print(f"    TOP SKILLS: {top}")
             print(_column_header("    "))
             for s in w.sessions:
                 sub = f" +{s.subagent_count}agt" if s.subagent_count else ""
@@ -687,8 +716,14 @@ def print_plain_listing(model: list[WorktreeInfo], logs_dir: Path) -> None:
                       f"{_rel_time(s.last_ts, now):>9}  "
                       f"{_commit_cell(w.last_commit_subject)}{sub}")
 
+    if skill_usage_agg:
+        print("\n── SKILL USAGE  (top across all logs) " + "─" * 30)
+        print(skill_usage.format_table(skill_usage_agg, top=10))
 
-def print_json(model: list[WorktreeInfo], logs_dir: Path) -> None:
+
+def print_json(model: list[WorktreeInfo], logs_dir: Path,
+               *, skill_usage_agg: dict | None = None,
+               skill_top_n: int = 5) -> None:
     """Machine-readable JSON for the skill-driven AskUserQuestion picker.
 
     Carries the full session_id, worktree abs path, and log path so the
@@ -711,6 +746,11 @@ def print_json(model: list[WorktreeInfo], logs_dir: Path) -> None:
                 "path": str(w.path) if w.path else None,
                 "last_commit_subject": w.last_commit_subject,
                 "has_live": any(s.status is Status.LIVE for s in w.sessions),
+                "skill_usage": _per_worktree_top_skills(
+                    skill_usage.filter_by_cwd_prefix(
+                        skill_usage_agg, str(w.path))
+                    if (skill_usage_agg and w.path is not None) else {},
+                    top_n=skill_top_n) or None,
                 "sessions": [
                     {
                         "session_id": s.session_id,
@@ -729,6 +769,7 @@ def print_json(model: list[WorktreeInfo], logs_dir: Path) -> None:
             }
             for w in model
         ],
+        "skill_usage_total": (skill_usage_agg or {}),
     }
     print(json.dumps(payload, indent=2, sort_keys=False))
 
@@ -1075,6 +1116,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--print-resume-command", action="store_true",
                    help="print the cwd + argv that would be exec'd on Enter, "
                         "then exit (no picker, no exec)")
+    p.add_argument("--skill-usage", action="store_true",
+                   help="attach a per-worktree top-skills line (and a "
+                        "global top-10 panel) using logs/*.jsonl turn + "
+                        "Skill tool_use counts")
+    p.add_argument("--skill-days", type=int, default=30,
+                   help="window (days) for --skill-usage aggregation "
+                        "(default 30; pass 0 to disable)")
     p.add_argument("--filter", metavar="PATTERN", default="",
                    help="substring filter (case-insensitive) across "
                         "session_id, branch, model, source, log_path, "
@@ -1107,12 +1155,19 @@ def main(argv=None) -> int:
             print(f"[session-monitor] --filter {args.filter!r} matched "
                   f"0 of {before} sessions", file=sys.stderr)
 
+    skill_agg = None
+    if args.skill_usage:
+        window = None if args.skill_days == 0 else args.skill_days
+        skill_agg = skill_usage.aggregate_skill_usage(
+            str(logs_dir / '**' / '*.jsonl'), window,
+            include_per_cwd=True)
+
     if args.list:
-        print_plain_listing(model, logs_dir)
+        print_plain_listing(model, logs_dir, skill_usage_agg=skill_agg)
         return 0
 
     if args.json:
-        print_json(model, logs_dir)
+        print_json(model, logs_dir, skill_usage_agg=skill_agg)
         return 0
 
     if args.print_resume_command:
