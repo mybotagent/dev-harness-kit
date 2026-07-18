@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """discover_dependents.py — Phase 2 of /dev-kit:prune.
 
-Walks the call graph of every Phase-1 deletion candidate and emits one row
-per live importer / caller / runtime reference. Output is a DEPENDENTS
-block that gates Phase 3 (REPORT) on per-row user ack.
+Re-runs the delete-mode analysis engine over every Phase-1 deletion candidate
+and emits one row per suggested deletion or dependent-proof blocker. Output is
+a DEPENDENTS block that gates Phase 3 (REPORT) on per-row user ack.
 
 Backed by `lib/analysis_core.runner.run_analysis(mode="delete", ...)` —
 the same deterministic engine Phase 1 used, so scope filtering, severity
 floors, dedupe, and the `deletion_proof` contract (no_importers AND
 no_callers) all behave identically. The engine emits the deletion
-suggestions; this script annotates them with the live dependents that
-would break if the candidate were removed.
+suggestions; this script presents them as dependent-proof rows that would
+block removal when callers remain.
 
 Why a separate script (vs inlining into the SKILL.md body)?
-- The dependent-walk has to run AFTER Phase 1 produces candidates; it is
+- The dependent-proof pass has to run AFTER Phase 1 produces candidates; it is
   stateful and would otherwise bloat the SKILL.md body.
 - It needs to be testable in isolation (see
   `tests/test_prune.py::test_prune_target_runs_full_suite` and friends).
@@ -32,7 +32,6 @@ body formats it as a bullet list.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -49,10 +48,64 @@ if str(_REPO_ROOT) not in sys.path:
 
 from lib.analysis_core.runner import (  # noqa: E402  (sys.path tweak above)
     emit_suggested_diffs,
-    render_markdown,
     run_analysis,
 )
 from lib.analysis_core.dimensions import group  # noqa: E402
+
+
+def _within_repo(path: Path) -> bool:
+    """Return whether a resolved path stays inside this repository."""
+    try:
+        path.resolve().relative_to(_REPO_ROOT.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_target_scope(target: str) -> Path | None:
+    """Resolve a target to its feature root or return ``None``.
+
+    Targets may name a phase directory, a skill directory, or a Python module
+    under ``lib/``. Reject absolute paths and traversal so the target cannot
+    widen analysis outside the repository.
+    """
+    raw = Path(target)
+    if raw.is_absolute() or ".." in raw.parts:
+        return None
+
+    candidates: List[Path]
+    if raw.parts and raw.parts[0] in {"skills", "phases", "lib"}:
+        candidates = [_REPO_ROOT.joinpath(*raw.parts)]
+    else:
+        candidates = [
+            _REPO_ROOT / "phases" / raw,
+            _REPO_ROOT / "skills" / raw,
+            _REPO_ROOT / "lib" / raw,
+            _REPO_ROOT / "lib" / f"{target}.py",
+        ]
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not resolved.exists() or not _within_repo(resolved):
+            continue
+        if resolved.is_dir() and (
+            resolved.parent.name in {"phases", "skills"}
+            or resolved.parent == _REPO_ROOT / "lib"
+            or resolved.parts[-2:-1] == ("analysis_core",)
+        ):
+            return resolved
+        if resolved.is_file() and resolved.suffix == ".py":
+            return resolved
+    return None
+
+
+def _scope_within_target(path: Path, target_scope: Path) -> bool:
+    """Return whether an explicit scope remains inside the target root."""
+    try:
+        path.resolve().relative_to(target_scope.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _load_candidates(path: Path) -> Dict[str, List[Dict[str, Any]]]:
@@ -189,19 +242,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    target_scope = _resolve_target_scope(args.target)
+    if target_scope is None:
+        print(
+            f"discover_dependents: target is not resolvable: {args.target}",
+            file=sys.stderr,
+        )
+        return 2
+
     if not args.candidates.exists():
         print(f"discover_dependents: candidates file missing: {args.candidates}",
               file=sys.stderr)
         return 2
 
-    candidates = _load_candidates(args.candidates)
-    paths = [Path(p).resolve() for p in args.scope] if args.scope else [
-        _REPO_ROOT.resolve(),
-    ]
+    try:
+        candidates = _load_candidates(args.candidates)
+    except (OSError, ValueError) as exc:
+        print(f"discover_dependents: invalid candidates: {exc}", file=sys.stderr)
+        return 2
+
+    if args.scope:
+        paths = [Path(p).resolve() for p in args.scope]
+        if any(not _scope_within_target(path, target_scope) for path in paths):
+            print(
+                "discover_dependents: scope must remain inside target root: "
+                f"{target_scope}",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        paths = [target_scope]
+
     rows = _dependent_rows(candidates, args.target, paths)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(_render_markdown(args.target, rows), encoding="utf-8")
-    print(f"discover_dependents: wrote {len(rows)} rows to {args.out}")
+    finding_count = sum(row["dim"] != "__engine__" for row in rows)
+    print(f"discover_dependents: wrote {finding_count} rows to {args.out}")
     return 0
 
 

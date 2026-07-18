@@ -7,7 +7,7 @@ Locks in the 4-phase prune contract. Asserts:
 - body has 4 phase headings ([1/4], [2/4], [3/4], [4/4])
 - body has an Iron Law with MUST-L1 / MUST-L2 / MUST-L3 / MUST-L4 references
 - body disambiguates from /dev-kit:refactor (delete != refactor)
-- body declares `--target <feat>` flag (replaces old /dev-kit:feat-remove)
+- body declares `--target <feat>` flag (coexists with /dev-kit:feat-remove)
 - body declares Phase 4 VERIFY runs the full suite (not just the changed path)
 - body declares Edit in disallowed-tools (orchestrator only)
 - body never claims to call `rm` itself (mirrors feat-remove discipline)
@@ -104,9 +104,9 @@ class TestPruneSchema(unittest.TestCase):
         )
 
     def test_target_flag_absorbs_feat_remove(self):
-        # The --target <feat> flag replaces the old /dev-kit:feat-remove
-        # slash. The body must surface the migration so users running
-        # /dev-kit:feat-remove muscle memory see the new verb.
+        # The --target <feat> flag adds a single-feature mode alongside the
+        # existing /dev-kit:feat-remove slash. The body must surface both
+        # paths so users can choose the intended deletion flow.
         self.assertIn(
             "--target", self.text,
             "prune must declare the --target flag for single-feature deletion",
@@ -169,7 +169,7 @@ class TestDiscoverDependentsScript(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp_ctx.cleanup()
 
-    def _run(self, candidates_obj, target="demo-feat", scope=None):
+    def _run(self, candidates_obj, target="prune", scope=None):
         cand = self.tmp_p / "cand.json"
         out = self.tmp_p / "out.md"
         cand.write_text(json.dumps(candidates_obj), encoding="utf-8")
@@ -200,7 +200,7 @@ class TestDiscoverDependentsScript(unittest.TestCase):
         # whole-file deletion_proof the engine requires for `git rm`.
         candidates = {
             "dead": [{
-                "file": "skills/_demo_dead/SKILL.md",
+                "file": "skills/prune/SKILL.md",
                 "line": 1,
                 "severity": "major",
                 "confidence": "high",
@@ -235,7 +235,7 @@ class TestDiscoverDependentsScript(unittest.TestCase):
         proc = subprocess.run(
             [
                 sys.executable, str(DISCOVER_DEPENDENTS),
-                "--target", "demo-feat",
+                "--target", "prune",
                 "--candidates", str(self.tmp_p / "does-not-exist.json"),
                 "--out", str(out),
             ],
@@ -244,6 +244,45 @@ class TestDiscoverDependentsScript(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 2)
         self.assertIn("candidates file missing", proc.stderr)
+
+    def test_invalid_target_exits_2(self):
+        """An unresolved feature name must fail before analysis runs."""
+        cand = self.tmp_p / "cand.json"
+        out = self.tmp_p / "out.md"
+        cand.write_text("{}", encoding="utf-8")
+        proc = subprocess.run(
+            [
+                sys.executable, str(DISCOVER_DEPENDENTS),
+                "--target", "missing-feature",
+                "--candidates", str(cand),
+                "--out", str(out),
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("target is not resolvable", proc.stderr)
+
+    def test_target_scope_defaults_to_feature_root(self):
+        """Without --scope, analysis is narrowed to the resolved skill root."""
+        candidates = {
+            "dead": [{
+                "file": "skills/refactor/SKILL.md",
+                "line": 1,
+                "severity": "major",
+                "confidence": "high",
+                "title": "Out of scope",
+                "tldr": "outside target",
+                "failure_scenario": "not under prune",
+                "deletion_scope": "whole-file",
+                "deletion_proof": {"no_importers": True, "no_callers": True},
+            }],
+        }
+        proc, out_path = self._run(candidates, target="prune")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = out_path.read_text(encoding="utf-8")
+        self.assertIn("## Verdict", text)
+        self.assertNotIn("**File:**", text)
 
 
 if __name__ == "__main__":
