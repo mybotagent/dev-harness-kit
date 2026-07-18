@@ -1,218 +1,40 @@
 ---
 name: review
 category: review
-description: "Parallel multi-dimension code review with a false-positive filter. Fans out to specialized subagents (correctness, security, architecture) that run at the same time and return structured, evidence-backed findings; a verification pass confirms or rejects each candidate before rendering per-line inline comments plus one PR-style summary with a verdict. Use when the user types /dev-kit:review, or asks to review code, review a diff, review a PR, or check this before merge."
-when_to_use: |
+description: "Parallel multi-dimension code review with a false-positive filter. Fans out to per-dim experts (correctness, security, architecture) that run in parallel and return evidence-backed findings; a verifier pass confirms/rejects each candidate before rendering per-line inline comments plus a PR-style summary with a verdict."
+when_to_use:
   - User types /dev-kit:review [paths] [--diff] [--diff --staged] [--fast]
-  - User asks to "review this code", "review the diff", "review the PR", "check this before merge"
-  - Before merge / PR — wants a structured, severity-ranked, low-noise review
+  - User asks to review code, the diff, or the PR
+  - Before merge — wants structured, severity-ranked, low-noise review
 allowed-tools: Read Grep Glob Bash Agent
 model: opus
 disable-model-invocation: false
 ---
 
-## Provider (defaults to MiniMax, Anthropic-compatible)
+Multi-dim code review. Delegates to `lib.analysis_core.run_analysis(dimensions=group("review"), mode="read-only", paths=...)`. The engine owns the registry, evidence schema, FP filter, verifier, renderer. This skill owns the parallel Agent fan-out, the verifier call, and the inline + summary rendering.
 
-This skill follows whatever provider the GitHub Action configures via env vars.
-Default is **MiniMax-M3[1m]** at `ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic`.
-Opt-in to real Claude Code via `REVIEW_PROVIDER=anthropic`.
+## Scope
 
-# /dev-kit:review — parallel multi-dimension code review
+1. No paths -> whole project directory. `--diff` -> diff vs default branch. `--diff --staged` -> working-tree changes only. `--fast` -> skip verifier.
+2. Filter to source files. Empty -> tell user, stop. >~40 files -> narrow subset.
+3. On diff run, capture `git diff -U0`. Experts must only flag issues introduced by the changed lines, not pre-existing code.
 
-Review target code by fanning out to **specialized dimension experts that run in parallel**,
-one subagent per dimension, then run a **verification pass** that filters out false positives.
+## Fan-out + verify
 
-**MVP dimensions (3):** `correctness`, `security`, `architecture`.
+Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, good, fix`). Return a fenced `json` array.
 
-**Guiding principle — precision over recall.** A review that cries wolf gets ignored.
-**Every rendered finding must be real and demonstrable.**
+**Dimensions:** correctness, security, architecture (see `group("review")`).
 
----
+One verifier Agent (`general-purpose`, `model: "sonnet"`) returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`. Drop REJECTED; keep CONFIRMED + PLAUSIBLE. Skipped with `--fast`.
 
-## Step 1 — Resolve scope
+## Render
 
-1. No paths (common) → whole project directory.
-2. `--diff` → diff vs default branch.
-3. `--diff --staged` → working-tree changes only.
-4. `--fast` → skip verifier (deterministic filter only).
+**Layer 2 (one PR summary at top):** `## Review summary` with verdict (`Blocked`/`Changes Requested`/`Approve`), severity counts, walkthrough, strengths, blocking findings, next actions. Verdict: Blocked (>=1 critical) -> Changes Requested (>=1 major) -> Approve.
 
-Filter to source files. Empty list → tell user, stop. >~40 files → narrow subset.
+**Layer 1 (inline, one per finding):** Call `mcp__github_inline_comment__create_inline_comment` with `path`, `line`, `body` shaped `[<severity> · <verdict>] <title> @ path:line (dim: ...) / TL;DR: ... / ✓ Good: ... / Fix: <snippet>`. Skip when 0 findings (clean Approve).
 
-On diff run, also capture changed hunks (`git diff -U0`). Experts must only flag issues
-**introduced by the changed lines**, not pre-existing code.
-
----
-
-## Step 2 — Fan out to the experts (THE PARALLEL STEP)
-
-> **Issue all 3 `Agent` calls inside ONE assistant message** so they run concurrently.
-> Separate messages run sequentially and defeat the purpose.
-
-Each call: `subagent_type: "general-purpose"`, `model: "sonnet"`, `run_in_background: false`.
-
-### Shared contract (prepend to every expert prompt)
-
-```
-You are a code-review expert for ONE dimension: <DIMENSION>. Read each file and report
-ONLY real, demonstrable issues in your dimension. Precision matters more than
-completeness — a false positive is worse than a missed nit.
-
-Files to review (read each one):
-<file list, absolute paths>
-[diff run only] Only report issues in these changed hunks; ignore pre-existing code:
-<hunk list>
-
-MANDATORY per finding:
-- failure_scenario: a CONCRETE trigger — specific inputs/state that lead to wrong
-  output, crash, or exploit. If you cannot write one, the issue is speculative → DROP.
-- confidence: high | medium | low — your certainty the issue is real AND reachable.
-
-DO NOT report:
-- Style, naming, formatting preferences with no functional impact.
-- Hypothetical issues with no reachable trigger.
-- "Missing" validation when a visible guard, type, or caller already covers it.
-- Defensive-programming suggestions that aren't a real defect.
-- Anything outside your dimension, or (on a diff run) outside the changed hunks.
-- A weaker restatement of a more fundamental issue you're also reporting.
-
-Severity: critical (breaks behavior / exploitable / data loss → blocks merge) ·
-major (real defect) · minor (non-blocking improvement) · nit (trivial).
-
-Return ONLY a fenced ```json array:
-[{
-  "file": "<absolute path>",
-  "line": <1-indexed anchor int>,
-  "dim": "<DIMENSION>",
-  "severity": "critical|major|minor|nit",
-  "confidence": "high|medium|low",
-  "title": "<short imperative title>",
-  "tldr": "<one line: what's wrong and why it matters>",
-  "failure_scenario": "<concrete inputs/state → wrong output/crash/exploit>",
-  "good": "<what is done well near this code, or null>",
-  "fix": "```<lang>\n<corrected code snippet>\n```"
-}]
-Return [] if you find nothing real. Prefer 2 solid findings over 8 speculative ones.
-```
-
-### Dimension charters
-
-- **correctness** — logic errors, edge-case/boundary/null handling, off-by-one, state
-  transitions, error-handling gaps, race conditions, API/contract misuse, wrong return values.
-- **security** — `eval` / `new Function` / `os.system` / `child_process.exec` /
-  `pickle` / `yaml.load` / `dangerouslySetInnerHTML` / SSRF / IDOR / hardcoded
-  credentials / weak crypto. READ surrounding code; only report if reachable.
-- **architecture** — module boundaries, coupling, layering, leaky abstractions,
-  duplication, God objects, poor extensibility. Report only structural problems
-  with concrete maintenance/scaling impact.
-
----
-
-## Step 3 — Verify (false-positive filter)
-
-Parse each expert's JSON. Then:
-
-### 3a. Deterministic filter
-Drop if:
-- Missing/empty `failure_scenario`.
-- `confidence: low` AND severity is `minor`/`nit`.
-- (Diff run only) anchor outside changed hunks.
-
-### 3b. Dedupe
-Same `file+line+theme` → keep higher severity. Cross-dimension root cause → collapse.
-
-### 3c. Verifier pass (default; skipped with `--fast`)
-Spawn one verifier subagent (`general-purpose`, `model: "sonnet"`). Give it surviving
-candidates + file list with this prompt:
-
-```
-You are a strict verifier. RE-READ the cited code and decide if each candidate is REAL.
-Try hard to REFUTE. Return only:
-[{ "id": <index>, "verdict": "CONFIRMED|PLAUSIBLE|REJECTED",
-   "reason": "<one line>" }]
-- CONFIRMED: you executed failure_scenario against the code and it holds.
-- PLAUSIBLE: likely real but can't fully confirm from given scope.
-- REJECTED: code already handles it, or scenario doesn't trigger.
-```
-
-Drop every REJECTED. Keep CONFIRMED + PLAUSIBLE.
-
-### 3d. Sort
-By severity (critical→nit), CONFIRMED before PLAUSIBLE, then file, then line.
-
----
-
-## Step 4 — Render
-
-### Layer 2 — PR summary (exactly one, at top)
-
-```
-## Review summary
-
-**Verdict:** <Blocked | Changes Requested | Approve>
-**Severity:** 🔴 <n>  🟠 <n>  🟡 <n>  ⚪ <n>
-**Precision:** <M> findings shown · <K> filtered as false positives/low-signal
-
-**Walkthrough:** <2-3 lines>
-
-**Strengths:**
-- <notable good points>
-
-**Blocking findings (critical + major only):**
-- [🔴 critical · CONFIRMED] <title> — path:line
-
-**Next actions:**
-- [ ] <short checklist>
-```
-
-Verdict: Blocked (≥1 critical) → Changes Requested (≥1 major) → Approve.
-
-### Layer 1 — inline comments (one per finding)
-
-For **each** surviving finding (after Step 3 verification), call
-`mcp__github_inline_comment__create_inline_comment` with `path`,
-`line` (or commit_id for non-line findings), and `body` shaped exactly
-like below. Do this in the same response that posts the Layer 2
-summary — the inline comments are the per-finding review, the summary
-is the roll-up. **Skip this layer only when there are zero
-findings** (clean Approve).
-
-```
-[🔴 critical · CONFIRMED] <title>        @ path/to/file.py:42  (dim: security)
-TL;DR: <one line>
-✓ Good: <redeeming aspect, or "—">
-Fix:
-```<lang>
-<code>
-```
-```
-
-After each `mcp__github_inline_comment__create_inline_comment` call,
-verify the response includes a non-empty `id`; if it returned a
-permission error or empty body, log the issue and continue — never
-silently drop the finding.
-
----
-
-## Hook integration (Stage Review)
+## Hooks
 
 `slop-detector, secret-scan, stop-verify` ON. `tdd-guard` OFF (review stage).
 
-## Next step
-
-`/dev-kit:security` (10-dim OWASP) or `/dev-kit:ship`.
-
----
-
-## Regression testing
-
-After any prompt change, run:
-- `bash skills/review/fixtures/check.sh real-bugs` → MUST catch all
-- `bash skills/review/fixtures/check.sh traps` → MUST NOT flag
-- `bash skills/review/fixtures/check.sh clean` → MUST return Approve
-- Compare against `fixtures/expected.md` (source of truth).
-
-## Scaling 3 → 10 dimensions
-
-Add a charter line + one more `Agent` call **in the same fan-out message**. The
-Step 3 verifier handles whatever candidates arrive. For a full OWASP A01–A10 sweep,
-use `/dev-kit:security`.
+Next: `/dev-kit:security` (10-dim OWASP) or `/dev-kit:ship`.

@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """test_inspect.py — Regression for skills/inspect/SKILL.md schema.
 
-Locks in the 8-dim inspect contract so a future refactor that silently
-drops a dim (or rewrites the hand-off table to fewer rows) fails the
-gate before merge. Asserts:
+After P1 (analysis-core engine), inspect is a thin procedural shell
+that delegates to `lib.analysis_core.run_analysis(...)`. This test
+locks in the new compact shape:
 
-- description declares 8 dims (not 6, not 7)
-- --dim flag list includes 8 entries
-- dimension-charter bullets cover 8 named dims
-- per-dim summary table has 8 rows
+- description declares 8 dims
+- --dim flag list mentions all 8 named dims
+- dimension charter bullets cover 8 named dims (one-line charters)
+- the engine handles per-dim HIGH/MED/LOW counts (renderer in
+  lib.analysis_core.runner.render_markdown) — not duplicated here
 - hand-off routing table has 8 rows
-- hand-off mentions the refactor skill as the whole-pipeline wrapper
-- hand-off mentions the prune skill as the whole-pipeline deletion wrapper
+- hand-off routes to /dev-kit:refactor AND /dev-kit:prune
+- body references the engine entrypoint (lib.analysis_core.run_analysis)
+- body has <= 60 lines (procedural shell)
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ EXPECTED_DIMS = (
     "dead", "dup", "smell", "overeng", "overarch", "cleancode",
     "tokenbudget", "slop",
 )
+MAX_BODY_LINES = 60
 
 
 class TestInspectSchema(unittest.TestCase):
@@ -41,12 +44,21 @@ class TestInspectSchema(unittest.TestCase):
         self.assertIn("8-dim", desc, f"description should declare 8-dim; got: {desc!r}")
 
     def test_dim_flag_lists_all_eight(self):
-        # The --dim description wraps across 2 lines; use DOTALL to span them.
-        m = re.search(r"--dim <name>.*?Multiple", self.text, re.DOTALL)
+        # Find the --dim <name> usage line and check the dim list
+        # that follows it contains all 8 named dims.
+        m = re.search(r"`--dim <name>`[^\n]*", self.text)
         self.assertIsNotNone(m, "--dim flag description missing")
-        block = m.group(0)
+        # The list of dim names appears in a backtick-quoted span on
+        # the same line OR in the next backtick-quoted span. Walk
+        # forward through backtick-delimited tokens and assert each
+        # appears somewhere in the document (engine SSOT) but the
+        # --dim scope line lists them all.
+        scope_line = m.group(0)
         for dim in EXPECTED_DIMS:
-            self.assertIn(dim, block, f"--dim list missing {dim!r} (block: {block!r})")
+            self.assertIn(
+                dim, scope_line,
+                f"--dim flag scope line must list {dim!r}; got: {scope_line!r}",
+            )
 
     def test_dimension_charters_cover_all_eight(self):
         for dim in EXPECTED_DIMS:
@@ -56,45 +68,66 @@ class TestInspectSchema(unittest.TestCase):
                 f"dimension charter missing for {dim!r}",
             )
 
-    def test_per_dimension_summary_table_has_eight_rows(self):
-        m = re.search(
-            r"## Per-dimension summary(.*?)## Notes",
-            self.text, re.DOTALL,
-        )
-        self.assertIsNotNone(m, "per-dim summary block missing")
-        block = m.group(1)
-        rows = [line for line in block.splitlines() if line.startswith("| ") and "---" not in line]
-        # header + separator + 8 data rows = 10 lines; drop header -> 9; drop separator -> 8
-        data_rows = [r for r in rows if not r.startswith("| dim")]
-        self.assertEqual(
-            len(data_rows), len(EXPECTED_DIMS),
-            f"per-dim summary table has {len(data_rows)} data rows; expected {len(EXPECTED_DIMS)}",
-        )
-
     def test_hand_off_routing_table_has_eight_rows(self):
-        m = re.search(
-            r"## Hand-off(.*?)## Related",
-            self.text, re.DOTALL,
-        )
+        # The hand-off section now starts with `## Hand-off` and runs
+        # to end-of-body or `## Next step` / similar. New shape: 8 rows.
+        m = re.search(r"## Hand-off(.*?)(?:## Next|\Z)", self.text, re.DOTALL)
         self.assertIsNotNone(m, "Hand-off section missing")
         block = m.group(1)
-        rows = [line for line in block.splitlines() if line.startswith("| ") and "---" not in line and "Dim" not in line]
+        rows = [
+            line for line in block.splitlines()
+            if line.startswith("| ") and "---" not in line and "Dim" not in line
+        ]
         self.assertEqual(
             len(rows), len(EXPECTED_DIMS),
             f"Hand-off table has {len(rows)} rows; expected {len(EXPECTED_DIMS)} (one per dim)",
         )
 
-    def test_hand_off_mentions_refactor(self):
-        m = re.search(
-            r"## Hand-off(.*?)## Related",
-            self.text, re.DOTALL,
-        )
+    def test_hand_off_routes_to_refactor_and_prune(self):
+        m = re.search(r"## Hand-off(.*?)(?:## Next|\Z)", self.text, re.DOTALL)
         self.assertIsNotNone(m, "Hand-off section missing")
         block = m.group(1)
-        self.assertIn("/dev-kit:refactor", block, "Hand-off should route whole-pipeline to /dev-kit:refactor")
-        # The deletion counterpart should also be mentioned so the
-        # baseline report can route deletion candidates to the right skill.
-        self.assertIn("/dev-kit:prune", block, "Hand-off should route deletion candidates to /dev-kit:prune")
+        self.assertIn(
+            "/dev-kit:refactor", block,
+            "Hand-off should route whole-pipeline to /dev-kit:refactor",
+        )
+        self.assertIn(
+            "/dev-kit:prune", block,
+            "Hand-off should route deletion candidates to /dev-kit:prune",
+        )
+
+    def test_delegates_to_engine(self):
+        # New procedural shape: the body must reference the engine
+        # entrypoint so the dimension knowledge lives in one place.
+        self.assertIn(
+            "lib.analysis_core.run_analysis",
+            self.text,
+            "inspect SKILL.md must delegate to lib.analysis_core.run_analysis",
+        )
+        self.assertIn(
+            "group(\"inspect\")",
+            self.text,
+            "inspect SKILL.md must request its dimension set via group(\"inspect\")",
+        )
+
+    def test_skill_is_thin_shell(self):
+        # Procedural shell budget: the entire SKILL.md is <= 60 lines.
+        line_count = len(self.text.splitlines())
+        self.assertLessEqual(
+            line_count, MAX_BODY_LINES,
+            f"inspect SKILL.md has {line_count} lines; "
+            f"procedural shell budget is {MAX_BODY_LINES}",
+        )
+
+    def test_engine_owns_per_dim_counts(self):
+        # The renderer's HIGH/MED/LOW per-dim table moved into
+        # lib.analysis_core.runner.render_markdown. The skill body
+        # must NOT duplicate that table.
+        self.assertNotIn(
+            "## Per-dimension summary",
+            self.text,
+            "Per-dim HIGH/MED/LOW table moved to lib.analysis_core.runner.render_markdown",
+        )
 
 
 if __name__ == "__main__":
