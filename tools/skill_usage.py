@@ -359,6 +359,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="emit machine-readable JSON instead of a table")
     p.add_argument("--per-cwd", action="store_true",
                    help="include a per-cwd breakdown in the JSON output")
+    p.add_argument("--propose-delete", action="store_true",
+                   help="filter to skills with 0 turns AND 0 invocations in "
+                        "the window and pipe the list to "
+                        "skills/prune-propose/scripts/dump_usage.py for a "
+                        "per-skill delete proposal loop")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --propose-delete, print the candidate table "
+                        "only and skip the AskUserQuestion loop")
     args = p.parse_args(argv)
 
     logs_glob = args.logs_glob or _default_logs_glob()
@@ -371,12 +379,61 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 0
 
+    if args.propose_delete:
+        return _run_propose_delete(skills, window, dry_run=args.dry_run)
+
     if args.json:
         print(format_json(skills))
     else:
         top = None if args.top == 0 else args.top
         print(format_table(skills, top=top))
     return 0
+
+
+def _run_propose_delete(skills: dict[str, dict],
+                        window: int | None,
+                        *,
+                        dry_run: bool) -> int:
+    """Pipe the 0/0-in-window subset to ``dump_usage.py``.
+
+    The subset is the deterministic gate: skills whose aggregated
+    ``turns`` AND ``invocations`` are both 0 within the window. Skills
+    that never appeared in any log are excluded here too -- the dump
+    tool runs against telemetry, not against the on-disk inventory, so
+    a skill that has never been invoked in any captured session will
+    not show up.
+
+    ``dry_run=True`` echoes ``--dry-run`` to dump_usage.py so the
+    chat-rendered table is printed without the AskUserQuestion loop.
+    Returns dump_usage.py's exit code (0 on a clean loop).
+    """
+    candidates = sorted(
+        name for name, rec in skills.items()
+        if rec.get("turns", 0) == 0 and rec.get("invocations", 0) == 0
+    )
+    # dump_usage.py lives next to the skill that owns it. Resolve the
+    # path from the tools/ dir to keep the call site free of absolute
+    # repo paths.
+    here = Path(__file__).resolve().parent
+    dump_script = here.parent / "skills" / "prune-propose" / "scripts" / "dump_usage.py"
+    if not dump_script.is_file():
+        print(f"[skill-usage] dump script missing: {dump_script}",
+              file=sys.stderr)
+        return 2
+
+    import subprocess
+    cmd = [sys.executable, str(dump_script),
+           "--window-days", str(window if window is not None else 0)]
+    if dry_run:
+        cmd.append("--dry-run")
+    payload = "\n".join(candidates) + ("\n" if candidates else "")
+    r = subprocess.run(cmd, input=payload, text=True,
+                       capture_output=True, timeout=300)
+    if r.stdout:
+        sys.stdout.write(r.stdout)
+    if r.stderr:
+        sys.stderr.write(r.stderr)
+    return r.returncode
 
 
 if __name__ == "__main__":
