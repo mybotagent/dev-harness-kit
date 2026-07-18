@@ -727,33 +727,17 @@ class TestCiSetup(unittest.TestCase):
             self.assertEqual(recorded, actual,
                              "marker SHA must match post-install file bytes")
 
-    # === Issue #212: provider-file install + secrets catalog ===
+    # === Issue #212: provider resolution is now env-based, not a tracked file ===
 
-    def test_provider_file_landed_in_empty_target(self):
-        """Issue #212-A1: .github/ci-review-provider.txt is in EXPECTED_PATHS
-        and contains a valid provider name on fresh install."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            r = self.ci_setup.install_ci_config(target)
-            self.assertEqual(r.errors, [], f"errors: {r.errors}")
-            provider_path = target / ".github" / "ci-review-provider.txt"
-            self.assertTrue(
-                provider_path.exists(),
-                ".github/ci-review-provider.txt missing after install",
-            )
-            content = provider_path.read_text(encoding="utf-8").strip().lower()
-            self.assertIn(
-                content, self.ci_setup.PROVIDER_SECRETS,
-                f"provider file content '{content}' not in catalog",
-            )
-
-    def test_provider_file_appears_in_expected_paths(self):
-        """Issue #212-A1 sanity: the provider file path lives in EXPECTED_PATHS."""
-        self.assertIn(
+    def test_provider_file_not_in_expected_paths(self):
+        """After the env refactor: the tracked provider file is GONE — there is
+        no default to ship, so the same repo can be used by different operators
+        with different providers. Provider selection lives in `.env` (local)
+        and `vars.CI_REVIEW_PROVIDER` (CI)."""
+        self.assertNotIn(
             ".github/ci-review-provider.txt",
             self.ci_setup.EXPECTED_PATHS,
-            "ci-review-provider.txt not in EXPECTED_PATHS; consumers will not see it",
+            "ci-review-provider.txt must not be installed — provider is env-based now",
         )
 
     def test_required_secrets_catalog_contains_known_providers(self):
@@ -782,26 +766,48 @@ class TestCiSetup(unittest.TestCase):
         cmd = self.ci_setup.gh_secret_set_command("OWNER/REPO", "MINIMAX_API_KEY")
         self.assertEqual(cmd, "gh secret set MINIMAX_API_KEY --repo OWNER/REPO")
 
-    def test_read_provider_file_returns_minimax_when_missing(self):
-        """Issue #212-A1: read_provider_file falls back to 'minimax' (not raises)
-        when the file is absent or unreadable, so the gate's default applies."""
+    def test_read_provider_returns_minimax_when_missing(self):
+        """read_provider falls back to 'minimax' (not raises) when no env, no
+        .env, no .env.example declares the provider — matches the historical
+        default that the now-removed tracked file used to encode."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
-            # No file: returns 'minimax'.
-            self.assertEqual(self.ci_setup.read_provider_file(target), "minimax")
-            # Unknown value: returns 'minimax' (treated as missing).
-            (target / ".github").mkdir(parents=True)
-            (target / ".github" / "ci-review-provider.txt").write_text("garbage\n")
-            self.assertEqual(self.ci_setup.read_provider_file(target), "minimax")
-            # Recognized value: returns normalized value.
-            (target / ".github" / "ci-review-provider.txt").write_text("DeepSeek\n")
-            self.assertEqual(self.ci_setup.read_provider_file(target), "deepseek")
+            # No .env, no .env.example → returns 'minimax'.
+            self.assertEqual(self.ci_setup.read_provider(target), "minimax")
+            # Unknown value in .env → returns 'minimax' (treated as missing).
+            (target / ".env").write_text("CI_REVIEW_PROVIDER=garbage\n")
+            self.assertEqual(self.ci_setup.read_provider(target), "minimax")
+            # Recognized value in .env → returns normalized value.
+            (target / ".env").write_text("CI_REVIEW_PROVIDER=DeepSeek\n")
+            self.assertEqual(self.ci_setup.read_provider(target), "deepseek")
+            # .env.example fallback when no .env.
+            (target / ".env").unlink()
+            (target / ".env.example").write_text("CI_REVIEW_PROVIDER=anthropic\n")
+            self.assertEqual(self.ci_setup.read_provider(target), "anthropic")
+
+    def test_read_provider_env_var_takes_precedence(self):
+        """Process env `CI_REVIEW_PROVIDER` wins over .env — that's how the
+        GitHub Actions workflow threads the repo variable through."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            (target / ".env").write_text("CI_REVIEW_PROVIDER=anthropic\n")
+            old = os.environ.get("CI_REVIEW_PROVIDER")
+            os.environ["CI_REVIEW_PROVIDER"] = "deepseek"
+            try:
+                self.assertEqual(self.ci_setup.read_provider(target), "deepseek")
+            finally:
+                if old is None:
+                    os.environ.pop("CI_REVIEW_PROVIDER", None)
+                else:
+                    os.environ["CI_REVIEW_PROVIDER"] = old
 
     def test_marker_verifies_after_install(self):
         """Issue #212-A3/E1: the marker must round-trip through a real
         read after atomic_write_json — empty/zero-byte markers fail loudly,
-        not silently."""
+        not silently. After the env refactor the marker records the env
+        key name (`provider_env_key`) instead of a file path."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
@@ -811,10 +817,14 @@ class TestCiSetup(unittest.TestCase):
             payload = json.loads(marker.read_text(encoding="utf-8"))
             self.assertIsInstance(payload, dict)
             self.assertGreater(len(payload), 0)
-            # ci_review_provider_file pointer recorded for ci-doctor to read.
             self.assertEqual(
-                payload.get("ci_review_provider_file"),
-                ".github/ci-review-provider.txt",
+                payload.get("provider_env_key"),
+                "CI_REVIEW_PROVIDER",
+                "marker must point ci-doctor at the env key, not a file path",
+            )
+            self.assertNotIn(
+                "ci_review_provider_file", payload,
+                "old file-pointer key must not reappear in the marker",
             )
 
 

@@ -58,12 +58,11 @@ EXPECTED_PATHS: tuple[str, ...] = (
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
     ".github/workflows/review.yml",
-    # Provider selector for review.yml (issue #212-A1). Plain text file;
-    # consumers switch by running `bin/set-provider.sh <provider>` and
-    # pushing the resulting commit. `.env` is NOT consulted — a
-    # GitHub-hosted runner can't see it anyway, and the silent
-    # `.env` -> tracked-file sync was removed (see #230).
-    ".github/ci-review-provider.txt",
+    # Provider selection is env-based: locally `.env:CI_REVIEW_PROVIDER`
+    # (managed via `bin/set-provider.sh <provider>`, gitignored, per-user),
+    # in CI `vars.CI_REVIEW_PROVIDER` (per-repo, set via `gh variable set`).
+    # There is intentionally NO tracked provider file — the same repo can
+    # be used by different operators with different providers.
     ".githooks/pre-push",
     "scripts/validate.py",
     "scripts/test.sh",
@@ -164,8 +163,8 @@ PROVIDER_SECRETS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 # Consumer install always needs the dev-harness-kit PAT. The skill body
-# reads `ci-review-provider.txt` and merges the matching provider secret
-# above with this PAT.
+# resolves the provider via `read_provider()` (env + `.env`) and merges
+# the matching provider secret above with this PAT.
 DEV_KIT_CONSUMER_SECRET: tuple[str, str] = (
     "DEV_KIT_GITHUB_TOKEN",
     "Fine-grained PAT with `contents:read` on sh-ai-x/dev-harness-kit "
@@ -199,21 +198,60 @@ def gh_secret_set_command(repo: str, secret_name: str) -> str:
     path goes through `print_checklist=True` and the post-install recap.
     """
     return f"gh secret set {secret_name} --repo {repo}"
-def read_provider_file(target_dir: Path) -> str:
-    """Read `.github/ci-review-provider.txt` from `target_dir`.
 
-    Returns the trimmed string content, or `"minimax"` when the file is
-    missing / unreadable / empty. Idempotent read; never raises.
+
+def _read_env_key(path: Path, key: str) -> str:
+    """Return the last `KEY=...` value from a dotenv-style file.
+
+    Skips blank lines and `#` comments. Does NOT handle multi-line values
+    or `export KEY=` prefixes — neither is produced by `bin/set-provider.sh`.
+    Surrounding single or double quotes are stripped. OSError (missing /
+    unreadable) returns empty.
     """
-    p = target_dir / ".github" / "ci-review-provider.txt"
     try:
-        raw = p.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except OSError:
-        return "minimax"
-    value = raw.strip().lower()
-    if value not in PROVIDER_SECRETS:
-        return "minimax"
-    return value
+        return ""
+    out = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() == key:
+            out = v.strip().strip('"').strip("'")
+    return out
+
+
+def read_provider(target_dir: Path | None = None) -> str:
+    """Resolve the CI review provider for `target_dir`.
+
+    Lookup order (first allowlisted match wins):
+      1. Process env `CI_REVIEW_PROVIDER` — how CI runners thread the
+         repo variable through `env:`.
+      2. `<target_dir>/.env` — developer-local (gitignored), managed by
+         `bin/set-provider.sh <provider>`.
+      3. `<target_dir>/.env.example` — template fallback so ci-doctor can
+         audit a freshly-cloned repo before `.env` exists.
+
+    Returns the lower-cased value when it matches `PROVIDER_SECRETS`,
+    otherwise `"minimax"` as the documented fallback (matches the
+    historical default that the now-removed tracked `.github/ci-review-
+    provider.txt` used to encode on its own line). Never raises.
+    """
+    candidates: list[str] = []
+    env_val = os.environ.get("CI_REVIEW_PROVIDER", "").strip().lower()
+    if env_val:
+        candidates.append(env_val)
+    if target_dir is not None:
+        for env_name in (".env", ".env.example"):
+            v = _read_env_key(target_dir / env_name, "CI_REVIEW_PROVIDER").lower()
+            if v:
+                candidates.append(v)
+    for c in candidates:
+        if c in PROVIDER_SECRETS:
+            return c
+    return "minimax"
 
 
 @dataclass
@@ -410,7 +448,7 @@ def _build_marker() -> dict:
         "installed_at": _now_utc_iso(),
         "installed_by": "dev-kit:ci-setup",
         "runners": ["ci.yml", "auto-fix-pr.yml", "review.yml"],
-        "ci_review_provider_file": ".github/ci-review-provider.txt",
+        "provider_env_key": "CI_REVIEW_PROVIDER",
         "scripts": [
             "scripts/validate.py",
             "scripts/test.sh",

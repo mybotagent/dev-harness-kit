@@ -27,10 +27,9 @@ Runs `lib/ci_doctor.py:audit()` against the current working directory (or `--tar
 | Check | Why |
 |---|---|
 | `file present: .github/workflows/{ci,review,auto-fix-pr}.yml` | Three runners must land; missing any = no CI |
-| `file present: .github/ci-review-provider.txt` | `review.yml` reads the provider from this file (issue #212-A1) |
+| `provider declared` | `CI_REVIEW_PROVIDER` resolved from process env → `.env` → `.env.example`; report shows which source supplied the value |
 | `file present: .dev-kit/ci-config.json` | Build pre-flight marker (`/dev-kit:build` refuses to start without it) |
-| `marker parseable` / `marker non-empty` / `marker records provider file` | Round-trip JSON, no zero-byte corruption |
-| `provider file content` | `.github/ci-review-provider.txt` holds a valid provider name |
+| `marker parseable` / `marker non-empty` / `marker records provider key` | Round-trip JSON, no zero-byte corruption; marker payload records the env key name (`provider_env_key: CI_REVIEW_PROVIDER`) |
 | `gh auth` | `gh secret list` requires `gh auth status` to pass |
 | `secret set: DEV_KIT_GITHUB_TOKEN` | Consumer-install precondition (issue #212-B1) |
 | `secret set: <provider-API-key>` | Provider-matching secret (B2). Default `minimax` ⇒ `MINIMAX_API_KEY` |
