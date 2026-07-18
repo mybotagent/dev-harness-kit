@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # session-envelope.sh — shared cwd + branch + emit helpers for the two
-# nudge hooks (session-start-check.sh + task-detector.sh). Both hook bodies
+# nudge hooks (session-start-check.sh). The hook bodies
 # duplicate the same envelope:
 #   1. extract HOOK_CWD from stdin payload (more authoritative than $PWD)
 #   2. cd into HOOK_CWD if it's a real directory

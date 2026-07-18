@@ -91,17 +91,16 @@ git branch -d fix/<slug>        # local branch gone
    - `git checkout main` followed by `git commit` in the same command
    - `git push --force` and `git push -f` (already blocked by `bash-guard.sh` — kept for redundancy)
 2. **`hooks/worktree-guard.sh`** (PreToolUse, Write|Edit|MultiEdit matcher) — HARD BLOCK on edits in the main checkout. Discriminator: `git rev-parse --git-dir == --git-common-dir` evaluated from the repo toplevel (canonicalized via `realpath`). Any Edit/Write/MultiEdit attempted while the session cwd is the main checkout is denied with an actionable message naming the worktree command. **Fails closed** (deny) when `jq` is missing.
-3. **`hooks/task-detector.sh`** (UserPromptSubmit) — EARLY WARNING. Detects new-task intent in user prompts (slash-invocations; verb-leading start with word boundary; polite-prefix forms like "let's add"; intent-implying noun phrases). When intent matches AND the session is in the main checkout, emits an `additionalContext` nudge so Claude remembers the rule before doing any work. Silent in worktrees and on clarifying questions. **Fails open with a stderr warning** when `jq` is missing (advisory hook; the hard block is worktree-guard.sh).
-4. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks. **Fails open with a stderr warning** when `jq` is missing.
-5. **`hooks/lib/worktree-detect.sh`** — shared `worktree_detect()` helper. All three rule-hooks source this so the `--git-dir`/`--git-common-dir` discriminator doesn't drift across files.
+3. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks. **Fails open with a stderr warning** when `jq` is missing.
+4. **`hooks/lib/worktree-detect.sh`** — shared `worktree_detect()` helper. Both rule-hooks source this so the `--git-dir`/`--git-common-dir` discriminator doesn't drift across files.
 6. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
    - All non-main branches match `<type>/<slug>` format
    - No `TODO` / `wip` / `tmp` slugs in the last 30 commits' branch names
    - Recent merged PR titles follow Conventional Commits
    - `worktree-guard.sh` denies Edit/Write in the main checkout, allows in worktrees, fails closed when `jq` is missing, exits 0 on empty payload, and exits 0 outside any git repo
-   - `task-detector.sh` nudges on task-intent prompts in the main checkout, stays silent in worktrees and on non-task prompts (including false-positive guard: "make sure", "write a brief", "addendum:", "fixing typos"), stays silent on empty prompt
+   - `task-detector.sh` was removed — early-warning advisory duplicated the worktree rule that worktree-guard.sh enforces as a hard block
    - `session-start-check.sh` nudges when started in the main checkout, stays silent in worktrees, stays silent on missing `cwd`
-   - `hooks.json` wires all three hooks into the correct event matchers
+   - `hooks.json` wires the remaining hooks into the correct event matchers
 7. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
 
 ## Out of scope (intentionally not enforced)
@@ -118,10 +117,9 @@ git branch -d fix/<slug>        # local branch gone
 ## Related
 
 - `tests/test_git_workflow.py` (branch-naming + `git-guard` regression)
-- `tests/test_worktree_guard.py` (`worktree-guard` + `task-detector` + `session-start-check` regression)
+- `tests/test_worktree_guard.py` (`worktree-guard` + `session-start-check` regression)
 - `hooks/lib/worktree-detect.sh` (shared discriminator — single source of truth)
 - `hooks/git-guard.sh` (PreToolUse Bash block)
 - `hooks/worktree-guard.sh` (PreToolUse Edit/Write block, fails closed)
-- `hooks/task-detector.sh` (UserPromptSubmit nudge, fails open with warning)
 - `hooks/session-start-check.sh` (SessionStart nudge, fails open with warning)
 - `hooks/hooks.json` (wires all hooks into Claude Code)

@@ -4,6 +4,18 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Removed — task-detector.sh (chore/delete-task-detector, closes #281)
+
+`hooks/task-detector.sh` (UserPromptSubmit) deleted. The hook emitted an `additionalContext` nudge when the user prompt looked task-shaped and the session cwd was the main checkout, but the nudge was invisible to the user (the harness's log pipeline does not capture hook output) and `worktree-guard.sh` already hard-blocks the same rule on Edit/Write. The 18 cascading references in tests, rules, docs, lib, and templates were updated in lockstep.
+
+- **chore(hooks)**: `hooks/task-detector.sh` deleted; `hooks/hooks.json` and `.codex-plugin/hooks/hooks.json` UserPromptSubmit wiring updated.
+- **chore(tests)**: `tests/test_hooks_single_source.py`, `tests/test_hooks_status.py`, `tests/test_worktree_auto_cut.py`, `tests/test_ci_setup.py`, and `tests/test_worktree_guard.py` updated; `class TestTaskDetector` (~167 lines) removed. `templates/ci/tests/test_worktree_guard.py` mirror updated.
+- **chore(lib)**: `lib/ci_setup.py` EXPECTED_PATHS × 3 dropped.
+- **docs(rules)**: `rules/git-workflow.md` and `templates/ci/.claude/rules/git-workflow.md` rule prose updated.
+- **docs(hooks)**: `hooks/lib/worktree-detect.sh`, `hooks/lib/session-envelope.sh`, `hooks/worktree-auto-cut.sh` comment-only references updated.
+- **docs(skills)**: `skills/bootstrap-full/SKILL.md` mention dropped.
+- **docs(public)**: `README.md`, `docs/ci-setup.md`, `docs/hook-coverage-gaps.md` updated.
+
 ### Fixed — worktree add leaves stale files (fix/worktree-stale-file-recovery, issue #215)
 
 When `git worktree add <path>` runs against a directory that already contains files (typical after a partial/cancelled prior attempt, or an external cleanup that left files behind), git creates the worktree's bookkeeping but does NOT overwrite the pre-existing files. The new worktree's working tree then disagrees with HEAD for those files — `git status` shows them as `modified:`, and tests fail with `ImportError` against symbols that exist in HEAD but not in the on-disk file. Triage on 2026-07-16 against `.worktrees/fix-save-log-branch-imports/tools/save_log.py` showed a 16,346-byte HEAD blob vs an 8,450-byte on-disk file (pre-existing, never refreshed) that masked three functions and the dual-write logic.

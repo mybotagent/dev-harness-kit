@@ -40,7 +40,6 @@ The skill copies the `templates/ci/` source tree into the target project. Files 
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
 | **`hooks/worktree-guard.sh`** | PreToolUse (Write\|Edit\|MultiEdit) — hard-block edits in the main checkout |
-| **`hooks/task-detector.sh`** | UserPromptSubmit — nudge new tasks to a worktree |
 | **`hooks/session-start-check.sh`** | SessionStart — gentle reminder about the worktree rule |
 | **`hooks/lib/worktree-detect.sh`** | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
 | **`hooks/hooks.json`** | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |

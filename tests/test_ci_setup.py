@@ -225,7 +225,6 @@ class TestCiSetup(unittest.TestCase):
         shared session-envelope helper (issue #277)."""
         expected_new = {
             "hooks/worktree-guard.sh",
-            "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/lib/payload-parse.sh",
@@ -246,7 +245,6 @@ class TestCiSetup(unittest.TestCase):
         import stat
         new_sh = (
             "hooks/worktree-guard.sh",
-            "hooks/task-detector.sh",
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/lib/payload-parse.sh",
@@ -934,7 +932,7 @@ class TestCiSetup(unittest.TestCase):
 
     def test_session_envelope_in_expected_paths(self):
         """EXPECTED_PATHS must list hooks/lib/session-envelope.sh — defined
-        by task-detector.sh / session-start-check.sh via
+        by session-start-check.sh via
         `source .../lib/session-envelope.sh`."""
         self.assertIn(
             "hooks/lib/session-envelope.sh",

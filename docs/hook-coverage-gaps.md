@@ -21,7 +21,7 @@ wrong OR fails to fire):
 
 | # | Scenario | Existing hook(s) | Gap | Severity | Proposed fix |
 |---|----------|------------------|-----|----------|---------------|
-| 1 | User starts a new task in the main checkout (Claude) | task-detector.sh (nudge) + worktree-guard.sh (hard block) | none | -- | -- |
+| 1 | User starts a new task in the main checkout (Claude) | worktree-guard.sh (hard block) | resolved by ACP M-tier (PR-2) | -- | -- |
 | 2 | User starts a new task in the main checkout (Codex) | same hooks, routed via .codex-plugin/hooks/hooks.json | partial -- see #4 | MEDIUM | wire parity, see below |
 | 3 | Edit/Write inside main checkout | worktree-guard.sh | none | -- | -- |
 | 4 | Commit + push non-main branch | git-guard.sh + review-yml-isolation.sh (Claude only) | **MISSING in Codex runtime** -- .codex-plugin/hooks/hooks.json does NOT register review-yml-isolation.sh, so a Codex sub-agent can land review.yml + unrelated edits in the same commit. The CI gate verdict becomes unreadable. | **HIGH** | Mirror the review-yml-isolation.sh entry into .codex-plugin/hooks/hooks.json (PreToolUse::Bash). Single-entry add. |

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""test_worktree_guard.py — regression tests for the 3 worktree-rule hooks.
+"""test_worktree_guard.py — regression tests for the 2 worktree-rule hooks.
 
 Verifies the bash-level behavior of:
   - hooks/worktree-guard.sh       (PreToolUse Edit|Write|MultiEdit — hard block)
-  - hooks/task-detector.sh        (UserPromptSubmit — advisory additionalContext)
+
   - hooks/session-start-check.sh  (SessionStart — advisory additionalContext)
 
 The hard rule under test (.claude/rules/git-workflow.md):
@@ -212,160 +212,6 @@ class TestWorktreeGuardJqMissing(unittest.TestCase):
         self.assertIn("permissionDecision", r.stderr)
 
 
-class TestTaskDetector(unittest.TestCase):
-    """task-detector.sh: UserPromptSubmit — emit additionalContext nudge when
-    the prompt looks like a new task AND the session cwd is the main checkout.
-    Silent when in a worktree or when prompt is not task-like."""
-
-    def setUp(self):
-        if not (HOOKS / "task-detector.sh").exists():
-            self.skipTest("task-detector.sh not found")
-
-    def test_nudges_on_implement_in_main_checkout(self):
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("implement a login page", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
-            self.assertIn("additionalContext", r.stdout, f"missing nudge: stdout={r.stdout!r}")
-            self.assertIn("GIT-WORKFLOW REMINDER", r.stdout)
-            self.assertIn("new worktree", r.stdout)
-        finally:
-            main_tmp.cleanup()
-
-    def test_nudges_on_add_in_main_checkout(self):
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("add a /healthz endpoint", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertIn("GIT-WORKFLOW REMINDER", r.stdout)
-        finally:
-            main_tmp.cleanup()
-
-    def test_nudges_on_slash_command_in_main_checkout(self):
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("/dev-kit:plan", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertIn("GIT-WORKFLOW REMINDER", r.stdout)
-        finally:
-            main_tmp.cleanup()
-
-    def test_nudges_on_polite_prefix_form(self):
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("let's add a metrics exporter", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertIn("GIT-WORKFLOW REMINDER", r.stdout)
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_false_positive_make_sure(self):
-        """Major 1: 'make sure' starts with verb 'make' but is not a task.
-        Word-boundary regex must not match."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("make sure the tests pass", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertNotIn("GIT-WORKFLOW REMINDER", r.stdout,
-                             f"false-positive: stdout={r.stdout!r}")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_false_positive_write_a_brief(self):
-        """Major 1: 'write a brief summary' is a verb-led sentence that is
-        not a new task. Word boundary on 'write' alone would match;
-        the actual signal (verb + space/colon/end) is what we test."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("write a brief summary of the diff", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            # "write a brief summary" — verb "write" is followed by space,
-            # so by the rule it IS a task. The test asserts that "write" +
-            # space is detected as task intent. This is intentional:
-            # "write a brief summary" can mean "add a brief summary" which
-            # is a new task. The false-positive guard only kicks in for
-            # the prose sense ("write a brief summary of what you did").
-            # We allow this through; if the user means "summarize", the
-            # override path lets them say so.
-            self.assertEqual(r.returncode, 0)
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_false_positive_addendum(self):
-        """Major 1: 'addendum:' starts with 'add' but is a continuation."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("addendum: I forgot to mention the test", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            # 'addendum:' ends with a colon — the regex requires word
-            # boundary or end, but 'addendum' contains 'add' as a prefix,
-            # not a separate word. The regex `^(add)([[:space:]]|$|:)`
-            # matches 'add:' but NOT 'addendum:'. So this must be silent.
-            self.assertEqual(r.returncode, 0)
-            self.assertNotIn("GIT-WORKFLOW REMINDER", r.stdout,
-                             f"false-positive: stdout={r.stdout!r}")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_false_positive_fixing_typos(self):
-        """Major 1: 'fixing typos' starts with 'fix' but 'fixing' is a
-        gerund, not a task-starting verb. The regex requires the verb
-        form (not -ing) at word start."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("fixing typos in README", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            # 'fixing' is not in the verb list (only 'fix' is). The
-            # regex `^(fix)([[:space:]]|$|:)` does not match 'fixing'.
-            self.assertEqual(r.returncode, 0)
-            self.assertNotIn("GIT-WORKFLOW REMINDER", r.stdout,
-                             f"false-positive: stdout={r.stdout!r}")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_empty_prompt_with_cwd(self):
-        """Minor 4: missing-payload test for task-detector."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertEqual(r.stdout.strip(), "")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_question_in_main_checkout(self):
-        """A question about state (not a new task) must NOT trigger the nudge."""
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("what does this file do?", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertNotIn("GIT-WORKFLOW REMINDER", r.stdout,
-                             f"unexpected nudge on question prompt: stdout={r.stdout!r}")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_on_task_in_worktree(self):
-        """Even a clear new-task prompt must be silent when already in a worktree."""
-        _, wt_parent, wt_path = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("implement feature X", cwd=str(wt_path)), cwd=wt_path)
-            self.assertEqual(r.returncode, 0)
-            self.assertNotIn("GIT-WORKFLOW REMINDER", r.stdout)
-        finally:
-            wt_parent.cleanup()
-
-    def test_silent_on_empty_prompt(self):
-        main_tmp, _, _ = _init_main_with_worktree()
-        try:
-            r = _run_hook("task-detector.sh", _prompt_payload("", cwd=main_tmp.name), cwd=Path(main_tmp.name))
-            self.assertEqual(r.returncode, 0)
-            self.assertEqual(r.stdout.strip(), "")
-        finally:
-            main_tmp.cleanup()
-
-    def test_silent_outside_git_repo(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            r = _run_hook("task-detector.sh", _prompt_payload("implement X", cwd=tmp), cwd=Path(tmp))
-            self.assertEqual(r.returncode, 0)
-            self.assertEqual(r.stdout.strip(), "")
-
 
 class TestSessionStartCheck(unittest.TestCase):
     """session-start-check.sh: SessionStart — nudge only in main checkout."""
@@ -427,13 +273,6 @@ class TestHooksJsonWiring(unittest.TestCase):
         self.assertTrue(
             any("worktree-guard.sh" in c for c in cmds),
             f"worktree-guard.sh not wired into PreToolUse. Got commands: {cmds}",
-        )
-
-    def test_task_detector_in_userpromptsubmit(self):
-        cmds = self._hooks_under("UserPromptSubmit")
-        self.assertTrue(
-            any("task-detector.sh" in c for c in cmds),
-            f"task-detector.sh not wired into UserPromptSubmit. Got: {cmds}",
         )
 
     def test_session_start_check_in_sessionstart(self):

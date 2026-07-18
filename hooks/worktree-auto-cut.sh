@@ -2,7 +2,7 @@
 # worktree-auto-cut.sh — UserPromptSubmit hook.
 #
 # Auto-prepares a new worktree when the user starts a new task in the
-# main checkout. Companion to task-detector.sh: that hook only nudges;
+# main checkout. worktree-guard.sh handles the hard block; this hook adds
 # this one (a) derives a slug from the prompt, (b) cuts the worktree
 # (with all preconditions checked first), and (c) bootstraps the
 # log-on scaffold inside the new worktree so the user's first session
@@ -80,7 +80,7 @@ case "$WORKTREE_DETECT" in
   *) exit 0 ;;
 esac
 
-# Detect task intent (same verb regex as task-detector.sh — keep the
+# Detect task intent (verb regex mirrors the policy described in
 # two hooks' classification identical so users see consistent behavior).
 LOWER="$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]')"
 task_intent=0

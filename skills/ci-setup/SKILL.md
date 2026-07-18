@@ -146,7 +146,6 @@ The install is considered successful even if `gh secret set` fails — secrets a
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
 | `hooks/worktree-guard.sh` | PreToolUse Write/Edit block on main checkout (fails closed when jq missing) |
-| `hooks/task-detector.sh` | UserPromptSubmit gentle nudge when intent + main checkout |
 | `hooks/session-start-check.sh` | SessionStart reminder when started in main checkout |
 | `hooks/lib/worktree-detect.sh` | Shared `--git-dir`/`--git-common-dir` discriminator for all rule hooks |
 | `hooks/hooks.json` | Wires the 4 hook files into the right event matchers |
