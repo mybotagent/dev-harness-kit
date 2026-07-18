@@ -28,7 +28,7 @@ Creates the target project's logging scaffold:
 Idempotent: re-running refreshes save_log.py to the current source version.
 --force overwrites even if the local copy SHA matches.
 --all-worktrees also runs setup + hook install for every existing sibling
-                     worktree under <target>/.workspace/*/. Legacy
+                     worktree under <target>/.worktree/*/. Legacy
                      <target>/.claude/worktrees/*/ and
                      <target>/.codex/worktrees/*/ roots are also scanned for
                      backwards compatibility. Use this once after --target
@@ -169,11 +169,11 @@ else
 fi
 
 if [[ "$ALL_WORKTREES" -eq 1 ]]; then
-    # .workspace is the shared canonical root (issue #272). Keep the three
+    # .worktree is the shared canonical root (issue #272). Keep the three
     # historical roots discoverable so upgrading does not strand existing
     # worktrees.
     WT_ROOTS=(
-        "$TARGET_DIR/.workspace"
+        "$TARGET_DIR/.worktree"
         "$TARGET_DIR/.worktrees"
         "$TARGET_DIR/.claude/worktrees"
         "$TARGET_DIR/.codex/worktrees"

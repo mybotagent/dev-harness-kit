@@ -11,7 +11,7 @@
 # Allows (exit 0):
 #   Edits from inside ANY git worktree. The discriminator is
 #   `git_dir == git_common_dir` which is robust to the worktree living
-#   anywhere on disk (not just `.workspace/`).
+#   anywhere on disk (not just `.worktree/`).
 #   Edits in non-git directories — this hook is project-scoped.
 #   Empty / probe payloads — nothing to gate.
 #
@@ -149,8 +149,8 @@ REQUIRED environment setup before retrying:
 Without these, abort this edit. Re-running without setting them will be denied.
 
 Routing (after config is set):
-  claude  + single   -> git worktree add -b <type>/<slug> .workspace/<slug> origin/main
-                        cd .workspace/<slug>
+  claude  + single   -> git worktree add -b <type>/<slug> .worktree/<slug> origin/main
+                        cd .worktree/<slug>
                         open a Claude session there
   claude  + parallel -> same worktree, then fan out sub-agents via the Agent tool
   codex   + single   -> git worktree add ..., then spawn one sub-agent with cwd=<worktree>

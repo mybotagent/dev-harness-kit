@@ -28,11 +28,11 @@
   },
   "permissions": {
     "allow": [
-      "Edit(.workspace/**)",
-      "Read(.workspace/**)",
-      "Bash(git -C .workspace/** *)",
-      "Bash(git -C .workspace/* *)",
-      "Bash(cd .workspace/* && git:*)"
+      "Edit(.worktree/**)",
+      "Read(.worktree/**)",
+      "Bash(git -C .worktree/** *)",
+      "Bash(git -C .worktree/* *)",
+      "Bash(cd .worktree/* && git:*)"
     ],
     "deny": [],
     "ask": []

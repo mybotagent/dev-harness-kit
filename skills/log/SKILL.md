@@ -60,7 +60,7 @@ Default subcommand when none given: `status`.
 |---|---|---|
 | `--target DIR` | all | Override target project |
 | `--global` | setup, on, off | Install to `$HOME/.claude/` (settings + save_log.py) so a SINGLE install captures every project / worktree on the machine. Mutually exclusive with `--target` and `--all-worktrees`. See [Global install](#global-install-recommended) below. |
-| `--all-worktrees` | setup | Run `setup` + `on` recursively for every `.workspace/*/` dir under `--target`. Use after `--target` on the main checkout to backfill sibling worktrees. Mutually exclusive with `--global`. |
+| `--all-worktrees` | setup | Run `setup` + `on` recursively for every `.worktree/*/` dir under `--target`. Use after `--target` on the main checkout to backfill sibling worktrees. Mutually exclusive with `--global`. |
 | `--force` | setup | Overwrite `tools/save_log.py` even when local sha matches |
 | `--claude-only` | on, off | Touch only `.claude/settings.json` |
 | `--codex-only` | on, off | Touch only `.codex/hooks.json` (no-op if source has no codex config) |

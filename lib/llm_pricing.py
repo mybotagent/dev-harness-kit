@@ -151,7 +151,7 @@ _PROVIDER_CACHE: Dict[str, Dict[str, float]] = {
 def _project_root() -> Path:
     """Walk up from this file looking for ``.claude-plugin/plugin.json``.
 
-    Works from worktrees (``<root>/.workspace/<name>``) and from the
+    Works from worktrees (``<root>/.worktree/<name>``) and from the
     consumer install (``.dev-kit/`` inside ``$HOME``).
     """
     here = Path(__file__).resolve().parent

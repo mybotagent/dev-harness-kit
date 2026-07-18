@@ -49,7 +49,7 @@ fallback_context() {
   local ctx="worktree auto-cut unavailable
   reason:  $reason
   action:  do not edit the main checkout; resolve the reason, then run:
-           git fetch origin main && git worktree add -b <type>/<slug> .workspace/<slug> origin/main
+           git fetch origin main && git worktree add -b <type>/<slug> .worktree/<slug> origin/main
   Codex:   after the worktree exists, spawn a subagent with that path as cwd and pass the original task prompt"
   jq -nc --arg ctx "$ctx" \
     '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
@@ -217,7 +217,7 @@ fi
 # first so a session started from a subdirectory still shares the canonical
 # worktree root with Claude Code and Codex.
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-WT_PARENT="$REPO_ROOT/.workspace"
+WT_PARENT="$REPO_ROOT/.worktree"
 mkdir -p "$WT_PARENT"
 WT_PATH="$WT_PARENT/$DIRNAME"
 

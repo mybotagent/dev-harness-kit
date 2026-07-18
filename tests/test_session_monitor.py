@@ -142,18 +142,18 @@ class TestProcessDetection(unittest.TestCase):
 
     def test_pid_cwd_parses_lsof(self):
         def runner(cmd, **kw):
-            return FakeCompleted("p100\nfcwd\nn/repo/.workspace/foo\n")
+            return FakeCompleted("p100\nfcwd\nn/repo/.worktree/foo\n")
         self.assertEqual(sm.pid_cwd(100, runner=runner),
-                         Path("/repo/.workspace/foo"))
+                         Path("/repo/.worktree/foo"))
 
     def test_map_processes_drops_outside_repo(self):
         wt_paths = {"(main)": Path("/repo"),
-                    "foo": Path("/repo/.workspace/foo")}
+                    "foo": Path("/repo/.worktree/foo")}
 
         def runner(cmd, **kw):
             if cmd[0] == "lsof":
                 pid = cmd[cmd.index("-p") + 1]
-                mapping = {"1": "/repo/.workspace/foo/src",
+                mapping = {"1": "/repo/.worktree/foo/src",
                            "2": "/somewhere/else"}
                 return FakeCompleted(f"p{pid}\nfcwd\nn{mapping[pid]}\n")
             return FakeCompleted("")

@@ -4,7 +4,7 @@
 Claude Code's permission matcher only matches `Edit(path)` rules for
 file-editing tools (Edit/Write/MultiEdit all share the same allow-rule
 matcher, keyed on `Edit`). A `Write(path)` rule is silently dropped and
-surfaces as a "Permission allow rule: Write(.workspace/**) is not
+surfaces as a "Permission allow rule: Write(.worktree/**) is not
 matched by file permission checks" warning on every Write call.
 
 This test pins the structural contract so the bad rule cannot be
@@ -13,7 +13,7 @@ re-introduced (regression for PR #228, reverted by this fix).
   T1: `.claude/settings.json` parses as valid JSON.
   T2: `permissions.allow` exists and is a list.
   T3: no rule uses the `Write(` prefix (silent no-op; Edit covers Write).
-  T4: `Edit(.workspace/**)` is present (the rule that actually covers
+  T4: `Edit(.worktree/**)` is present (the rule that actually covers
       worktree writes for /dev-kit:build sub-agents).
 """
 from __future__ import annotations
@@ -57,18 +57,18 @@ class SettingsPermissionsContract(unittest.TestCase):
         )
 
     def test_edit_worktrees_rule_present(self) -> None:
-        """The pre-allow for worktree writes must remain as Edit(.workspace/**).
+        """The pre-allow for worktree writes must remain as Edit(.worktree/**).
 
-        /dev-kit:build spawns sub-agents that Edit/Write inside .workspace/;
+        /dev-kit:build spawns sub-agents that Edit/Write inside .worktree/;
         without this rule, every tool call prompts the user.
         """
         with SETTINGS.open() as f:
             data = json.load(f)
         allow = data.get("permissions", {}).get("allow", [])
         self.assertIn(
-            "Edit(.workspace/**)",
+            "Edit(.worktree/**)",
             allow,
-            "Edit(.workspace/**) must remain in permissions.allow so "
+            "Edit(.worktree/**) must remain in permissions.allow so "
             "/dev-kit:build sub-agents can write to worktrees without prompting.",
         )
 
