@@ -2,6 +2,7 @@
 name: bootstrap-full
 category: bootstrap
 description: One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker.
+alpha: state
 when_to_use:
   - User types `/dev-kit:bootstrap-full` on a brand-new project and wants CLAUDE.md + CI in one shot
   - User does not want to chain `/dev-kit:bootstrap` then `/dev-kit:ci-setup` manually

@@ -2,6 +2,7 @@
 name: plan
 category: plan
 description: 0-arg plan stage. Take 1-line idea → PRD.md + phases/<name>/{index.json, step<N>.md} in 5 gates. Quantified value (cost/LTV) + ambiguity loop (0-10) replace the old 5-question grill-me.
+alpha: state
 when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated

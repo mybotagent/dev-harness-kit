@@ -2,6 +2,7 @@
 name: onboard
 category: onboard
 description: 0-arg new team member onboarding (MUST-47). 30 min productive. CLAUDE.md + .dev-kit + eval baseline auto.
+alpha: state
 when_to_use: |
   - User types /dev-kit:onboard <github_username>
 allowed-tools: Read Write Bash Glob Grep

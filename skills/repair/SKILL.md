@@ -2,6 +2,7 @@
 name: repair
 category: repair
 description: 8-step Eval-Repair loop (golden → judge → root cause → fix → judge → A/B → diff → Human Review). Final step = single user approve.
+alpha: state
 when_to_use: |
   - User types /dev-kit:repair approve|reject|defer <asset>
 allowed-tools: Read Grep Glob Bash Agent

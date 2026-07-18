@@ -2,6 +2,7 @@
 name: bootstrap
 category: bootstrap
 description: 0-arg orchestrator. Writes minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default.
+alpha: state
 when_to_use: |
   - User types `/dev-kit:bootstrap` 1st time on a new project
   - User wants to refresh CLAUDE.md / active-hooks.json
