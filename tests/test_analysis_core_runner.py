@@ -449,7 +449,10 @@ class TestMarkdownFormatCompatibility(unittest.TestCase):
         )
         md = render_markdown(result)
         from lib.render_report_html import _parse_inspect_findings
-        body_start = md.find("## Findings")
+        # Section header shape is HIGH/MED/LOW (N) — matches the
+        # dispatch keys in lib/render_report_html.py:387-393.
+        body_start = md.find("## HIGH (")
+        self.assertNotEqual(body_start, -1, "missing '## HIGH (N)' section header")
         body = md[body_start:]
         parsed = _parse_inspect_findings(body)
         self.assertEqual(len(parsed), 1)
@@ -483,6 +486,64 @@ class TestMarkdownFormatCompatibility(unittest.TestCase):
         # Each known field key must appear in the report body.
         for key in ("Dim", "TL;DR", "Scenario", "Fix"):
             self.assertIn(f"{key}:", md, f"missing field key: {key}")
+
+    def test_findings_bucketed_into_high_med_low(self):
+        # Sections are emitted so the HTML consumer's dispatch at
+        # lib/render_report_html.py:387-393 can route every block.
+        repo = _build_synth_repo()
+        candidates = {
+            "dead": [
+                {"file": str(repo / "a.py"), "line": 1,
+                 "severity": "critical", "confidence": "high",
+                 "title": "h", "tldr": "t", "failure_scenario": "s"},
+                {"file": str(repo / "b.py"), "line": 1,
+                 "severity": "minor", "confidence": "high",
+                 "title": "m", "tldr": "t", "failure_scenario": "s"},
+                {"file": str(repo / "c.py"), "line": 1,
+                 "severity": "nit", "confidence": "high",
+                 "title": "l", "tldr": "t", "failure_scenario": "s"},
+            ],
+        }
+        md = render_markdown(run_analysis(
+            dimensions=["dead"],
+            mode="read-only",
+            paths=[repo],
+            candidates=candidates,
+        ))
+        self.assertIn("## HIGH (1)", md)
+        self.assertIn("## MED (1)", md)
+        self.assertIn("## LOW (1)", md)
+
+    def test_end_to_end_html_render_includes_findings(self):
+        # Integration test: drive render_report_html.render directly so
+        # the section-header → dispatch → HTML pipeline is exercised.
+        # This locks in the fix for finding #5 (silently dropped
+        # findings in /dev-kit:report output).
+        repo = _build_synth_repo()
+        candidates = {
+            "dead": [
+                {
+                    "file": str(repo / "a.py"),
+                    "line": 1,
+                    "severity": "critical",
+                    "confidence": "high",
+                    "title": "unused module",
+                    "tldr": "no importers",
+                    "failure_scenario": "no callers",
+                },
+            ],
+        }
+        md = render_markdown(run_analysis(
+            dimensions=["dead"],
+            mode="read-only",
+            paths=[repo],
+            candidates=candidates,
+        ))
+        from lib.render_report_html import render as render_html
+        html = render_html("", md)
+        self.assertIn("unused module", html)
+        self.assertIn("CRITICAL", html)
+        self.assertIn("finding", html.lower())
 
 
 class TestSecretMasking(unittest.TestCase):
@@ -568,6 +629,107 @@ class TestSecretMasking(unittest.TestCase):
         diffs = emit_suggested_diffs(result)
         # secret dim has mode=read-only → no diff emitted (correct)
         self.assertEqual(diffs, [])
+
+    def test_anthropic_sk_ant_key_masked(self):
+        from lib.analysis_core.runner import _mask_secrets
+        self.assertNotIn(
+            "sk-ant-abcdefghijklmnopqrstuvwxyz123456",
+            _mask_secrets("found sk-ant-abcdefghijklmnopqrstuvwxyz123456 in env"),
+        )
+
+    def test_github_oauth_token_masked(self):
+        from lib.analysis_core.runner import _mask_secrets
+        self.assertNotIn(
+            "gho_abcdefghijklmnopqrstuvwxyz0123456789AB",
+            _mask_secrets("token=gho_abcdefghijklmnopqrstuvwxyz0123456789AB"),
+        )
+
+    def test_pem_private_key_block_masked(self):
+        from lib.analysis_core.runner import _mask_secrets
+        pem = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEowIBAAKCAQEAxxxx...\n"
+            "-----END RSA PRIVATE KEY-----"
+        )
+        masked = _mask_secrets(pem)
+        self.assertNotIn("BEGIN RSA PRIVATE KEY", masked)
+        self.assertIn("[REDACTED]", masked)
+
+    def test_postgres_credential_uri_masked(self):
+        from lib.analysis_core.runner import _mask_secrets
+        uri = "postgres://user:pass@host:5432/db"
+        masked = _mask_secrets(uri)
+        self.assertNotIn(uri, masked)
+        self.assertIn("[REDACTED]", masked)
+
+    def test_mongodb_credential_uri_masked(self):
+        from lib.analysis_core.runner import _mask_secrets
+        uri = "mongodb+srv://user:pass@cluster.example.net/db"
+        masked = _mask_secrets(uri)
+        self.assertNotIn(uri, masked)
+        self.assertIn("[REDACTED]", masked)
+
+    def test_secret_path_masked_in_markdown_bullet(self):
+        # f.file goes through _mask_secrets in render_markdown so a
+        # secret-shaped path cannot leak through the bullet line.
+        repo = _build_synth_repo()
+        secret_path = repo / "sk-ant-abcdefghijklmnopqrstuvwxyz123456.log"
+        secret_path.write_text("x")
+        candidates = {
+            "secret": [
+                {
+                    "file": str(secret_path),
+                    "line": 1,
+                    "severity": "critical",
+                    "confidence": "high",
+                    "title": "x",
+                    "tldr": "t",
+                    "failure_scenario": "y",
+                },
+            ],
+        }
+        md = render_markdown(run_analysis(
+            dimensions=["secret"],
+            mode="read-only",
+            paths=[repo],
+            candidates=candidates,
+        ))
+        self.assertNotIn("sk-ant-abcdefghijklmnopqrstuvwxyz123456", md)
+        self.assertIn("[REDACTED]", md)
+
+    def test_delete_mode_diff_file_is_masked(self):
+        # SuggestedDiff.file in delete mode must also be masked.
+        # Use a delete-mode-supported dim so we actually get a diff.
+        repo = _build_synth_repo()
+        secret_path = repo / "gho_abcdefghijklmnopqrstuvwxyz0123456789AB.log"
+        secret_path.write_text("x")
+        candidates = {
+            "dead": [
+                {
+                    "file": str(secret_path),
+                    "line": 1,
+                    "severity": "major",
+                    "confidence": "high",
+                    "title": "unused",
+                    "tldr": "t",
+                    "failure_scenario": "y",
+                },
+            ],
+        }
+        result = run_analysis(
+            dimensions=["dead"],
+            mode="delete",
+            paths=[repo],
+            candidates=candidates,
+        )
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        self.assertNotIn(
+            "gho_abcdefghijklmnopqrstuvwxyz0123456789AB", diffs[0].file
+        )
+        self.assertNotIn(
+            "gho_abcdefghijklmnopqrstuvwxyz0123456789AB", diffs[0].command
+        )
 
 
 if __name__ == "__main__":

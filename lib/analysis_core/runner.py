@@ -42,14 +42,26 @@ from .evidence import Verdict  # noqa: F401  (re-export for callers)
 
 # Well-known secret patterns that must be masked at the engine boundary
 # before any expert free-text hits the report or the suggested diff.
-# Each pattern matches a public, vendor-published key shape so false-
-# positives stay rare in normal source text.
+# Pattern set is the SSOT required by the `secret` dimension charter
+# (lib/analysis_core/dimensions.py + skills/audit/SKILL.md). Adding a
+# new credential family means appending here, not editing call sites.
 _SECRET_PATTERNS = (
     re.compile(r"AKIA[0-9A-Z]{16}"),                  # AWS access key id
     re.compile(r"AIza[0-9A-Za-z\-_]{35}"),            # GCP API key
     re.compile(r"ghp_[0-9A-Za-z]{36}"),               # GitHub personal access token
+    re.compile(r"gho_[0-9A-Za-z]{36}"),               # GitHub OAuth token
     re.compile(r"sk-[0-9A-Za-z]{32,}"),               # OpenAI-style secret key
+    re.compile(r"sk-ant-[0-9A-Za-z\-]{32,}"),         # Anthropic admin key
     re.compile(r"xox[baprs]-[0-9A-Za-z\-]{10,}"),     # Slack token
+    re.compile(
+        r"-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+PRIVATE KEY-----"
+    ),                                                # PEM private key block
+    re.compile(
+        r"postgres(?:ql)?://[^\s:@]+:[^\s@]+@[^\s]+"
+    ),                                                # postgres credential URI
+    re.compile(
+        r"mongodb(?:\+srv)?://[^\s:@]+:[^\s@]+@[^\s]+"
+    ),                                                # mongodb credential URI
 )
 _SECRET_PLACEHOLDER = "[REDACTED]"
 
@@ -221,31 +233,59 @@ def render_markdown(result: AnalysisResult) -> str:
         out.append(f"| {d.name} | {high} | {med} | {low} |")
 
     out.append("")
-    out.append("## Findings")
-    out.append("")
-    for f in result.findings:
+
+    def _bucket(sev: Severity) -> str:
+        # Dispatch keys for `lib/render_report_html.py:_parse_sections`
+        # dispatch (HIGH/MED/LOW prefix match at line 387-393).
+        if sev in (Severity.CRITICAL, Severity.MAJOR):
+            return "HIGH"
+        if sev == Severity.MINOR:
+            return "MED"
+        return "LOW"
+
+    def _render_finding(f: Evidence) -> List[str]:
         # Mask secrets at the engine boundary so secret-dim findings
-        # never echo a real key in the rendered report.
+        # never echo a real key in the rendered report. Apply to every
+        # rendered/exported field, including the file path itself, so
+        # a secret-shaped path cannot leak even when the same token
+        # would be masked in title/scenario fields.
         title = _mask_secrets(f.title)
         tldr = _mask_secrets(f.tldr)
         scenario = _mask_secrets(f.failure_scenario)
         fix_hint = _mask_secrets(f.fix_hint) if f.fix_hint else None
+        safe_file = _mask_secrets(f.file)
         # Bullet shape is locked to match `lib/render_report_html.py`'s
         # _parse_inspect_findings regex so the HTML report consumer keeps
         # working. Field keys must stay in {Dim, TL;DR, Scenario, Fix}.
-        out.append(
+        block = [
             f"- [{f.severity.value.upper()} | {f.confidence.upper()}] "
-            f"{title} -- {f.file}:{f.line}"
-        )
-        out.append(f"  Dim: {f.dim}")
-        out.append(f"  TL;DR: {tldr}")
-        out.append(f"  Scenario: {scenario}")
+            f"{title} -- {safe_file}:{f.line}",
+            f"  Dim: {f.dim}",
+            f"  TL;DR: {tldr}",
+            f"  Scenario: {scenario}",
+        ]
         if fix_hint:
-            out.append(f"  Fix: {fix_hint}")
-        out.append("")
+            block.append(f"  Fix: {fix_hint}")
+        block.append("")
+        return block
+
     if not result.findings:
+        out.append("## HIGH (0)")
+        out.append("")
         out.append("(no findings)")
         out.append("")
+        return "\n".join(out)
+
+    # Bucket findings by HIGH/MED/LOW so the HTML consumer's dispatch
+    # in `lib/render_report_html.py:387-393` can reach every block.
+    by_bucket: Dict[str, List[Evidence]] = {"HIGH": [], "MED": [], "LOW": []}
+    for f in result.findings:
+        by_bucket[_bucket(f.severity)].append(f)
+    for header, items in by_bucket.items():
+        out.append(f"## {header} ({len(items)})")
+        out.append("")
+        for f in items:
+            out.extend(_render_finding(f))
     return "\n".join(out)
 
 
@@ -283,7 +323,7 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
             seen_files.add(f.file)
             out.append(
                 SuggestedDiff(
-                    file=f.file,
+                    file=_mask_secrets(f.file),
                     line=f.line,
                     dim=f.dim,
                     command=f"git rm {_mask_secrets(f.file)}",
