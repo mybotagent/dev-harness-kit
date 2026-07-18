@@ -2,6 +2,7 @@
 name: build-refactor
 category: build
 description: 4-pass cleanup (dead → dup → naming → coverage). No cleanup without regression test (MUST-L1 + L4).
+alpha: enforcement
 when_to_use: |
   - User types "cleanup" / "refactor" / "simplify"
   - Internal sub-skill of /dev-kit:refactor

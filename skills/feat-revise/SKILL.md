@@ -2,6 +2,7 @@
 name: feat-revise
 category: build
 description: Revise a feature under TDD. Update the test to reflect the new AC, watch it fail, refactor the implementation, keep the full suite green.
+alpha: state
 when_to_use: |
   - User types /dev-kit:feat-revise <feature>
   - AC has changed for an existing feature

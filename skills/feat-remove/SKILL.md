@@ -2,6 +2,7 @@
 name: feat-remove
 category: build
 description: Safely remove a feature. Sweeps the call graph, flags dependents, produces a deletion report, and verifies the full suite stays green after deletion.
+alpha: state
 when_to_use: |
   - User types /dev-kit:feat-remove <feature>
   - Feature is deprecated, replaced, or out of scope

@@ -2,6 +2,7 @@
 name: inspect
 category: audit
 description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
+alpha: analysis
 when_to_use:
   - User types /dev-kit:inspect
   - Pre-release hygiene sweep

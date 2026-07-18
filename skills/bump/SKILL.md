@@ -2,6 +2,7 @@
 name: bump
 category: ship
 description: Explicit version bump of `.claude-plugin/plugin.json` + push of `chore/bump-vX.Y.Z`. Mirrors the auto-bump in `.github/workflows/version-bump.yml` but user-triggered for race recovery and pre-PR explicit bumps.
+alpha: state
 when_to_use: |
   - User types /dev-kit:bump [major|minor|patch]
   - User wants explicit local bump before PR (e.g. cutting a release candidate)

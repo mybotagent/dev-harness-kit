@@ -2,6 +2,7 @@
 name: token-analyzer
 category: audit
 description: 0-arg token-efficiency dashboard. Runs tools/token_efficiency_analyzer.py over logs/{claude-code,codex}/*.jsonl to produce an HTML report (+ lazy per-worktree transcript sidecars) -- 4-dim session scoring, 6 anti-pattern warnings, USD savings estimate.
+alpha: analysis
 when_to_use: |
   - User types /dev-kit:token-analyzer
   - User wants to know where token spend is going in their Claude Code / Codex sessions

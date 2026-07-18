@@ -2,6 +2,7 @@
 name: ship
 category: ship
 description: 0-arg. Release tag emit. Gate check only (hooks auto). Requires Review verdict=Approve + main-block pass.
+alpha: state
 when_to_use: |
   - User types /dev-kit:ship
   - Release cutoff
