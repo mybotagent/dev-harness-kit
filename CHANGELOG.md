@@ -4,6 +4,27 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+### Fixed — ci-doctor: don't report ready-to-merge when PR is in a CI-silently-skipped state (fix/ci-doctor-open-pr-state, closes #249)
+
+`lib/ci_doctor.py` was purely local: it checked the marker file, required files, provider, secrets, gh auth, and bash hook syntax, but never looked at the open PR's state. When a PR was opened in `mergeable: CONFLICTING`, GitHub Actions silently refused to run any workflow on the PR (`gh pr checks <N>` returned `no checks reported` with no error), and `ci-doctor` returned PASS anyway — a latent correctness break for the "is my CI ready?" check.
+
+This change adds `_check_open_pr()` + `_fetch_open_pr_state()` to the audit. The new check inspects the open PR for the current branch via `gh pr view <branch> --json mergeable,mergeStateStatus,isDraft,title` and emits:
+
+| Row | State | Meaning |
+|---|---|---|
+| `open PR mergeable` | FAIL | PR has merge conflicts with main — CI will not run |
+| `open PR mergeable` | WARN | GitHub still computing (UNKNOWN) — re-run in 30s |
+| `open PR mergeable` | PASS | no conflicts |
+| `open PR draft` | INFO | draft PR — required checks gated until ready-for-review |
+| `open PR title` | INFO | bump-PR — ci/review/security skip by design |
+| `open PR state` | SKIP | `gh` absent, no PR open for the branch, detached HEAD, JSON parse error |
+
+CONFLICTING is the only state that flips the verdict to FAIL. SKIP / WARN / INFO rows preserve the existing "verdict-neutral diagnostics" contract. The check degrades the same way the rest of ci-doctor does: missing tool → SKIP, not FAIL.
+
+- **feat(lib)**: `lib/ci_doctor.py` — new `_fetch_open_pr_state(target)` helper calls `git rev-parse --abbrev-ref HEAD` then `gh pr view <branch> --json ...` and returns `(dict, degraded_msg)`. Empty dict + non-empty msg means degraded. New `_check_open_pr(target)` translates the JSON into Check rows per the severity matrix above. `audit()` calls `_check_open_pr` after `_check_branch_protection`.
+- **feat(skills)**: `skills/ci-doctor/SKILL.md` — "What it does" table grows one row; new "Open PR state (issue #249)" section documents the severity matrix and degraded modes.
+- **test**: `tests/test_ci_doctor.py` — new `TestOpenPrState` class (8 tests) covers: CONFLICTING → FAIL + verdict flip; MERGEABLE → PASS; UNKNOWN → WARN (verdict-neutral); isDraft → INFO; bump-PR title → INFO; no open PR → SKIP; `gh` absent → SKIP; helper sanity. All 48 tests in `tests/test_ci_doctor.py` pass; 18 pre-existing `test_save_log*` / `test_log_capture_coverage` / `test_git_workflow` failures (worktree-state from prior interrupted sessions) are not touched by this fix.
+
 ### Removed — task-detector.sh (chore/delete-task-detector, closes #281)
 
 `hooks/task-detector.sh` (UserPromptSubmit) deleted. The hook emitted an `additionalContext` nudge when the user prompt looked task-shaped and the session cwd was the main checkout, but the nudge was invisible to the user (the harness's log pipeline does not capture hook output) and `worktree-guard.sh` already hard-blocks the same rule on Edit/Write. The 18 cascading references in tests, rules, docs, lib, and templates were updated in lockstep.

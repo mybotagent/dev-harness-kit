@@ -35,6 +35,7 @@ Runs `lib/ci_doctor.py:audit()` against the current working directory (or `--tar
 | `secret set: DEV_KIT_GITHUB_TOKEN` | Consumer-install precondition (issue #212-B1) |
 | `secret set: <provider-API-key>` | Provider-matching secret (B2). Default `minimax` ⇒ `MINIMAX_API_KEY` |
 | `workflow triggers` / `fork-PR secret gap` / `concurrency:` / `branch policy` | Root-cause diagnostics for *why* `ci github action review` might not run — always WARN or INFO, never FAIL, never flip the verdict (flexible review process) |
+| `open PR mergeable` / `open PR draft` / `open PR title` / `open PR state` | Issue #249: surfaces when the open PR's state would silently skip CI (CONFLICTING → FAIL; UNKNOWN → WARN; isDraft / bump-title → INFO; gh absent or no PR open → SKIP) |
 
 Every FAIL row prints the exact remediation (`run: gh secret set NAME --repo OWNER/REPO`, etc.) so the discover path is `audit → paste commands → re-audit` rather than the current `push PR → CI red → read log → grep for the secret name`.
 
@@ -66,6 +67,28 @@ When the target is the dev-kit plugin authoring source itself — detected by a 
 | `secret set: DEV_KIT_GITHUB_TOKEN` | The PAT lets consumer CI read the source; the source repo's own CI uses the default `GITHUB_TOKEN` (see `lib/ci_setup.py:DEV_KIT_CONSUMER_SECRET`) |
 
 The provider API-key secret (e.g. `DEEPSEEK_API_KEY`) is **still required** — the source repo's own `review.yml` uses it. An `INFO` row (`repo role: dev-kit source repo`) flags the mode. SKIP rows never flip the verdict, so a correctly-configured source repo audits as PASS instead of the spurious 3-FAIL it produced before.
+
+## Open PR state (issue #249)
+
+A PR opened in `mergeable: CONFLICTING` causes GitHub Actions to silently
+refuse ALL workflows on the PR — `gh pr checks <N>` returns `no checks
+reported` with no error. The audit calls `gh pr view <branch> --json
+mergeable,mergeStateStatus,isDraft,title` and emits:
+
+| Row | State | Meaning |
+|---|---|---|
+| `open PR mergeable` | FAIL | PR has merge conflicts with main — CI will not run. Run `git fetch origin main && git merge origin/main` |
+| `open PR mergeable` | WARN | GitHub still computing (UNKNOWN) — re-run in 30s |
+| `open PR mergeable` | PASS | no conflicts |
+| `open PR draft` | INFO | draft PR — required checks gated until marked ready-for-review |
+| `open PR title` | INFO | title starts with `chore(release): bump dev-kit to v` — ci/review/security skip by design (see `templates/ci/.github/workflows/ci.yml`) |
+| `open PR state` | SKIP | `gh` absent, no PR open for the branch, detached HEAD, JSON parse error |
+
+CONFLICTING is the only state that flips the verdict to FAIL. SKIP / WARN
+/ INFO rows preserve the existing "verdict-neutral diagnostics" contract.
+The check degrades the same way the rest of ci-doctor does: missing tool
+→ SKIP, not FAIL. The 8 new tests in `tests/test_ci_doctor.py::TestOpenPrState`
+pin every branch.
 
 ## Body
 

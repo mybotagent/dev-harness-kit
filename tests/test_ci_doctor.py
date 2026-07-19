@@ -960,5 +960,209 @@ class TestCiDoctor(unittest.TestCase):
             self.assertTrue(r.ok)
 
 
+class TestOpenPrState(unittest.TestCase):
+    """Issue #249: ci-doctor must surface CI-silently-skipped PR states.
+
+    When a PR is opened in `mergeable: CONFLICTING` (or still computing)
+    GitHub Actions refuses to run any workflow on the PR. ci-doctor
+    must NOT return PASS in that state. The check inspects the open PR
+    for the current branch via `gh pr view --json ...` and emits
+    FAIL/WARN/INFO/SKIP rows accordingly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cd = _load("ci_doctor", "ci_doctor.py")
+
+    def _diagnostic_rows(self, r, label_substr: str) -> list:
+        """Filter `r.checks` to rows whose label contains `label_substr`."""
+        return [c for c in r.checks if label_substr in c.label]
+
+    def _gh_pr_json(self, *, mergeable, is_draft=False, title=""):
+        """Return the dict shape `gh pr view --json mergeable,...` emits."""
+        return {
+            "mergeable": mergeable,  # "CONFLICTING" | "MERGEABLE" | "UNKNOWN"
+            "mergeStateStatus": "DIRTY" if mergeable == "CONFLICTING" else "CLEAN",
+            "isDraft": is_draft,
+            "title": title,
+        }
+
+    def _audit_with_pr_state(self, pr_payload):
+        """Run `audit()` with `_fetch_open_pr_state` mocked to `pr_payload`.
+
+        The tempdir has no `.env.example`, no workflow files, no marker,
+        no git remote — so the install-shape + provider + secrets checks
+        would all FAIL and pollute `r.ok`. Patch those out so the only
+        check under test is the open-PR check.
+        """
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_required_files", return_value=[]):
+                    with patch.object(self.cd, "_check_marker_payload", return_value=[]):
+                        with patch.object(self.cd, "_check_provider_declared", return_value=[]):
+                            with patch.object(self.cd, "_check_secrets", return_value=[]):
+                                with patch.object(self.cd, "_fetch_open_pr_state",
+                                                  return_value=(pr_payload, "")):
+                                    return self.cd.audit(target), target
+
+    def _open_pr_rows(self, r):
+        return self._diagnostic_rows(r, "open PR ")
+
+    def test_conflicting_pr_flips_verdict_to_fail(self):
+        """Issue #249 repro: open PR in CONFLICTING state → audit must FAIL.
+
+        Pre-fix: this test fails because the open-PR check does not exist
+        and audit returns PASS even when the PR is in a CI-silently-skipped
+        state. Post-fix: a FAIL row appears with the merge-conflict message
+        and `r.ok` becomes False.
+        """
+        pr = self._gh_pr_json(mergeable="CONFLICTING", title="fix: something")
+        r, _ = self._audit_with_pr_state(pr)
+        rows = self._open_pr_rows(r)
+        self.assertTrue(
+            any(c.state == "FAIL" for c in rows),
+            f"CONFLICTING PR must produce a FAIL row; got: "
+            f"{[(c.label, c.state, c.detail) for c in rows]}",
+        )
+        merge_row = next((c for c in rows if "mergeable" in c.label), None)
+        self.assertIsNotNone(merge_row, "no `open PR mergeable` row emitted")
+        self.assertEqual(merge_row.state, "FAIL")
+        self.assertIn("conflict", merge_row.detail.lower())
+        self.assertFalse(
+            r.ok,
+            "audit verdict must be FAIL when open PR has merge conflicts",
+        )
+
+    def test_mergeable_pr_emits_pass_row(self):
+        """Open PR in MERGEABLE state → PASS row, audit still PASS."""
+        pr = self._gh_pr_json(mergeable="MERGEABLE", title="feat: ok")
+        r, _ = self._audit_with_pr_state(pr)
+        rows = self._open_pr_rows(r)
+        merge_row = next((c for c in rows if "mergeable" in c.label), None)
+        self.assertIsNotNone(merge_row)
+        self.assertEqual(merge_row.state, "PASS")
+        self.assertTrue(r.ok)
+
+    def test_unknown_merge_state_warns(self):
+        """GitHub still computing (mergeable: UNKNOWN) → WARN, not FAIL.
+
+        Transient: re-running ci-doctor in 30s should resolve to either
+        MERGEABLE or CONFLICTING. WARN keeps the verdict PASS but tells
+        the user the state is in flux.
+        """
+        pr = self._gh_pr_json(mergeable="UNKNOWN", title="fix: ?")
+        r, _ = self._audit_with_pr_state(pr)
+        rows = self._open_pr_rows(r)
+        merge_row = next((c for c in rows if "mergeable" in c.label), None)
+        self.assertIsNotNone(merge_row)
+        self.assertEqual(merge_row.state, "WARN")
+        self.assertTrue(
+            r.ok,
+            "UNKNOWN merge state must not flip the verdict (it's transient)",
+        )
+
+    def test_draft_pr_emits_info_row(self):
+        """isDraft: true → INFO row (drafts don't trigger required checks)."""
+        pr = self._gh_pr_json(mergeable="MERGEABLE", is_draft=True, title="WIP")
+        r, _ = self._audit_with_pr_state(pr)
+        rows = self._open_pr_rows(r)
+        draft_row = next((c for c in rows if "draft" in c.label), None)
+        self.assertIsNotNone(draft_row)
+        self.assertEqual(draft_row.state, "INFO")
+        self.assertIn("draft", draft_row.detail.lower())
+        self.assertTrue(r.ok)
+
+    def test_bump_pr_title_emits_info_row(self):
+        """Title starts `chore(release): bump dev-kit to v` → INFO row.
+
+        The version-bump workflow skips ci/review/security on bump PRs
+        by design (their job is purely the version-tag dance). ci-doctor
+        should surface this so users don't ask 'why didn't test run?'.
+        """
+        pr = self._gh_pr_json(
+            mergeable="MERGEABLE",
+            title="chore(release): bump dev-kit to v0.3.92",
+        )
+        r, _ = self._audit_with_pr_state(pr)
+        rows = self._open_pr_rows(r)
+        title_row = next((c for c in rows if "title" in c.label), None)
+        self.assertIsNotNone(title_row)
+        self.assertEqual(title_row.state, "INFO")
+        self.assertIn("bump", title_row.detail.lower())
+        self.assertTrue(r.ok)
+
+    def test_no_open_pr_skips_check(self):
+        """`_fetch_open_pr_state` returns degraded msg → SKIP row.
+
+        Most ci-doctor runs happen BEFORE the PR is opened. In that case
+        the open-PR check is meaningless and must not flip the verdict.
+        """
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_required_files", return_value=[]):
+                    with patch.object(self.cd, "_check_marker_payload", return_value=[]):
+                        with patch.object(self.cd, "_check_provider_declared", return_value=[]):
+                            with patch.object(self.cd, "_check_secrets", return_value=[]):
+                                with patch.object(self.cd, "_fetch_open_pr_state",
+                                                  return_value=({}, "no open PR for current branch")):
+                                    r = self.cd.audit(target)
+        rows = self._open_pr_rows(r)
+        self.assertTrue(
+            any(c.state == "SKIP" for c in rows),
+            f"no-open-PR case must SKIP; got: "
+            f"{[(c.label, c.state, c.detail) for c in rows]}",
+        )
+        self.assertTrue(r.ok)
+
+    def test_gh_unavailable_skips_check(self):
+        """`gh` absent or unauthenticated → SKIP, not FAIL.
+
+        Same degraded-mode discipline as the rest of ci-doctor: missing
+        tool is SKIP, not FAIL, because the user might be running the
+        audit in an environment without gh auth (CI runner, container).
+        """
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            with patch.object(self.cd, "_check_gh_auth",
+                              return_value=self.cd.Check("gh auth", "SKIP", "")):
+                with patch.object(self.cd, "_check_required_files", return_value=[]):
+                    with patch.object(self.cd, "_check_marker_payload", return_value=[]):
+                        with patch.object(self.cd, "_check_provider_declared", return_value=[]):
+                            with patch.object(self.cd, "_check_secrets", return_value=[]):
+                                with patch.object(self.cd, "_fetch_open_pr_state",
+                                                  return_value=({}, "gh not on PATH")):
+                                    r = self.cd.audit(target)
+        rows = self._open_pr_rows(r)
+        self.assertTrue(
+            any(c.state == "SKIP" for c in rows),
+            f"gh-unavailable case must SKIP; got: "
+            f"{[(c.label, c.state, c.detail) for c in rows]}",
+        )
+        self.assertTrue(r.ok)
+
+    def test_diagnostic_rows_helper_filters_by_label(self):
+        """Sanity: `_diagnostic_rows` finds rows containing the substring.
+
+        Not strictly an open-PR test — verifies the shared helper used by
+        the rest of this class actually filters as expected.
+        """
+        r = self.cd.DoctorReport()
+        r.checks.append(self.cd.Check("open PR mergeable", "PASS", "ok"))
+        r.checks.append(self.cd.Check("other", "FAIL", "x"))
+        rows = self._diagnostic_rows(r, "open PR ")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].label, "open PR mergeable")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
