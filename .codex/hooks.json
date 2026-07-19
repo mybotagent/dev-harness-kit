@@ -1,14 +1,25 @@
 {
   "hooks": {
-    "Stop": [
+    "SessionStart": [
       {
+        "_commands_dir_registered_by_install_commands": true,
         "hooks": [
           {
-            "type": "command",
-            "command": "for i in python3 python py; do if \"$i\" -c \"\" </dev/null >/dev/null 2>&1; then \"$i\" tools/save_log.py --tool codex; exit 0; fi; done"
+            "command": "for f in python3 python py; do if \"$f\" -c \"\" </dev/null >/dev/null 2>&1; then exec \"$f\" \"$PWD/bin/install-commands.sh\"; fi; done",
+            "type": "command"
           }
-        ],
-        "_loghooks_managed": true
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "_loghooks_managed": true,
+        "hooks": [
+          {
+            "command": "for i in python3 python py; do if \"$i\" -c \"\" </dev/null >/dev/null 2>&1; then \"$i\" tools/save_log.py --tool codex; exit 0; fi; done",
+            "type": "command"
+          }
+        ]
       }
     ]
   }

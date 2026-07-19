@@ -7,12 +7,12 @@ when_to_use: |
   - User types /dev-kit:adapt
   - A build step is in_progress and the plan/spec is discovered to be wrong
   - User wants the build to continue with amended artifacts, not restart from scratch
-allowed-tools: Read Write Bash Glob Grep
-disallowed-tools: WebFetch
-model: opus
-disable-model-invocation: false
-user-invocable: true
+alpha: state
 ---
+
+## Invocation
+
+Arguments: `$ARGUMENTS` — pass any focused scope (step number, artifact name, or short rationale) so the diff surfaces the right contradiction.
 
 ## What it does
 
@@ -43,7 +43,7 @@ Pauses an in-flight per-step harness runner (`lib/execute.py`) step, surfaces th
 
 - MUST-L5: one proposed patch per invocation. No "while I'm here" edits. If two gaps exist, the second waits for a second `adapt` call.
 - MUST-L3: completion requires the patch written + the next build step started with a quoted exit code.
-- The skill does NOT modify `step<N>-output.json`. The per-step harness runner (`lib/execute.py`) owns that file.
+- The command does NOT modify `step<N>-output.json`. The per-step harness runner (`lib/execute.py`) owns that file.
 - The patch is MINIMAL: the smallest change that resolves the surfaced contradiction. No refactors, no opportunistic cleanups, no scope creep.
 
 ## Hook integration
@@ -65,7 +65,7 @@ Pauses an in-flight per-step harness runner (`lib/execute.py`) step, surfaces th
 
 | Thought | Reality |
 |---|---|
-| "While I'm here, let me also fix X" | Out of scope. Run another skill. |
+| "While I'm here, let me also fix X" | Out of scope. Run another command. |
 | "The plan was wrong from the start" | That is a `/dev-kit:plan` revision, not an adapt. |
 | "I'll just rewrite the whole step" | L5 violation. Minimal patch only. |
 | "Adapt three times in a row" | Stop. The plan is too unstable — back to `/dev-kit:plan`. |

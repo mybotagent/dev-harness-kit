@@ -1,6 +1,6 @@
 {
   "name": "dev-kit",
-  "version": "0.3.89",
+  "version": "0.3.90",
   "description": "AI-native dev harness: 13 categories, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop.",
   "author": {
     "name": "sanghee",
@@ -20,6 +20,7 @@
   ],
   "hooks": "./.codex-plugin/hooks/hooks.json",
   "skills": "./skills/",
+  "commands": "./commands/",
   "interface": {
     "displayName": "Dev Harness Kit",
     "shortDescription": "Skills for planning, TDD build, review, security, and release workflows",
