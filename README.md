@@ -262,9 +262,6 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 | `/dev-kit:plan` | PRD + phases (Plan + Design unified) |
 | `/dev-kit:build` | Run per-step sub-agents |
 | `/dev-kit:adapt` | Mid-build plan/spec amendment |
-| `/dev-kit:feat-add` | Add a feature under TDD |
-| `/dev-kit:feat-fix` | Reproduce-first fix for one named feature |
-| `/dev-kit:feat-revise` | Revise a feature under TDD |
 | `/dev-kit:feat-remove` | Remove a feature (call-graph sweep + deletion report) |
 
 **Review → Ship**
@@ -276,7 +273,7 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 | `/dev-kit:audit` | Batch slop + secret audit |
 | `/dev-kit:inspect` | 8-dim code-health audit (read-only) |
 | `/dev-kit:refactor` | 3-phase refactor: inspect → cleanup → review |
-| `/dev-kit:prune` | 3-phase deletion sweep: inspect → delete → review |
+| `/dev-kit:prune` | 4-phase deletion sweep: sweep → dependents → report → verify (`--target <feat>` for one feature) |
 | `/dev-kit:babysit-pr` | PR babysitter loop (poll CI, fix, re-iterate) |
 | `/dev-kit:ship` | Release tag |
 | `/dev-kit:bump [major\|minor\|patch]` | Explicit version bump + push |
