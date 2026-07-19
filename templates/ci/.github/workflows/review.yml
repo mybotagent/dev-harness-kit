@@ -329,14 +329,28 @@ jobs:
               verdict_source="default-approve-empty-file"
               agent_ran="true"
             else
-              # No agent output file. The bootstrap-PR remediation
-              # (needs_fallback=true) is handled by the early-return
-              # branch above; if we got here without a fallback, the
-              # action silently skipped. Default to Approve + warning.
-              echo "::warning::review verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
-              verdict="Approve"
-              verdict_source="default-approve-no-file"
-              agent_ran="false"
+              # Issue #253 backport (boilerplate-web PR #20): case-switch
+              # on ${{ job.status }} so transient failures (timeout /
+              # runtime error → cancelled|failure) are not misclassified
+              # as a bootstrap-PR skip. Pre-#253 the no-file branch was a
+              # flat agent_ran="false", which made boilerplate-web PR #18's
+              # 20-min timeouts hard-fail the gate even though review + CI
+              # were otherwise green. Default arm keeps the bootstrap-PR
+              # skip semantics (agent_ran="false") for success/anything else.
+              case "${{ job.status }}" in
+                cancelled|failure)
+                  echo "::warning::review verdict missing (job.status=${{ job.status }}, transient); defaulting to Approve"
+                  verdict="Approve"
+                  verdict_source="default-approve-job-${{ job.status }}"
+                  agent_ran="true"
+                  ;;
+                *)
+                  echo "::warning::review verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
+                  verdict="Approve"
+                  verdict_source="default-approve-no-file"
+                  agent_ran="false"
+                  ;;
+              esac
             fi
           fi
           echo "review_verdict=${verdict}  source=${verdict_source}  agent_ran=${agent_ran}"
@@ -584,10 +598,23 @@ jobs:
               verdict_source="default-approve-empty-file"
               agent_ran="true"
             else
-              echo "::warning::security verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
-              verdict="Approve"
-              verdict_source="default-approve-no-file"
-              agent_ran="false"
+              # Issue #253 backport (boilerplate-web PR #20): symmetric
+              # with the review job — see review-branch comment above for
+              # the cancelled|failure vs default rationale.
+              case "${{ job.status }}" in
+                cancelled|failure)
+                  echo "::warning::security verdict missing (job.status=${{ job.status }}, transient); defaulting to Approve"
+                  verdict="Approve"
+                  verdict_source="default-approve-job-${{ job.status }}"
+                  agent_ran="true"
+                  ;;
+                *)
+                  echo "::warning::security verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
+                  verdict="Approve"
+                  verdict_source="default-approve-no-file"
+                  agent_ran="false"
+                  ;;
+              esac
             fi
           fi
           echo "security_verdict=${verdict}  source=${verdict_source}  agent_ran=${agent_ran}"

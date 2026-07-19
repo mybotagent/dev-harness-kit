@@ -284,6 +284,86 @@ class TestTemplateGateTolerance(unittest.TestCase):
         )
 
 
+class TestTemplateJobStatusTolerance(unittest.TestCase):
+    """Pin issue #253 — backport boilerplate-web PR #20 contract on the
+    no-file branch of review + security extract steps:
+
+      case "${{ job.status }}" in
+        cancelled|failure) verdict="Approve"  verdict_source="default-approve-job-${{ job.status }}"  agent_ran="true"
+        *)                 verdict="Approve"  verdict_source="default-approve-no-file"              agent_ran="false"
+      esac
+
+    Pre-#253 the no-file branch is a flat `agent_ran="false"` which makes
+    timeouts (job.status=cancelled) trigger the gate's hard-fail-on-skip
+    rule — boilerplate-web PR #18 failure mode.
+    """
+
+    def setUp(self):
+        self.text = TEMPLATE_PATH.read_text()
+
+    def _job_body(self, job: str) -> str:
+        m = re.search(
+            rf"^  {job}:\n(?P<body>.*?)(?=^  [a-z_]+:\n|\Z)",
+            self.text, flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(m, f"{job}: job block not found in template")
+        return m.group("body")
+
+    def _case_arms(self, job: str) -> tuple[str, str]:
+        """Return (transient_arm, default_arm) from the
+        `case "${{ job.status }}" in ... esac` block, or fail.
+        """
+        m = re.search(
+            r'case "\$\{\{ job\.status \}\}" in\n(?P<inner>.*?)^\s*esac\b',
+            self._job_body(job), flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(
+            m,
+            f'{job}: no `case "${{{{ job.status }}}}" in ... esac` block '
+            f"found (issue #253 — boilerplate-web PR #20 patch missing)",
+        )
+        parts = re.split(r"^\s+\*\)", m.group("inner"), maxsplit=1, flags=re.MULTILINE)
+        self.assertEqual(
+            len(parts), 2,
+            f"{job}: case-statement missing default `*)` arm (issue #253)",
+        )
+        return parts[0], parts[1]
+
+    def _assert_job_status_contract(self, job: str) -> None:
+        transient, default = self._case_arms(job)
+        # Pin the transient arm is actually labelled `cancelled|failure)` —
+        # assignments alone (without the label) would let a mis-patched
+        # template with a different transient label pass.
+        self.assertRegex(
+            transient, r"(?m)^\s*cancelled\|failure\)",
+            f"{job}: transient arm missing 'cancelled|failure)' case label "
+            f"(issue #253 — boilerplate-web PR #20 contract)",
+        )
+        for arm, label, expect in (
+            (transient, "cancelled|failure", {
+                "verdict": "Approve",
+                "verdict_source": "default-approve-job-${{ job.status }}",
+                "agent_ran": "true",
+            }),
+            (default, "*) default", {
+                "verdict": "Approve",
+                "verdict_source": "default-approve-no-file",
+                "agent_ran": "false",
+            }),
+        ):
+            for key, val in expect.items():
+                self.assertIn(
+                    f'{key}="{val}"', arm,
+                    f"{job}: {label} arm missing {key}=\"{val}\" (issue #253)",
+                )
+
+    def test_review_job_status_tolerance(self):
+        self._assert_job_status_contract("review")
+
+    def test_security_job_status_tolerance(self):
+        self._assert_job_status_contract("security")
+
+
 class TestTemplateGateTimeExtract(unittest.TestCase):
     """Pins bug 3 (root-cause fix): gate MUST extract verdict at gate time.
 
