@@ -1037,7 +1037,123 @@ def audit(target_dir: Path, *, provider: str | None = None) -> DoctorReport:
     report.checks.extend(_check_secrets(target, provider, source_repo))
     report.checks.extend(_check_workflow_diagnostics(target, source_repo))
     report.checks.append(_check_branch_protection(target, source_repo))
+    report.checks.extend(_check_open_pr(target))
     return report
+
+
+# ---- Open PR state (issue #249) ---------------------------------------
+# A PR in `mergeable: CONFLICTING` causes GitHub Actions to silently
+# refuse ALL workflows on the PR — `gh pr checks <N>` returns `no
+# checks reported` with no error. ci-doctor must surface this rather
+# than reporting PASS. Also surfaces UNKNOWN (still computing) as WARN,
+# draft state as INFO, and version-bump PRs as INFO so users don't ask
+# why their CI didn't run.
+
+def _fetch_open_pr_state(target: Path) -> tuple[dict, str]:
+    """Return (pr_state_dict, degraded-message).
+
+    Empty dict + non-empty msg means degraded (gh missing/unauth, no
+    PR open for the current branch, JSON parse failed, or detached
+    HEAD). Caller emits a single SKIP row in that case.
+    """
+    gh = shutil.which("gh")
+    if not gh:
+        return {}, "gh not on PATH"
+    # Detect current branch via `git rev-parse --abbrev-ref HEAD`.
+    try:
+        cp = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+        return {}, f"git branch detect error: {e}"
+    if cp.returncode != 0:
+        return {}, f"git branch detect failed: {(cp.stderr or '').strip() or cp.returncode}"
+    branch = cp.stdout.strip()
+    if not branch or branch == "HEAD":
+        return {}, "detached HEAD — no branch PR can target"
+    # `gh pr view <branch> --json ...` — non-zero exit when no PR is
+    # open for the branch. Treat as degraded (SKIP), not error.
+    try:
+        cp = subprocess.run(
+            [gh, "pr", "view", branch, "--json",
+             "mergeable,mergeStateStatus,isDraft,title"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+        return {}, f"gh pr view error: {e}"
+    if cp.returncode != 0:
+        err = (cp.stderr or "").strip()
+        if "no pull requests found" in err.lower() or "not found" in err.lower():
+            return {}, "no open PR for current branch"
+        return {}, f"gh pr view failed: {err or cp.returncode}"
+    try:
+        return json.loads(cp.stdout), ""
+    except json.JSONDecodeError as e:
+        return {}, f"gh pr view JSON parse error: {e}"
+
+
+def _check_open_pr(target: Path) -> list[Check]:
+    """Diagnose the open PR's merge state for the current branch.
+
+    Issue #249: when a PR is in `mergeable: CONFLICTING`, GitHub
+    Actions silently refuses to run any workflow on the PR — neither
+    `ci.yml` nor `review.yml` nor `auto-fix-pr.yml` fires. The
+    previous ci-doctor implementation was purely local and could
+    return PASS for a PR that would sit in a no-checks state for an
+    arbitrary interval. This check makes the open-PR state part of
+    the audit so users see the actual readiness signal.
+
+    Severity matrix:
+      - CONFLICTING → FAIL (CI will not run)
+      - UNKNOWN     → WARN (GitHub still computing; re-run in 30s)
+      - MERGEABLE   → PASS
+      - other enum  → INFO (forward-compat: future schema change)
+      - isDraft     → INFO (required checks gated until ready-for-review)
+      - bump-title  → INFO (ci/review/security skip by design)
+      - degraded    → SKIP (gh missing, no PR, etc.)
+    """
+    data, degraded = _fetch_open_pr_state(target)
+    if degraded:
+        return [Check("open PR state", "SKIP", degraded)]
+    rows: list[Check] = []
+    mergeable = data.get("mergeable", "")
+    if mergeable == "CONFLICTING":
+        rows.append(Check(
+            "open PR mergeable", "FAIL",
+            "open PR has merge conflicts with main — CI will not run. "
+            "Run: git fetch origin main && git merge origin/main",
+        ))
+    elif mergeable == "UNKNOWN":
+        rows.append(Check(
+            "open PR mergeable", "WARN",
+            "GitHub still computing merge state — re-run "
+            "/dev-kit:ci-doctor in 30s",
+        ))
+    elif mergeable == "MERGEABLE":
+        rows.append(Check("open PR mergeable", "PASS", "no conflicts"))
+    else:
+        # Unknown enum value (e.g. a new GitHub state) — surface as
+        # INFO so future schema changes don't silently degrade the
+        # check into a false PASS.
+        rows.append(Check(
+            "open PR mergeable", "INFO",
+            f"unrecognized mergeable value: {mergeable!r}",
+        ))
+    if data.get("isDraft"):
+        rows.append(Check(
+            "open PR draft", "INFO",
+            "PR is a draft — required checks gated until marked "
+            "ready for review",
+        ))
+    title = data.get("title", "")
+    if title.startswith("chore(release): bump dev-kit to v"):
+        rows.append(Check(
+            "open PR title", "INFO",
+            "bump-PR — ci/review/security explicitly skip per "
+            "templates/ci/.github/workflows/ci.yml",
+        ))
+    return rows
 
 
 if __name__ == "__main__":
