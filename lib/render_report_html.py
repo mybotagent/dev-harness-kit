@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 
@@ -351,109 +352,166 @@ def _render_inspect_per_dim(rows: List[Tuple[str, int, int, int]]) -> str:
 # ---------- public API ----------
 
 
-def render(eval_report_md: str, inspect_report_md: str, *, now: str | None = None) -> str:
-    """Render two markdown reports as one self-contained HTML document.
+# --- Parsed dataclasses (issue #96) ----------------------------------------
 
-    Both arguments may be empty strings; missing/empty inputs render a
-    'not found' banner in the corresponding section rather than failing.
 
-    Returns a UTF-8 HTML string. No I/O is performed.
+@dataclass
+class EvalData:
+    """Parsed eval-report state. Returned by `parse_eval_sections`."""
+    summary: Dict[str, int] = field(default_factory=dict)
+    per_dim_blocks: List[Tuple[str, int, float, List[Tuple[str, float]]]] = field(default_factory=list)
+    per_case: List[Dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class InspectData:
+    """Parsed inspect-report state. Returned by `parse_inspect_sections`."""
+    header: Dict[str, str] = field(default_factory=dict)
+    findings_high: List[Dict[str, str]] = field(default_factory=list)
+    findings_med: List[Dict[str, str]] = field(default_factory=list)
+    findings_low: List[Dict[str, str]] = field(default_factory=list)
+    per_dim: List[Tuple[str, int, int, int]] = field(default_factory=list)
+
+
+def parse_eval_sections(eval_report_md: str) -> EvalData:
+    """Parse the eval-report markdown into structured `EvalData`.
+
+    Empty input returns an empty `EvalData`. The shell decides how to
+    render that (typically a 'no eval report' banner).
     """
-    eval_sections = _parse_sections(eval_report_md) if eval_report_md else {}
-    inspect_sections = _parse_sections(inspect_report_md) if inspect_report_md else {}
-
-    eval_summary = _parse_eval_summary(eval_sections.get("Summary", ""))
+    if not eval_report_md:
+        return EvalData()
+    sections = _parse_sections(eval_report_md)
+    summary = _parse_eval_summary(sections.get("Summary", ""))
     # Per-dim blocks are ### sub-headers under '## Per-Dimension Scores'.
     # The new _parse_sections treats ### as a section break, so they
     # appear as their own top-level keys.
-    eval_per_dim_blocks: List[Tuple[str, int, float, List[Tuple[str, float]]]] = []
-    for header, body in eval_sections.items():
+    per_dim_blocks: List[Tuple[str, int, float, List[Tuple[str, float]]]] = []
+    for header, body in sections.items():
         if header in ("_title", "Summary", "Per-Dimension Scores", "Per-Case Results"):
             continue
         if not re.match(r"^[a-z]+\s*\(n=", header):
             continue
-        parsed = _parse_eval_per_dim(header, body)
-        eval_per_dim_blocks.extend(parsed)
-    eval_per_case = _parse_eval_per_case(eval_sections.get("Per-Case Results", ""))
+        per_dim_blocks.extend(_parse_eval_per_dim(header, body))
+    per_case = _parse_eval_per_case(sections.get("Per-Case Results", ""))
+    return EvalData(summary=summary, per_dim_blocks=per_dim_blocks, per_case=per_case)
 
-    if inspect_report_md:
-        # The header body is everything in the _title section (it contains
-        # the "**Verdict:** ..." block-quoted lines).
-        inspect_header = _parse_inspect_header(inspect_sections.get("_title", ""))
-        # Findings: any section whose header starts with HIGH/MED/LOW.
-        inspect_findings_high: List[Dict[str, str]] = []
-        inspect_findings_med: List[Dict[str, str]] = []
-        inspect_findings_low: List[Dict[str, str]] = []
-        for header, body in inspect_sections.items():
-            if header.startswith("HIGH"):
-                inspect_findings_high = _parse_inspect_findings(body)
-            elif header.startswith("MED"):
-                inspect_findings_med = _parse_inspect_findings(body)
-            elif header.startswith("LOW"):
-                inspect_findings_low = _parse_inspect_findings(body)
-        inspect_per_dim = _parse_inspect_per_dim_table(
-            inspect_sections.get("Per-dimension summary", "")
-        )
-    else:
-        inspect_header = {}
-        inspect_findings_high = []
-        inspect_findings_med = []
-        inspect_findings_low = []
-        inspect_per_dim = []
 
+def parse_inspect_sections(inspect_report_md: str) -> InspectData:
+    """Parse the inspect-report markdown into structured `InspectData`.
+
+    Empty input returns an empty `InspectData`.
+    """
+    if not inspect_report_md:
+        return InspectData()
+    sections = _parse_sections(inspect_report_md)
+    # The header body is everything in the _title section (it contains
+    # the "**Verdict:** ..." block-quoted lines).
+    header = _parse_inspect_header(sections.get("_title", ""))
+    # Findings: any section whose header starts with HIGH/MED/LOW.
+    findings_high: List[Dict[str, str]] = []
+    findings_med: List[Dict[str, str]] = []
+    findings_low: List[Dict[str, str]] = []
+    for sec_header, body in sections.items():
+        if sec_header.startswith("HIGH"):
+            findings_high = _parse_inspect_findings(body)
+        elif sec_header.startswith("MED"):
+            findings_med = _parse_inspect_findings(body)
+        elif sec_header.startswith("LOW"):
+            findings_low = _parse_inspect_findings(body)
+    per_dim = _parse_inspect_per_dim_table(sections.get("Per-dimension summary", ""))
+    return InspectData(
+        header=header,
+        findings_high=findings_high,
+        findings_med=findings_med,
+        findings_low=findings_low,
+        per_dim=per_dim,
+    )
+
+
+def render(eval_report_md: str, inspect_report_md: str, *, now: str | None = None) -> str:
+    """Render two markdown reports as one self-contained HTML document.
+
+    Thin dispatcher (issue #96): delegates to `parse_eval_sections`,
+    `parse_inspect_sections`, and `compose_html`. Both arguments may be
+    empty strings; missing/empty inputs render a 'not found' banner.
+
+    Returns a UTF-8 HTML string. No I/O is performed.
+    """
+    eval_data = parse_eval_sections(eval_report_md)
+    inspect_data = parse_inspect_sections(inspect_report_md)
+    has_eval = bool(eval_report_md)
+    has_inspect = bool(inspect_report_md)
+    return compose_html(eval_data, inspect_data, now=now or _now_iso(),
+                        has_eval=has_eval, has_inspect=has_inspect)
+
+
+def compose_html(
+    eval_data: EvalData,
+    inspect_data: InspectData,
+    *,
+    now: str,
+    has_eval: bool = True,
+    has_inspect: bool = True,
+) -> str:
+    """Compose the HTML shell (doctype/head/body + per-section emission).
+
+    Pure function over `EvalData` / `InspectData`. The shell + per-section
+    emission live here; parsing is in `parse_*_sections`.
+    """
     title = "dev-harness-kit -- Code Quality Report"
     parts: List[str] = []
-    parts.append(f'<!DOCTYPE html>\n<html lang="en">\n<head>')
-    parts.append(f'<meta charset="utf-8">')
+    parts.append('<!DOCTYPE html>\n<html lang="en">\n<head>')
+    parts.append('<meta charset="utf-8">')
     parts.append(f'<title>{_esc(title)}</title>')
     parts.append(f'<style>{INLINE_CSS}</style>')
     parts.append('</head>\n<body>')
     parts.append(f'<h1>{_esc(title)}</h1>')
-    parts.append(f'<p class="meta">Generated {_esc(now or _now_iso())}</p>')
+    parts.append(f'<p class="meta">Generated {_esc(now)}</p>')
 
     # ---- eval section ----
     parts.append('<h2>Eval</h2>')
-    if not eval_report_md:
+    if not has_eval:
         parts.append('<div class="missing">No eval report found at '
                      '<code>.dev-kit/eval-report.md</code>. Run '
                      '<code>/dev-kit:eval</code> first.</div>')
     else:
-        parts.append(_render_eval_cards(eval_summary))
-        if eval_per_dim_blocks:
+        parts.append(_render_eval_cards(eval_data.summary))
+        if eval_data.per_dim_blocks:
             parts.append('<h3>Per-dimension scores</h3>')
-            parts.append(_render_eval_per_dim(eval_per_dim_blocks))
-        if eval_per_case:
+            parts.append(_render_eval_per_dim(eval_data.per_dim_blocks))
+        if eval_data.per_case:
             parts.append('<h3>Per-case results</h3>')
-            parts.append(_render_eval_per_case(eval_per_case))
+            parts.append(_render_eval_per_case(eval_data.per_case))
 
     # ---- inspect section ----
     parts.append('<h2>Inspect</h2>')
-    if not inspect_report_md:
+    if not has_inspect:
         parts.append('<div class="missing">No inspect report found at '
                      '<code>.dev-kit/inspect-report.md</code>. Run '
                      '<code>/dev-kit:inspect</code> first.</div>')
     else:
-        verdict = inspect_header.get("Verdict", "Unknown")
+        verdict = inspect_data.header.get("Verdict", "Unknown")
         verdict_cls = VERDICT_CLASS.get(verdict, "")
         parts.append(f'<p><b>Verdict:</b> <span class="{_esc(verdict_cls)}">{_esc(verdict)}</span></p>')
-        coverage = inspect_header.get("Coverage", "")
-        precision = inspect_header.get("Precision", "")
+        coverage = inspect_data.header.get("Coverage", "")
+        precision = inspect_data.header.get("Precision", "")
         if coverage:
             parts.append(f'<p class="meta"><b>Coverage:</b> {_esc(coverage)}</p>')
         if precision:
             parts.append(f'<p class="meta"><b>Precision:</b> {_esc(precision)}</p>')
-        if inspect_per_dim:
+        if inspect_data.per_dim:
             parts.append('<h3>Per-dimension</h3>')
-            parts.append(_render_inspect_per_dim(inspect_per_dim))
-        if inspect_findings_high:
-            parts.append(f'<h3>HIGH ({len(inspect_findings_high)})</h3>')
-            parts.append(_render_inspect_findings(inspect_findings_high))
-        if inspect_findings_med:
-            parts.append(f'<h3>MED ({len(inspect_findings_med)})</h3>')
-            parts.append(_render_inspect_findings(inspect_findings_med))
-        if inspect_findings_low:
-            parts.append(f'<h3>LOW ({len(inspect_findings_low)})</h3>')
-            parts.append(_render_inspect_findings(inspect_findings_low))
+            parts.append(_render_inspect_per_dim(inspect_data.per_dim))
+        if inspect_data.findings_high:
+            parts.append(f'<h3>HIGH ({len(inspect_data.findings_high)})</h3>')
+            parts.append(_render_inspect_findings(inspect_data.findings_high))
+        if inspect_data.findings_med:
+            parts.append(f'<h3>MED ({len(inspect_data.findings_med)})</h3>')
+            parts.append(_render_inspect_findings(inspect_data.findings_med))
+        if inspect_data.findings_low:
+            parts.append(f'<h3>LOW ({len(inspect_data.findings_low)})</h3>')
+            parts.append(_render_inspect_findings(inspect_data.findings_low))
 
     # ---- footer ----
     parts.append('<footer>Generated by <code>/dev-kit:report</code>. '
