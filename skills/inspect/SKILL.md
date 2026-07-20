@@ -26,6 +26,8 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 
 Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, fix_hint`). Return a fenced `json` array. One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`; REJECTED are dropped.
 
+The dedupe (on `file,line,theme`) + verifier + synthesize pipeline routes through `tools/parallel_dispatch.py:fanout_and_synthesize` (issue #177). The skill body still issues the Agent calls; the helper owns the post-fan-out pipeline.
+
 ## Dimensions (charters live in `lib/analysis_core/dimensions.py`)
 
 - **dead** — unused exports, unreachable branches, commented-out blocks (>3 lines), orphan config keys.
