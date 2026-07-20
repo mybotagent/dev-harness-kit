@@ -158,6 +158,91 @@ class TestWriteProjectMd(unittest.TestCase):
         self.assertNotIn("x-access-token", out)
         self.assertIn("requests==2.31.0", out)
 
+    # --- per-section helpers (issue #97) -------------------------------------
+
+    def test_render_iron_laws_section(self):
+        """_render_iron_laws(state) returns just §1 body (header + items)."""
+        out = write_project_md._render_iron_laws(write_project_md.IRON_LAWS)
+        self.assertIn("## §1 Iron Laws", out)
+        self.assertIn("**L1**", out)
+        self.assertIn("verification artifact", out)
+        # No §2+ content
+        self.assertNotIn("## §2", out)
+        self.assertNotIn("## §3", out)
+
+    def test_render_active_stage_section(self):
+        """_render_active_stage(state) returns just §2 body."""
+        out = write_project_md._render_active_stage(stage="build", step=2, methodology="tdd")
+        self.assertIn("## §2 Active Stage", out)
+        self.assertIn("current_stage: build", out)
+        self.assertIn("current_step: 2", out)
+        self.assertIn("methodology: tdd", out)
+        # No §1 or §3+ content
+        self.assertNotIn("## §1", out)
+        self.assertNotIn("## §3", out)
+
+    def test_render_active_stage_section_default_step(self):
+        """Default step is 1/1, methodology tdd."""
+        out = write_project_md._render_active_stage(stage="bootstrap")
+        self.assertIn("current_step: 1/1", out)
+        self.assertIn("shortcut_used: none", out)
+
+    def test_render_codebase_map_index_section(self):
+        """_render_codebase_map_index(root) returns just §3 lazy-loading body."""
+        out = write_project_md._render_codebase_map_index(self.root)
+        self.assertIn("## §3 Codebase Map", out)
+        self.assertIn("lazy-loading index", out)
+        self.assertIn("--full-claude-md", out)
+        # No §2 or §4+ content
+        self.assertNotIn("## §2", out)
+        self.assertNotIn("## §4", out)
+
+    def test_render_hook_matrix_section_default(self):
+        """_render_hook_matrix() returns just §4 with the DEFAULT_MATRIX table."""
+        out = write_project_md._render_hook_matrix()
+        self.assertIn("## §4 Hook Matrix", out)
+        self.assertIn("active-hooks.json", out)
+        self.assertIn("tdd-guard", out)
+        # No §3 or §5 content
+        self.assertNotIn("## §3", out)
+        self.assertNotIn("## §5", out)
+
+    def test_render_hook_matrix_section_custom(self):
+        """Custom hook matrix string passes through unchanged."""
+        custom = "custom matrix body"
+        out = write_project_md._render_hook_matrix(hook_matrix=custom)
+        self.assertIn(custom, out)
+
+    def test_render_handoff_section_default(self):
+        """_render_handoff() returns just §5 with default hand-off pointer."""
+        out = write_project_md._render_handoff()
+        self.assertIn("## §5 Hand-off Pointer", out)
+        self.assertIn("/dev-kit:plan", out)
+        self.assertIn("/dev-kit:tdd-fast", out)
+        # No §4 content
+        self.assertNotIn("## §4", out)
+
+    def test_render_handoff_section_custom(self):
+        """Custom hand-off string passes through unchanged."""
+        custom = "next_stage_trigger: /dev-kit:foo\nshortcut_trigger: /dev-kit:bar"
+        out = write_project_md._render_handoff(hand_off_chain=custom)
+        self.assertIn("/dev-kit:foo", out)
+        self.assertIn("/dev-kit:bar", out)
+
+    def test_render_claude_md_is_dispatcher(self):
+        """render_claude_md body should be thin — under 30 lines of logic.
+
+        Issue #97 acceptance: 'render_claude_md becomes a 5-line dispatcher.'
+        """
+        import inspect
+        source = inspect.getsource(write_project_md.render_claude_md)
+        # Count non-empty, non-comment lines
+        logic_lines = [
+            l for l in source.splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.assertLess(len(logic_lines), 30, f"render_claude_md too long: {len(logic_lines)} lines\n{source}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
