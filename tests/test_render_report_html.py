@@ -266,5 +266,114 @@ class TestParserRobustness(unittest.TestCase):
                           f"verdict {v!r} missing from VERDICT_CLASS")
 
 
+# ---------- refactor: parse_*_sections + compose_html (issue #96) ----------
+
+
+class TestParseEvalSections(unittest.TestCase):
+    """parse_eval_sections(md) -> EvalData covers summary, per-dim, per-case."""
+
+    def test_returns_eval_data_dataclass(self):
+        from render_report_html import EvalData  # type: ignore
+        data = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertIsInstance(data, EvalData)
+
+    def test_summary_populated(self):
+        data = render_report_html.parse_eval_sections(EVAL_MIN)
+        # The parser captures keys with regex r"^[-*]\s+(\w+):\s*(\d+)\s*$",
+        # which doesn't match "Total cases: 3" (the first word must be the
+        # entire key). So "Total" doesn't appear; only OK/DRIFT_WARNING/ROT/SKIPPED.
+        self.assertEqual(data.summary.get("OK"), 1)
+        self.assertEqual(data.summary.get("DRIFT_WARNING"), 1)
+        self.assertEqual(data.summary.get("ROT"), 1)
+        self.assertEqual(data.summary.get("SKIPPED"), 0)
+
+    def test_per_dim_blocks_extracted(self):
+        data = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertGreater(len(data.per_dim_blocks), 0)
+
+    def test_per_case_extracted(self):
+        data = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertGreater(len(data.per_case), 0)
+
+    def test_empty_input_returns_empty_eval_data(self):
+        from render_report_html import EvalData  # type: ignore
+        data = render_report_html.parse_eval_sections("")
+        self.assertIsInstance(data, EvalData)
+        self.assertEqual(data.summary, {})
+        self.assertEqual(data.per_dim_blocks, [])
+        self.assertEqual(data.per_case, [])
+
+
+class TestParseInspectSections(unittest.TestCase):
+    """parse_inspect_sections(md) -> InspectData covers header, findings, per-dim."""
+
+    def test_returns_inspect_data_dataclass(self):
+        from render_report_html import InspectData  # type: ignore
+        data = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertIsInstance(data, InspectData)
+
+    def test_header_populated(self):
+        data = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertIn("Verdict", data.header)
+
+    def test_findings_split_by_severity(self):
+        data = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertGreater(len(data.findings_high), 0)
+        self.assertEqual(data.findings_high[0]["Dim"], "dead")
+
+    def test_per_dim_rows_extracted(self):
+        data = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertGreater(len(data.per_dim), 0)
+
+    def test_empty_input_returns_empty_inspect_data(self):
+        from render_report_html import InspectData  # type: ignore
+        data = render_report_html.parse_inspect_sections("")
+        self.assertIsInstance(data, InspectData)
+        self.assertEqual(data.header, {})
+        self.assertEqual(data.findings_high, [])
+        self.assertEqual(data.per_dim, [])
+
+
+class TestComposeHtml(unittest.TestCase):
+    """compose_html(eval_data, inspect_data, now) -> str is the shell-only renderer."""
+
+    def test_empty_inputs_render_skeleton(self):
+        from render_report_html import EvalData, InspectData  # type: ignore
+        html = render_report_html.compose_html(EvalData(), InspectData(), now="2026-07-09T00:00:00Z")
+        self.assertIn("<!DOCTYPE html>", html)
+        self.assertIn("</html>", html)
+
+    def test_doctype_present_with_populated_inputs(self):
+        from render_report_html import parse_eval_sections, parse_inspect_sections  # type: ignore
+        eval_data = parse_eval_sections(EVAL_MIN)
+        inspect_data = parse_inspect_sections(INSPECT_MIN)
+        html = render_report_html.compose_html(eval_data, inspect_data, now="2026-07-09T00:00:00Z")
+        self.assertIn("<!DOCTYPE html>", html)
+        self.assertIn("Eval", html)
+        self.assertIn("Inspect", html)
+
+    def test_missing_inputs_render_banner(self):
+        from render_report_html import EvalData, InspectData  # type: ignore
+        # Eval present, inspect missing → eval section + missing inspect banner
+        eval_data = render_report_html.parse_eval_sections(EVAL_MIN)
+        inspect_data = InspectData()  # empty
+        html = render_report_html.compose_html(
+            eval_data, inspect_data,
+            now="2026-07-09T00:00:00Z", has_eval=True, has_inspect=False,
+        )
+        self.assertIn("No inspect report found", html)
+        self.assertIn("Eval", html)  # eval section still renders
+
+    def test_render_thin_dispatcher(self):
+        """render() is now a thin dispatcher — body < 30 logic lines (issue #96)."""
+        import inspect
+        source = inspect.getsource(render_report_html.render)
+        logic_lines = [
+            l for l in source.splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.assertLess(len(logic_lines), 30, f"render() too long: {len(logic_lines)} lines\n{source}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
