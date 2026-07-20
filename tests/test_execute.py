@@ -835,5 +835,52 @@ class TestRunStepBody(unittest.TestCase):
             self.assertIn("feat(test-phase): step 0 — my-name", log)
 
 
+# --- issue #94: status-transition table ---------------------------------
+
+class TestStatusTransitionsTable(unittest.TestCase):
+    """The status-transition table is the SSOT for per-status side effects.
+
+    Issue #94: adding a new status (e.g. skipped) means adding ONE entry to
+    STATUS_TRANSITIONS — the dispatcher routes through it. No more
+    forgetting a `s.pop("started_at", None)` line in one of 5 branches.
+    """
+
+    def test_table_covers_all_valid_statuses(self):
+        from lib import execute as ex
+        for status in ex.VALID_STATUSES:
+            self.assertIn(status, ex.STATUS_TRANSITIONS,
+                          f"missing STATUS_TRANSITIONS entry for {status!r}")
+
+    def test_table_values_are_callables(self):
+        from lib import execute as ex
+        for status, fn in ex.STATUS_TRANSITIONS.items():
+            self.assertTrue(callable(fn),
+                            f"STATUS_TRANSITIONS[{status!r}] is not callable")
+
+    def test_dispatcher_routes_through_table(self):
+        """update_step_status must look up the transition via STATUS_TRANSITIONS, not if/elif chain."""
+        import inspect
+        source = inspect.getsource(execute.update_step_status)
+        for forbidden in (
+            'elif status == "completed"',
+            'elif status == "error"',
+            'elif status == "blocked"',
+            'elif status == "pending"',
+            'elif status == "unimplemented"',
+        ):
+            self.assertNotIn(forbidden, source,
+                             f"update_step_status still uses {forbidden!r} instead of STATUS_TRANSITIONS table")
+
+    def test_each_transition_signature(self):
+        """Every transition fn takes (step, now, kwargs) and mutates step in place."""
+        from lib import execute as ex
+        import inspect
+        for status, fn in ex.STATUS_TRANSITIONS.items():
+            sig = inspect.signature(fn)
+            params = list(sig.parameters.keys())
+            self.assertGreaterEqual(len(params), 2,
+                                    f"transition {status!r} has < 2 params")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

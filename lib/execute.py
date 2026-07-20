@@ -102,6 +102,59 @@ def register_step(
 
 # ---------- Step status state machine ----------
 
+def _transition_in_progress(step: dict, now: str, **_kwargs) -> None:
+    """Idempotent started_at stamp (issue #94 transition table)."""
+    if "started_at" not in step:
+        step["started_at"] = now
+
+
+def _transition_completed(step: dict, now: str, *, duration_seconds: Optional[float] = None, **_kwargs) -> None:
+    """Set completed_at + duration_seconds; clear error/blocked fields."""
+    step["completed_at"] = now
+    if duration_seconds is None and "started_at" in step:
+        try:
+            started = datetime.fromisoformat(step["started_at"])
+            finished = datetime.fromisoformat(now)
+            duration_seconds = max(0.0, (finished - started).total_seconds())
+        except Exception:
+            duration_seconds = None
+    if duration_seconds is not None:
+        step["duration_seconds"] = float(duration_seconds)
+    step.pop("error_message", None)
+    step.pop("blocked_reason", None)
+    step.pop("failed_at", None)
+
+
+def _transition_error(step: dict, now: str, *, error_message: Optional[str] = None, **_kwargs) -> None:
+    """Stamp failed_at + error_message."""
+    step["failed_at"] = now
+    step["error_message"] = error_message
+
+
+def _transition_blocked(step: dict, now: str, *, blocked_reason: Optional[str] = None, **_kwargs) -> None:
+    """Stamp blocked_at + blocked_reason."""
+    step["blocked_at"] = now
+    step["blocked_reason"] = blocked_reason
+
+
+def _transition_reset(step: dict, _now: str, **_kwargs) -> None:
+    """Resume-retry / stub-registration: clear all timestamps."""
+    _clear_step_timestamps(step)
+
+
+# Status transition table (issue #94). Adding a new status = adding one
+# entry here + one entry in VALID_STATUSES. No more forgetting a
+# `s.pop("started_at", None)` line in one of 5 branches.
+STATUS_TRANSITIONS: Dict[str, Callable[..., None]] = {
+    "in_progress": _transition_in_progress,
+    "completed": _transition_completed,
+    "error": _transition_error,
+    "blocked": _transition_blocked,
+    "pending": _transition_reset,
+    "unimplemented": _transition_reset,
+}
+
+
 def update_step_status(
     project_root: Path,
     phase: str,
@@ -113,27 +166,12 @@ def update_step_status(
 ) -> None:
     """Update a single step's status with validation + atomic write.
 
+    Side effects route through `STATUS_TRANSITIONS` (issue #94): each status
+    has a single transition function owning its timestamp + field logic.
     Args:
-        status: one of VALID_STATUSES. New: "unimplemented" (initial stub)
-            and "in_progress" (runner started) are now first-class.
+        status: one of VALID_STATUSES.
         duration_seconds: optional wall-clock duration; when transitioning
             to "completed" and not provided, computed from started_at.
-
-    Side effects on the step entry in `phases/<phase>/index.json`:
-        pending → unimplemented: clears all timestamps
-        unimplemented → pending: clears all timestamps
-        pending → in_progress: sets started_at (idempotent — does NOT overwrite
-                               if already present, so resume after crash keeps
-                               the original start time)
-        in_progress → completed: sets completed_at; sets duration_seconds
-                              (from arg or computed from started_at)
-        in_progress → error: sets failed_at + error_message
-        in_progress → blocked: sets blocked_at + blocked_reason
-        any → pending (reset): clears completed_at/failed_at/blocked_at/
-                              error_message/blocked_reason/started_at/
-                              duration_seconds
-        any → completed (manual): sets completed_at; clears error/blocked
-                                  fields. duration_seconds optional.
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {status}. Valid: {VALID_STATUSES}")
@@ -147,39 +185,12 @@ def update_step_status(
     for s in data["steps"]:
         if s["step"] == step:
             s["status"] = status
-            now = now_iso()
-            if status == "in_progress":
-                # Idempotent: only stamp started_at on the FIRST in_progress
-                # transition so a resumed-after-crash run measures duration
-                # from the original start, not the resume time.
-                if "started_at" not in s:
-                    s["started_at"] = now
-            elif status == "completed":
-                s["completed_at"] = now
-                if duration_seconds is None and "started_at" in s:
-                    try:
-                        started = datetime.fromisoformat(s["started_at"])
-                        finished = datetime.fromisoformat(now)
-                        duration_seconds = max(0.0, (finished - started).total_seconds())
-                    except Exception:
-                        duration_seconds = None
-                if duration_seconds is not None:
-                    s["duration_seconds"] = float(duration_seconds)
-                s.pop("error_message", None)
-                s.pop("blocked_reason", None)
-                s.pop("failed_at", None)
-            elif status == "error":
-                s["failed_at"] = now
-                s["error_message"] = error_message
-            elif status == "blocked":
-                s["blocked_at"] = now
-                s["blocked_reason"] = blocked_reason
-            elif status == "pending":
-                # Resume retry — clear timestamps so duration recomputes cleanly.
-                _clear_step_timestamps(s)
-            elif status == "unimplemented":
-                # Stub registration — no timestamps.
-                _clear_step_timestamps(s)
+            STATUS_TRANSITIONS[status](
+                s, now_iso(),
+                error_message=error_message,
+                blocked_reason=blocked_reason,
+                duration_seconds=duration_seconds,
+            )
             break
     else:
         raise ValueError(f"step {step} not found in {phase}")
