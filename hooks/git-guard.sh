@@ -75,7 +75,7 @@ strip_git_globals() {
         case "$nxt" in
           -*)
             i=$((i+1)) ;;
-          commit|push|checkout|switch|branch|log|status|diff|show|fetch|pull|rebase|reset|tag|remote|merge|cherry-pick|revert|clean|stash|init|clone|add|mv|rm|config|shortlog|rerere|repack|gc|prune|fsck|reflog|restore|rm|notes|range-diff|mailinfo|mailsplit|request-pull)
+          commit|push|checkout|switch|branch|log|status|diff|show|fetch|pull|rebase|reset|tag|remote|merge|cherry-pick|revert|clean|stash|init|clone|add|mv|rm|config|shortlog|rerere|repack|gc|prune|fsck|reflog|restore|notes|range-diff|mailinfo|mailsplit|request-pull)
             i=$((i+1)) ;;
           *)
             i=$((i+2)) ;;

@@ -63,8 +63,7 @@ worktree_detect() {
 
 # abspath — canonicalize a path to absolute. Uses realpath when
 # available (macOS ships it by default since 10.12), falls back to
-# identity / manual resolution. Exported so sourced consumers can
-# call it directly if needed.
+# identity / manual resolution.
 abspath() {
   local p="$1"
   if command -v realpath >/dev/null 2>&1; then
