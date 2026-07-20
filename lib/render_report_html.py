@@ -340,10 +340,10 @@ def _render_inspect_per_dim(rows: List[Tuple[str, int, int, int]]) -> str:
     if not rows:
         return ""
     out = ['<table><tr><th>Dim</th><th>HIGH</th><th>MED</th><th>LOW</th></tr>']
-    for dim, h, m, l in rows:
+    for dim, high, medium, low in rows:
         out.append(
-            f"<tr><td><b>{_esc(dim)}</b></td><td>{_esc(h)}</td>"
-            f"<td>{_esc(m)}</td><td>{_esc(l)}</td></tr>"
+            f"<tr><td><b>{_esc(dim)}</b></td><td>{_esc(high)}</td>"
+            f"<td>{_esc(medium)}</td><td>{_esc(low)}</td></tr>"
         )
     out.append("</table>")
     return "".join(out)

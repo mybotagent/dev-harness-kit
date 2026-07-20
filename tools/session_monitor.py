@@ -42,13 +42,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Dict, List
 
 # When run as ``python3 tools/session_monitor.py`` the script's own dir is
 # already ``sys.path[0]``; the explicit insert also covers ``import
 # session_monitor`` from the test suite (which inserts ``tools/`` on the path).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import token_efficiency_analyzer as tea  # noqa: E402  (path set up above)
 import skill_usage  # noqa: E402  (path set up above)
+import token_efficiency_analyzer as tea  # noqa: E402  (path set up above)
 
 # A session with no running process is still "LIVE" if its most recent turn
 # landed within this window -- the Stop/SessionEnd hooks fire per turn, so a

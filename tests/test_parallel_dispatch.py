@@ -15,7 +15,6 @@ from pathlib import Path
 # Add the tools/ dir to the path so `import parallel_dispatch` works.
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 
-import parallel_dispatch  # noqa: E402
 from parallel_dispatch import (  # noqa: E402
     Finding,
     SynthesisResult,

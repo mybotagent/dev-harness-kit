@@ -18,17 +18,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import subprocess
 import os
+import re
 import shutil
+import subprocess
 import sys
 import time
-import yaml
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
+
+import yaml
 
 # Atomic write helper. Dual-import supports both shapes:
 #   * source repo: `lib/__init__.py` makes `lib` a package, so intra-package
@@ -147,7 +148,10 @@ POST_INSTALL_CHECKLIST: tuple[tuple[str, str], ...] = (
           "       (omit if sh-ai-x/dev-harness-kit is public)"),
     ("2", "Add MINIMAX_API_KEY (or ANTHROPIC_API_KEY for opt-in provider):\n"
           "       gh secret set MINIMAX_API_KEY --repo <OWNER>/<REPO>"),
-    ("3", "Enable pre-push hook:  git config core.hooksPath .githooks"),
+    ("3", "Install Ruff and enable Git hooks:\n"
+          "       brew install ruff   # macOS\n"
+          "       apt install ruff    # Debian/Ubuntu\n"
+          "       git config core.hooksPath .githooks"),
     ("4", "Push a feature branch; open a PR that does NOT modify "
           ".github/workflows/*.\n"
           "       /dev-kit:review + /dev-kit:security should fire."),

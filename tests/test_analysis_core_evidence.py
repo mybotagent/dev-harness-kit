@@ -12,28 +12,27 @@ JSON item must look like after parsing.
 """
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
-import sys
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from lib.analysis_core.evidence import (  # noqa: E402
-    Evidence,
+    SEVERITY_ORDER,
     Severity,
     Verdict,
-    SEVERITY_ORDER,
+    from_dict,
     parse_candidate,
     to_dict,
-    from_dict,
 )
 from lib.analysis_core.fp_filter import (  # noqa: E402
-    deterministic_filter,
-    dedupe,
-    apply_verifier,
-    threshold_by_mode,
     Verifier,
+    apply_verifier,
+    dedupe,
+    deterministic_filter,
+    threshold_by_mode,
 )
 
 
@@ -320,11 +319,12 @@ class TestFixVsFixHintSchemaSeparation(unittest.TestCase):
         # When the evidence carries BOTH `fix` and a non-empty
         # `fix_hint`, the rewrite-mode diff must contain `fix` only —
         # never the human-readable `fix_hint` prose.
-        from lib.analysis_core import (
-            run_analysis,
-            emit_suggested_diffs,
-        )
         import tempfile
+
+        from lib.analysis_core import (
+            emit_suggested_diffs,
+            run_analysis,
+        )
         tmp = tempfile.mkdtemp(prefix="ac-fix-hint-")
         root = Path(tmp)
         (root / "m.py").write_text("x = 0\n", encoding="utf-8")

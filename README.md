@@ -676,10 +676,14 @@ python3 bin/dev-kit-hooks-status.py --json    # machine-readable
 ```
 
 The report distinguishes Claude Code registration, Codex registration + trust,
-the `.dev-kit/.active-hooks.json` matrix, and Git's separate pre-push hook. Git
-enforcement is active only after you opt in:
+the `.dev-kit/.active-hooks.json` matrix, and Git's separate pre-commit and
+pre-push hooks. The pre-commit gate checks staged Python files with host-installed
+Ruff and never auto-fixes them; pre-push keeps the branch and version policy.
+Activate both hooks after installing Ruff:
 
 ```bash
+brew install ruff                              # macOS
+apt install ruff                               # Debian/Ubuntu
 git config core.hooksPath .githooks
 ```
 

@@ -58,7 +58,6 @@ def dedupe(items: Sequence[Evidence]) -> List[Evidence]:
     so downstream verifier decisions and log keys stay valid across
     dedupe.
     """
-    import dataclasses
     by_anchor: dict = {}
     fl_index: dict = {}  # (file, line) -> index in `out`
     out: List[Evidence] = []

@@ -23,7 +23,6 @@ subprocess with controlled R/S/EVENT env vars. They protect against:
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import unittest
 from pathlib import Path

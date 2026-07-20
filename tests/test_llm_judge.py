@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
@@ -95,7 +95,7 @@ class TestLlmJudge(unittest.TestCase):
                 {"type": "text", "text": '{"semantic_drift":8,"completeness":9,"correctness":10,"consistency":9}'}
             ],
             "usage": {"input_tokens": 100, "output_tokens": 50},
-        }) as mock_post:
+        }):
             result = llm_judge.call_judge(
                 provider="minimax",
                 api_key="test-key",

@@ -26,8 +26,8 @@ CODEX_JSON = LLM_INFO / "codex.json"
 # Allow `import llm_pricing` from repo root without installing.
 sys.path.insert(0, str(PROJECT_ROOT / "lib"))
 
-import llm_pricing  # noqa: E402
 import cost_gate  # noqa: E402
+import llm_pricing  # noqa: E402
 
 # Token analyzer is a CLI script in tools/ — adapt sys.path so we can import it.
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
@@ -105,7 +105,8 @@ class TestPricingFor(unittest.TestCase):
         self.assertEqual(row["out"], 15.00)
 
     def test_unknown_id_warns_to_stderr_and_returns_sonnet(self):
-        import io, contextlib
+        import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             row = llm_pricing.pricing_for("totally-unknown-model-xyz")

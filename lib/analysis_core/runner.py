@@ -26,20 +26,24 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .dimensions import Dimension, resolve
-from .evidence import Evidence, Severity, SEVERITY_ORDER, parse_candidate
+from .evidence import (
+    SEVERITY_ORDER,
+    Evidence,
+    Severity,
+    Verdict,  # noqa: F401  (re-export for callers)
+    parse_candidate,
+)
 from .fp_filter import (
     apply_verifier,
     dedupe,
     deterministic_filter,
     threshold_by_mode,
 )
-from .evidence import Verdict  # noqa: F401  (re-export for callers)
-
 
 # ---- Bucket SSOT -----------------------------------------------------------
 # The HIGH/MED/LOW bucket assigned to a single Evidence is computed in one

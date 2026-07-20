@@ -30,7 +30,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # Dual-mode import for sibling ci_setup.py:
 #   * Source repo (this module loaded as `lib.ci_doctor`): the relative
 #     `from .ci_setup import` resolves inside the `lib` package.
@@ -40,20 +39,20 @@ from pathlib import Path
 try:
     from .ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        read_provider,
         _read_env_key,
-        required_secrets_for_provider,
-        gh_secret_set_command,
         detect_owner_repo,
+        gh_secret_set_command,
+        read_provider,
+        required_secrets_for_provider,
     )
 except ImportError:
     from ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        read_provider,
         _read_env_key,
-        required_secrets_for_provider,
-        gh_secret_set_command,
         detect_owner_repo,
+        gh_secret_set_command,
+        read_provider,
+        required_secrets_for_provider,
     )
 
 
@@ -938,7 +937,7 @@ def _fetch_required_status_checks(repo: str) -> tuple[set[str], str]:
                  "--jq", jq_expr],
                 capture_output=True, text=True, timeout=10,
             )
-        except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError):
             return set(), True
         if cp.returncode != 0:
             err = (cp.stderr or "").strip().splitlines()[-1] if cp.stderr else ""

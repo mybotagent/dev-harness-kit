@@ -12,8 +12,10 @@ After `/dev-kit:ci-setup` writes `.dev-kit/ci-config.json`, do these IN ORDER:
    gh secret set MINIMAX_API_KEY --repo <owner>/<repo>                        # (or ANTHROPIC_API_KEY)
    ```
    The first secret is required only if `sh-ai-x/dev-harness-kit` is private.
-2. **Enable the pre-push hook** so direct pushes to `main` are blocked client-side:
+2. **Install Ruff and enable the Git hooks** so staged Python files are linted and direct pushes to `main` are blocked client-side:
    ```bash
+   brew install ruff                              # macOS
+   apt install ruff                               # Debian/Ubuntu
    git config core.hooksPath .githooks
    ```
 3. **Open a feature PR first** that does NOT modify `.github/workflows/*` — this is your smoke test for review + security.
@@ -34,7 +36,7 @@ The skill copies the `templates/ci/` source tree into the target project. Files 
 | `.github/workflows/ci.yml` | Branch-policy warn + `pytest` test + `validate.py` validator jobs |
 | `.github/workflows/auto-fix-pr.yml` | Auto-fix loop on `changes_requested` review (5-iteration cap, label counter, forbidden-path guard) |
 | `.github/workflows/review.yml` | `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) PR fan-out + severity gate. **Self-aware install step**: detects self-install vs consumer-install at runtime |
-| `.githooks/pre-push` | Client-side block of `git push` to `main`; activate with `git config core.hooksPath .githooks` |
+| `.githooks/pre-push` | Client-side block of `git push` to `main`; activate with `git config core.hooksPath .githooks`. The dev-kit source repo also keeps a Ruff lint gate in the sibling `.githooks/pre-commit`; it is not copied to consumers. |
 | `scripts/validate.py` | Extracted from dev-kit's own `ci.yml` 5-step validate job; checks install + marker + bash syntax |
 | `scripts/test.sh` | `pytest` wrapper (gracefully skips if no `tests/` directory) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
@@ -58,10 +60,13 @@ python3 bin/dev-kit-hooks-status.py
 ```
 
 In Codex, use `/hooks` after installation or whenever the hook definition
-changes to review and trust the plugin hooks. The Git pre-push hook is separate
-from both clients and is inactive until the repository configures:
+changes to review and trust the plugin hooks. The Git pre-commit and pre-push
+hooks are separate from both clients. Install Ruff on the host, then activate
+the hook directory:
 
 ```bash
+brew install ruff                              # macOS
+apt install ruff                               # Debian/Ubuntu
 git config core.hooksPath .githooks
 ```
 

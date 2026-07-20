@@ -18,25 +18,25 @@ hands them off after the parallel fan-out step.
 """
 from __future__ import annotations
 
-from .dimensions import REGISTRY, Dimension, get, resolve, group  # noqa: F401
+from .dimensions import REGISTRY, Dimension, get, group, resolve  # noqa: F401
 from .evidence import (  # noqa: F401
+    SEVERITY_ORDER,
     Evidence,
     Severity,
     Verdict,
-    SEVERITY_ORDER,
+    from_dict,
     parse_candidate,
     to_dict,
-    from_dict,
 )
 from .fp_filter import (  # noqa: F401
-    deterministic_filter,
-    dedupe,
     apply_verifier,
+    dedupe,
+    deterministic_filter,
     threshold_by_mode,
 )
 from .runner import (  # noqa: F401
     AnalysisResult,
-    run_analysis,
-    render_markdown,
     emit_suggested_diffs,
+    render_markdown,
+    run_analysis,
 )

@@ -17,10 +17,8 @@ to backdate mtimes or mocking rsync — neither is worth the brittleness).
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path

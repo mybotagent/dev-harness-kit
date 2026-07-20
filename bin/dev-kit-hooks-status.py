@@ -40,13 +40,16 @@ def status(root: Path) -> dict[str, object]:
     claude_manifest = root / ".claude-plugin" / "plugin.json"
     codex_manifest = root / ".codex-plugin" / "plugin.json"
     codex_hooks_json = codex_hooks_path(root, codex_manifest)
-    git_hook = root / ".githooks" / "pre-push"
+    pre_push_hook = root / ".githooks" / "pre-push"
+    pre_commit_hook = root / ".githooks" / "pre-commit"
     configured_path = git_config(root, "core.hooksPath")
     configured_dir = Path(configured_path)
     if configured_path and not configured_dir.is_absolute():
         configured_dir = root / configured_dir
     configured_pre_push = configured_dir / "pre-push" if configured_path else None
-    git_active = bool(configured_pre_push and configured_pre_push.is_file())
+    configured_pre_commit = configured_dir / "pre-commit" if configured_path else None
+    pre_push_active = bool(configured_pre_push and configured_pre_push.is_file())
+    pre_commit_active = bool(configured_pre_commit and configured_pre_commit.is_file())
 
     codex_registered = False
     try:
@@ -72,10 +75,13 @@ def status(root: Path) -> dict[str, object]:
             "trust": "review with /hooks if new or changed",
         },
         "git": {
-            "pre_push_file": git_hook.is_file(),
+            "pre_push_file": pre_push_hook.is_file(),
             "configured_hooks_path": configured_path or None,
             "configured_pre_push": str(configured_pre_push) if configured_pre_push else None,
-            "pre_push_active": git_active,
+            "pre_push_active": pre_push_active,
+            "pre_commit_file": pre_commit_hook.is_file(),
+            "configured_pre_commit": str(configured_pre_commit) if configured_pre_commit else None,
+            "pre_commit_active": pre_commit_active,
         },
         "active_hooks_matrix": (root / ".dev-kit" / ".active-hooks.json").is_file(),
     }
@@ -93,6 +99,7 @@ def main() -> int:
         print(f"root: {result['root']}")
         print(f"Claude Code: {'registered' if result['claude']['hooks_registered'] else 'not registered'}")
         print(f"Codex:       {'registered' if result['codex']['hooks_registered'] else 'not registered'} (trust: {result['codex']['trust']})")
+        print(f"Git pre-commit: {'active' if result['git']['pre_commit_active'] else 'inactive'}")
         print(f"Git pre-push: {'active' if result['git']['pre_push_active'] else 'inactive'}")
         print(f"Matrix:      {'present' if result['active_hooks_matrix'] else 'missing'} (.dev-kit/.active-hooks.json)")
         print(f"Events:      {', '.join(result['source_hooks']['events']) or 'none'}")

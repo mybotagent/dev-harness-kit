@@ -30,12 +30,10 @@ refactor cannot drift silently:
 """
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
 import yaml
-
 
 WORKFLOW_PATH = (
     Path(__file__).parent.parent / ".github" / "workflows" / "version-bump.yml"

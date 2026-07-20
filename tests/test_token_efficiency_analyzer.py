@@ -20,19 +20,16 @@ import sys
 import tempfile
 import unittest
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 from token_efficiency_analyzer import (  # noqa: E402
-    DEFAULT_COST_GATE_TOKENS,
-    DEFAULT_COST_GATE_USD,
+    _KNOWN_SOURCES,
     DEFAULT_PRICING_KEY,
     PRICING,
-    WARNING_RECOMMENDATIONS,
-    _KNOWN_SOURCES,
     _aggregate_worktree_rows,
     _source_for,
     aggregate_session,
@@ -656,7 +653,7 @@ class TestEndToEndDashboard(unittest.TestCase):
         # And the in-scope session count from JSON output must also be
         # scoped to fixture-repo only (no double-count).
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
@@ -680,7 +677,7 @@ class TestEndToEndDashboard(unittest.TestCase):
 
     def test_stderr_warn_does_not_leak_into_stdout(self):
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
@@ -710,7 +707,7 @@ class TestJsonOutput(unittest.TestCase):
 
     def test_json_emits_expected_keys(self):
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
@@ -889,7 +886,7 @@ class TestBranchAwareness(unittest.TestCase):
         self.assertEqual(s["source"], "claude-code")
 
     def test_filter_sessions_branch_substring_match(self):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timezone
         p1 = self._write_session("main", "s-main", branch="main")
         p2 = self._write_session("feature-x", "s-feat", branch="feature-x")
         sessions = [aggregate_session(p) for p in (p1, p2)]
@@ -914,8 +911,8 @@ class TestBranchAwareness(unittest.TestCase):
         self.assertEqual(len(kept), 2)
 
     def test_main_branch_filter_json(self):
-        from io import StringIO
         import contextlib
+        from io import StringIO
         self._write_session("main", "s-main", branch="main")
         self._write_session("feature-x", "s-feat", branch="feature-x")
         buf = StringIO()
@@ -934,8 +931,8 @@ class TestBranchAwareness(unittest.TestCase):
         self.assertEqual(data["sessions"], 1)
 
     def test_main_mixed_flat_and_nested_does_not_crash(self):
-        from io import StringIO
         import contextlib
+        from io import StringIO
         self._write_session("main", "s-main", branch="main")
         flat = self.tmpdir / "logs" / "claude-code" / "legacy.jsonl"
         flat.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,8 +1210,8 @@ class TestWorktreeAwareness(unittest.TestCase):
         self.assertEqual([s["session_id"] for s in kept], ["s-3"])
 
     def test_main_worktree_filter_json(self):
-        from io import StringIO
         import contextlib
+        from io import StringIO
         with tempfile.TemporaryDirectory(prefix="wt-main-json-") as td:
             td_path = Path(td)
             # Two sessions: one in main checkout, one in a worktree.
@@ -1265,8 +1262,8 @@ class TestWorktreeAwareness(unittest.TestCase):
                 self.assertEqual(data["warnings"][0]["worktree"], "feat-x")
 
     def test_render_dashboard_contains_worktree_panel_and_column(self):
-        from io import StringIO
         import contextlib
+        from io import StringIO
         with tempfile.TemporaryDirectory(prefix="wt-render-") as td:
             td_path = Path(td)
             d = td_path / "logs" / "claude-code" / "main"
@@ -1309,9 +1306,10 @@ class TestWorktreeAwareness(unittest.TestCase):
 
     def test_dedupe_dual_write_session(self):
         """Same sessionId in two files -> one counted, cost from fuller copy."""
-        import json, tempfile
-        from io import StringIO
         import contextlib
+        import json
+        import tempfile
+        from io import StringIO
         with tempfile.TemporaryDirectory(prefix="dedupe-") as td:
             td_path = Path(td)
             SID = "dedup-test-sid"
@@ -1333,8 +1331,6 @@ class TestWorktreeAwareness(unittest.TestCase):
             main_dir.mkdir(parents=True)
             (main_dir / f"{SID}.jsonl").write_text(json.dumps(rec) + "\n")
             # Worktree-side copy: 5 assistant records (more complete).
-            wt_dir = (td_path / "logs" / "claude-code"
-                      / "feat-x" / ".claude" / "worktrees" / "feat-x")
             # Note: discover_logs walks <logs_dir>/<source>/** and any
             # nested .claude/worktrees/ dirs, so place worktree copy under
             # <logs_dir>/claude-code/<branch>/.claude/worktrees/<wt>/ to
@@ -1453,8 +1449,8 @@ class TestCacheTtlMixEmpty(unittest.TestCase):
     """
 
     def _run_main_and_read_html(self, td_path, out_html, *, repo="dev-harness-kit"):
-        from io import StringIO
         import contextlib
+        from io import StringIO
         buf = StringIO()
         with contextlib.redirect_stdout(buf):
             rc = main([
@@ -1644,10 +1640,8 @@ class TestWorktreeStaleness(unittest.TestCase):
             self.assertEqual(meta["branch_name"], "")
 
     def test_cost_by_worktree_panel_renders_state_column(self):
-        from io import StringIO
-        import contextlib
-        from token_efficiency_analyzer import main
         from collections import Counter
+
         now = datetime.now(timezone.utc)
 
         def _s(sid, worktree, state, model="claude-sonnet-5", tokens=100):
@@ -1692,6 +1686,7 @@ class TestWorktreeStaleness(unittest.TestCase):
     def test_sessions_split_into_active_and_inactive_tables(self):
         from collections import Counter
         from datetime import datetime, timezone
+
         from token_efficiency_analyzer import score_session
         now = datetime.now(timezone.utc)
 
@@ -1744,9 +1739,10 @@ class TestWorktreeStaleness(unittest.TestCase):
         """Drive main() with --no-include-worktree-logs to skip real git, then
         patch classify_all_worktrees to return a fake map. Assert the [ok]
         line carries stale_cost=."""
-        from io import StringIO
         import contextlib
+        from io import StringIO
         from unittest import mock
+
         from token_efficiency_analyzer import main
 
         with tempfile.TemporaryDirectory(prefix="wt-stdout-") as td:
@@ -1797,9 +1793,10 @@ class TestWorktreeStaleness(unittest.TestCase):
     def test_json_payload_includes_worktrees_and_stale_cost(self):
         """Drive main() with --json + mock classify_all_worktrees. Assert the
         JSON payload carries ``worktrees``, ``stale_cost_usd``, ``stale_pct``."""
-        from io import StringIO
         import contextlib
+        from io import StringIO
         from unittest import mock
+
         from token_efficiency_analyzer import main
 
         with tempfile.TemporaryDirectory(prefix="wt-json-") as td:
@@ -2036,7 +2033,7 @@ class TestZeroTurnSessionSuppressed(unittest.TestCase):
     def test_zero_turn_session_dropped_from_active_panel(self) -> None:
         # Use the public main() entrypoint.
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
 
         sid_active = "a2914f3e-cf19-4421-a1fb-7f9b81cc92e8"  # active worktree
         sid_inactive = "b72bba75-3406-4841-8fdb-b3f86985bae7"  # stale

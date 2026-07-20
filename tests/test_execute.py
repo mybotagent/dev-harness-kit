@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import io
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call, ANY
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
@@ -109,7 +108,7 @@ class TestExecute(unittest.TestCase):
         execute.update_step_status(self.root, "0-mvp", step=0, status="completed")
         # completed → pending reset OK (resume)
         execute.update_step_status(self.root, "0-mvp", step=0, status="pending", error_message=None, blocked_reason=None)
-        parsed = execute.parse_step_index(idx_path := self.root / "phases" / "0-mvp" / "index.json")
+        parsed = execute.parse_step_index(self.root / "phases" / "0-mvp" / "index.json")
         self.assertEqual(parsed[0]["status"], "pending")
 
     def test_blocked_status_requires_reason(self):
@@ -402,7 +401,10 @@ class TestRunSequential(unittest.TestCase):
             # holds everything else (including `cwd`).
             cmd = args[0] if args else kwargs.get("args", [])
             if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
-                m = MagicMock(); m.returncode = 1; m.stdout = ""; m.stderr = ""
+                m = MagicMock()
+                m.returncode = 1
+                m.stdout = ""
+                m.stderr = ""
                 return m
             return self._fake_proc()
 
@@ -471,7 +473,10 @@ class TestRunSequential(unittest.TestCase):
         def _side_effect_dirty(*args, **kwargs):
             cmd = args[0] if args else kwargs.get("args", [])
             if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
-                m = MagicMock(); m.returncode = 1; m.stdout = ""; m.stderr = ""
+                m = MagicMock()
+                m.returncode = 1
+                m.stdout = ""
+                m.stderr = ""
                 return m
             return self._fake_proc()
 
@@ -501,7 +506,10 @@ class TestRunSequential(unittest.TestCase):
         def _side_effect_clean(*args, **kwargs):
             cmd = args[0] if args else kwargs.get("args", [])
             if list(cmd[:4]) == ["git", "diff", "--cached", "--quiet"]:
-                m = MagicMock(); m.returncode = 0; m.stdout = ""; m.stderr = ""
+                m = MagicMock()
+                m.returncode = 0
+                m.stdout = ""
+                m.stderr = ""
                 return m
             return self._fake_proc(stdout="no files written\n<!-- status: blocked --> waiting for human input")
 
@@ -747,8 +755,9 @@ class TestRunStepBody(unittest.TestCase):
 
     def test_run_step_body_returns_zero_on_success(self):
         import tempfile
-        from lib import execute as ex  # noqa: E402
         from unittest.mock import MagicMock
+
+        from lib import execute as ex  # noqa: E402
         with tempfile.TemporaryDirectory() as td:
             root, phase, branch_base = self._setup_phase(Path(td))
             # Mock run_proc → returns clean exit + empty stdout.
@@ -761,6 +770,7 @@ class TestRunStepBody(unittest.TestCase):
 
     def test_run_step_body_uses_commit_message_format(self):
         import tempfile
+
         from lib import execute as ex  # noqa: E402
         with tempfile.TemporaryDirectory() as td:
             root, phase, branch_base = self._setup_phase(Path(td))
@@ -786,8 +796,9 @@ class TestRunStepBody(unittest.TestCase):
 
     def test_run_step_body_returns_two_on_blocked_marker(self):
         import tempfile
-        from lib import execute as ex  # noqa: E402
         from unittest.mock import MagicMock
+
+        from lib import execute as ex  # noqa: E402
         with tempfile.TemporaryDirectory() as td:
             root, phase, branch_base = self._setup_phase(Path(td))
             stdout = "<!-- status: blocked -->\n<!-- blocked_reason: needs API key -->"
@@ -797,8 +808,9 @@ class TestRunStepBody(unittest.TestCase):
 
     def test_run_step_body_returns_nonzero_on_error(self):
         import tempfile
-        from lib import execute as ex  # noqa: E402
         from unittest.mock import MagicMock
+
+        from lib import execute as ex  # noqa: E402
         with tempfile.TemporaryDirectory() as td:
             root, phase, branch_base = self._setup_phase(Path(td))
             run_proc = MagicMock(return_value=(1, "", "boom"))
@@ -813,8 +825,8 @@ class TestRunStepBody(unittest.TestCase):
         routed through _step_post_collect. This test guards against drift.
         """
         import tempfile
+
         from lib import execute as ex  # noqa: E402
-        from unittest.mock import MagicMock
         with tempfile.TemporaryDirectory() as td:
             root, phase, branch_base = self._setup_phase(Path(td))
             # Pre-spawn produces the worktree; we then drive post-collect directly.
@@ -873,8 +885,9 @@ class TestStatusTransitionsTable(unittest.TestCase):
 
     def test_each_transition_signature(self):
         """Every transition fn takes (step, now, kwargs) and mutates step in place."""
-        from lib import execute as ex
         import inspect
+
+        from lib import execute as ex
         for status, fn in ex.STATUS_TRANSITIONS.items():
             sig = inspect.signature(fn)
             params = list(sig.parameters.keys())

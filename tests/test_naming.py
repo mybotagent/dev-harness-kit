@@ -11,7 +11,6 @@ Tests verify:
 from __future__ import annotations
 
 import re
-import sys
 import unittest
 from pathlib import Path
 
@@ -49,7 +48,7 @@ class TestNaming(unittest.TestCase):
                 mismatches.append(
                     f"dir={expected_dir_name} but frontmatter name={name_field} in {skill_dir.relative_to(PROJECT_ROOT)}"
                 )
-        self.assertEqual(mismatches, [], f"Naming mismatches (MUST-NOT-15):\n" + "\n".join(mismatches))
+        self.assertEqual(mismatches, [], "Naming mismatches (MUST-NOT-15):\n" + "\n".join(mismatches))
 
     def test_skill_categories_valid(self):
         # Plugin-only: walk `skills/` (flat, one level). category comes from frontmatter.
@@ -83,16 +82,11 @@ class TestNaming(unittest.TestCase):
         self.assertEqual(violations, [], f"Non-kebab-case dirs: {violations}")
 
     def test_commands_exist(self):
-        expected = {
-            "bootstrap.md", "plan.md", "design.md", "build.md",
-            "review.md", "security.md", "ship.md", "audit.md",
-            "shortcut-tdd-fast.md", "shortcut-quick-fix.md",
-        }
         commands_dir = PROJECT_ROOT / "commands"
         if not commands_dir.exists():
             self.skipTest("no commands dir yet")
         existing = {p.name for p in commands_dir.glob("*.md")}
-        # Allow incremental — what we have should be subset of what we want
+        # Incremental wrapper installs are valid, but the directory must not be empty.
         self.assertTrue(existing, "commands dir empty")
 
     def test_lib_python_kebab_or_snake(self):

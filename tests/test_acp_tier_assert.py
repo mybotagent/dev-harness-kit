@@ -20,10 +20,7 @@ that carries the literal assertion line.
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path

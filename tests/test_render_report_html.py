@@ -8,7 +8,6 @@ present for each input shape.
 """
 from __future__ import annotations
 
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -16,7 +15,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "lib"))
 import render_report_html  # type: ignore  # noqa: E402
-
 
 # ---------- fixtures (strings, not files) ----------
 
@@ -353,7 +351,7 @@ class TestComposeHtml(unittest.TestCase):
         self.assertIn("Inspect", html)
 
     def test_missing_inputs_render_banner(self):
-        from render_report_html import EvalData, InspectData  # type: ignore
+        from render_report_html import InspectData  # type: ignore
         # Eval present, inspect missing → eval section + missing inspect banner
         eval_data = render_report_html.parse_eval_sections(EVAL_MIN)
         inspect_data = InspectData()  # empty
@@ -369,8 +367,8 @@ class TestComposeHtml(unittest.TestCase):
         import inspect
         source = inspect.getsource(render_report_html.render)
         logic_lines = [
-            l for l in source.splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            line for line in source.splitlines()
+            if line.strip() and not line.strip().startswith("#")
         ]
         self.assertLess(len(logic_lines), 30, f"render() too long: {len(logic_lines)} lines\n{source}")
 

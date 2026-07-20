@@ -15,16 +15,14 @@ Asserts:
 """
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
-import sys
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from lib.analysis_core import dimensions as dim_mod  # noqa: E402import dataclasses
-
-
+from lib.analysis_core import dimensions as dim_mod  # noqa: E402
 
 # Names that the 6 SKILL.md bodies reference; if any are removed the
 # skills' --dim flags and hand-off tables become unreachable.
@@ -191,7 +189,6 @@ class TestDimensionImmutability(unittest.TestCase):
         # Every dimension in the registry must carry `__dataclass_params__.frozen=True`,
         # not just the one we touched in test_dimension_is_frozen. Spoofing
         # would otherwise silently bypass the mutation gate.
-        import dataclasses
         for name, dim in dim_mod.REGISTRY.items():
             self.assertTrue(
                 hasattr(dim, "__dataclass_params__") and dim.__dataclass_params__.frozen,

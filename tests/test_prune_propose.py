@@ -20,7 +20,6 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import json
-import os
 import re
 import subprocess
 import sys
@@ -36,8 +35,8 @@ SKILL_MD = PROJECT_ROOT / "skills" / "prune-propose" / "SKILL.md"
 sys.path.insert(0, str(TOOLS))
 sys.path.insert(0, str(SCRIPTS))
 
-import skill_usage  # noqa: E402
 import dump_usage  # noqa: E402
+import skill_usage  # noqa: E402
 
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "skill_usage" / "mixed.jsonl"
 

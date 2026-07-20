@@ -223,7 +223,7 @@ class TestRunEval(unittest.TestCase):
             _seed_transcript(
                 self.root, dim, f"{dim}-01", {"verdict": "Approve", "findings": []}
             )
-        report = eval_runner.run_eval(self.root, dry_run=True)
+        eval_runner.run_eval(self.root, dry_run=True)
         out = self.root / ".dev-kit" / "eval-report.md"
         self.assertTrue(out.exists())
         body = out.read_text()
@@ -342,8 +342,8 @@ class TestWriteReportDispatcher(unittest.TestCase):
         import inspect
         source = inspect.getsource(eval_runner.write_report)
         logic_lines = [
-            l for l in source.splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            line for line in source.splitlines()
+            if line.strip() and not line.strip().startswith("#")
         ]
         self.assertLess(
             len(logic_lines), 50,
@@ -356,8 +356,8 @@ class TestRunEvalDispatcher(unittest.TestCase):
         import inspect
         source = inspect.getsource(eval_runner.run_eval)
         logic_lines = [
-            l for l in source.splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            line for line in source.splitlines()
+            if line.strip() and not line.strip().startswith("#")
         ]
         self.assertLess(
             len(logic_lines), 50,

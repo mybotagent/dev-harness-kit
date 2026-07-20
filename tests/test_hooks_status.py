@@ -98,6 +98,41 @@ class TestHooksStatus(unittest.TestCase):
             subprocess.run(["git", "-C", str(root), "config", "core.hooksPath", ".githooks"], check=True)
             self.assertTrue(self.run_status(root)["git"]["pre_push_active"])
 
+    def test_reports_active_pre_commit_when_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".githooks").mkdir()
+            pre_commit = root / ".githooks" / "pre-commit"
+            pre_commit.write_text("#!/bin/sh\n")
+            pre_commit.chmod(0o755)
+            subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(root), "config", "core.hooksPath", ".githooks"], check=True)
+
+            git_status = self.run_status(root)["git"]
+            self.assertTrue(git_status["pre_commit_file"])
+            self.assertTrue(git_status["pre_commit_active"])
+            self.assertTrue(git_status["configured_pre_commit"].endswith(".githooks/pre-commit"))
+            self.assertFalse(git_status["pre_push_file"])
+            self.assertFalse(git_status["pre_push_active"])
+            self.assertTrue(git_status["configured_pre_push"].endswith(".githooks/pre-push"))
+
+    def test_reports_inactive_pre_commit_when_file_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".githooks").mkdir()
+            pre_push = root / ".githooks" / "pre-push"
+            pre_push.write_text("#!/bin/sh\n")
+            pre_push.chmod(0o755)
+            subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+            subprocess.run(["git", "-C", str(root), "config", "core.hooksPath", ".githooks"], check=True)
+
+            git_status = self.run_status(root)["git"]
+            self.assertFalse(git_status["pre_commit_file"])
+            self.assertFalse(git_status["pre_commit_active"])
+            self.assertTrue(git_status["pre_push_file"])
+            self.assertTrue(git_status["pre_push_active"])
+            self.assertIn("configured_pre_push", git_status)
+
 
 if __name__ == "__main__":
     unittest.main()

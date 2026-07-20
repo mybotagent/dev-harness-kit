@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 import eval_runner  # noqa: E402
 import llm_judge  # noqa: E402
 
-
 REPO_ROOT = Path(__file__).parent.parent
 FIXTURE_LOGS = REPO_ROOT / "tests" / "fixtures" / "session_logs"
 FIXTURE_GOLDEN = REPO_ROOT / "tests" / "fixtures" / "golden"
@@ -381,7 +380,7 @@ class TestSessionMonitorHandshake(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         # Fake worktree + session data.
-        from tools.session_monitor import WorktreeInfo, Session, Status  # noqa: E402
+        from tools.session_monitor import Session, Status, WorktreeInfo  # noqa: E402
         sys.path.insert(0, str(REPO_ROOT / "tools"))
         from tools import session_monitor  # type: ignore  # noqa: E402,F401
         agg = {

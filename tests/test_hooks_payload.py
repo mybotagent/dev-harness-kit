@@ -18,11 +18,11 @@ Tests are organized in three groups:
   3. Consumer hook integration (Write/Edit/MultiEdit end-to-end)
 """
 from __future__ import annotations
+
 import json
 import os
 import shutil
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 

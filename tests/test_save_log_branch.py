@@ -177,7 +177,7 @@ class TestSaveLogBranch(unittest.TestCase):
         # Primary: main checkout (canonical scan location).
         self.assertTrue(
             (main / "logs" / "claude-code" / "fix-x" / "sid.jsonl").exists(),
-            f"main repo logs/ missing the captured transcript",
+            "main repo logs/ missing the captured transcript",
         )
         # Secondary: worktree's own logs/ (analyzer attribution).
         self.assertTrue(
@@ -208,7 +208,6 @@ class TestSaveLogBranch(unittest.TestCase):
         # file path. With single-write to <main>/logs/<branch>/, the path
         # has no worktree segment and the session is bucketed as (main).
         # save_log.py must dual-write: main logs + worktree logs.
-        from save_log import find_worktree_for_cwd
         main = self.tmpdir / "dual"
         main.mkdir()
         _git(main, "init", "-q")
@@ -236,7 +235,6 @@ class TestSaveLogBranch(unittest.TestCase):
         # Force the initial branch to "main" — `git init`'s default
         # (init.defaultBranch) varies by host (macOS: main, ubuntu CI:
         # master), and we want a deterministic test, not a host-flaky one.
-        from save_log import find_worktree_for_cwd
         main = self.tmpdir / "mainonly"
         main.mkdir()
         _git(main, "init", "-q", "-b", "main")
