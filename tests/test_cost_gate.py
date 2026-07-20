@@ -125,7 +125,10 @@ class TestStateIO(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(LIB))
         from cost_gate import (  # type: ignore
-            new_session_state, load_state, save_state, DEFAULT_TOTAL,
+            DEFAULT_TOTAL,
+            load_state,
+            new_session_state,
+            save_state,
         )
         self.new_session_state = new_session_state
         self.load_state = load_state
@@ -190,7 +193,8 @@ class TestThresholds(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(LIB))
         from cost_gate import (  # type: ignore
-            DEFAULT_THRESHOLDS, resolve_thresholds,
+            DEFAULT_THRESHOLDS,
+            resolve_thresholds,
         )
         self.DEFAULT_THRESHOLDS = DEFAULT_THRESHOLDS
         self.resolve_thresholds = resolve_thresholds
@@ -217,7 +221,7 @@ class TestThresholds(unittest.TestCase):
 class TestFooterParsing(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(LIB))
-        from cost_gate import parse_footers, aggregate_pr_sessions  # type: ignore
+        from cost_gate import aggregate_pr_sessions, parse_footers  # type: ignore
         self.parse_footers = parse_footers
         self.aggregate_pr_sessions = aggregate_pr_sessions
 

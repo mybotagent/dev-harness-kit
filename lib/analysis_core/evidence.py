@@ -27,11 +27,11 @@ other's sink.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from enum import Enum
-from typing import Any, Dict, Optional, Tuple
 import hashlib
 import json
+from dataclasses import asdict, dataclass
+from enum import Enum
+from typing import Any, Dict, Optional, Tuple
 
 
 class Severity(Enum):

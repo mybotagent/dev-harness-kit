@@ -27,17 +27,14 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import os
 import re
 import subprocess
 import sys
-import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Iterable
 
 # Allow `import llm_pricing` — tools/ lives next to lib/ but stdlib does
 # not auto-add parent dirs to sys.path. The shared loader reads
@@ -1791,12 +1788,12 @@ def _session_cost(s: dict) -> float:
 
 def _ts_range(session: dict) -> str:
     """Human-readable ``first → last`` UTC range for a session header."""
-    f = session.get("first_ts")
-    l = session.get("last_ts")
-    if not f:
+    first_ts = session.get("first_ts")
+    last_ts = session.get("last_ts")
+    if not first_ts:
         return "—"
-    fs = f.strftime("%Y-%m-%d %H:%M")
-    ls = l.strftime("%H:%M") if l else ""
+    fs = first_ts.strftime("%Y-%m-%d %H:%M")
+    ls = last_ts.strftime("%H:%M") if last_ts else ""
     return f"{fs} → {ls} UTC" if ls else f"{fs} UTC"
 
 

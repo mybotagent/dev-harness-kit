@@ -239,7 +239,6 @@ def verdict_from_score(score: float) -> str:
 
 
 if __name__ == "__main__":
-    import sys
     project_root = Path(os.environ.get("PROJECT_ROOT", "."))
     cfg = load_config(project_root)
     print(f"config: {cfg}")

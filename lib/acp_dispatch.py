@@ -35,7 +35,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable
 
 # ---------------------------------------------------------------------------
 # Constants — single source of truth, mirror docs/acp-harness.md §3.2.

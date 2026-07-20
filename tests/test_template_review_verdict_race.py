@@ -405,7 +405,6 @@ class TestTemplateGateTimeExtract(unittest.TestCase):
         # Hardest pin: the gate R/S lines must NOT be direct
         # `needs.review.outputs.verdict` / `needs.security.outputs.verdict`
         # assignments in the same shape that lost the race originally.
-        gate_bash = _extract_gate_bash(self.text)
         # If the template still uses `needs.review.outputs.verdict` to set R,
         # it may still race — unless the per-job extract step was moved.
         # We allow both: (a) gate uses gh api at gate time, (b) gate still

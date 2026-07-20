@@ -25,7 +25,6 @@ The full install is tested by tests/test_ci_setup.py.
 """
 from __future__ import annotations
 
-import re
 import subprocess
 import tempfile
 import unittest

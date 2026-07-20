@@ -95,7 +95,7 @@ class TestCiSetup(unittest.TestCase):
             self.assertEqual(r2.overwritten, [])
             self.assertEqual(
                 len(r2.skipped), len(self.ci_setup.EXPECTED_PATHS),
-                f"all paths should be skipped on re-run without --force",
+                "all paths should be skipped on re-run without --force",
             )
             self.assertEqual(r2.errors, [])
             # Idempotency does NOT touch file contents, but the marker's
@@ -242,8 +242,8 @@ class TestCiSetup(unittest.TestCase):
 
     def test_worktree_hooks_have_executable_bit_in_target(self):
         """All 6 new .sh files end up executable in the installed target."""
-        import tempfile
         import stat
+        import tempfile
         new_sh = (
             "hooks/worktree-guard.sh",
             "hooks/session-start-check.sh",
@@ -857,8 +857,8 @@ class TestCiSetup(unittest.TestCase):
     def test_ci_setup_installs_payload_parse(self):
         """install_ci_config(force=True) lands payload-parse.sh under
         hooks/lib/ with the executable bit set (issue #273 reproduction)."""
-        import tempfile
         import stat
+        import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             r = self.ci_setup.install_ci_config(target, force=True)
@@ -1139,8 +1139,8 @@ class TestInstallCiConfigDispatcher(unittest.TestCase):
         import inspect
         source = inspect.getsource(self.ci_setup.install_ci_config)
         logic_lines = [
-            l for l in source.splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            line for line in source.splitlines()
+            if line.strip() and not line.strip().startswith("#")
         ]
         self.assertLess(
             len(logic_lines), 80,

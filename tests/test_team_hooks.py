@@ -11,6 +11,7 @@ asserting on exit code + stdout/stderr. No mocks — we test the real
 scripts the way Claude Code will invoke them.
 """
 from __future__ import annotations
+
 import json
 import os
 import subprocess

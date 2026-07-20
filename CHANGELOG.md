@@ -4,6 +4,8 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+- **feat(hooks)**: Add a host-installed Ruff pre-commit gate for staged Python files and clean the Python lint baseline.
+
 ### Fixed — ci-doctor: don't report ready-to-merge when PR is in a CI-silently-skipped state (fix/ci-doctor-open-pr-state, closes #249)
 
 `lib/ci_doctor.py` was purely local: it checked the marker file, required files, provider, secrets, gh auth, and bash hook syntax, but never looked at the open PR's state. When a PR was opened in `mergeable: CONFLICTING`, GitHub Actions silently refused to run any workflow on the PR (`gh pr checks <N>` returned `no checks reported` with no error), and `ci-doctor` returned PASS anyway — a latent correctness break for the "is my CI ready?" check.

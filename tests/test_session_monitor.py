@@ -9,13 +9,13 @@ per the skill doc.
 """
 from __future__ import annotations
 
+import io
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-import io
-import json
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -212,7 +212,7 @@ class TestPrintResumeCommand(unittest.TestCase):
 
     def _run(self, repo_root: Path, logs_dir: Path, days: int = 3650) -> str:
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf), redirect_stderr(io.StringIO()):
             original = sm.discover_repo_root
@@ -258,7 +258,7 @@ class TestPrintResumeCommand(unittest.TestCase):
             logs = root / "logs"
             logs.mkdir()
             import io
-            from contextlib import redirect_stdout, redirect_stderr
+            from contextlib import redirect_stderr, redirect_stdout
             buf = io.StringIO()
             with redirect_stdout(buf), redirect_stderr(io.StringIO()):
                 original = sm.discover_repo_root
@@ -441,7 +441,7 @@ class TestPrintJson(unittest.TestCase):
 
     def _run(self, repo_root: Path, logs_dir: Path) -> dict:
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf), redirect_stderr(io.StringIO()):
             original = sm.discover_repo_root
@@ -807,7 +807,7 @@ class TestPrintJsonIncludesCommit(unittest.TestCase):
 
     def _run(self, repo_root: Path, logs_dir: Path) -> dict:
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf), redirect_stderr(io.StringIO()):
             original = sm.discover_repo_root
@@ -841,7 +841,7 @@ class TestSearchFlag(unittest.TestCase):
     def _run(self, repo_root: Path, logs_dir: Path,
              pattern: str) -> dict:
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import redirect_stderr, redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf), redirect_stderr(io.StringIO()):
             original = sm.discover_repo_root

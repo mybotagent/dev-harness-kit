@@ -23,6 +23,7 @@ fi
 
 echo "branch-policy.sh: active enforcement lives in .githooks/pre-push."
 echo "  Client-side:    git config core.hooksPath .githooks"
+echo "  Python lint:    .githooks/pre-commit runs Ruff in the dev-kit source repo."
 echo "  Server-side:    this script (warn-only in CI)."
 echo "  Bypass (emergency hotfix only): git push --no-verify"
 exit 0

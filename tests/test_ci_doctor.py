@@ -12,7 +12,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 import unittest
 from pathlib import Path

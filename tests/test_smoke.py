@@ -54,7 +54,7 @@ class TestSmoke(unittest.TestCase):
 
     def test_plugin_manifest_has_version(self):
         """feat/skill-versions: `.claude-plugin/plugin.json` MUST declare `version:`."""
-        from importlib.util import spec_from_file_location, module_from_spec
+        from importlib.util import module_from_spec, spec_from_file_location
         spec = spec_from_file_location(
             "ci_setup_smoke", PROJECT_ROOT / "lib" / "ci_setup.py"
         )
@@ -66,7 +66,7 @@ class TestSmoke(unittest.TestCase):
 
     def test_semver_re_accepts_and_rejects(self):
         """`lib/ci_setup.py:SEMVER_RE` matches semver 2.0.0 shape (X.Y.Z + optional -pre/+build)."""
-        from importlib.util import spec_from_file_location, module_from_spec
+        from importlib.util import module_from_spec, spec_from_file_location
         spec = spec_from_file_location(
             "ci_setup_semver_smoke", PROJECT_ROOT / "lib" / "ci_setup.py"
         )
@@ -103,7 +103,7 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(mp["name"], "dev-kit")
 
     def test_active_hooks_matrix_7_stages(self):
-        from importlib.util import spec_from_file_location, module_from_spec
+        from importlib.util import module_from_spec, spec_from_file_location
         sys.path.insert(0, str(PROJECT_ROOT / "lib"))
         spec = spec_from_file_location("ahc", PROJECT_ROOT / "lib" / "active_hooks_codec.py")
         ahc = module_from_spec(spec)

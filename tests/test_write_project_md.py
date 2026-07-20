@@ -238,8 +238,8 @@ class TestWriteProjectMd(unittest.TestCase):
         source = inspect.getsource(write_project_md.render_claude_md)
         # Count non-empty, non-comment lines
         logic_lines = [
-            l for l in source.splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            line for line in source.splitlines()
+            if line.strip() and not line.strip().startswith("#")
         ]
         self.assertLess(len(logic_lines), 30, f"render_claude_md too long: {len(logic_lines)} lines\n{source}")
 

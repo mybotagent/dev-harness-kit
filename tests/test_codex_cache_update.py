@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 SCRIPT = PROJECT_ROOT / "skills" / "codex-cache-update" / "scripts" / "update.sh"
 

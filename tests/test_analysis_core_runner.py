@@ -13,21 +13,20 @@ candidate stream, and asserts:
 """
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-import sys
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from lib.analysis_core import (  # noqa: E402
-    run_analysis,
-    render_markdown,
+    Severity,
     emit_suggested_diffs,
     group,
-    Severity,
-    Evidence,
+    render_markdown,
+    run_analysis,
 )
 
 
@@ -883,8 +882,8 @@ class TestBucketAssignmentIsSingleSource(unittest.TestCase):
     """
 
     def test_bucket_assignment_is_single_ssource(self):
-        from lib.analysis_core.runner import _bucket_for
         from lib.analysis_core.evidence import Severity
+        from lib.analysis_core.runner import _bucket_for
         # Same evidence: both severities bucket identically through
         # the same helper.
         for sev, expected in [

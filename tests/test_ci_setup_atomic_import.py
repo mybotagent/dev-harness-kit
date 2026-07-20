@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import inspect
 import re as _re
 import sys
 import tempfile

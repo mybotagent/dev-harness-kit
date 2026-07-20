@@ -34,9 +34,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import fnmatch
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Iterable

@@ -22,7 +22,6 @@ so the dispatcher reads it from its expected relative path.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -35,9 +34,9 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from lib.acp_dispatch import (  # noqa: E402  (sys.path tweak above)
+    SEVEN_PLACEHOLDERS,
     ACPDispatcher,
     DispatchResult,
-    SEVEN_PLACEHOLDERS,
     _fill_placeholders,
     parse_pr_spec,
 )
