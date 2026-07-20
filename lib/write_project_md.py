@@ -47,6 +47,9 @@ L2_ROOT_CAUSE_FIRST = "No fix without reproducing the bug (Phase 1 = reproduce)"
 L3_EVIDENCE_BEFORE_DONE = "No completion claim without quoted exit code / test count / build log"
 L4_NO_STUB = "No TODO/FIXME/'we'll extend later'/'this is a starting point'"
 L5_LEAN_OUTPUT = "No option/alternative list when not asked. One answer."
+L6_ALPHA_DECLARE = "New skills must declare `alpha: state|enforcement|analysis` in frontmatter. Reasoning-only `analysis` skills are tolerated only for distinct user intents — minimize new instances."
+L7_ALPHA_LOCATION = "A skill's alpha lives in the parts the model can't self-impose (deterministic enforcement, stateful processes, audit artifacts). Don't spend alpha on reasoning the next-gen model will absorb."
+L8_PROSE_TRIM = "Skill prompt prose that duplicates state-machine / hook / gate behavior must be trimmed. The state machine is the contract; prose is just orientation. Don't restate the contract in prose — reference the SSOT."
 
 IRON_LAWS: List[str] = [
     L1_NO_TEST_NO_CODE,
@@ -54,6 +57,9 @@ IRON_LAWS: List[str] = [
     L3_EVIDENCE_BEFORE_DONE,
     L4_NO_STUB,
     L5_LEAN_OUTPUT,
+    L6_ALPHA_DECLARE,
+    L7_ALPHA_LOCATION,
+    L8_PROSE_TRIM,
 ]
 
 

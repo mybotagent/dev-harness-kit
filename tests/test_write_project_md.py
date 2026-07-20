@@ -34,12 +34,16 @@ class TestWriteProjectMd(unittest.TestCase):
 
     def test_iron_laws_count_and_content(self):
         laws = write_project_md.IRON_LAWS
-        self.assertEqual(len(laws), 5)
+        self.assertEqual(len(laws), 8)
         self.assertIn("verification artifact", laws[0])
         self.assertIn("reproducing", laws[1])
         self.assertIn("completion claim", laws[2])
         self.assertIn("TODO", laws[3])
         self.assertIn("option", laws[4])
+        # L6 alpha-declare, L7 alpha-location, L8 prose-trim (issue #263)
+        self.assertIn("alpha", laws[5].lower())
+        self.assertIn("can't self-impose", laws[6])
+        self.assertIn("state-machine", laws[7])
 
     def test_render_stub_is_lazy_loading_index(self):
         """§3 stub = canonical file refs + opt-in dump command. No inline tree."""
@@ -68,7 +72,7 @@ class TestWriteProjectMd(unittest.TestCase):
 
     def test_render_claude_md_includes_iron_laws(self):
         md = write_project_md.render_claude_md(self.root)
-        for i in range(1, 6):
+        for i in range(1, 9):
             self.assertIn(f"**L{i}**", md)
 
     def test_render_claude_md_section_3_is_always_lazy(self):
