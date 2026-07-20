@@ -46,7 +46,10 @@ Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup`
 
 ## Status state machine (lib/execute.py)
 
-`unimplemented → pending → in_progress → completed`, with two resume paths: `error → pending` (retry) and `blocked → pending` (human unblock). `SKIPPABLE_STATUSES = ("completed", "unimplemented")`. `--skip-blocked` extends this with `"blocked"` at runtime (the schema constant is unchanged; the flag bypasses the bailing rule). `RESUMABLE_STATUSES = ("pending", "error", "in_progress")`.
+SSOT: `lib/execute.py:VALID_STATUSES` (+ `SKIPPABLE_STATUSES`, `RESUMABLE_STATUSES`,
+`--skip-blocked` override). The plan/build contract: plan emits `pending`,
+build drives `in_progress`/`completed`/`error`/`blocked` per the source
+constants.
 
 ## Hook integration (Stage B)
 

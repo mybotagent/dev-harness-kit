@@ -232,21 +232,11 @@ For each step in order:
 
 ### Per-step `status` (state machine)
 
-Defined in `lib/execute.py:VALID_STATUSES`. The plan skill only writes the
-first three; the runner owns the rest.
-
-| Status | Set by | Meaning |
-|---|---|---|
-| `unimplemented` | `register_step()` stub | index entry exists, `step<N>.md` not yet written; runner skips |
-| `pending` | plan skill, after writing `step<N>.md` | runner will pick up on next cycle |
-| `in_progress` | harness-runner | runner started; `started_at` stamped (idempotent on resume) |
-| `completed` | harness-runner (timestamp) + sub-agent (`summary`) | finished; `completed_at` + `duration_seconds` + one-line `summary` (files + key decisions) recorded |
-| `error` | harness-runner (timestamp) + sub-agent (`error_message`) | failed after 3 retries; `failed_at` + concrete `error_message` recorded; resume via `pending` |
-| `blocked` | harness-runner (timestamp) + sub-agent (`blocked_reason`) | user intervention required; `blocked_at` + `blocked_reason` recorded |
-
-Plan MUST NOT set `in_progress` / `completed` / `error` / `blocked` — those
-are runtime states. Plan only sets `unimplemented` (via `register_step`) and
-`pending` (after writing the step file).
+SSOT: `lib/execute.py:VALID_STATUSES` (+ `SKIPPABLE_STATUSES`, `RESUMABLE_STATUSES`).
+The plan skill only writes `unimplemented` (via `register_step`) and `pending`
+(after writing `step<N>.md`). Runtime states (`in_progress`, `completed`,
+`error`, `blocked`) are owned by the harness-runner; plan MUST NOT set them.
+See the source constants for the current set + transition table.
 
 ### Step file template (pinned)
 
