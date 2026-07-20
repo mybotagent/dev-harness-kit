@@ -287,5 +287,83 @@ class TestRunEval(unittest.TestCase):
         self.assertIn("api down", report["results"][0].get("error", ""))
 
 
+# --- per-helper tests (issue #93) ---------------------------------------
+
+class TestRenderSummary(unittest.TestCase):
+    def test_block_includes_verdict_counts(self):
+        results = [
+            {"verdict": "OK"}, {"verdict": "OK"},
+            {"verdict": "DRIFT_WARNING"}, {"verdict": "ROT"},
+            {"verdict": "SKIPPED"},
+        ]
+        out = eval_runner._render_summary(results)
+        self.assertIn("## Summary", out)
+        self.assertIn("- Total cases: 5", out)
+        self.assertIn("- OK: 2", out)
+        self.assertIn("- DRIFT_WARNING: 1", out)
+        self.assertIn("- ROT: 1", out)
+        self.assertIn("- SKIPPED: 1", out)
+
+    def test_block_handles_empty_results(self):
+        out = eval_runner._render_summary([])
+        self.assertIn("## Summary", out)
+        self.assertIn("- Total cases: 0", out)
+
+
+class TestRenderPerDimTable(unittest.TestCase):
+    def test_block_includes_axes(self):
+        results = [
+            {"dim": "review", "verdict": "OK", "scores": {"precision": 9.0, "recall": 8.0}},
+            {"dim": "review", "verdict": "DRIFT_WARNING", "scores": {"precision": 7.0, "recall": 7.0}},
+        ]
+        out = eval_runner._render_per_dim_table(results)
+        self.assertIn("## Per-Dimension Scores", out)
+        self.assertIn("### review", out)
+        self.assertIn("| Axis | Mean |", out)
+        self.assertIn("`precision`", out)
+        self.assertIn("`recall`", out)
+
+
+class TestRenderPerCase(unittest.TestCase):
+    def test_block_includes_case_id_and_axes(self):
+        results = [
+            {"verdict": "OK", "case_id": "case-1", "dim": "review",
+             "score": 9.0, "scores": {"precision": 9.0, "recall": 8.0}},
+        ]
+        out = eval_runner._render_per_case(results)
+        self.assertIn("## Per-Case Results", out)
+        self.assertIn("`case-1`", out)
+        self.assertIn("dim=review", out)
+        self.assertIn("precision=9.0", out)
+
+
+class TestWriteReportDispatcher(unittest.TestCase):
+    def test_body_thin(self):
+        import inspect
+        source = inspect.getsource(eval_runner.write_report)
+        logic_lines = [
+            l for l in source.splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.assertLess(
+            len(logic_lines), 50,
+            f"write_report too long: {len(logic_lines)} lines",
+        )
+
+
+class TestRunEvalDispatcher(unittest.TestCase):
+    def test_body_thin(self):
+        import inspect
+        source = inspect.getsource(eval_runner.run_eval)
+        logic_lines = [
+            l for l in source.splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.assertLess(
+            len(logic_lines), 50,
+            f"run_eval too long: {len(logic_lines)} lines",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
