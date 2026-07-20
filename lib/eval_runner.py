@@ -279,31 +279,20 @@ def judge_case(
 
 # ---------- report ----------
 
-def write_report(
-    project_root: Path,
-    results: List[Dict],
-    config: Optional[Dict] = None,
-) -> Path:
-    """Write `.dev-kit/eval-report.md` with a per-dim table + verdict counts."""
-    path = project_root / ".dev-kit" / "eval-report.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines: List[str] = [
-        "# Eval Report — agent-behavior (dev-harness-kit)",
-        f"> Generated: {now_iso()}",
-        f"> Provider: {config.get('provider', 'minimax') if config else 'minimax'}",
-        f"> Model: {config.get('model', 'MiniMax-M3[1m]') if config else 'MiniMax-M3[1m]'}",
-        "",
-        "## Summary",
-    ]
+def _render_summary(results: List[Dict]) -> str:
+    """Render the `## Summary` block: total cases + verdict counts."""
     by_verdict: Dict[str, int] = {"OK": 0, "DRIFT_WARNING": 0, "ROT": 0, "SKIPPED": 0}
     for r in results:
         by_verdict[r.get("verdict", "OK")] += 1
-    lines.append(f"- Total cases: {len(results)}")
+    lines = ["## Summary", f"- Total cases: {len(results)}"]
     for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED"):
         lines.append(f"- {v}: {by_verdict[v]}")
-    lines.append("")
-    # Per-dim table.
-    lines.append("## Per-Dimension Scores")
+    return "\n".join(lines)
+
+
+def _render_per_dim_table(results: List[Dict]) -> str:
+    """Render the `## Per-Dimension Scores` block (one ### dim section per dim)."""
+    lines = ["## Per-Dimension Scores"]
     by_dim: Dict[str, List[Dict]] = {d: [] for d in SUPPORTED_DIMS}
     for r in results:
         by_dim.setdefault(r.get("dim", "?"), []).append(r)
@@ -320,9 +309,7 @@ def write_report(
         for ax in axes:
             vals = [r["scores"].get(ax, 0.0) for r in scored]
             axis_means[ax] = round(sum(vals) / max(1, len(vals)), 2)
-        overall = round(
-            sum(axis_means.values()) / max(1, len(axis_means)), 2
-        )
+        overall = round(sum(axis_means.values()) / max(1, len(axis_means)), 2)
         lines.append(f"### {dim} (n={len(scored)}, overall={overall})")
         lines.append("")
         lines.append("| Axis | Mean |")
@@ -330,8 +317,12 @@ def write_report(
         for ax in axes:
             lines.append(f"| `{ax}` | {axis_means[ax]} |")
         lines.append("")
-    # Per-case detail.
-    lines.append("## Per-Case Results")
+    return "\n".join(lines)
+
+
+def _render_per_case(results: List[Dict]) -> str:
+    """Render the `## Per-Case Results` block: one bullet per result."""
+    lines = ["## Per-Case Results"]
     for r in results:
         verdict = r.get("verdict", "?")
         score = r.get("score", 0)
@@ -342,11 +333,85 @@ def write_report(
             for ax in llm_judge.DIM_AXES.get(dim, ())
         )
         lines.append(f"- **{verdict}** `{case_id}` (dim={dim}) score={score} ({axes_str})")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines)
+
+
+def write_report(
+    project_root: Path,
+    results: List[Dict],
+    config: Optional[Dict] = None,
+) -> Path:
+    """Write `.dev-kit/eval-report.md`. Thin dispatcher (issue #93).
+
+    Composes header + the three renderers (_render_summary, _render_per_dim_table,
+    _render_per_case) and writes the assembled markdown to disk.
+    """
+    path = project_root / ".dev-kit" / "eval-report.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "# Eval Report — agent-behavior (dev-harness-kit)\n"
+        f"> Generated: {now_iso()}\n"
+        f"> Provider: {config.get('provider', 'minimax') if config else 'minimax'}\n"
+        f"> Model: {config.get('model', 'MiniMax-M3[1m]') if config else 'MiniMax-M3[1m]'}\n"
+    )
+    body = "\n\n".join([
+        _render_summary(results),
+        _render_per_dim_table(results),
+        _render_per_case(results),
+    ])
+    path.write_text(f"{header}\n{body}\n", encoding="utf-8")
     return path
 
 
 # ---------- top-level driver ----------
+
+def _discover_cases_for_run(project_root: Path, dim: Optional[str], case: Optional[str]) -> List[Dict]:
+    """Discover + filter cases for one run_eval invocation."""
+    cases = discover_cases(project_root)
+    if dim is not None:
+        cases = [c for c in cases if c["dim"] == dim]
+    if case is not None:
+        cases = [c for c in cases if c["case_id"] == case]
+    return cases
+
+
+def _run_dry_run(project_root: Path, cases: List[Dict]) -> List[CaseResult]:
+    """Mock each case: SKIPPED if no transcript, else DRIFT_WARNING at 7.0."""
+    results: List[CaseResult] = []
+    for c in cases:
+        t = load_transcript(project_root, c["dim"], c["case_id"])
+        if t is None:
+            results.append(mock_skipped(c, llm_judge.DIM_AXES[c["dim"]]))
+            continue
+        results.append(mock_drift_warning(c, llm_judge.DIM_AXES[c["dim"]]))
+    return results
+
+
+def _run_real_judges(project_root: Path, cases: List[Dict], config: Dict) -> List[CaseResult]:
+    """Run real LLM judge per case; any exception becomes ROT."""
+    results: List[CaseResult] = []
+    for c in cases:
+        t = load_transcript(project_root, c["dim"], c["case_id"])
+        try:
+            results.append(_judge_case(project_root, c, t, config))
+        except Exception as e:
+            results.append(exception_rot(c, llm_judge.DIM_AXES[c["dim"]], e))
+    return results
+
+
+def _tally_and_emit(project_root: Path, results: List[CaseResult], config: Dict) -> Dict:
+    """Tally verdicts, write the report, return the run summary dict."""
+    results_dicts = [asdict(r) for r in results]
+    write_report(project_root, results_dicts, config)
+    summary: Dict[str, int] = {v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED")}
+    for r in results:
+        summary[r.verdict or "OK"] += 1
+    return {
+        "results": results_dicts,
+        "config": {k: v for k, v in config.items() if k != "api_key"},
+        "summary": summary,
+    }
+
 
 def run_eval(
     project_root: Path,
@@ -356,7 +421,7 @@ def run_eval(
     dim: Optional[str] = None,
     case: Optional[str] = None,
 ) -> Dict:
-    """Run the agent-behavior eval.
+    """Run the agent-behavior eval. Thin dispatcher (issue #93).
 
     Args:
         project_root: project root.
@@ -368,44 +433,11 @@ def run_eval(
     if config is None:
         config = llm_judge.load_config(project_root)
     if dim is not None and dim not in SUPPORTED_DIMS:
-        raise ValueError(
-            f"unknown dim={dim!r}; must be one of {SUPPORTED_DIMS}"
-        )
-
-    cases = discover_cases(project_root)
-    if dim is not None:
-        cases = [c for c in cases if c["dim"] == dim]
-    if case is not None:
-        cases = [c for c in cases if c["case_id"] == case]
-
-    results: List[CaseResult] = []
-    if dry_run or not config.get("api_key"):
-        # Mock each case at 7.0 / DRIFT_WARNING, except SKIPPED for cases
-        # with no transcript (a real setup gap).
-        for c in cases:
-            t = load_transcript(project_root, c["dim"], c["case_id"])
-            if t is None:
-                results.append(mock_skipped(c, llm_judge.DIM_AXES[c["dim"]]))
-                continue
-            results.append(mock_drift_warning(c, llm_judge.DIM_AXES[c["dim"]]))
-    else:
-        for c in cases:
-            t = load_transcript(project_root, c["dim"], c["case_id"])
-            try:
-                results.append(_judge_case(project_root, c, t, config))
-            except Exception as e:
-                results.append(exception_rot(c, llm_judge.DIM_AXES[c["dim"]], e))
-
-    results_dicts = [asdict(r) for r in results]
-    write_report(project_root, results_dicts, config)
-    summary: Dict[str, int] = {v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED")}
-    for r in results:
-        summary[r.verdict or "OK"] += 1
-    return {
-        "results": results_dicts,
-        "config": {k: v for k, v in config.items() if k != "api_key"},
-        "summary": summary,
-    }
+        raise ValueError(f"unknown dim={dim!r}; must be one of {SUPPORTED_DIMS}")
+    cases = _discover_cases_for_run(project_root, dim, case)
+    results = (_run_dry_run(project_root, cases) if dry_run or not config.get("api_key")
+               else _run_real_judges(project_root, cases, config))
+    return _tally_and_emit(project_root, results, config)
 
 
 # ---------- session-log judge (opt-in, default OFF) ----------
