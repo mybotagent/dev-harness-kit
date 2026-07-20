@@ -805,6 +805,35 @@ class TestRunStepBody(unittest.TestCase):
             rc = ex._run_step_body(root, phase, 0, branch_base, "x", push=False, run_proc=run_proc)
             self.assertEqual(rc, 1)
 
+    def test_post_collect_locks_parallel_commit_format(self):
+        """_step_post_collect is the SSOT for the parallel runner's commit messages.
+
+        Locks the format: feat({phase}): step {n} — {name} + chore({phase}): step {n} output.
+        Issue #79 follow-up: review verdict was "Blocked" until _SlotRunner.collect()
+        routed through _step_post_collect. This test guards against drift.
+        """
+        import tempfile
+        from lib import execute as ex  # noqa: E402
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            root, phase, branch_base = self._setup_phase(Path(td))
+            # Pre-spawn produces the worktree; we then drive post-collect directly.
+            ctx = ex._step_pre_spawn(root, phase, 0, branch_base)
+            # Simulate the sub-agent writing a file (so the feat commit lands).
+            (ctx["wt"] / "made_change.txt").write_text("hi\n")
+            rc = ex._step_post_collect(
+                root, phase, 0, "my-name", ctx,
+                push=False, exit_code=0, stdout="", stderr="",
+            )
+            self.assertEqual(rc, 0)
+            import subprocess as sp
+            log = sp.run(
+                ["git", "log", "--format=%s", "main..HEAD"],
+                cwd=ctx["wt"], capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            # First-occurrence feat commit lands; chore may be no-op.
+            self.assertIn("feat(test-phase): step 0 — my-name", log)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

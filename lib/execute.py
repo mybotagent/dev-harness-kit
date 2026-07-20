@@ -360,79 +360,69 @@ def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = Fal
     return 0
 
 
-def _run_step_body(
+def _step_pre_spawn(
     root: Path,
     phase: str,
     step_num: int,
     worktree_branch: str,
-    step_name: str,
-    *,
-    push: bool,
-    run_proc: Callable[[str, list[str]], Tuple[int, str, str]],
-) -> int:
-    """Shared per-step body for sequential + parallel runners (issue #79).
+) -> dict:
+    """Pre-spawn shared stage (issue #79 follow-up). Returns a ctx dict.
 
-    Executes one step end-to-end:
+    Stages:
       1. Create per-step worktree from origin/main (MUST-38).
       2. Read step<N>.md as preamble; append AC + self-fix guard.
       3. Mark step `in_progress` (sets started_at).
-      4. Spawn `claude -p` via `run_proc` (MUST-36). Sequential passes a
-         `subprocess.run` closure; parallel passes a Popen-collect closure.
-      5. Capture stdout/stderr/returncode → write step<N>-output.json.
-      6. On `<!-- status: blocked -->` marker → mark blocked, return 2.
-      7. On non-zero exit → mark `error`, return exit code.
-      8. 2-commit protocol: feat(scope) + chore(scope) on the per-step branch.
-      9. Push per-step branch when `push=True`.
-     10. Mark `completed` with measured duration.
 
-    The contract for `run_proc`: takes (cwd, args) and returns
-    `(exit_code, stdout, stderr)`. Both sequential (subprocess.run) and
-    parallel (Popen+communicate) runners satisfy this signature via a
-    1-line closure.
-
-    Returns the exit code to surface to the runner (0 = success,
-    1 = sub-agent failure, 2 = blocked sentinel).
+    Returns a dict with the worktree path, branch, full_prompt, and
+    started_at_iso for the post-collect stage to consume.
     """
     wt = root / ".worktrees" / f"{phase}-step{step_num}"
     branch = f"{worktree_branch}-step{step_num}"
-
-    # 1. per-step worktree (MUST-38)
     subprocess.run(
         ["git", "worktree", "add", "-B", branch, str(wt), "origin/main"],
         cwd=str(root), check=True, capture_output=True, text=True,
     )
-
-    # 2. preamble = step.md body + AC guard + 3-cycle self-fix (MUST-37)
     preamble_path = root / "phases" / phase / f"step{step_num}.md"
     preamble = preamble_path.read_text(encoding="utf-8") if preamble_path.exists() else ""
     full_prompt = preamble + "\n\n---\nAC: see step file. 3-cycle self-fix max."
-
-    # 3. in_progress
     update_step_status(root, phase, step_num, status="in_progress")
-    started_at_iso = now_iso()
+    return {
+        "wt": wt,
+        "branch": branch,
+        "full_prompt": full_prompt,
+        "started_at_iso": now_iso(),
+    }
 
-    # 4. spawn one sub-agent (MUST-36) via the injected runner.
-    #    Issue #221 RC1: --add-dir <wt> + --allowedTools so the sub-agent can
-    #    write into the per-step worktree even when the consumer's parent
-    #    Claude Code sandbox blocks ".worktrees/**" by default.
-    exit_code, stdout, stderr = run_proc(
-        str(root),
-        ["claude", "-p",
-         "--add-dir", str(wt),
-         "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
-         "--workdir", str(wt),
-         full_prompt],
-    )
 
-    # 5. write step<N>-output.json with REAL contents
+def _step_post_collect(
+    root: Path,
+    phase: str,
+    step_num: int,
+    step_name: str,
+    ctx: dict,
+    *,
+    push: bool,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> int:
+    """Post-collect shared stage (issue #79 follow-up). Returns the exit code.
+
+    Stages:
+      1. write step<N>-output.json with REAL exit_code/stdout/stderr/duration.
+      2. On `<!-- status: blocked -->` marker → mark blocked, return 2.
+      3. On non-zero exit → mark `error`, return exit code.
+      4. 2-commit protocol: feat(scope) + chore(scope) on the per-step branch.
+      5. Push per-step branch when `push=True`.
+      6. Mark `completed` with measured duration.
+    """
     try:
-        started = datetime.fromisoformat(started_at_iso)
+        started = datetime.fromisoformat(ctx["started_at_iso"])
         duration = max(0.0, (datetime.fromisoformat(now_iso()) - started).total_seconds())
     except Exception:
         duration = 0.0
 
     # Issue #221 RC3: parse `<!-- status: blocked -->` BEFORE marking completed.
-    # stdout==0 + marker present → register as blocked (with reason) and bail rc=2.
     blocked_reason = _extract_blocked_reason(stdout or "")
     write_step_output(
         root, phase, step_num,
@@ -444,45 +434,62 @@ def _run_step_body(
         blocked_reason=blocked_reason,
     )
 
-    # 5b. blocked marker wins — even on a clean exit_code==0, refuse to advance.
     if blocked_reason is not None:
-        update_step_status(
-            root, phase, step_num,
-            status="blocked",
-            blocked_reason=blocked_reason,
-        )
-        return 2  # sentinel mirrored by _run_sequential("blocked" pre-existing) → bails the loop
-
-    # 6. on failure → error status, return
+        update_step_status(root, phase, step_num, status="blocked", blocked_reason=blocked_reason)
+        return 2
     if exit_code != 0:
-        update_step_status(
-            root, phase, step_num,
-            status="error",
-            error_message=f"claude exited {exit_code}",
-        )
+        update_step_status(root, phase, step_num, status="error", error_message=f"claude exited {exit_code}")
         return exit_code
 
-    # 7. 2-commit protocol (feat + chore) on the per-step branch.
-    #    Issue #221 RC2: replace `git commit --allow-empty` with add-A +
-    #    conditional commit via _commit_step. If the sub-agent wrote nothing
-    #    (still a valid "the step has nothing to commit" outcome), the per-step
-    #    branch simply gets one fewer commit — NOT an empty commit with a fake
-    #    "feat:" stamp.
+    # Issue #221 RC2: --allow-empty is GONE. add-A + conditional commit.
+    wt = ctx["wt"]
     feat_msg = f"feat({phase}): step {step_num}" + (f" — {step_name}" if step_name else "")
     _commit_step(wt, feat_msg)
-    chore_msg = f"chore({phase}): step {step_num} output"
-    _commit_step(wt, chore_msg)
+    _commit_step(wt, f"chore({phase}): step {step_num} output")
 
-    # 8. push
     if push:
         subprocess.run(
-            ["git", "push", "-u", "origin", branch],
+            ["git", "push", "-u", "origin", ctx["branch"]],
             cwd=str(wt), check=False, capture_output=True, text=True,
         )
 
-    # 9. mark completed (status transition also stamps duration_seconds from started_at)
     update_step_status(root, phase, step_num, status="completed")
     return 0
+
+
+def _run_step_body(
+    root: Path,
+    phase: str,
+    step_num: int,
+    worktree_branch: str,
+    step_name: str,
+    *,
+    push: bool,
+    run_proc: Callable[[str, list[str]], Tuple[int, str, str]],
+) -> int:
+    """Sequential wrapper: pre-spawn + run_proc + post-collect (issue #79 follow-up).
+
+    The actual work now lives in `_step_pre_spawn` + `_step_post_collect`
+    (issue #79 review follow-up). This function is the thin orchestrator
+    that wires the two halves around a `run_proc` closure.
+    """
+    ctx = _step_pre_spawn(root, phase, step_num, worktree_branch)
+    wt = ctx["wt"]
+    # Issue #221 RC1: --add-dir <wt> + --allowedTools so the sub-agent can
+    # write into the per-step worktree even when the consumer's parent
+    # Claude Code sandbox blocks ".worktrees/**" by default.
+    exit_code, stdout, stderr = run_proc(
+        str(root),
+        ["claude", "-p",
+         "--add-dir", str(wt),
+         "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
+         "--workdir", str(wt),
+         ctx["full_prompt"]],
+    )
+    return _step_post_collect(
+        root, phase, step_num, step_name, ctx,
+        push=push, exit_code=exit_code, stdout=stdout, stderr=stderr,
+    )
 
 
 def _run_one_step(
@@ -494,7 +501,7 @@ def _run_one_step(
     push: bool,
 ) -> int:
     """Sequential wrapper around `_run_step_body`. Uses `subprocess.run`."""
-    def _run(cwd: str, args: list[str]) -> tuple[int, str, str]:
+    def _run(cwd: str, args: list[str]) -> Tuple[int, str, str]:
         proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
         return proc.returncode, proc.stdout or "", proc.stderr or ""
     return _run_step_body(
@@ -593,104 +600,53 @@ class _SlotRunner:
         self.started_at_iso: Optional[str] = None
         self.wt: Optional[Path] = None
         self.branch: Optional[str] = None
+        self._ctx: Optional[dict] = None
 
     def launch(self) -> None:
-        """Spawn the per-step sub-agent via Popen. Body extracted to _run_step_body.
+        """Spawn the per-step sub-agent via Popen. Pre-spawn is shared.
 
-        This wrapper only retains the Popen-specific state (Popen handle,
-        branch path) that `_run_step_body` doesn't own. The shared body
-        (worktree-add, preamble, in_progress stamp, 2-commit protocol,
-        blocked/error handling) lives in `_run_step_body` to keep sequential
-        and parallel paths producing identical artifacts.
+        The pre-spawn stage (worktree-add, preamble, in_progress stamp)
+        routes through `_step_pre_spawn` — the same helper `_run_step_body`
+        uses for the sequential path. `collect()` then routes through
+        `_step_post_collect` so the parallel path produces the same
+        commit-message format + status transitions as the sequential path
+        (issue #79 follow-up).
         """
         step = self.next_step
         if step is None:
             return
         n = step["step"]
         self.current_step = step
-        self.wt = self.root / ".worktrees" / f"{self.phase}-step{n}"
-        self.branch = f"{self.worktree_branch}-step{n}"
-        subprocess.run(
-            ["git", "worktree", "add", "-B", self.branch, str(self.wt), "origin/main"],
-            cwd=str(self.root), check=True, capture_output=True, text=True,
-        )
-        preamble_path = self.root / "phases" / self.phase / f"step{n}.md"
-        preamble = preamble_path.read_text(encoding="utf-8") if preamble_path.exists() else ""
-        full_prompt = preamble + "\n\n---\nAC: see step file. 3-cycle self-fix max."
-        update_step_status(self.root, self.phase, n, status="in_progress")
-        self.started_at_iso = now_iso()
+        self._ctx = _step_pre_spawn(self.root, self.phase, n, self.worktree_branch)
+        self.wt = self._ctx["wt"]
+        self.branch = self._ctx["branch"]
+        self.started_at_iso = self._ctx["started_at_iso"]
         # Issue #221 RC1: same --add-dir + --allowedTools fix as sequential.
-        # Stash Popen handle so collect() can communicate(); the rest of the
-        # body (blocked/error/2-commit/completed) lives in _run_step_body.
         self.proc = subprocess.Popen(
             ["claude", "-p",
              "--add-dir", str(self.wt),
              "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
              "--workdir", str(self.wt),
-             full_prompt],
+             self._ctx["full_prompt"]],
             cwd=str(self.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        # Capture the args + cwd so collect() can reuse _run_step_body for the
-        # post-spawn stages. This guarantees parallel produces the same
-        # commit-message format + status transitions as sequential.
-        self._spawn_args = self.proc.args
-        self._spawn_cwd = str(self.root)
 
     def collect(self) -> None:
+        """Communicate with the Popen + route through the shared post-collect stage."""
         assert self.proc is not None
         stdout, stderr = self.proc.communicate()
         self.exit_code = self.proc.returncode or 0
         step = self.current_step
         assert step is not None
-        n = step["step"]
-        try:
-            started = datetime.fromisoformat(self.started_at_iso) if self.started_at_iso else None
-            duration = max(
-                0.0,
-                (datetime.fromisoformat(now_iso()) - started).total_seconds(),
-            ) if started else 0.0
-        except Exception:
-            duration = 0.0
-        # Issue #221 RC3: parse the blocked marker first so a clean exit_code
-        # cannot silently advance a step the sub-agent explicitly held back.
-        blocked_reason = _extract_blocked_reason(stdout or "")
-        write_step_output(
-            self.root, self.phase, n,
+        # Route through the SAME post-collect helper the sequential path uses.
+        self.exit_code = _step_post_collect(
+            self.root, self.phase, step["step"], step.get("name", ""),
+            self._ctx,
+            push=self.push,
             exit_code=self.exit_code,
             stdout=stdout or "",
             stderr=stderr or "",
-            duration_seconds=duration,
-            blocked=bool(blocked_reason),
-            blocked_reason=blocked_reason,
         )
-        if blocked_reason is not None:
-            update_step_status(
-                self.root, self.phase, n,
-                status="blocked",
-                blocked_reason=blocked_reason,
-            )
-            self.exit_code = 2  # bail the whole parallel run on a blocked step
-        elif self.exit_code != 0:
-            update_step_status(
-                self.root, self.phase, n,
-                status="error",
-                error_message=f"claude exited {self.exit_code}",
-            )
-        else:
-            # Issue #221 RC2: --allow-empty is GONE. add-A + conditional commit.
-            feat_msg = f"feat({self.phase}): step {n}" + (
-                f" — {step.get('name', '')}" if step.get("name") else ""
-            )
-            _commit_step(self.wt, feat_msg)
-            _commit_step(
-                self.wt, f"chore({self.phase}): step {n} output"
-            )
-            if self.push and self.branch:
-                subprocess.run(
-                    ["git", "push", "-u", "origin", self.branch],
-                    cwd=str(self.wt), check=False, capture_output=True, text=True,
-                )
-            update_step_status(self.root, self.phase, n, status="completed")
         self.proc = None
         self.current_step = None
 
