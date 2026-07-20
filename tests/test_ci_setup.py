@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -1085,6 +1086,66 @@ def tempfile_path(name: str):
     fd, p = tempfile.mkstemp(prefix=f"ci_setup_{name}_", suffix=".txt")
     os.close(fd)
     return Path(p)
+
+
+# --- per-function helpers (issue #91) -------------------------------------
+
+class TestValidateTarget(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ci_setup = _load_ci_setup()
+
+    def test_rejects_none(self):
+        with self.assertRaises(FileNotFoundError):
+            self.ci_setup._validate_target(None)
+
+    def test_rejects_missing_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "nope"
+            with self.assertRaises(FileNotFoundError):
+                self.ci_setup._validate_target(missing)
+
+    def test_rejects_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "file"
+            f.write_text("hi")
+            with self.assertRaises(NotADirectoryError):
+                self.ci_setup._validate_target(f)
+
+    def test_accepts_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            resolved = self.ci_setup._validate_target(Path(td))
+            self.assertEqual(resolved, Path(td).resolve())
+
+
+class TestRunLintAndEmitSummary(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ci_setup = _load_ci_setup()
+
+    def test_returns_list_on_empty_target(self):
+        with tempfile.TemporaryDirectory() as td:
+            warnings = self.ci_setup._run_lint_and_emit_summary(Path(td))
+            self.assertIsInstance(warnings, list)
+
+
+class TestInstallCiConfigDispatcher(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ci_setup = _load_ci_setup()
+
+    def test_body_is_thin(self):
+        """install_ci_config body should be < 80 logic lines after the split."""
+        import inspect
+        source = inspect.getsource(self.ci_setup.install_ci_config)
+        logic_lines = [
+            l for l in source.splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+        self.assertLess(
+            len(logic_lines), 80,
+            f"install_ci_config still too long: {len(logic_lines)} lines",
+        )
 
 
 if __name__ == "__main__":
