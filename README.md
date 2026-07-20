@@ -7,6 +7,31 @@
 
 ---
 
+## Enforcement hooks (the durable moat)
+
+This plugin's load-bearing surface is **deterministic enforcement**, not
+prompt prose. Per `CLAUDE.md` Iron Law L7 ("a skill's alpha lives in the
+parts the model can't self-impose"), the 8 hooks below short-circuit the
+model's tool calls — they cannot be absorbed by model improvements.
+
+| Hook | What it does | Stage |
+|---|---|---|
+| `tdd-guard` | Blocks `lib/` edits without a failing test | Build |
+| `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
+| `secret-scan` | Redacts credential patterns in tool inputs | All |
+| `slop-detector` | Catches AI-typical patterns across 110+ rules | Build + Review + Security |
+| `worktree-guard` | Hard-blocks Edit/Write in the main checkout | All |
+| `worktree-auto-cut` | Creates the per-task worktree + branch | All |
+| `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
+| `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
+
+The skills (`/dev-kit:*`) are convenience wrappers around these hooks +
+the state machine (`phases/<name>/index.json` + `STATUS_TRANSITIONS`).
+The next-gen-model thesis (issue #295) says the analysis-heavy skills
+get absorbed; the **hooks and state machine don't**.
+
+---
+
 ## Table of contents
 
 - [What it is](#what-it-is)
