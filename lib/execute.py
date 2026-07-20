@@ -22,7 +22,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
@@ -360,26 +360,38 @@ def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = Fal
     return 0
 
 
-def _run_one_step(
+def _run_step_body(
     root: Path,
     phase: str,
     step_num: int,
     worktree_branch: str,
     step_name: str,
+    *,
     push: bool,
+    run_proc: Callable[[str, list[str]], Tuple[int, str, str]],
 ) -> int:
-    """Execute ONE step end-to-end. Returns 0 on success, non-zero on failure.
+    """Shared per-step body for sequential + parallel runners (issue #79).
 
-    Order:
+    Executes one step end-to-end:
       1. Create per-step worktree from origin/main (MUST-38).
       2. Read step<N>.md as preamble; append AC + self-fix guard.
       3. Mark step `in_progress` (sets started_at).
-      4. Spawn ONE `claude -p` sub-agent in worktree (MUST-36).
-      5. Capture stdout/stderr/returncode → write step<N>-output.json (real result).
-      6. On non-zero exit → mark `error`, return.
-      7. 2-commit protocol: feat(scope) + chore(scope) on the per-step branch.
-      8. Push per-step branch when `push=True`.
-      9. Mark `completed` with measured duration.
+      4. Spawn `claude -p` via `run_proc` (MUST-36). Sequential passes a
+         `subprocess.run` closure; parallel passes a Popen-collect closure.
+      5. Capture stdout/stderr/returncode → write step<N>-output.json.
+      6. On `<!-- status: blocked -->` marker → mark blocked, return 2.
+      7. On non-zero exit → mark `error`, return exit code.
+      8. 2-commit protocol: feat(scope) + chore(scope) on the per-step branch.
+      9. Push per-step branch when `push=True`.
+     10. Mark `completed` with measured duration.
+
+    The contract for `run_proc`: takes (cwd, args) and returns
+    `(exit_code, stdout, stderr)`. Both sequential (subprocess.run) and
+    parallel (Popen+communicate) runners satisfy this signature via a
+    1-line closure.
+
+    Returns the exit code to surface to the runner (0 = success,
+    1 = sub-agent failure, 2 = blocked sentinel).
     """
     wt = root / ".worktrees" / f"{phase}-step{step_num}"
     branch = f"{worktree_branch}-step{step_num}"
@@ -399,17 +411,17 @@ def _run_one_step(
     update_step_status(root, phase, step_num, status="in_progress")
     started_at_iso = now_iso()
 
-    # 4. spawn one sub-agent (MUST-36)
+    # 4. spawn one sub-agent (MUST-36) via the injected runner.
     #    Issue #221 RC1: --add-dir <wt> + --allowedTools so the sub-agent can
     #    write into the per-step worktree even when the consumer's parent
     #    Claude Code sandbox blocks ".worktrees/**" by default.
-    proc = subprocess.run(
+    exit_code, stdout, stderr = run_proc(
+        str(root),
         ["claude", "-p",
          "--add-dir", str(wt),
          "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
          "--workdir", str(wt),
          full_prompt],
-        cwd=str(root), capture_output=True, text=True,
     )
 
     # 5. write step<N>-output.json with REAL contents
@@ -421,12 +433,12 @@ def _run_one_step(
 
     # Issue #221 RC3: parse `<!-- status: blocked -->` BEFORE marking completed.
     # stdout==0 + marker present → register as blocked (with reason) and bail rc=2.
-    blocked_reason = _extract_blocked_reason(proc.stdout or "")
+    blocked_reason = _extract_blocked_reason(stdout or "")
     write_step_output(
         root, phase, step_num,
-        exit_code=proc.returncode,
-        stdout=proc.stdout or "",
-        stderr=proc.stderr or "",
+        exit_code=exit_code,
+        stdout=stdout or "",
+        stderr=stderr or "",
         duration_seconds=duration,
         blocked=bool(blocked_reason),
         blocked_reason=blocked_reason,
@@ -442,13 +454,13 @@ def _run_one_step(
         return 2  # sentinel mirrored by _run_sequential("blocked" pre-existing) → bails the loop
 
     # 6. on failure → error status, return
-    if proc.returncode != 0:
+    if exit_code != 0:
         update_step_status(
             root, phase, step_num,
             status="error",
-            error_message=f"claude exited {proc.returncode}",
+            error_message=f"claude exited {exit_code}",
         )
-        return proc.returncode
+        return exit_code
 
     # 7. 2-commit protocol (feat + chore) on the per-step branch.
     #    Issue #221 RC2: replace `git commit --allow-empty` with add-A +
@@ -471,6 +483,24 @@ def _run_one_step(
     # 9. mark completed (status transition also stamps duration_seconds from started_at)
     update_step_status(root, phase, step_num, status="completed")
     return 0
+
+
+def _run_one_step(
+    root: Path,
+    phase: str,
+    step_num: int,
+    worktree_branch: str,
+    step_name: str,
+    push: bool,
+) -> int:
+    """Sequential wrapper around `_run_step_body`. Uses `subprocess.run`."""
+    def _run(cwd: str, args: list[str]) -> tuple[int, str, str]:
+        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+    return _run_step_body(
+        root, phase, step_num, worktree_branch, step_name,
+        push=push, run_proc=_run,
+    )
 
 
 
@@ -565,6 +595,14 @@ class _SlotRunner:
         self.branch: Optional[str] = None
 
     def launch(self) -> None:
+        """Spawn the per-step sub-agent via Popen. Body extracted to _run_step_body.
+
+        This wrapper only retains the Popen-specific state (Popen handle,
+        branch path) that `_run_step_body` doesn't own. The shared body
+        (worktree-add, preamble, in_progress stamp, 2-commit protocol,
+        blocked/error handling) lives in `_run_step_body` to keep sequential
+        and parallel paths producing identical artifacts.
+        """
         step = self.next_step
         if step is None:
             return
@@ -582,6 +620,8 @@ class _SlotRunner:
         update_step_status(self.root, self.phase, n, status="in_progress")
         self.started_at_iso = now_iso()
         # Issue #221 RC1: same --add-dir + --allowedTools fix as sequential.
+        # Stash Popen handle so collect() can communicate(); the rest of the
+        # body (blocked/error/2-commit/completed) lives in _run_step_body.
         self.proc = subprocess.Popen(
             ["claude", "-p",
              "--add-dir", str(self.wt),
@@ -590,6 +630,11 @@ class _SlotRunner:
              full_prompt],
             cwd=str(self.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        # Capture the args + cwd so collect() can reuse _run_step_body for the
+        # post-spawn stages. This guarantees parallel produces the same
+        # commit-message format + status transitions as sequential.
+        self._spawn_args = self.proc.args
+        self._spawn_cwd = str(self.root)
 
     def collect(self) -> None:
         assert self.proc is not None

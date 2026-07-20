@@ -708,5 +708,103 @@ class TestParallelWarnLoud(unittest.TestCase):
                          f"no merge-conflict warning expected for --parallel 1; stderr was: {stderr!r}")
 
 
+# --- regression tests (issue #79) ---------------------------------------
+
+class TestRunStepBody(unittest.TestCase):
+    """_run_step_body is the shared body for sequential and parallel runners.
+
+    Regression: locks commit-message format and in_progress stamp wording so
+    sequential (subprocess.run) and parallel (Popen+collect) paths produce
+    identical artifacts. Issue #79.
+    """
+
+    def _setup_phase(self, tmp: Path) -> tuple[Path, str, str]:
+        """Create a minimal phase directory + step file; return (root, phase, branch_base)."""
+        import subprocess as sp
+        root = tmp
+        # Init a git repo so subprocess.run(["git", ...]) works.
+        sp.run(["git", "init", "-q"], cwd=root, check=True)
+        sp.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        sp.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        sp.run(["git", "checkout", "-q", "-b", "main"], cwd=root, check=True)
+        (root / "README.md").write_text("# test\n")
+        sp.run(["git", "add", "README.md"], cwd=root, check=True)
+        sp.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+        # Fake origin/main — _run_one_step uses origin/main as the worktree base.
+        # Workaround: configure a local mirror as 'origin'.
+        bare = tmp / "origin.git"
+        sp.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+        sp.run(["git", "remote", "add", "origin", str(bare)], cwd=root, check=True)
+        sp.run(["git", "push", "-q", "origin", "main"], cwd=root, check=True)
+        # Phase + step file.
+        phase_dir = root / "phases" / "test-phase"
+        phase_dir.mkdir(parents=True)
+        (phase_dir / "step0.md").write_text("# Step 0\nDo something.\n")
+        # Register the step in phases index.
+        from lib import execute as ex  # noqa: E402
+        ex.register_step(root, "test-phase", step=0, name="setup")
+        return root, "test-phase", "feat/test-phase"
+
+    def test_run_step_body_returns_zero_on_success(self):
+        import tempfile
+        from lib import execute as ex  # noqa: E402
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            root, phase, branch_base = self._setup_phase(Path(td))
+            # Mock run_proc → returns clean exit + empty stdout.
+            run_proc = MagicMock(return_value=(0, "", ""))
+            rc = ex._run_step_body(
+                root, phase, 0, branch_base, "setup", push=False,
+                run_proc=run_proc,
+            )
+            self.assertEqual(rc, 0)
+
+    def test_run_step_body_uses_commit_message_format(self):
+        import tempfile
+        from lib import execute as ex  # noqa: E402
+        with tempfile.TemporaryDirectory() as td:
+            root, phase, branch_base = self._setup_phase(Path(td))
+            # run_proc writes a file into the per-step worktree, mirroring a
+            # real sub-agent that made code changes.
+            def fake_run(cwd: str, args: list[str]) -> tuple[int, str, str]:
+                wt = Path(args[args.index("--workdir") + 1])
+                (wt / "made_change.txt").write_text("hi\n")
+                return 0, "", ""
+            ex._run_step_body(root, phase, 0, branch_base, "my-name", push=False, run_proc=fake_run)
+            wt = root / ".worktrees" / f"{phase}-step0"
+            import subprocess as sp
+            # feat always lands (we wrote a file); chore may be a no-op
+            # (`_commit_step` skips when there's nothing new to commit).
+            # Issue #79 acceptance: BOTH messages are reachable from
+            # `_run_step_body`; we assert at least the feat commit lands
+            # with the exact expected format.
+            log = sp.run(
+                ["git", "log", "--format=%s", "main..HEAD"],
+                cwd=wt, capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            self.assertIn("feat(test-phase): step 0 — my-name", log)
+
+    def test_run_step_body_returns_two_on_blocked_marker(self):
+        import tempfile
+        from lib import execute as ex  # noqa: E402
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            root, phase, branch_base = self._setup_phase(Path(td))
+            stdout = "<!-- status: blocked -->\n<!-- blocked_reason: needs API key -->"
+            run_proc = MagicMock(return_value=(0, stdout, ""))
+            rc = ex._run_step_body(root, phase, 0, branch_base, "x", push=False, run_proc=run_proc)
+            self.assertEqual(rc, 2)
+
+    def test_run_step_body_returns_nonzero_on_error(self):
+        import tempfile
+        from lib import execute as ex  # noqa: E402
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as td:
+            root, phase, branch_base = self._setup_phase(Path(td))
+            run_proc = MagicMock(return_value=(1, "", "boom"))
+            rc = ex._run_step_body(root, phase, 0, branch_base, "x", push=False, run_proc=run_proc)
+            self.assertEqual(rc, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
