@@ -581,6 +581,26 @@ def _copy_all_templates(target: Path, force: bool, report: InstallReport) -> Non
     _chmod_executable(EXECUTABLE_PATHS, target)
 
 
+def _validate_target(target_dir: Path | None) -> Path:
+    """Resolve and validate `target_dir`. Returns the resolved Path.
+
+    Raises FileNotFoundError if None / missing; NotADirectoryError if a file.
+    """
+    if target_dir is None:
+        raise FileNotFoundError("target_dir is None")
+    target = Path(target_dir).resolve()
+    if not target.exists():
+        raise FileNotFoundError(f"target_dir does not exist: {target}")
+    if not target.is_dir():
+        raise NotADirectoryError(f"target_dir is not a directory: {target}")
+    return target
+
+
+def _run_lint_and_emit_summary(target_dir: Path) -> list[str]:
+    """Run lint_installed_workflows on the target. Returns the warnings list."""
+    return list(lint_installed_workflows(target_dir))
+
+
 def install_ci_config(
     target_dir: Path,
     *,
@@ -614,15 +634,7 @@ def install_ci_config(
             to one.
     """
     started = time.monotonic()
-
-    if target_dir is None:
-        raise FileNotFoundError("target_dir is None")
-    target = Path(target_dir).resolve()
-    if not target.exists():
-        raise FileNotFoundError(f"target_dir does not exist: {target}")
-    if not target.is_dir():
-        raise NotADirectoryError(f"target_dir is not a directory: {target}")
-
+    target = _validate_target(target_dir)
     report = InstallReport()
 
     # Read prior marker (if any) so the drift-detection pass (issue #202)
@@ -648,7 +660,7 @@ def install_ci_config(
         if isinstance(recorded_shas, dict):
             report.warnings.extend(_detect_drift(target, recorded_shas))
         if lint:
-            report.warnings.extend(lint_installed_workflows(target))
+            report.warnings.extend(_run_lint_and_emit_summary(target))
         return report
 
     # Drift detection BEFORE the copy loop (issue #202). Only meaningful
@@ -711,7 +723,7 @@ def install_ci_config(
     # Always runs on a fresh install; on a no-op idempotent re-install the
     # skill body may opt out via the kwarg below.
     if lint:
-        report.warnings.extend(lint_installed_workflows(target))
+        report.warnings.extend(_run_lint_and_emit_summary(target))
 
     report.elapsed_ms = int((time.monotonic() - started) * 1000)
 
