@@ -29,14 +29,14 @@
 # when log-on.sh itself errors out — same policy as
 # session-start-check.sh.
 
-set -uo pipefail
-INPUT="$(cat)"
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning).
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
 
-# Source the shared worktree-detection helper.
-# shellcheck source=lib/worktree-detect.sh
-source "$(dirname "$0")/lib/worktree-detect.sh"
-
-# Warn (not fail) if jq is missing.
+# Warn (not fail) if jq is missing. The preamble's worktree_detect
+# leaves $WORKTREE_DETECT="" when jq is absent; the case below
+# already treats "" as silent.
 if ! command -v jq >/dev/null 2>&1; then
   worktree_detect_jq_missing_warn "log-on-session-start.sh"
   exit 0
@@ -49,9 +49,7 @@ if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
 
-# Detect whether we are in a worktree or main. The rest of the script
-# branches on the discriminator.
-worktree_detect
+# Discriminator: already populated by the preamble.
 case "$WORKTREE_DETECT" in
   worktree|main) ;;  # proceed to dev-kit check
   *) exit 0 ;;       # outside, jq-missing, or unset → silent
