@@ -127,13 +127,11 @@ def _transition_completed(step: dict, now: str, *, duration_seconds: Optional[fl
 
 
 def _transition_error(step: dict, now: str, *, error_message: Optional[str] = None, **_kwargs) -> None:
-    """Stamp failed_at + error_message."""
     step["failed_at"] = now
     step["error_message"] = error_message
 
 
 def _transition_blocked(step: dict, now: str, *, blocked_reason: Optional[str] = None, **_kwargs) -> None:
-    """Stamp blocked_at + blocked_reason."""
     step["blocked_at"] = now
     step["blocked_reason"] = blocked_reason
 

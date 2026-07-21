@@ -134,10 +134,6 @@ class WorktreeInfo:
     last_commit_subject: str | None = None
 
 
-@dataclass
-class ResumeRequest:
-    agg: dict
-    wt_path: Path | None
 
 
 # --------------------------------------------------------------------------

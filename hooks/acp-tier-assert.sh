@@ -51,7 +51,6 @@ fi
 TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)"
 SESSION_ID="$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)"
 HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
-TRANSCRIPT="$(printf '%s' "$INPUT" | jq -r '.transcript // ""' 2>/dev/null)"
 
 # Short-circuit on already-asserted sessions. The sidecar is written by
 # this hook on the first successful assert; subsequent tool calls in the

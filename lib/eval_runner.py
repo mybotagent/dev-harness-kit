@@ -442,19 +442,6 @@ def run_eval(
 
 # ---------- session-log judge (opt-in, default OFF) ----------
 
-@dataclass
-class SessionEvalReport:
-    """Result of run_session_dim on one session log."""
-    session_id: str = ""
-    log_path: str = ""
-    scores: Dict[str, float] = field(default_factory=dict)
-    tokens_in: int = 0
-    tokens_out: int = 0
-    raw: str = ""
-    verdict: str = ""
-    score: float = 0.0
-    error: Optional[str] = None
-    cached: bool = False
 
 
 def _session_id_from_log(path: Path) -> str:
@@ -756,16 +743,6 @@ def write_session_report(project_root: Path, report: Dict) -> Path:
 
 # ---------- golden diff (opt-in, default OFF) ----------
 
-@dataclass
-class RegressionMarker:
-    """One axis-level regression marker from run_golden_diff."""
-    case_id: str = ""
-    dim: str = ""
-    axis: str = ""
-    baseline: float = 0.0
-    current: float = 0.0
-    delta: float = 0.0
-    severity: str = "minor"  # "minor" | "major" | "critical"
 
 
 def _golden_index(project_root: Path) -> Dict[str, Dict]:
