@@ -232,8 +232,16 @@ jobs:
         # upgrades its lint baseline.
         run: pip install --quiet "ruff==0.15.16"
       - name: ruff check
-        # Same flag set as .githooks/pre-commit: --exit-zero-empty so a
-        # tree with no Python files (e.g. a docs-only PR) exits 0 instead of
-        # failing on "no Python files to check". --no-fix because the gate
-        # only diagnoses; auto-fix is a developer-side affordance.
-        run: ruff check --exit-zero-empty --no-fix .
+        # Same flag set as .githooks/pre-commit: --exit-zero so a tree with
+        # no Python files (e.g. a docs-only PR) exits 0 instead of failing
+        # on "no Python files to check". Ruff treats no-Python-found as
+        # exit 0 by default; --exit-zero only matters when combined with
+        # a later subcommand. --no-fix because the gate only diagnoses;
+        # auto-fix is a developer-side affordance.
+        #
+        # NOTE: --exit-zero-empty is NOT a valid ruff flag in 0.15.x
+        # (the closest is --exit-zero). The previous CI check used it
+        # verbatim, which caused `error: unexpected argument
+        # '--exit-zero-empty' found` on the first PR run through the
+        # new gate. Fixed to --exit-zero per `ruff check --help`.
+        run: ruff check --exit-zero --no-fix .
