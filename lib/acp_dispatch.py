@@ -30,10 +30,12 @@ import dataclasses
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 # ---------------------------------------------------------------------------
 # Constants — single source of truth, mirror docs/acp-harness.md §3.2.
@@ -385,101 +387,54 @@ class ACPDispatcher:
     def _branch_exists(self, branch: str) -> bool:
         """Return True when `branch` already exists as a local ref.
 
-        Used by `_cut_worktree` to decide whether a failed
-        `git worktree add -b` is allowed to `git branch -D` the slot
-        during cleanup — only branches this dispatch created are
-        safe to remove; pre-existing branches must survive a failed
-        dispatch so the M never silently destroys another T's work.
+        Kept as a thin wrapper around the canonical helper so the
+        regression test in ``tests/test_acp_dispatch.py`` (which
+        pre-creates the branch on origin/main) still verifies the
+        safe-mode contract end-to-end. The actual ``git worktree
+        add`` invocation now routes through ``lib.git_worktree.
+        cut_worktree`` (issue #310) — same semantics, one place to
+        evolve them.
         """
-        completed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(self.repo_root),
-                "rev-parse",
-                "--verify",
-                f"refs/heads/{branch}",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        return completed.returncode == 0
-
-    def _remove_worktree_dir(self, worktree_path: Path) -> None:
-        """Best-effort removal of a worktree directory after a failed cut.
-
-        Uses `git worktree remove --force` first so git's metadata
-        stays consistent, then falls back to `shutil.rmtree` for the
-        rare case where the worktree was never registered (e.g.
-        `git worktree add` failed before git could open the dir).
-        """
-        completed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(self.repo_root),
-                "worktree",
-                "remove",
-                "--force",
-                str(worktree_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0 and worktree_path.exists():
-            shutil.rmtree(worktree_path, ignore_errors=True)
+        from git_worktree import _branch_exists as _gw_branch_exists  # local: avoid module-load churn
+        return _gw_branch_exists(self.repo_root, branch)
 
     def _cut_worktree(self, branch: str, worktree_path: Path) -> None:
         """Run `git worktree add -b <branch> <path> origin/main`.
 
-        Mirrors `hooks/worktree-auto-cut.sh:235` — fails closed when the
-        worktree dir already exists or when the branch is already
-        tracked, so a misconfigured dispatch does not silently overwrite
-        another T's branch.
+        Thin shim over ``lib.git_worktree.cut_worktree`` so the safe
+        contract (fail closed when dir exists, fail closed when branch
+        exists, preserve pre-existing branches on failure) is shared
+        with future callers. ``reset_branch=False`` matches the
+        historical ``-b`` behavior — pre-existing branches survive a
+        failed cut.
 
-        On failure, only branches created by THIS dispatch are
-        removed — pre-existing branches are preserved (regression
-        guard for the 🔴 Critical review finding).
+        The helper raises ``subprocess.CalledProcessError`` on a failed
+        ``git worktree add``; we wrap that in ``RuntimeError`` with the
+        git stderr verbatim so the dispatcher's existing contract
+        (caller catches ``RuntimeError`` and surfaces the message to the
+        M) stays intact. ``FileExistsError`` propagates verbatim.
         """
-        if worktree_path.exists():
-            raise FileExistsError(
-                f"worktree path already exists: {worktree_path}. "
-                f"Pick a unique slug or remove the stale dir."
+        try:
+            cut_worktree(
+                repo_root=self.repo_root,
+                branch=branch,
+                worktree_path=worktree_path,
+                reset_branch=False,
+                overwrite_worktree=False,
             )
-        pre_existing_branch = self._branch_exists(branch)
-        completed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(self.repo_root),
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                str(worktree_path),
-                "origin/main",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0:
-            # Mirror the hook's cleanup-on-failure pattern so a failed
-            # cut does not leave a half-initialized worktree behind,
-            # but ONLY remove the branch when this dispatch actually
-            # created it. A pre-existing branch must survive a failed
-            # cut (regression: review finding flagged that
-            # `git branch -D` could destroy a valid feature branch
-            # with its commits).
-            self._remove_worktree_dir(worktree_path)
-            if not pre_existing_branch:
-                subprocess.run(
-                    ["git", "-C", str(self.repo_root), "branch", "-D", branch],
-                    capture_output=True,
-                )
+        except FileExistsError:
+            raise
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "")
+            stdout = (exc.stdout or "")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
             raise RuntimeError(
                 f"git worktree add failed for branch {branch!r}: "
-                f"{completed.stderr.strip() or completed.stdout.strip()}"
-            )
+                f"{(stderr or stdout or 'unknown error').strip()}"
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
