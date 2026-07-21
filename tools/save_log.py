@@ -333,7 +333,7 @@ def main() -> int:
 
     try:
         payload = json.load(sys.stdin)
-    except Exception as exc:  # noqa: BLE001 - non-fatal
+    except (json.JSONDecodeError, ValueError) as exc:  # narrow: stdin payload must be JSON
         print(f"save_log: failed to parse stdin JSON: {exc}", file=sys.stderr)
         return 0
 

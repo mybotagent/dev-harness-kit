@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,6 +34,8 @@ from typing import Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
 from atomic import atomic_write_json, now_iso  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_DIMS: tuple = ("review", "security", "plan")
 PROMPT_BY_DIM: Dict[str, str] = {
@@ -414,7 +417,11 @@ def _run_real_judges(project_root: Path, cases: List[Dict], config: Dict) -> Lis
         t = load_transcript(project_root, c["dim"], c["case_id"])
         try:
             results.append(_judge_case(project_root, c, t, config))
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            logger.warning(
+                "judge_case failed for dim=%s case=%s: %s",
+                c["dim"], c["case_id"], e, exc_info=e,
+            )
             results.append(exception_rot(c, llm_judge.DIM_AXES[c["dim"]], e))
     return results
 
@@ -478,7 +485,7 @@ def _session_id_from_log(path: Path) -> str:
                     continue
                 try:
                     obj = json.loads(line)
-                except Exception:
+                except (json.JSONDecodeError,):
                     continue
                 sid = obj.get("sessionId") or obj.get("session_id") or ""
                 if sid:
@@ -533,6 +540,7 @@ def _summarize_session_log(path: Path, max_chars: int = 12_000) -> str:
     last_assistant_text = ""
     turn_count = 0
     parsed = 0
+    parse_failures = 0
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -541,7 +549,8 @@ def _summarize_session_log(path: Path, max_chars: int = 12_000) -> str:
                     continue
                 try:
                     obj = json.loads(line)
-                except Exception:
+                except (json.JSONDecodeError,):
+                    parse_failures += 1
                     continue
                 parsed += 1
                 if obj.get("isSidechain"):
@@ -804,7 +813,11 @@ def run_session_dim(
             raw=(raw.get("raw") or "")[:500],
             cached=False,
         )
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        logger.warning(
+            "session eval failed for sid=%s log=%s: %s",
+            sid, session_log_path, e, exc_info=e,
+        )
         report = _session_report(
             session_id=sid,
             log_path=str(session_log_path),
