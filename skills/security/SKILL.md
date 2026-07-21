@@ -33,7 +33,7 @@ Issue all 10 Agent calls inside ONE assistant message so they run concurrently. 
 
 One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`. Drop REJECTED; keep CONFIRMED + PLAUSIBLE.
 
-The dedupe (on `file,line,theme`) + verifier + synthesize pipeline routes through `tools/parallel_dispatch.py:fanout_and_synthesize` (issue #177). The skill body still issues the Agent calls; the helper owns the post-fan-out pipeline.
+The skill body owns the dedupe (on `file,line,theme`) + verifier + synthesize pipeline inline — the Agent calls return raw findings inside one assistant message, and the body collapses duplicates, applies the verifier verdict, and synthesizes the per-category breakdown table.
 
 ## Output
 
