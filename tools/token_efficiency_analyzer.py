@@ -43,28 +43,10 @@ from statistics import mean
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import llm_pricing  # noqa: E402 — shared SSOT pricing loader (see rules/token-pricing.md)
 
-#: Worktrees newer than this many seconds with HEAD == origin/main SHA and
-#: zero unique commits classify as ``state="fresh"`` instead of ``"merged"``.
-#: Without this branch, a freshly-cut worktree (no commits yet) is
-#: indistinguishable from a rebase-merged branch (also HEAD == origin/main),
-#: so the dashboard marks it ``merged`` + ``stale`` and the user thinks their
-#: brand-new worktree is dead weight. 1 hour covers "open dashboard right
-#: after `git worktree add`" without overstaying — a forgotten worktree
-#: degrades to ``merged`` the next day.
-FRESH_WORKTREE_MAX_AGE_SECONDS = 3600
-
 # `.worktrees/` is client-neutral. Keep legacy roots discoverable so older
 # Claude/Codex sessions remain visible after the migration.
 WORKTREE_ROOT_NAMES = (".worktrees", ".claude/worktrees", ".codex/worktrees")
 
-#: String fragment that distinguishes a log path captured from inside a
-#: worktree (``<main>/.claude/worktrees/<wt>/logs/...``) from one
-#: captured at the main checkout. Used to short-circuit
-#: ``classify_all_worktrees`` when no worktree log was actually
-#: discovered — saving a ``git worktree list`` subprocess call per
-#: invocation on slow shared CI filesystems.
-WORKTREE_MARKER_FRAGMENT = "/.claude/worktrees/"
-WORKTREE_MARKER_FRAGMENT_LEGACY = "/.worktrees/"
 
 #: Hard cap on how deep ``_walk_all_worktree_logs`` recurses into nested
 #: worktree roots. The production case is a single layer (sessions captured

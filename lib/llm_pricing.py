@@ -352,6 +352,3 @@ def clear_cache() -> None:
     _pricing_cache.cache_clear()
 
 
-def pricing_keys() -> List[str]:
-    """Return every key the loader currently resolves — for assertion in tests."""
-    return sorted(set(_pricing_cache()) | set(LEGACY_FALLBACK))

@@ -29,13 +29,6 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
-
-# Skill list lives in the same directory's SKILL.md frontmatter, but
-# we accept the simpler invariant that the calling skill has already
-# piped names on stdin. This keeps dump_usage testable without YAML
-# parsing and removes a hidden dependency on the SKILL.md location.
-_HERE = Path(__file__).resolve().parent
 
 
 def _read_candidates(stream) -> list[str]:

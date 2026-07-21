@@ -53,22 +53,6 @@ resolve_global_dir() {
     printf '%s/.claude\n' "$home"
 }
 
-# Rewrite a per-project hook command so the save_log.py path is global.
-# Strips the per-project ${CLAUDE_PROJECT_DIR}/tools/ prefix and replaces
-# it with ${HOME}/.claude/ so the merged command is self-contained —
-# works regardless of which checkout the session actually starts in.
-#   $1 = original command (string)
-# echoes the rewritten command on stdout
-rewrite_command_for_global() {
-    local cmd="$1"
-    # Replace both forms seen in the loghooks source repo:
-    #   ${CLAUDE_PROJECT_DIR}/tools/save_log.py
-    #   tools/save_log.py
-    # with a single ${HOME}/.claude/save_log.py.
-    cmd="${cmd//\$\{CLAUDE_PROJECT_DIR\}\/tools\/save_log\.py/\$\{HOME\}\/.claude\/save_log\.py}"
-    cmd="${cmd//tools\/save_log\.py/\$\{HOME\}\/.claude\/save_log\.py}"
-    printf '%s\n' "$cmd"
-}
 
 # Build a temp file with the source settings.json rewritten for global
 # install. Every `command` field has its `save_log.py` path rewritten to

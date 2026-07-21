@@ -33,10 +33,8 @@ class TestExecute(unittest.TestCase):
         (self.root / ".dev-kit" / "hand-off").mkdir(parents=True, exist_ok=True)
         (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
         (self.root / "CLAUDE.md").write_text("# CLAUDE.md\nIron laws: TDD only.\n", encoding="utf-8")
-        # step0 + step1
         (self.root / "phases" / "0-mvp" / "step0.md").write_text("# Setup\nInitialize project.\n", encoding="utf-8")
         (self.root / "phases" / "0-mvp" / "step1.md").write_text("# Build\nTDD: red, green, refactor.\n", encoding="utf-8")
-        # phase index
         idx = {
             "project": "test-project",
             "phase": "0-mvp",

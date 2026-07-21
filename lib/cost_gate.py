@@ -68,9 +68,6 @@ import llm_pricing as _llm_pricing  # noqa: E402
 _UNKNOWN_MODELS: List[str] = []
 
 
-def reset_unknown_models() -> None:
-    """Clear the per-process list of unknown model ids (test helper)."""
-    _UNKNOWN_MODELS.clear()
 
 
 def _looks_like_known(model_id: str) -> bool:

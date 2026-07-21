@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import datetime as _dt
 import json
 import os
 import re
@@ -56,8 +55,6 @@ SEVEN_PLACEHOLDERS: tuple[str, ...] = (
 # Default template path (relative to repo root).
 DEFAULT_TEMPLATE_PATH = Path(".claude/skills/_acp/sub-agent-prompt.md")
 
-# Default lock dir under the orch-worktree round dir.
-DEFAULT_LOCK_DIR = Path(".dev-kit/round-{round}/locks")
 
 
 # ---------------------------------------------------------------------------
@@ -166,33 +163,6 @@ def parse_pr_spec(spec: str) -> tuple[int, str, str]:
     return pr_index, f"feat/{slug}", slug
 
 
-def _utc_iso() -> str:
-    """Return the current UTC time in ISO 8601 (e.g. `2026-07-18T22:00:00Z`).
-
-    M always writes timestamps in UTC so dispatches are diffable across
-    timezones (the round-meta convention from `docs/acp-harness.md` §6).
-    """
-    return _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _git_common_dir(repo_root: Path) -> Path | None:
-    """Resolve the git common dir for `repo_root` (handles linked worktrees).
-
-    Returns None when `repo_root` is not inside a git working tree.
-    """
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "--git-common-dir"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-    raw = completed.stdout.strip()
-    if not raw:
-        return None
-    return Path(raw).resolve()
 
 
 def _read_template(template_path: Path) -> str:

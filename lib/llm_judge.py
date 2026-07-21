@@ -225,12 +225,10 @@ def _http_post(*, url: str, payload: Dict, api_key: str, timeout: int) -> Dict:
 
 
 def score_aggregate(axes: Dict[str, float]) -> float:
-    """Mean of 4 axes (0-10)."""
     return round(sum(axes.values()) / max(1, len(axes)), 2)
 
 
 def verdict_from_score(score: float) -> str:
-    """OK / DRIFT_WARNING / ROT verdict."""
     if score >= 8.0:
         return "OK"
     if score >= 5.0:

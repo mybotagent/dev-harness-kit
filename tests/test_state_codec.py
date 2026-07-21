@@ -16,7 +16,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Add lib to path so we can import state_codec
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 import state_codec  # noqa: E402
