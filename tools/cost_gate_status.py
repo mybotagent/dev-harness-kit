@@ -63,27 +63,41 @@ def _load_or_ephemeral_state(state_path: Path, *, add_default_warning: bool = Fa
     return state
 
 
+def _resolved_state(args: argparse.Namespace) -> tuple[Path, dict]:
+    """Resolve (state_path, state) for any CLI mode that displays state.
+
+    Single point where `_state_path` + `_load_or_ephemeral_state` come
+    together — keeps the 4 display-mode handlers in sync (closes the
+    inspect dup-10 finding). The default-warning note is intentionally
+    left to the caller; only `_cli_text` shows `state["warnings"]` in its
+    output, so adding it here would leak a "no state file" string into
+    JSON / HTML / git-trailer output where it doesn't belong.
+    """
+    state_path = _state_path(args.state, os.getcwd())
+    state = _load_or_ephemeral_state(state_path)
+    return state_path, state
+
+
 # ---------------------------------------------------------------------------
 # CLI modes
 # ---------------------------------------------------------------------------
 
 def _cli_text(args: argparse.Namespace) -> int:
-    state_path = _state_path(args.state, os.getcwd())
-    state = _load_or_ephemeral_state(state_path, add_default_warning=True)
+    state_path, state = _resolved_state(args)
+    if state.get("scope_id") == "ephemeral":
+        state["warnings"] = ["no state file — showing defaults"]
     sys.stdout.write(cg.format_text(state, state_path) + "\n")
     return 0
 
 
 def _cli_json(args: argparse.Namespace) -> int:
-    state_path = _state_path(args.state, os.getcwd())
-    state = _load_or_ephemeral_state(state_path)
+    state_path, state = _resolved_state(args)
     sys.stdout.write(cg.format_json(state, state_path) + "\n")
     return 0
 
 
 def _cli_html(args: argparse.Namespace) -> int:
-    state_path = _state_path(args.state, os.getcwd())
-    state = _load_or_ephemeral_state(state_path)
+    state_path, state = _resolved_state(args)
     out_path = Path(args.html)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(cg.format_html(state, state_path), encoding="utf-8")
@@ -92,8 +106,7 @@ def _cli_html(args: argparse.Namespace) -> int:
 
 
 def _cli_footer(args: argparse.Namespace) -> int:
-    state_path = _state_path(args.state, os.getcwd())
-    state = _load_or_ephemeral_state(state_path)
+    state_path, state = _resolved_state(args)
     sys.stdout.write(cg.format_footer(state) + "\n")
     return 0
 
@@ -123,11 +136,12 @@ def _cli_aggregate_pr(args: argparse.Namespace) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(prog="cost_gate_status")
     p.add_argument("--state", help="Path to state.json (default: $CWD/.dev-kit/.cost-gate/state.json)")
-    p.add_argument("--json", action="store_true", help="Emit JSON to stdout")
-    p.add_argument("--html", metavar="PATH", help="Write self-contained HTML report")
-    p.add_argument("--footer", action="store_true", help="Emit two-line git-trailer block")
-    p.add_argument("--aggregate-pr", action="store_true", help="Aggregate PR commit trailers")
     p.add_argument("--bodies-file", help="(with --aggregate-pr) file with one commit body per line")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--json", action="store_true", help="Emit JSON to stdout")
+    mode.add_argument("--html", metavar="PATH", help="Write self-contained HTML report")
+    mode.add_argument("--footer", action="store_true", help="Emit two-line git-trailer block")
+    mode.add_argument("--aggregate-pr", action="store_true", help="Aggregate PR commit trailers")
     args = p.parse_args()
 
     if args.aggregate_pr:

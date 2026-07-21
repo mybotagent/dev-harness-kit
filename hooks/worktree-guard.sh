@@ -61,12 +61,13 @@ print('.'.join(parts))
 "
 }
 
-set -uo pipefail
-INPUT="$(cat)"
-
-# Source the shared worktree-detection helper.
-# shellcheck source=lib/worktree-detect.sh
-source "$(dirname "$0")/lib/worktree-detect.sh"
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning) + payload-parse.sh for the
+# `deny` helper. The jq-missing warning is informational here — this
+# hook fails closed below via its own printf (deny() itself needs jq).
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
+# shellcheck source=lib/payload-parse.sh
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
 
 # Fail CLOSED if jq is missing. Without jq we cannot parse the
@@ -127,8 +128,8 @@ if [[ "$ORCH_BRANCH" == orch/* ]]; then
 fi
 
 # Detect whether we are in the main checkout or a worktree. The lib
-# function never returns 1 here because we just verified jq exists.
-worktree_detect
+# function never returns 1 here because we just verified jq exists;
+# $WORKTREE_DETECT was already populated by the preamble.
 case "$WORKTREE_DETECT" in
   worktree|outside|"") exit 0 ;;
   main) ;;

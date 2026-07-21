@@ -29,13 +29,16 @@
 #   - Hand-off template lint (`tests/test_acp_hand_off.py`).
 #   - Round-meta write discipline (M-only handoffs.md).
 
-set -uo pipefail
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning). POSIX-safe expansion so the
+# source line still works when PATH is broken (jq-less test envs
+# strip dirname along with jq — same pattern as bash-guard.sh).
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
 
-INPUT="$(cat)"
-
-# Source shared helpers.
+# Source shared payload helpers (`deny` for fail-closed JSON emit).
 # shellcheck source=lib/payload-parse.sh
-source "$(dirname "$0")/lib/payload-parse.sh"
+source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
 
 # Fail CLOSED when jq is missing — the literal scan + discriminator both
 # need jq. Self-contained printf (not the deny() helper, which itself

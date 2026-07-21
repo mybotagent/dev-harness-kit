@@ -17,15 +17,16 @@
 # Fails open (with stderr warning) when `jq` is missing — the rule is
 # advisory in this hook. worktree-guard.sh is the hard-block layer.
 
-set -uo pipefail
-INPUT="$(cat)"
-
-# Source the shared worktree-detection helper.
-# shellcheck source=lib/worktree-detect.sh
-source "$(dirname "$0")/lib/worktree-detect.sh"
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning) + the session-envelope helper.
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
+# shellcheck source=lib/session-envelope.sh
 source "${BASH_SOURCE[0]%/*}/lib/session-envelope.sh"
 
-# Warn (not fail) if jq is missing.
+# Warn (not fail) if jq is missing. The preamble already ran
+# worktree_detect, which leaves $WORKTREE_DETECT="" when jq is absent;
+# the case statement below treats "" as silent / no-op.
 if ! command -v jq >/dev/null 2>&1; then
   worktree_detect_jq_missing_warn "session-start-check.sh"
   exit 0
@@ -33,8 +34,7 @@ fi
 
 extract_hook_cwd "session-start-check.sh"
 
-# Detect whether we are in the main checkout or a worktree.
-worktree_detect
+# Discriminator: already populated by the preamble.
 case "$WORKTREE_DETECT" in
   worktree|outside|"") exit 0 ;;
   main) ;;

@@ -101,6 +101,18 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # `extract_hook_cwd: command not found`.
     "hooks/lib/session-envelope.sh",
     "hooks/lib/worktree-detect.sh",
+    # Shared hook preamble (issue #310 slice 314): `set -uo pipefail`,
+    # `INPUT=$(cat)`, worktree_detect dispatch, and the `::warning::jq
+    # missing` marker. Sourced by every PreToolUse + SessionStart +
+    # PostToolUse hook. Missing from EXPECTED_PATHS caused consumer
+    # repos to ship hooks that crashed with `hook-preamble.sh: No such
+    # file` on first tool call — same failure shape as #273 / #277.
+    "hooks/lib/hook-preamble.sh",
+    # Shared bash-ERE SSOT for credential regexes (issue #310 dup-4).
+    # Consumed by hooks/secret-scan.sh; the Python mirror lives in
+    # lib/analysis_core/runner.py::_SECRET_PATTERNS. Either both
+    # files update or the secret-dim audit silently misses a family.
+    "hooks/lib/secret-patterns.sh",
     "hooks/hooks.json",
     ".claude/rules/git-workflow.md",
     "tests/test_worktree_guard.py",
@@ -124,6 +136,7 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/session-start-check.sh",
     "hooks/review-yml-isolation.sh",
     "hooks/lib/payload-parse.sh",
+    "hooks/lib/hook-preamble.sh",
     "hooks/lib/session-envelope.sh",
     "hooks/lib/worktree-detect.sh",
 )

@@ -34,12 +34,10 @@
 #
 # Hook timeout: 30s (the cost is dominated by `git fetch`).
 
-set -uo pipefail
-INPUT="$(cat)"
-
-# Source the shared worktree-detection helper.
-# shellcheck source=lib/worktree-detect.sh
-source "$(dirname "$0")/lib/worktree-detect.sh"
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning).
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
 
 # Hooks are advisory, but a silent fallback makes the next edit look like an
 # unrelated hard failure from worktree-guard.sh. Always return a handoff
@@ -71,9 +69,9 @@ if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
 
-# Discriminator: only fire in the main checkout. Worktree sessions
-# already follow the rule; outside-git is out of scope.
-worktree_detect
+# Discriminator: already populated by the preamble. Only fire in
+# the main checkout. Worktree sessions already follow the rule;
+# outside-git is out of scope.
 case "$WORKTREE_DETECT" in
   worktree|outside|"") exit 0 ;;
   main) ;;

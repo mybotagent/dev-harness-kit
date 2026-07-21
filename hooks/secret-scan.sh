@@ -8,6 +8,8 @@ set -eo pipefail
 # strip dirname along with jq — see TestSecretScanRefactor.fails_closed).
 # shellcheck source=lib/payload-parse.sh
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+# shellcheck source=lib/secret-patterns.sh
+source "${BASH_SOURCE[0]%/*}/lib/secret-patterns.sh"
 require_jq secret-scan
 read_stdin_json secret-scan
 [ -z "$INPUT_JSON" ] && exit 0
@@ -15,21 +17,12 @@ FILE=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.file_path // ""')
 extract_content
 [ -z "$CONTENT" ] && exit 0
 
-# Patterns (regex). NO secret text in output — masked only.
-PATTERNS=(
-  "AKIA[0-9A-Z]{16}"
-  "sk-[a-zA-Z0-9_-]{20,}"
-  "sk-ant-[a-zA-Z0-9_-]{20,}"
-  "ghp_[a-zA-Z0-9]{36}"
-  "gho_[a-zA-Z0-9]{36}"
-  "xox[bpoa]-[a-zA-Z0-9-]{20,}"
-  "-----BEGIN [A-Z ]*PRIVATE KEY-----"
-  "postgres://[^:]+:[^@]+@"
-  "mongodb\+srv://[^:]+:[^@]+@"
-)
+# Patterns (regex) — sourced from lib/secret-patterns.sh (SSOT mirror of
+# lib/analysis_core/runner.py::_SECRET_PATTERNS). NO secret text in
+# output — masked only.
 
 HITS=()
-for p in "${PATTERNS[@]}"; do
+for p in "${SECRET_PATTERNS[@]}"; do
   MATCHES=$(echo "$CONTENT" | grep -oE "$p" 2>/dev/null | head -3)
   if [ -n "$MATCHES" ]; then
     HITS+=("$p × $(echo "$MATCHES" | wc -l)")

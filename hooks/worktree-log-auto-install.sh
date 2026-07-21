@@ -20,15 +20,15 @@
 # Fails open (exit 0 with stderr warning) when jq is missing — see the
 # worktree-guard.sh pattern; this hook is also non-blocking.
 
-set -uo pipefail
-
-INPUT="$(cat)"
+# Source the shared preamble (set -uo pipefail, INPUT=$(cat),
+# worktree_detect, jq-missing warning). The preamble also sources
+# lib/worktree-detect.sh for us, so we no longer need that line.
+# shellcheck source=lib/hook-preamble.sh
+source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
 
 # Source lib.sh to get jq detection + log script paths.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-# shellcheck source=lib/worktree-detect.sh
-source "$SCRIPT_DIR/lib/worktree-detect.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "worktree-log-auto-install: jq missing; skipping auto-install (run /dev-kit:log setup manually)" >&2

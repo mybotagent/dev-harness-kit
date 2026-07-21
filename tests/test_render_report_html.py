@@ -8,6 +8,7 @@ present for each input shape.
 """
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -482,6 +483,140 @@ class TestRoundTripParsingContract(unittest.TestCase):
             self.assertIsInstance(axes, list)
             for ax in axes:
                 self.assertEqual(len(ax), 2)
+
+
+class TestParserHelpersIter(unittest.TestCase):
+    """Dedup-8 helpers: `_iter_bullets` + `_iter_table_rows`.
+
+    The one-shot parsers used to inline the
+    `for line in body.splitlines(): m = pat.match(line.strip()) ...`
+    loop. Both helpers must:
+      - skip lines that don't match the prefix / format
+      - tolerate leading whitespace on a bullet
+      - tolerate extra pipes on a table row
+      - stop at end-of-section (no off-by-one past the last line)
+      - produce the same structured output as the inline loops did
+    """
+
+    BULLET_PAT = re.compile(r"^[-*]\s+(\w+):\s*(\d+)\s*$")
+    PER_CASE_PAT = re.compile(
+        r"^[-*]\s+\*\*(\w+)\*\*\s+`([^`]+)`\s+\(dim=(\w+)\)\s+score=([0-9.]+)\s+\((.+)\)\s*$"
+    )
+    HEADER_PAT = re.compile(r"^\*\*(\w+):\*\*\s+(.+?)\s*$")
+    TABLE_PAT = re.compile(
+        r"^\|\s*`?(\w+)`?\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*$"
+    )
+
+    def test_bullets_skip_on_bad_prefix(self):
+        # Lines without `-`/`*` bullets, or with non-numeric values,
+        # or with non-word keys are skipped silently.
+        body = (
+            "# heading line\n"
+            "Total cases: 5\n"            # not a bullet
+            "- not_a_kv_pair\n"           # bullet but no `key: int`
+            "- foo: bar\n"                # value not int
+            "- OK: 3\n"                   # the only valid line
+        )
+        groups = [
+            m.groups() for m in render_report_html._iter_bullets(body, self.BULLET_PAT)
+        ]
+        self.assertEqual(groups, [("OK", "3")])
+
+    def test_bullets_handle_leading_whitespace_and_blank_lines(self):
+        # A real markdown body may have blank separators and
+        # 0..N leading spaces (e.g. inside a list item). The helper
+        # strips each line before matching, so a 2-space indent must
+        # NOT disqualify the bullet.
+        body = (
+            "  - OK: 1\n"
+            "\n"
+            "   - DRIFT_WARNING: 2\n"
+            "    - no_colon\n"
+            "   * ROT: 4\n"
+        )
+        groups = [
+            m.groups() for m in render_report_html._iter_bullets(body, self.BULLET_PAT)
+        ]
+        self.assertEqual(groups, [("OK", "1"), ("DRIFT_WARNING", "2"), ("ROT", "4")])
+
+    def test_table_rows_tolerate_extra_pipes(self):
+        # A row with extra pipes (e.g. `| dim | HIGH | MED | LOW | extra |`)
+        # must NOT match the strict 5-pipe pattern. The renderer is
+        # strict by design (inspect data is column-stable), so a
+        # malformed row is skipped rather than partially captured.
+        # The header `| dim | HIGH | MED | LOW |` is also non-numeric
+        # in the 2nd..4th columns, so the helper (not the caller's
+        # `not in ("dim", "---")` guard) skips it.
+        body = (
+            "| dim | HIGH | MED | LOW |\n"
+            "| dead | 1 | 0 | 0 |\n"
+            "| slop | 1 | 0 | 0 | extra |\n"   # extra column -> skip
+            "| cleancode | 0 | 1 | 2 |\n"
+        )
+        rows = [
+            (m.group(1), m.group(2), m.group(3), m.group(4))
+            for m in render_report_html._iter_table_rows(body, self.TABLE_PAT)
+        ]
+        self.assertEqual(
+            rows,
+            [
+                ("dead", "1", "0", "0"),
+                ("cleancode", "0", "1", "2"),
+            ],
+        )
+
+    def test_iteration_stops_at_end_of_section(self):
+        # Trailing content with no newline at EOF must still be
+        # scanned; an off-by-one that drops the last line would break
+        # the per-case renderer (last finding vanishes).
+        body = (
+            "- **OK** `case-1` (dim=review) score=9.0 (p=10, r=8)\n"
+            "- **ROT** `case-2` (dim=review) score=4.0 (p=4, r=4)"  # no trailing \n
+        )
+        rows = list(render_report_html._iter_bullets(body, self.PER_CASE_PAT))
+        self.assertEqual(len(rows), 2)
+        # Per-case regex group 2 is the case_id (after verdict in group 1).
+        self.assertEqual(rows[0].group(2), "case-1")
+        self.assertEqual(rows[1].group(2), "case-2")
+
+    def test_helpers_match_inline_parsers_for_existing_fixtures(self):
+        # Golden round-trip: every one-shot parser that was rewritten
+        # to use the helpers must produce the same structured data it
+        # produced before the refactor, for both EVAL_MIN and INSPECT_MIN.
+        eval_data = render_report_html.parse_eval_sections(EVAL_MIN)
+        inspect_data = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        # Eval summary: OK/DRIFT_WARNING/ROT/SKIPPED, all 1/1/1/0.
+        self.assertEqual(
+            eval_data.summary,
+            {"OK": 1, "DRIFT_WARNING": 1, "ROT": 1, "SKIPPED": 0},
+        )
+        # Per-case: all 3 lines captured with the expected fields.
+        self.assertEqual(len(eval_data.per_case), 3)
+        self.assertEqual(
+            [c["case_id"] for c in eval_data.per_case],
+            ["review-01-clean", "review-02-trap", "review-03-bug"],
+        )
+        # Inspect header: at least Verdict is captured.
+        self.assertEqual(inspect_data.header.get("Verdict"), "Critical")
+        self.assertIn("Coverage", inspect_data.header)
+        self.assertIn("Precision", inspect_data.header)
+        # Per-dim table: 5 rows.
+        self.assertEqual(len(inspect_data.per_dim), 5)
+        self.assertEqual(inspect_data.per_dim[0], ("dead", 1, 0, 0))
+
+    def test_helpers_yield_independent_matches_per_call(self):
+        # Each call constructs a fresh iterator; consuming one
+        # should not affect a subsequent call. (Generators are
+        # single-pass, so this also guards against accidental
+        # reuse bugs.)
+        body = "- OK: 1\n- ROT: 2\n"
+        first = list(render_report_html._iter_bullets(body, self.BULLET_PAT))
+        second = list(render_report_html._iter_bullets(body, self.BULLET_PAT))
+        self.assertEqual(
+            [m.groups() for m in first],
+            [m.groups() for m in second],
+        )
+        self.assertEqual(len(first), 2)
 
 
 if __name__ == "__main__":

@@ -121,7 +121,7 @@ def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[st
         try:
             data = json.loads(m.group(0))
             return {ax: float(data[ax]) for ax in target_axes if ax in data}
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             pass
     return {}
 

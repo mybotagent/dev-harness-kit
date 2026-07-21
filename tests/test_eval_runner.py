@@ -276,7 +276,7 @@ class TestRunEval(unittest.TestCase):
             "# rubric stub",
         )
         with patch.object(
-            llm_judge, "call_judge", side_effect=RuntimeError("api down")
+            llm_judge, "call_judge", side_effect=OSError("api down")
         ), patch.object(
             llm_judge, "load_config",
             return_value={"provider": "minimax", "model": "x",
