@@ -83,6 +83,10 @@ sections:
       **Phase 1 (LCS)** — LCS 서버 + 8 리소스 + 스킬.
 
       **Phase 2 (훅이 LCS 읽기)** — worktree-guard, git-guard 전환.
+      **Iron Law L3**: 각 PR 본문은 `pytest` 출력의 마지막 줄
+      (`<N> passed, <N> skipped in <Ns>s` 또는 `<N> failed in <Ns>s`)
+      패턴을 인용해야 severity gate 통과. PR #319 첫 반복에서
+      적용됨 (commit 참조).
 
       **Phase 3 (평가 확장)** — `lib/eval_runner.py` RUBRIC_REGISTRY
       + harness/OS 루브릭.

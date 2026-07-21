@@ -160,7 +160,7 @@ a:hover { text-decoration: underline; }
 <h2 id="sec-5">마이그레이션 단계 (요약)</h2>
 <p><strong>Phase 0 (포터빌리티)</strong> — <code>lib/runtime_adapters/</code> + CI 매트릭스. 모든 후속 Phase의 선결 조건.</p>
 <p><strong>Phase 1 (LCS)</strong> — LCS 서버 + 8 리소스 + 스킬.</p>
-<p><strong>Phase 2 (훅이 LCS 읽기)</strong> — worktree-guard, git-guard 전환.</p>
+<p><strong>Phase 2 (훅이 LCS 읽기)</strong> — worktree-guard, git-guard 전환. <strong>Iron Law L3</strong>: 각 PR 본문은 <code>pytest</code> 출력의 마지막 줄 (<code>&lt;N&gt; passed, &lt;N&gt; skipped in &lt;Ns&gt;s</code> 또는 <code>&lt;N&gt; failed in &lt;Ns&gt;s</code>) 패턴을 인용해야 severity gate 통과. PR #319 첫 반복에서 적용됨 (commit 참조).</p>
 <p><strong>Phase 3 (평가 확장)</strong> — <code>lib/eval_runner.py</code> RUBRIC_REGISTRY + harness/OS 루브릭.</p>
 <p><strong>Phase 4 (플랜 가치)</strong> — <code>lib/valuation_engine.py</code> + no-go 게이트.</p>
 <p><strong>Phase 5 (리서치 강화)</strong> — <code>lib/research_engine.py</code> + Phase 0–3 에스컬레이션 + 인용 verification.</p>
@@ -198,6 +198,6 @@ a:hover { text-decoration: underline; }
 
 <hr class="section-divider">
 
-<footer>Generated 2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<footer>Generated 2026-07-22 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
 </body>
 </html>
