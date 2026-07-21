@@ -2979,7 +2979,310 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
+@dataclass
+class AnalysisRequest:
+    """Filter set the user requested on the CLI.
+
+    Mirrors the relevant CLI flags without dragging the full argparse
+    Namespace into the snapshot — a snapshot is built once and consumed
+    by JSON + HTML sinks; tests can also build one directly.
+    """
+    repo: str
+    days: int
+    logs_dir: Path
+    branch: str = ""
+    worktree: str = ""
+    cost_gate_tokens: int = DEFAULT_COST_GATE_TOKENS
+    cost_gate_usd: float = DEFAULT_COST_GATE_USD
+    pricing_override: Path | None = None
+    include_worktree_logs: bool = True
+
+
+@dataclass
+class AnalysisSnapshot:
+    """Single immutable artifact shared by JSON + HTML sinks (issue #321 / smell-21).
+
+    The previous shape ran every aggregation inside ``main()`` and again
+    inside ``render_dashboard()``; the two walks could drift on any future
+    edit. With this snapshot, every per-panel number (totals, per-repo /
+    branch / worktree / tool / model breakdowns, active vs. inactive split,
+    cost gate status, warnings, view-model) is computed ONCE and read by
+    both sinks. Drift becomes impossible by construction.
+
+    Field groups:
+
+      * ``request``           — the CLI filter set, echoed into the JSON sink
+      * ``files``             — every JSONL the scanner discovered + deduped
+      * ``windowed``          — sessions in the (repo, days, worktree) window
+                                — feeds the per-repo / branch / worktree
+                                  panels (which intentionally surface other
+                                  branches too, so a ``--branch`` filter
+                                  does not collapse the panel to one row)
+      * ``selected``          — sessions also matching ``--branch``
+                                — feeds the per-session table + JSON totals
+      * ``scored``            — ``[(session, score_dict)]`` for selected
+      * ``warnings_per_session`` — Warning list per selected session
+      * ``reclaim_*``         — per-session reclaim axes (cache / dup /
+                                model_downgrade) for the savings estimate
+      * ``estimated``         — ``estimated_savings(scored)``
+      * ``gate_*``            — cost-gate evaluation
+      * ``unknown_models``    — set populated during pricing
+      * ``wt_meta``           — per-worktree classification
+      * ``total_cost``        — pre-computed sum across selected (echoes to
+                                ``[ok]`` stdout line + JSON ``total_cost_usd``)
+      * ``stale_*``           — stale-cost aggregate
+      * ``view_model``        — the pre-aggregated dashboard data fed to
+                                ``render_dashboard``
+    """
+    request: AnalysisRequest
+    files: list
+    sessions: list
+    windowed: list
+    selected: list
+    scored: list
+    warnings_per_session: list
+    reclaim_cache: list
+    reclaim_dup: list
+    reclaim_downgrade: list
+    estimated: dict
+    gate_status: str
+    gate_violations: list
+    unknown_models: set
+    wt_meta: dict
+    total_cost: float
+    total_tokens: int
+    stale_cost: float
+    stale_pct: float
+    view_model: dict
+
+
+def build_analysis_snapshot(
+    *,
+    repo: str,
+    days: int,
+    logs_dir: Path,
+    branch: str = "",
+    worktree: str = "",
+    cost_gate_tokens: int = DEFAULT_COST_GATE_TOKENS,
+    cost_gate_usd: float = DEFAULT_COST_GATE_USD,
+    pricing_override: Path | None = None,
+    include_worktree_logs: bool = True,
+    repo_root: Path | None = None,
+) -> AnalysisSnapshot:
+    """Build the single AnalysisSnapshot consumed by JSON + HTML sinks.
+
+    ``main()`` calls this once and feeds the result to both sinks; tests
+    can also call it directly with a constructed request. The helper owns
+    the full pipeline:
+
+      1. Apply pricing override (CLI flag)
+      2. Discover JSONL logs (auto-walk worktrees when requested)
+      3. Dedup dual-write sessionId collisions
+      4. Per-file ``aggregate_session`` → ``sessions``
+      5. Stamp ``worktree_state`` from ``wt_meta``
+      6. Filter to ``windowed`` (repo+days+worktree) and ``selected``
+         (repo+days+branch+worktree)
+      7. Score, evaluate warnings, estimate savings, enforce cost gate
+      8. Walk once for unknown-model ids
+      9. Compute totals + stale_cost + stale_pct
+     10. Build the view-model
+
+    Returns an :class:`AnalysisSnapshot` — see its docstring for the
+    field set. The caller is responsible for warning-line emission
+    (unknown models / unknown worktrees / cost-gate stderr lines).
+    """
+    request = AnalysisRequest(
+        repo=repo, days=days, logs_dir=logs_dir,
+        branch=branch, worktree=worktree,
+        cost_gate_tokens=cost_gate_tokens, cost_gate_usd=cost_gate_usd,
+        pricing_override=pricing_override,
+        include_worktree_logs=include_worktree_logs,
+    )
+
+    # Apply pricing override before any pricing call.
+    load_pricing_override(pricing_override)
+
+    resolved_logs_dir = logs_dir.resolve()
+    resolved_repo_root = (Path.cwd().resolve() if include_worktree_logs
+                          else None)
+    files = discover_logs(resolved_logs_dir, repo_root=resolved_repo_root)
+    # Dual-write (#173) places the same sessionId in two files; dedup to
+    # one snapshot per sessionId so cost and branch attribution are not
+    # double-counted or skewed by the stale main-side copy.
+    files = _dedupe_by_session(files)
+
+    # Worktree classification (per project canonical/legacy worktree dir, vs
+    # `git worktree list` + ancestor-of-origin/main check). Skipped when
+    # --no-include-worktree-logs is in effect to avoid surprising git walks.
+    wt_meta: dict[str, dict] = (
+        classify_all_worktrees(resolved_repo_root) if resolved_repo_root is not None else {}
+    )
+
+    sessions: list[dict] = []
+    for p in files:
+        s = aggregate_session(p)
+        if s is not None:
+            sessions.append(s)
+
+    # Stamp worktree_state on each session so the dashboard can mark stale
+    # rows and the summary line can quote the stale-cost total. Always safe
+    # — falls back to "(main)" / "(unknown)" sentinels.
+    for s in sessions:
+        wt = s.get("worktree") or ""
+        if wt == "(main)":
+            s["worktree_state"] = "main"
+        elif wt == "(unknown)":
+            s["worktree_state"] = "unknown"
+        else:
+            entry = wt_meta.get(wt)
+            s["worktree_state"] = entry["state"] if entry else "unknown"
+
+    # --repo scopes ALL aggregate panels (Cost by Repository / Branch /
+    # Worktree / Tool / Model + sessions tables) to the focused project —
+    # not just the per-session total. Pass ``repo`` so the window
+    # matches the selection; an empty string here would let other repos'
+    # sessions bleed into the per-repo / per-branch / per-worktree rows.
+    windowed = filter_sessions(sessions, repo, days, worktree=worktree)
+    selected = filter_sessions(sessions, repo, days, branch, worktree)
+
+    scored: list[tuple[dict, dict]] = [(s, score_session(s)) for s in selected]
+    reclaim_cache = cache_miss_reclaim(scored)
+    reclaim_dup = dup_read_reclaim(scored)
+    reclaim_dn = model_downgrade_reclaim(scored)
+    warnings_per_session = [
+        evaluate_warnings(s, sc, rc, rd, rdn)
+        for (s, sc), rc, rd, rdn in zip(scored, reclaim_cache, reclaim_dup, reclaim_dn)
+    ]
+    estimated = estimated_savings(scored)
+
+    gate_status, gate_violations = enforce_cost_gate(
+        scored, cost_gate_tokens, cost_gate_usd,
+    )
+
+    # Detect unknown model ids (collect during scoring). Re-walk once.
+    unknown_models: set[str] = set()
+    for s in selected:
+        pricing_for(s["model"], _unknown_models=unknown_models)
+
+    # Pre-compute total_cost / total_tokens / stale_cost / stale_pct from
+    # the SAME `selected` set the JSON total_cost_usd + HTML Total Cost
+    # cell will read. Both sinks pull these from the snapshot so they
+    # cannot drift (issue #321 / smell-21).
+    session_costs: list[float] = []
+    for s in selected:
+        session_costs.append(cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        ))
+    total_cost = sum(session_costs)
+    total_tokens = sum(
+        s["input_tokens"] + s["output_tokens"]
+        + s["cache_write_tokens"] + s["cache_read_tokens"]
+        for s in selected
+    )
+
+    stale_cost = sum(
+        c for c, s in zip(session_costs, selected)
+        if s.get("worktree_state") in STALE_WORKTREE_STATES
+    )
+    stale_pct = (stale_cost / total_cost) if total_cost > 0 else 0.0
+
+    # Build the view-model ONCE — both JSON and HTML sinks consume it
+    # (issue #310). Adding a new panel now touches one aggregation site
+    # instead of two (the old ``main()`` / ``render_dashboard()``
+    # duplicated the cost-by-X loops).
+    view_model = build_view_model(
+        repo=repo,
+        days=days,
+        sessions=selected,
+        scored=scored,
+        warnings_per_session=warnings_per_session,
+        estimated=estimated,
+        cost_gate=(gate_status, gate_violations),
+        all_sessions_in_window=windowed,
+        unknown_models=unknown_models,
+        wt_meta=wt_meta,
+        stale_cost=stale_cost,
+        stale_pct=stale_pct,
+    )
+
+    return AnalysisSnapshot(
+        request=request,
+        files=files,
+        sessions=sessions,
+        windowed=windowed,
+        selected=selected,
+        scored=scored,
+        warnings_per_session=warnings_per_session,
+        reclaim_cache=reclaim_cache,
+        reclaim_dup=reclaim_dup,
+        reclaim_downgrade=reclaim_dn,
+        estimated=estimated,
+        gate_status=gate_status,
+        gate_violations=gate_violations,
+        unknown_models=unknown_models,
+        wt_meta=wt_meta,
+        total_cost=total_cost,
+        total_tokens=total_tokens,
+        stale_cost=stale_cost,
+        stale_pct=stale_pct,
+        view_model=view_model,
+    )
+
+
+def _emit_snapshot_warnings(snap: AnalysisSnapshot) -> None:
+    """Emit stderr warnings derived from the snapshot.
+
+    Mirrors the historical stderr lines ``main()`` printed before HTML
+    write / JSON print so the Iron Law ``[ok]`` stdout contract and the
+    stderr warning lines stay in the same order regardless of which sink
+    runs.
+    """
+    if not snap.selected:
+        warn_target = f"repo='{snap.request.repo}'"
+        if snap.request.branch:
+            warn_target += f" branch='{snap.request.branch}'"
+        if snap.request.worktree:
+            warn_target += f" worktree='{snap.request.worktree}'"
+        print(f"[warn] No sessions matched {warn_target} "
+              f"within {snap.request.days} days.", file=sys.stderr)
+
+    # Unknown-model warnings.
+    for m in sorted(snap.unknown_models):
+        print(f"WARN: unknown model '{m}' — using sonnet fallback pricing",
+              file=sys.stderr)
+
+    # Worktree classification fallback warnings.
+    for wt_name, meta in sorted(snap.wt_meta.items()):
+        if meta.get("state") == "unknown" and wt_name != "(main)":
+            print(
+                f"WARN: worktree '{wt_name}' classification failed "
+                f"(branch tip={meta.get('branch_tip','') or '?'}); "
+                f"check that origin/main is fetchable from this repo.",
+                file=sys.stderr,
+            )
+
+    # Cost Gate stderr lines.
+    for line in cost_gate_stderr_lines(snap.gate_violations):
+        print(line, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point — thin dispatch over an :class:`AnalysisSnapshot`.
+
+    Issue #321 / smell-21: every aggregation lives in
+    :func:`build_analysis_snapshot`; ``main()`` parses CLI flags,
+    builds the snapshot once, then forks to the JSON or HTML sink
+    using only the snapshot's pre-computed fields. Both sinks consume
+    the same numbers, so per-panel totals cannot drift (the bug that
+    motivated the split).
+    """
     parser = argparse.ArgumentParser(description="Token efficiency analyzer + HTML dashboard.")
     parser.add_argument("--repo", required=True, help="Repository name to filter (matches basename of cwd).")
     parser.add_argument("--days", type=int, default=30, help="Look-back window in days (default 30).")
@@ -3007,249 +3310,171 @@ def main(argv: list[str] | None = None) -> int:
                              "index-only run.")
     args = parser.parse_args(argv)
 
-    # Apply pricing override before any pricing call.
-    load_pricing_override(Path(args.pricing_override) if args.pricing_override else None)
-
-    logs_dir = Path(args.logs_dir).resolve()
-    repo_root = Path.cwd().resolve() if args.include_worktree_logs else None
-    files = discover_logs(logs_dir, repo_root=repo_root)
-    # Dual-write (#173) places the same sessionId in two files; dedup to
-    # one snapshot per sessionId so cost and branch attribution are not
-    # double-counted or skewed by the stale main-side copy.
-    files = _dedupe_by_session(files)
-    if not files:
+    # Pre-snapshot guard: surface "no logs found" as exit 2 BEFORE we
+    # build a snapshot (no point building one for an empty scan).
+    logs_dir = Path(args.logs_dir)
+    # Cheap probe — does the user-supplied logs dir contain any JSONL?
+    # ``build_analysis_snapshot`` does the heavy walk; we only need to
+    # confirm a JSONL exists under the explicit logs dir (the worktree
+    # auto-walk in ``build_analysis_snapshot`` may find more, but the
+    # CLI was pointing at a specific dir — silence stderr noise).
+    probe_target = logs_dir / "claude-code" if (logs_dir / "claude-code").exists() else logs_dir
+    has_files = probe_target.exists() and any(probe_target.rglob("*.jsonl"))
+    if not has_files:
+        # Mirror the historical stderr message; keep exit code 2.
         print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/"
-              f"{' (including sibling-worktree logs)' if repo_root else ''}",
+              f"{' (including sibling-worktree logs)' if args.include_worktree_logs else ''}",
               file=sys.stderr)
         return 2
 
-    unknown_models: set[str] = set()
-
-    # Worktree classification (per project canonical/legacy worktree dir, vs
-    # `git worktree list` + ancestor-of-origin/main check). Skipped when
-    # --no-include-worktree-logs is in effect to avoid surprising git walks.
-    wt_meta: dict[str, dict] = (
-        classify_all_worktrees(repo_root) if repo_root is not None else {}
-    )
-
-    sessions: list[dict] = []
-    for p in files:
-        s = aggregate_session(p)
-        if s is not None:
-            sessions.append(s)
-
-    # Stamp worktree_state on each session so the dashboard can mark stale
-    # rows and the summary line can quote the stale-cost total. Always safe
-    # — falls back to "(main)" / "(unknown)" sentinels.
-    for s in sessions:
-        wt = s.get("worktree") or ""
-        if wt == "(main)":
-            s["worktree_state"] = "main"
-        elif wt == "(unknown)":
-            s["worktree_state"] = "unknown"
-        else:
-            entry = wt_meta.get(wt)
-            s["worktree_state"] = entry["state"] if entry else "unknown"
-
-    # --repo scopes ALL aggregate panels (Cost by Repository / Branch /
-    # Worktree / Tool / Model + sessions tables) to the focused project —
-    # not just the per-session total. Pass ``args.repo`` so the window
-    # matches the selection; an empty string here would let other repos'
-    # sessions bleed into the per-repo / per-branch / per-worktree rows.
-    windowed = filter_sessions(sessions, args.repo, args.days, worktree=args.worktree)
-    selected = filter_sessions(sessions, args.repo, args.days, args.branch, args.worktree)
-    if not selected:
-        warn_target = f"repo='{args.repo}'"
-        if args.branch:
-            warn_target += f" branch='{args.branch}'"
-        if args.worktree:
-            warn_target += f" worktree='{args.worktree}'"
-        print(f"[warn] No sessions matched {warn_target} within {args.days} days.", file=sys.stderr)
-
-    scored: list[tuple[dict, dict]] = [(s, score_session(s)) for s in selected]
-    reclaim_cache = cache_miss_reclaim(scored)
-    reclaim_dup   = dup_read_reclaim(scored)
-    reclaim_dn    = model_downgrade_reclaim(scored)
-    warnings_per_session = [
-        evaluate_warnings(s, sc, rc, rd, rdn)
-        for (s, sc), rc, rd, rdn in zip(scored, reclaim_cache, reclaim_dup, reclaim_dn)
-    ]
-    estimated = estimated_savings(scored)
-
-    gate_status, gate_violations = enforce_cost_gate(scored, args.cost_gate_tokens, args.cost_gate_usd)
-
-    # Detect unknown model ids (collect during scoring). Re-walk once.
-    for s in selected:
-        pricing_for(s["model"], _unknown_models=unknown_models)
-
-    # Warn about unknown models on stderr (not stdout — stdout is the [ok] contract).
-    for m in sorted(unknown_models):
-        print(f"WARN: unknown model '{m}' — using sonnet fallback pricing", file=sys.stderr)
-
-    # Warn about worktrees whose classification fell back to "unknown"
-    # (typically: no `origin/main` ref, or porcelain git call timed out).
-    for wt_name, meta in sorted(wt_meta.items()):
-        if meta.get("state") == "unknown" and wt_name != "(main)":
-            print(
-                f"WARN: worktree '{wt_name}' classification failed "
-                f"(branch tip={meta.get('branch_tip','') or '?'}); "
-                f"check that origin/main is fetchable from this repo.",
-                file=sys.stderr,
-            )
-
-    # Cost Gate WARN lines (stderr only, after HTML is written so stdout order is stable).
-    for line in cost_gate_stderr_lines(gate_violations):
-        print(line, file=sys.stderr)
-
-    # Pre-compute stale_cost so the view-model can pick it up. The view-
-    # model itself recomputes totals / stale_cost from the scored set;
-    # this local recomputation here is just the stdout [ok] line, which
-    # mirrors the JSON ``total_cost_usd`` field.
-    total_cost = sum(
-        cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        for s in selected
-    )
-
-    # Stale-cost aggregate — sessions whose worktree was merged into
-    # origin/main or whose dir was already removed (gauge the spend left
-    # behind by stale-but-still-on-disk worktrees).
-    stale_cost = sum(
-        cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        for s in selected
-        if s.get("worktree_state") in STALE_WORKTREE_STATES
-    )
-    stale_pct = (stale_cost / total_cost) if total_cost > 0 else 0.0
-
-    # Build the view-model ONCE — both JSON and HTML sinks consume it
-    # (issue #310). Adding a new panel now touches one aggregation site
-    # instead of two (the old ``main()`` / ``render_dashboard()``
-    # duplicated the cost-by-X loops).
-    view_model = build_view_model(
+    # Build the snapshot ONCE — both JSON and HTML sinks consume it.
+    snap = build_analysis_snapshot(
         repo=args.repo,
         days=args.days,
-        sessions=selected,
-        scored=scored,
-        warnings_per_session=warnings_per_session,
-        estimated=estimated,
-        cost_gate=(gate_status, gate_violations),
-        all_sessions_in_window=windowed,
-        unknown_models=unknown_models,
-        wt_meta=wt_meta,
-        stale_cost=stale_cost,
-        stale_pct=stale_pct,
+        logs_dir=logs_dir,
+        branch=args.branch,
+        worktree=args.worktree,
+        cost_gate_tokens=args.cost_gate_tokens,
+        cost_gate_usd=args.cost_gate_usd,
+        pricing_override=Path(args.pricing_override) if args.pricing_override else None,
+        include_worktree_logs=args.include_worktree_logs,
     )
-    active_count = view_model["active_count"]
-    inactive_count = view_model["inactive_count"]
+
+    # Empty-but-valid case: no error, but no selected sessions either.
+    # ``build_analysis_snapshot`` doesn't fail-fast on empty; honor the
+    # historical exit-0 (e.g. ``test_main_mixed_flat_and_nested``) but
+    # still allow downstream JSON/HTML to render with empty panels.
+    _emit_snapshot_warnings(snap)
 
     if args.json:
-        # JSON output is a thin serialization of the view-model + raw
-        # session list (filtered-by-repo / branch / worktree). Per-panel
-        # numbers all come from ``view_model`` so JSON + HTML stay
-        # numerically identical.
-        out = {
-            "repo": args.repo,
-            "branch": args.branch,
-            "branch_filter_active": bool(args.branch),
-            "worktree": args.worktree,
-            "worktree_filter_active": bool(args.worktree),
-            "days": args.days,
-            "files_scanned": len(files),
-            "sessions": len(selected),
-            "active_sessions": active_count,
-            "inactive_sessions": inactive_count,
-            "total_cost_usd": round(view_model["totals"]["total_cost"], 4),
-            "stale_cost_usd": round(stale_cost, 4),
-            "stale_pct": round(stale_pct, 4),
-            "estimated_savings_usd": view_model["estimated"],
-            "cost_gate": {
-                "status": gate_status,
-                "tokens_threshold": args.cost_gate_tokens,
-                "usd_threshold": args.cost_gate_usd,
-                "violations": [
-                    {k: (round(v[k], 4) if isinstance(v[k], float) else v[k]) for k in v}
-                    for v in gate_violations
-                ],
-            },
-            "warnings": view_model["warnings"],
-            "unknown_models": view_model["unknown_models"],
-            "worktrees": view_model["cost_by_worktree_rows"],
-        }
-        print(json.dumps(out, indent=2, ensure_ascii=False))
-        if gate_status == "bad":
-            return 3
-        return 0
+        return _emit_json(snap)
 
-    out_path = Path(args.out) if args.out else Path(f"token-dashboard-{args.repo}-{args.days}d.html")
-    transcripts_dirname = (out_path.stem + ".assets") if args.transcripts else ""
-
-    html_out = render_dashboard(
-        repo=args.repo,
-        days=args.days,
-        sessions=selected,
-        scored=scored,
-        warnings_per_session=warnings_per_session,
-        estimated=estimated,
-        cost_gate=(gate_status, gate_violations),
-        all_sessions_in_window=windowed,
-        unknown_models=unknown_models,
-        wt_meta=wt_meta,
-        stale_cost=stale_cost,
-        stale_pct=stale_pct,
-        worktree_filter=args.worktree,
-        transcripts_dirname=transcripts_dirname,
-        view_model=view_model,
+    out_path = Path(args.out) if args.out else Path(
+        f"token-dashboard-{snap.request.repo}-{snap.request.days}d.html"
     )
+    transcripts_written = _render_html(snap, out_path, transcripts_enabled=args.transcripts)
 
-    out_path.write_text(html_out, encoding="utf-8")
-
-    # Transcript sidecars — one dir per worktree, one page per session, plus a
-    # per-worktree index. Written after the dashboard so stdout order is stable.
-    # Navigation is <a href> only, so nothing is loaded until the user clicks.
-    transcripts_written = 0
-    if args.transcripts:
-        assets_dir = out_path.with_name(out_path.stem + ".assets")
-        dash_href = f"../../{out_path.name}"
-        sessions_by_wt: dict[str, list[dict]] = defaultdict(list)
-        for s in selected:
-            sessions_by_wt[s.get("worktree") or "(unknown)"].append(s)
-        for wt, wt_sessions in sessions_by_wt.items():
-            wt_dir = assets_dir / _safe_seg(wt)
-            wt_dir.mkdir(parents=True, exist_ok=True)
-            (wt_dir / "index.html").write_text(
-                render_worktree_index(wt, wt_sessions, main_href=dash_href),
-                encoding="utf-8",
-            )
-            for s in wt_sessions:
-                (wt_dir / _sid_file(s["session_id"])).write_text(
-                    render_transcript_page(
-                        Path(s["log_path"]), s, main_href=dash_href, wt_href="index.html",
-                    ),
-                    encoding="utf-8",
-                )
-                transcripts_written += 1
-
-    # Console summary (stdout — Iron Law contract).
-    print(f"[ok] sessions={len(selected)}  files_scanned={len(files)}  "
-          f"total_cost=${total_cost:.2f}  estimated_savings=${estimated['total']:.2f}  "
-          f"stale_cost=${stale_cost:.2f}  transcripts={transcripts_written}")
+    # Console summary (stdout — Iron Law contract). All numbers come
+    # from the snapshot; no recomputation here, so JSON+HTML+stdout
+    # cannot drift on totals.
+    print(f"[ok] sessions={len(snap.selected)}  files_scanned={len(snap.files)}  "
+          f"total_cost=${snap.total_cost:.2f}  "
+          f"estimated_savings=${snap.estimated['total']:.2f}  "
+          f"stale_cost=${snap.stale_cost:.2f}  "
+          f"transcripts={transcripts_written}")
     print(f"[ok] dashboard -> {out_path}")
     return 0
+
+
+def _emit_json(snap: AnalysisSnapshot) -> int:
+    """Render the JSON sink from the snapshot.
+
+    Pulls every per-panel number from the snapshot's ``view_model`` so
+    JSON + HTML agree bit-for-bit (issue #321 / smell-21 fix).
+    """
+    request = snap.request
+    vm = snap.view_model
+    out = {
+        "repo": request.repo,
+        "branch": request.branch,
+        "branch_filter_active": bool(request.branch),
+        "worktree": request.worktree,
+        "worktree_filter_active": bool(request.worktree),
+        "days": request.days,
+        "files_scanned": len(snap.files),
+        "sessions": len(snap.selected),
+        "active_sessions": vm["active_count"],
+        "inactive_sessions": vm["inactive_count"],
+        # ``total_cost_usd`` derives from ``snap.total_cost`` (the same
+        # figure HTML echoes) — both sinks read from the snapshot.
+        "total_cost_usd": round(snap.total_cost, 4),
+        "stale_cost_usd": round(snap.stale_cost, 4),
+        "stale_pct": round(snap.stale_pct, 4),
+        "estimated_savings_usd": vm["estimated"],
+        "cost_gate": {
+            "status": snap.gate_status,
+            "tokens_threshold": request.cost_gate_tokens,
+            "usd_threshold": request.cost_gate_usd,
+            "violations": [
+                {k: (round(v[k], 4) if isinstance(v[k], float) else v[k]) for k in v}
+                for v in snap.gate_violations
+            ],
+        },
+        "warnings": vm["warnings"],
+        "unknown_models": vm["unknown_models"],
+        "worktrees": vm["cost_by_worktree_rows"],
+    }
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    if snap.gate_status == "bad":
+        return 3
+    return 0
+
+
+def _render_html(snap: AnalysisSnapshot, out_path: Path, *,
+                 transcripts_enabled: bool) -> int:
+    """Render the HTML dashboard + (optional) transcript sidecars.
+
+    Returns the count of transcript sidecar pages written so
+    ``main()`` can echo it on the ``[ok]`` stdout line.
+    """
+    transcripts_dirname = (out_path.stem + ".assets") if transcripts_enabled else ""
+
+    html_out = render_dashboard(
+        repo=snap.request.repo,
+        days=snap.request.days,
+        sessions=snap.selected,
+        scored=snap.scored,
+        warnings_per_session=snap.warnings_per_session,
+        estimated=snap.estimated,
+        cost_gate=(snap.gate_status, snap.gate_violations),
+        all_sessions_in_window=snap.windowed,
+        unknown_models=snap.unknown_models,
+        wt_meta=snap.wt_meta,
+        stale_cost=snap.stale_cost,
+        stale_pct=snap.stale_pct,
+        worktree_filter=snap.request.worktree,
+        transcripts_dirname=transcripts_dirname,
+        view_model=snap.view_model,
+    )
+    out_path.write_text(html_out, encoding="utf-8")
+
+    transcripts_written = 0
+    if transcripts_enabled:
+        transcripts_written = _write_transcript_sidecars(
+            snap.selected, out_path,
+        )
+    return transcripts_written
+
+
+def _write_transcript_sidecars(selected: list[dict], out_path: Path) -> int:
+    """Write per-worktree transcript sidecar pages; return the count.
+
+    One dir per worktree, one page per session, plus a per-worktree
+    index. Navigation is <a href> only, so nothing is loaded until the
+    user clicks.
+    """
+    assets_dir = out_path.with_name(out_path.stem + ".assets")
+    dash_href = f"../../{out_path.name}"
+    sessions_by_wt: dict[str, list[dict]] = defaultdict(list)
+    for s in selected:
+        sessions_by_wt[s.get("worktree") or "(unknown)"].append(s)
+    written = 0
+    for wt, wt_sessions in sessions_by_wt.items():
+        wt_dir = assets_dir / _safe_seg(wt)
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        (wt_dir / "index.html").write_text(
+            render_worktree_index(wt, wt_sessions, main_href=dash_href),
+            encoding="utf-8",
+        )
+        for s in wt_sessions:
+            (wt_dir / _sid_file(s["session_id"])).write_text(
+                render_transcript_page(
+                    Path(s["log_path"]), s, main_href=dash_href, wt_href="index.html",
+                ),
+                encoding="utf-8",
+            )
+            written += 1
+    return written
 
 
 if __name__ == "__main__":
