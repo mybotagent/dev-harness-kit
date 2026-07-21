@@ -1615,7 +1615,7 @@ class TestWorktreeStaleness(unittest.TestCase):
         import subprocess
 
         from token_efficiency_analyzer import (
-            FRESH_WORKTREE_MAX_AGE_SECONDS,
+            WORKTREE_FRESH_MAX_AGE_SECONDS,
             classify_worktree_dir,
         )
 
@@ -1695,8 +1695,8 @@ class TestWorktreeStaleness(unittest.TestCase):
             self.assertEqual(meta["branch_name"], "feat/x")
 
             # 2. MERGED — HEAD == origin/main SHA, log empty (rebase-merged).
-            # Backdate mtime so it falls outside FRESH_WORKTREE_MAX_AGE_SECONDS.
-            _age_dir(wt_root, seconds_old=FRESH_WORKTREE_MAX_AGE_SECONDS + 600)
+            # Backdate mtime so it falls outside WORKTREE_FRESH_MAX_AGE_SECONDS.
+            _age_dir(wt_root, seconds_old=WORKTREE_FRESH_MAX_AGE_SECONDS + 600)
             meta = classify_worktree_dir(
                 wt_root, root,
                 git_runner=_fake_git_run_factory(
@@ -1728,7 +1728,7 @@ class TestWorktreeStaleness(unittest.TestCase):
                 ),
             )
             # The worktree dir was just created in this test → mtime is
-            # within FRESH_WORKTREE_MAX_AGE_SECONDS → state="fresh".
+            # within WORKTREE_FRESH_MAX_AGE_SECONDS → state="fresh".
             self.assertEqual(meta["state"], "fresh")
             self.assertTrue(meta["is_fresh"])
 

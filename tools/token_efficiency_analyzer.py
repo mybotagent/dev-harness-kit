@@ -137,6 +137,14 @@ DEFAULT_COST_GATE_USD    = 5.00      # dollar cost in one session
 #: into Stale Cost -- everything else (main/live/fresh/unknown) is "Active".
 STALE_WORKTREE_STATES = frozenset({"merged", "gone"})
 
+#: Worktree mtime freshness threshold (seconds) for the ``fresh`` state.
+#: A worktree whose HEAD matches ``origin/main`` AND whose directory mtime
+#: is at most this many seconds old is classified as ``fresh``. Older
+#: worktrees with the same HEAD are classified as ``merged``. The value
+#: matches the FRESH_WORKTREE_MAX_AGE_SECONDS documented in earlier
+#: analyzer revisions.
+WORKTREE_FRESH_MAX_AGE_SECONDS = 3600
+
 # Recommendation strings keyed by warning code. Rendered into the
 # "Recommended Optimizations" block in the dashboard.
 WARNING_RECOMMENDATIONS: dict[str, str] = {
@@ -662,8 +670,8 @@ def classify_worktree_dir(
             import time as _time
             age = _time.time() - mtime
         except OSError:
-            age = FRESH_WORKTREE_MAX_AGE_SECONDS + 1
-        if age <= FRESH_WORKTREE_MAX_AGE_SECONDS:
+            age = WORKTREE_FRESH_MAX_AGE_SECONDS + 1
+        if age <= WORKTREE_FRESH_MAX_AGE_SECONDS:
             state = "fresh"
             is_fresh = True
         else:
