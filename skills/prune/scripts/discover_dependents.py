@@ -46,11 +46,11 @@ _REPO_ROOT = _SCRIPT_DIR.parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.analysis_core.dimensions import group  # noqa: E402
 from lib.analysis_core.runner import (  # noqa: E402  (sys.path tweak above)
     emit_suggested_diffs,
     run_analysis,
 )
-from lib.analysis_core.dimensions import group  # noqa: E402
 
 
 def _within_repo(path: Path) -> bool:
