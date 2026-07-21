@@ -387,7 +387,7 @@ jobs:
           # touch_probe.touches_prod = 'true' and the gate below stays in
           # force. If no, the verdict + human-gate owns approval.
           TOUCHES="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
-              --jq '.files // [] | .[] | .path' 2>/dev/null \
+              --json files --jq '.files[].path' 2>/dev/null \
             | grep -E '^(lib|tools|hooks|skills|\.githooks|\.claude|\.codex|\.github)/' \
             || true)"
           if [ -n "$TOUCHES" ]; then
@@ -416,7 +416,7 @@ jobs:
           TOUCHES_PROD: ${{ steps.touch_probe.outputs.touches_prod || '' }}
         run: |
           set -uo pipefail
-          PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --jq -r .body // '')"
+          PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json body --jq '.body // ""')"
 
           # pytest -q canonical form is one of:
           #   all-green:   `<N> passed, <N> skipped in <Ns>s`
