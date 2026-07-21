@@ -1,0 +1,38 @@
+# CODEOWNERS — required reviewers per path.
+#
+# Owners are auto-added as required reviewers when a PR touches a path
+# they own. The current repo is a single-author project (@sh-ai-x owns
+# everything), but the granular rules below let future maintainers scope
+# their review responsibility as the team grows.
+#
+# Format reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: any change requires an owner review.
+*                                          @sh-ai-x
+
+# Hot paths — changes here need extra eyes from the rules-of-the-repo
+# author. These match the policy files in rules/ so a rule change has to
+# walk past the author before it lands.
+/rules/                                    @sh-ai-x
+/CLAUDE.md                                 @sh-ai-x
+
+# Security-adjacent — secret-scan, cost-gate, and the auth surface live
+# here, plus the run-commands hook scripts that execute arbitrary bash.
+# A bypass here is a bypass of the project's enforcement layer; require
+# owner review at minimum.
+# (combined rule for hooks + .githooks + the security skill)
+hooks/*.sh                                 @sh-ai-x
+/.githooks/                                @sh-ai-x
+skills/security/                           @sh-ai-x
+skills/secret-scan/                        @sh-ai-x
+
+# Release / version contract — bump the plugin version + manifest atom.
+.claude-plugin/                            @sh-ai-x
+.github/workflows/version-bump.yml         @sh-ai-x
+.github/workflows/ci.yml                   @sh-ai-x
+.github/workflows/review.yml               @sh-ai-x
+
+# Hand-off / dispatch tools — the routing layer between agents and CLI.
+tools/parallel_dispatch.py                 @sh-ai-x
+tools/session_monitor.py                   @sh-ai-x
+tools/token_efficiency_analyzer.py         @sh-ai-x
