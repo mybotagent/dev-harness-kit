@@ -3,7 +3,7 @@
 Two pure-function primitives consumed by the babysit-pr skill
 (`skills/babysit-pr/SKILL.md`):
 
-  is_stale_lock(path, ttl_seconds=1800)
+  is_stale_lock(path, ttl_seconds=LOCK_TTL_SECONDS)
       Detect a stale babysit.lock left behind by a SIGKILL / OOM /
       network-partition during a previous run. Stale locks wedge every
       future babysit-pr iteration. Returns True when EITHER
@@ -12,7 +12,7 @@ Two pure-function primitives consumed by the babysit-pr skill
             exists (Linux: pid absent from /proc; macOS: kill(0)
             fails with ESRCH).
 
-  classify_check(check, now_epoch, ghost_threshold_seconds=300)
+  classify_check(check, now_epoch, ghost_threshold_seconds=GHOST_CHECK_THRESHOLD_SECONDS)
       Classify a single `gh pr checks` entry. Returns one of
         approved  -- conclusion in {success, skipped, neutral}
         failing   -- conclusion in {failure, cancelled, timed_out,
@@ -32,6 +32,12 @@ Both helpers are deterministic (no time-of-day randomness -- callers
 pass `now_epoch`) so regression tests can reproduce ghost / fresh-lock
 states without sleeping.
 
+The default TTL (LOCK_TTL_SECONDS = 1800) and ghost threshold
+(GHOST_CHECK_THRESHOLD_SECONDS = 300) are exported as module-level
+constants so a future tweak in one place is reflected everywhere
+(function defaults, docstrings, any future caller that wants the
+canonical value).
+
 This module is the exclusive home for babysit-pr reliability
 primitives. It does not touch `lib/analysis_core/*` or
 `tools/skill_usage.py`.
@@ -46,6 +52,17 @@ from pathlib import Path
 from typing import Any, Mapping, Union
 
 PathLike = Union[str, os.PathLike]
+
+# Default TTL for an `is_stale_lock` check: 30 minutes. Generous for the
+# babysit-pr per-iteration push cycle, but tight enough that a SIGKILL
+# during a run leaves a stale lock the next iteration can detect.
+LOCK_TTL_SECONDS: int = 1800
+
+# Default ghost-check threshold for `classify_check`: 5 minutes. Any
+# check that has been pending longer than this with no fresh
+# startedAt/updatedAt (or no databaseId at all) is treated as a ghost
+# the babysit-pr loop should stop waiting on.
+GHOST_CHECK_THRESHOLD_SECONDS: int = 300
 
 # Outcome strings observed by `gh pr checks --json name,state,conclusion`
 # in the wild (union of GitHub Actions conclusion vocabulary).
@@ -95,7 +112,7 @@ def _parse_pid_from_lock(content: str) -> int | None:
 
 def is_stale_lock(
     path: PathLike,
-    ttl_seconds: int = 1800,
+    ttl_seconds: int = LOCK_TTL_SECONDS,
     *,
     now_epoch: float | None = None,
 ) -> bool:
@@ -177,7 +194,7 @@ def classify_check(
     check: Mapping[str, Any],
     now_epoch: float,
     *,
-    ghost_threshold_seconds: int = 300,
+    ghost_threshold_seconds: int = GHOST_CHECK_THRESHOLD_SECONDS,
 ) -> str:
     """Classify a `gh pr checks` entry.
 

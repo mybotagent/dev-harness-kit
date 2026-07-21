@@ -59,6 +59,46 @@ def _make_pid_dead_body() -> str:
     return "2026-07-18T14:23:45Z pid=1 branch=feat/x"  # /proc/1 may exist on Linux; covered below
 
 
+class TestModuleConstants(unittest.TestCase):
+    """Issue #310: the lock TTL (1800) and ghost-check threshold (300)
+    live as module-level constants so the values are not duplicated
+    between function defaults and docstrings. Re-exports keep the
+    constants importable as `bpr.LOCK_TTL_SECONDS` / `bpr.GHOST_CHECK_THRESHOLD_SECONDS`.
+    """
+
+    def test_lock_ttl_constant_matches_prior_default(self):
+        # 1800 was the previous default value for `is_stale_lock(..., ttl_seconds=...)`.
+        # Pinning it here means any future change to the module default
+        # surfaces here as a deliberate constant bump, not an accidental edit.
+        self.assertEqual(bpr.LOCK_TTL_SECONDS, 1800)
+
+    def test_ghost_check_threshold_constant_matches_prior_default(self):
+        # 300 was the previous default for `classify_check(..., ghost_threshold_seconds=...)`.
+        self.assertEqual(bpr.GHOST_CHECK_THRESHOLD_SECONDS, 300)
+
+    def test_constants_are_reexported(self):
+        import importlib
+        mod = importlib.import_module("babysit_pr_reliability")
+        # The constants must be top-level module attributes so external
+        # callers (the babysit-pr skill) can read them without instantiating
+        # anything.
+        self.assertTrue(hasattr(mod, "LOCK_TTL_SECONDS"))
+        self.assertTrue(hasattr(mod, "GHOST_CHECK_THRESHOLD_SECONDS"))
+        # And the function defaults must point at the constants so there is
+        # exactly one place to bump the numbers.
+        import inspect
+        sig_stale = inspect.signature(bpr.is_stale_lock)
+        sig_classify = inspect.signature(bpr.classify_check)
+        self.assertEqual(
+            sig_stale.parameters["ttl_seconds"].default,
+            bpr.LOCK_TTL_SECONDS,
+        )
+        self.assertEqual(
+            sig_classify.parameters["ghost_threshold_seconds"].default,
+            bpr.GHOST_CHECK_THRESHOLD_SECONDS,
+        )
+
+
 class TestIsStaleLock(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
