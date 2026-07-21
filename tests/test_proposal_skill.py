@@ -126,6 +126,54 @@ class RenderBodyTests(unittest.TestCase):
         self.assertIn('href="https://example.com/280"', out)
         self.assertIn(">the issue</a>", out)
 
+    def test_link_javascript_scheme_rejected(self):
+        """`javascript:` href must NOT render as executable anchor.
+
+        Reviewer finding (PR #319): HTML escape prevents attribute
+        breakout but does not restrict URL scheme. A `javascript:`
+        link is still a clickable executable link when the file is
+        opened from `file://`. Render as escaped text instead.
+        """
+        out = rph.render_body("[open](javascript:alert(1))")
+        # No executable anchor produced:
+        self.assertNotIn("<a", out)
+        # Label text + scheme text both survive (in the fallback format
+        # `label (href)`):
+        self.assertIn("open", out)
+        self.assertIn("javascript:alert(1)", out)
+        # Crucially, no executable href:
+        self.assertNotIn('href="javascript:', out)
+
+    def test_link_data_scheme_rejected(self):
+        out = rph.render_body("[click](data:text/html,<script>alert(1)</script>)")
+        self.assertNotIn("<a", out)
+        self.assertNotIn('href="data:', out)
+
+    def test_link_vbscript_scheme_rejected(self):
+        out = rph.render_body("[click](vbscript:msgbox(1))")
+        self.assertNotIn("<a", out)
+        self.assertNotIn('href="vbscript:', out)
+
+    def test_link_file_scheme_rejected(self):
+        """file:// links are rejected: the proposal HTML is meant to be
+        safe-to-open from file://, so allowing file: links would defeat that."""
+        out = rph.render_body("[click](file:///etc/passwd)")
+        self.assertNotIn('href="file:', out)
+
+    def test_link_mailto_allowed(self):
+        out = rph.render_body("[email](mailto:a@b.com)")
+        self.assertIn('href="mailto:a@b.com"', out)
+
+    def test_link_https_with_query_allowed(self):
+        out = rph.render_body("[x](https://a.com/x?y=z&q=v)")
+        self.assertIn('href="https://a.com/x?y=z&amp;q=v"', out)
+
+    def test_link_relative_no_scheme_rejected(self):
+        """A bare relative path has no scheme and would resolve to
+        file://. Reject."""
+        out = rph.render_body("[x](../etc/passwd)")
+        self.assertNotIn("<a", out)
+
     def test_unordered_list(self):
         out = rph.render_body("- one\n- two\n- three")
         self.assertIn("<ul>", out)

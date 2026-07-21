@@ -47,13 +47,18 @@ Mirror patterns: `lib/render_report_html.py` (eval+inspect reports),
 """
 from __future__ import annotations
 
+import argparse
 import html
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional
 
 import yaml
+
+from lib.atomic import atomic_write_text
 
 KST = timezone(timedelta(hours=9))
 
@@ -255,6 +260,12 @@ def parse_proposal_yaml(text: str) -> Proposal:
 _INLINE_TOKEN_RE = re.compile(
     r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))"
 )
+# Allowlist for hyperlink href schemes. Anything else (javascript:, data:,
+# vbscript:, file:, raw text without a scheme) is rendered as escaped text
+# rather than an executable anchor. file:// is rejected because the
+# proposal HTML is meant to be safe-to-open from file://; allowing file:
+# inside would defeat that.
+_SAFE_URL_SCHEMES = re.compile(r"^(?:https?|mailto):", re.IGNORECASE)
 
 
 def _render_inline(text: str) -> str:
@@ -282,7 +293,21 @@ def _render_inline(text: str) -> str:
             link_m = re.match(r"\[([^\]]+)\]\(([^)]+)\)", token)
             if link_m:
                 label, href = link_m.group(1), link_m.group(2)
-                pieces.append(f'<a href="{html.escape(href, quote=True)}">{label}</a>')
+                # Note: `label` and `href` come from the already-escaped
+                # `safe` text, so they contain HTML entities (e.g. `&amp;`).
+                # We must NOT re-escape them or `&amp;` becomes `&amp;amp;`.
+                # Only `"` needs escaping to keep the attribute intact.
+                href_attr = href.replace('"', "&quot;")
+                if _SAFE_URL_SCHEMES.match(href.strip()):
+                    pieces.append(f'<a href="{href_attr}">{label}</a>')
+                else:
+                    # Disallowed scheme (javascript:, data:, vbscript:, file:,
+                    # relative w/o protocol, raw text). Render as plain text
+                    # with parens so it reads naturally:
+                    # `[click](javascript:alert(1))` -> `click (javascript:alert(1))`.
+                    # Note: the regex consumes `[label](href` and the leftover
+                    # `)` after the match stays in the surrounding text.
+                    pieces.append(f"{label} ({href})")
             else:
                 pieces.append(token)
         else:
@@ -538,3 +563,134 @@ def render(p: Proposal) -> str:
 def render_from_yaml(text: str) -> str:
     """Convenience wrapper: parse YAML text and render in one call."""
     return render(parse_proposal_yaml(text))
+
+
+# --- CLI entry point --------------------------------------------------------
+#
+# Per the proposal-skill design (see skills/proposal/SKILL.md and
+# docs/proposals/), the maintainer regenerates HTML from YAML by invoking
+# this lib as a module:
+#
+#   python3 -m lib.render_proposal_html <name>
+#
+# The CLI lives in the lib (not a separate `bin/dev-kit-proposal.py`) so
+# the path-traversal guard, atomic-write, and error reporting are
+# colocated with the render logic.
+#
+# Usage:
+#   python3 -m lib.render_proposal_html 00-index         # render one
+#   python3 -m lib.render_proposal_html --list            # list proposals
+#   python3 -m lib.render_proposal_html --all             # render all
+
+# --- CLI entry point --------------------------------------------------------
+#
+# Per the proposal-skill design (see skills/proposal/SKILL.md and
+# docs/proposals/), the maintainer regenerates HTML from YAML by invoking
+# this lib as a module:
+#
+#   python3 -m lib.render_proposal_html <name>
+#
+# The CLI lives in the lib (not a separate `bin/dev-kit-proposal.py`) so
+# the path-traversal guard, atomic-write, and error reporting are
+# colocated with the render logic.
+#
+# Usage:
+#   python3 -m lib.render_proposal_html 00-index         # render one
+#   python3 -m lib.render_proposal_html --list            # list proposals
+#   python3 -m lib.render_proposal_html --all             # render all
+
+_NAME_OK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def _list_proposals(project_root: Path) -> list[str]:
+    pdir = project_root / "docs" / "proposals"
+    if not pdir.exists():
+        return []
+    return sorted(p.stem for p in pdir.glob("*.yaml") if p.is_file())
+
+
+def _render_one(project_root: Path, name: str) -> int:
+    """Render one proposal. Returns process exit code."""
+    if not _NAME_OK_RE.fullmatch(name):
+        print(
+            f"error: invalid proposal name {name!r}: must match kebab/snake slug",
+            file=sys.stderr,
+        )
+        return 1
+
+    proposals_dir = (project_root / "docs" / "proposals").resolve()
+    src = proposals_dir / f"{name}.yaml"
+    out = proposals_dir / f"{name}.html"
+
+    src_resolved = src.resolve()
+    out_resolved = out.resolve()
+    if proposals_dir not in src_resolved.parents or proposals_dir not in out_resolved.parents:
+        print(f"error: path traversal blocked ({name!r})", file=sys.stderr)
+        return 1
+
+    if not src.exists():
+        print(f"error: source not found: {src}", file=sys.stderr)
+        print(f"hint: create {src} or run --list", file=sys.stderr)
+        return 1
+
+    text = src.read_text(encoding="utf-8")
+    try:
+        html_doc = render_from_yaml(text)
+    except (ValueError, KeyError) as e:
+        print(f"error: failed to parse {src}: {e}", file=sys.stderr)
+        return 1
+
+    atomic_write_text(out, html_doc)
+    size_kb = len(html_doc.encode("utf-8")) / 1024
+    print(f"wrote {out} ({size_kb:.1f} KB, source: {src.name})")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python3 -m lib.render_proposal_html",
+        description="Render a docs/proposals/<name>.yaml to <name>.html",
+    )
+    parser.add_argument(
+        "name",
+        nargs="?",
+        help="proposal name (file: docs/proposals/<name>.yaml)",
+    )
+    parser.add_argument(
+        "--project-root", default=".",
+        help="project root (default: cwd)",
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="list available proposals and exit",
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="render all proposals and exit",
+    )
+    args = parser.parse_args(argv)
+    root = Path(args.project_root).resolve()
+
+    if args.list:
+        names = _list_proposals(root)
+        if not names:
+            print("(no proposals found under docs/proposals/)")
+            return 0
+        for n in names:
+            print(n)
+        return 0
+
+    if args.all:
+        names = _list_proposals(root)
+        if not names:
+            print("no proposals found", file=sys.stderr)
+            return 1
+        for n in names:
+            _render_one(root, n)
+        return 0
+
+    if not args.name:
+        parser.error("proposal name required (or pass --list to see available)")
+    return _render_one(root, args.name)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -7,8 +7,7 @@ when_to_use: |
   - User types /dev-kit:proposal
   - User wants to share a draft proposal/plan with reviewers before implementation
   - User wants to view an existing proposal as a single self-contained HTML doc
-allowed-tools: Read Bash
-disallowed-tools: Write Edit
+allowed-tools: Read Write Bash
 model: sonnet
 user-invocable: true
 ---
@@ -21,10 +20,14 @@ Renders any `docs/proposals/<name>.yaml` proposal to a single self-contained HTM
 
 ## What it does
 
-1. List available proposals: `python3 bin/dev-kit-proposal.py --list`
-2. Render one: `python3 bin/dev-kit-proposal.py <name>` writes `docs/proposals/<name>.html`
+1. List available proposals: `python3 -m lib.render_proposal_html --list`
+2. Render one: `python3 -m lib.render_proposal_html <name>` writes `docs/proposals/<name>.html`
 3. Print the file path so the user can open it in a browser (`open docs/proposals/<name>.html` on macOS, or any browser via `file://`).
-4. Stop. The skill does not edit or write the YAML — the user authors the proposal; this skill renders.
+4. Stop. The skill does not edit the YAML — the user authors the proposal; this skill renders.
+
+The render logic lives in `lib/render_proposal_html.py` (pure function) plus a
+`__main__` CLI entry (`python3 -m lib.render_proposal_html`). No separate
+`bin/dev-kit-proposal.py` — see the "Architecture" section below.
 
 ## Output (in chat)
 
@@ -94,10 +97,18 @@ The YAML is hand-edited, not generated. Re-run `/dev-kit:proposal <name>` to ref
 
 ## Related
 
-- `lib/render_proposal_html.py` -- pure function: `parse_proposal_yaml` + `render`
-- `bin/dev-kit-proposal.py` -- CLI driver
+- `lib/render_proposal_html.py` -- pure function: `parse_proposal_yaml` + `render` + `__main__` CLI entry
 - `lib/render_report_html.py` -- sibling renderer (eval + inspect reports)
-- `bin/dev-kit-report.py` -- sibling CLI driver
-- `skills/report/SKILL.md` -- sibling skill pattern (read-only skill + bin CLI driver)
+- `bin/dev-kit-report.py` -- sibling CLI driver (kept as-is; this skill no longer uses this pattern)
+- `skills/report/SKILL.md` -- sibling skill (still uses the read-only-skill + bin CLI pattern; we deviated from it)
+
+## Architecture
+
+This skill deviates from the project's typical read-only-skill + `bin/dev-kit-*` CLI
+pattern. The proposal skill has Write permission and invokes
+`python3 -m lib.render_proposal_html <name>` directly. The CLI logic lives in
+the lib's `__main__` block. Rationale: the proposal skill is the only
+caller, the maintainer workflow is "edit YAML, regenerate HTML", and a
+separate binary added indirection without adding capability.
 - `docs/proposals/` -- proposal source/output directory (YAML in, HTML out)
 - Issue #280 -- the MCP harness analysis is the first proposal authored against this skill
