@@ -191,8 +191,11 @@ class TestRunSessionDimCached(unittest.TestCase):
 
     def test_rot_not_cached(self):
         # First call raises -> ROT, no cache write.
+        # After the #310 slice 315 narrowing, only (OSError, JSONDecodeError,
+        # KeyError) are converted to ROT; RuntimeError must propagate so
+        # the test exercises the same documented exception family.
         with patch.object(llm_judge, "call_judge",
-                          side_effect=RuntimeError("api down")):
+                          side_effect=OSError("api down")):
             r1 = eval_runner.run_session_dim(self.root, self.root_good,
                                              config=self.config)
         # Second call should also hit the network (no cache from ROT).
