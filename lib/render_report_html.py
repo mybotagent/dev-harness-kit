@@ -14,7 +14,7 @@ import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 KST = timezone(timedelta(hours=9))
 
@@ -131,15 +131,40 @@ def _parse_sections(md: str) -> Dict[str, str]:
 # ---------- eval parsing ----------
 
 
+def _iter_bullets(body: str, pattern: re.Pattern) -> Iterator[re.Match]:
+    """Yield regex matches for every line in `body` that matches `pattern`.
+
+    The one-shot markdown parsers below share a common shape: split the
+    body into lines, strip each one, and run a regex. This helper is the
+    dedup target for that loop (inspect finding dup-8).
+    """
+    for line in body.splitlines():
+        m = pattern.match(line.strip())
+        if m:
+            yield m
+
+
+def _iter_table_rows(body: str, pattern: re.Pattern) -> Iterator[re.Match]:
+    """Yield regex matches for every table line in `body`.
+
+    Mirrors `_iter_bullets`; kept as a separate name so call sites read
+    like a small DSL (`_iter_bullets` for `- foo` lists, `_iter_table_rows`
+    for `| col | col |` rows).
+    """
+    for line in body.splitlines():
+        m = pattern.match(line.strip())
+        if m:
+            yield m
+
+
 def _parse_eval_summary(body: str) -> Dict[str, int]:
     """Pull 'Total cases / OK / DRIFT_WARNING / ROT / SKIPPED' from bullets."""
     out: Dict[str, int] = {}
-    for line in body.splitlines():
-        m = re.match(r"^[-*]\s+(\w+):\s*(\d+)\s*$", line.strip())
-        if m:
-            key, val = m.group(1), int(m.group(2))
-            if key in ("Total", "OK", "DRIFT_WARNING", "ROT", "SKIPPED"):
-                out[key] = val
+    summary_pat = re.compile(r"[-*]\s+(\w+):\s*(\d+)\s*$")
+    for m in _iter_bullets(body, summary_pat):
+        key, val = m.group(1), int(m.group(2))
+        if key in ("Total", "OK", "DRIFT_WARNING", "ROT", "SKIPPED"):
+            out[key] = val
     return out
 
 
@@ -167,16 +192,14 @@ def _parse_eval_per_case(body: str) -> List[Dict[str, str]]:
     pat = re.compile(
         r"^[-*]\s+\*\*(\w+)\*\*\s+`([^`]+)`\s+\(dim=(\w+)\)\s+score=([0-9.]+)\s+\((.+)\)\s*$"
     )
-    for line in body.splitlines():
-        m = pat.match(line.strip())
-        if m:
-            out.append({
-                "verdict": m.group(1),
-                "case_id": m.group(2),
-                "dim": m.group(3),
-                "score": m.group(4),
-                "axes": m.group(5),
-            })
+    for m in _iter_bullets(body, pat):
+        out.append({
+            "verdict": m.group(1),
+            "case_id": m.group(2),
+            "dim": m.group(3),
+            "score": m.group(4),
+            "axes": m.group(5),
+        })
     return out
 
 
@@ -186,10 +209,9 @@ def _parse_eval_per_case(body: str) -> List[Dict[str, str]]:
 def _parse_inspect_header(body: str) -> Dict[str, str]:
     """Pull '**Verdict:**', '**Coverage:**', '**Precision:**' from header body."""
     out: Dict[str, str] = {}
-    for line in body.splitlines():
-        m = re.match(r"^\*\*(\w+):\*\*\s+(.+?)\s*$", line.strip())
-        if m:
-            out[m.group(1)] = m.group(2)
+    header_pat = re.compile(r"^\*\*(\w+):\*\*\s+(.+?)\s*$")
+    for m in _iter_bullets(body, header_pat):
+        out[m.group(1)] = m.group(2)
     return out
 
 
@@ -249,9 +271,9 @@ def _parse_inspect_findings(body: str) -> List[Dict[str, str]]:
 def _parse_inspect_per_dim_table(body: str) -> List[Tuple[str, int, int, int]]:
     """Parse the '| dim | HIGH | MED | LOW |' table."""
     out: List[Tuple[str, int, int, int]] = []
-    for line in body.splitlines():
-        m = re.match(r"^\|\s*`?(\w+)`?\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*$", line)
-        if m and m.group(1) not in ("dim", "---"):
+    pat = re.compile(r"^\|\s*`?(\w+)`?\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*$")
+    for m in _iter_table_rows(body, pat):
+        if m.group(1) not in ("dim", "---"):
             out.append((m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))))
     return out
 
