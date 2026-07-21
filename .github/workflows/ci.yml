@@ -204,3 +204,44 @@ jobs:
           import state_codec, active_hooks_codec, write_project_md, execute
           print('all 4 lib modules importable')
           "
+
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    # Skip on bump-PRs — same skip rationale as test:/validate: above. Ruff
+    # is invariant under a 0.3.X -> 0.3.Y version bump, so re-running it on
+    # the auto-generated bump commit produces noise without value.
+    if: |
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+      && !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 so ruff can blame ownership / detect introduced-in-
+          # PR violations vs. baseline-leaked violations (parity with the
+          # pre-commit hook's behavior on the developer side).
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        # Pinned to the version .githooks/pre-commit invokes locally, so the
+        # developer-side and CI-side gates produce byte-identical output.
+        # Bump together with .ruff.toml's target-version if/when the project
+        # upgrades its lint baseline.
+        run: pip install --quiet "ruff==0.15.16"
+      - name: ruff check
+        # Same flag set as .githooks/pre-commit: --exit-zero so a tree with
+        # no Python files (e.g. a docs-only PR) exits 0 instead of failing
+        # on "no Python files to check". Ruff treats no-Python-found as
+        # exit 0 by default; --exit-zero only matters when combined with
+        # a later subcommand. --no-fix because the gate only diagnoses;
+        # auto-fix is a developer-side affordance.
+        #
+        # NOTE: --exit-zero-empty is NOT a valid ruff flag in 0.15.x
+        # (the closest is --exit-zero). The previous CI check used it
+        # verbatim, which caused `error: unexpected argument
+        # '--exit-zero-empty' found` on the first PR run through the
+        # new gate. Fixed to --exit-zero per `ruff check --help`.
+        run: ruff check --exit-zero --no-fix .

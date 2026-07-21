@@ -576,79 +576,122 @@ class TestReportDictsPreserved(unittest.TestCase):
 
 
 class TestCliConflictRejection(unittest.TestCase):
-    """`_validate_cli_args` rejects mutually-exclusive flag combinations
-    and missing prerequisites. The CLI is the user-facing surface — a
-    silent typo (e.g. `--session-log` with no log path) must error, not
-    produce a misleading summary.
+    """`build_parser` + `_validate_cli_args` reject mutually-exclusive
+    flag combos and missing prerequisites. The CLI is the user-facing
+    surface — a silent typo (e.g. `--session-log` with no log path) must
+    error, not produce a misleading summary.
+
+    Issue #310: `--session-log` and `--golden-diff` are now enforced as
+    a native argparse `add_mutually_exclusive_group`, so the parser
+    itself rejects the combination with exit 2. `--session-log` also
+    declares `conflicts_with` against `--dim` / `--case`. The remaining
+    prerequisite checks (`--write-*` requires its mode flag) still
+    live in `_validate_cli_args`.
     """
 
-    def test_write_session_report_requires_session_log(self):
+    def _ns(
+        self,
+        session_log=None,
+        write_session_report=False,
+        golden_diff=False,
+        write_regression_report=False,
+        dim=None,
+        case=None,
+    ):
         import argparse
-        ns = argparse.Namespace(
-            session_log=None, write_session_report=True,
-            golden_diff=False, write_regression_report=False,
-            dim=None, case=None,
+        return argparse.Namespace(
+            session_log=session_log,
+            write_session_report=write_session_report,
+            golden_diff=golden_diff,
+            write_regression_report=write_regression_report,
+            dim=dim,
+            case=case,
         )
-        with self.assertRaises(SystemExit):
-            eval_runner._validate_cli_args(ns)
 
-    def test_write_regression_report_requires_golden_diff(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=None, write_session_report=False,
-            golden_diff=False, write_regression_report=True,
-            dim=None, case=None,
-        )
-        with self.assertRaises(SystemExit):
-            eval_runner._validate_cli_args(ns)
+    # ---- argparse-level checks (issue #310) ---------------------------
 
-    def test_session_log_and_golden_diff_mutually_exclusive(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=Path("/x.jsonl"), write_session_report=False,
-            golden_diff=True, write_regression_report=False,
-            dim=None, case=None,
-        )
-        with self.assertRaises(SystemExit):
-            eval_runner._validate_cli_args(ns)
+    def test_session_log_and_golden_diff_mutually_exclusive_via_parser(self):
+        """`--session-log + --golden-diff` is rejected at parse time with exit 2.
+
+        Previously this combination silently selected one mode via the
+        precedence `if args.session_log: ... else: ...` in `main()`. The
+        fix promotes the check into a `add_mutually_exclusive_group()` so
+        argparse itself emits the error and exit code.
+        """
+        parser = eval_runner.build_parser()
+        with self.assertRaises(SystemExit) as cm:
+            parser.parse_args([
+                "--session-log", "/tmp/x.jsonl",
+                "--golden-diff",
+            ])
+        # argparse uses exit code 2 for usage errors.
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_session_log_alone_passes_via_parser(self):
+        parser = eval_runner.build_parser()
+        ns = parser.parse_args(["--session-log", "/tmp/x.jsonl"])
+        self.assertEqual(ns.session_log, "/tmp/x.jsonl")
+        self.assertFalse(ns.golden_diff)
+
+    def test_golden_diff_alone_passes_via_parser(self):
+        parser = eval_runner.build_parser()
+        ns = parser.parse_args(["--golden-diff"])
+        self.assertTrue(ns.golden_diff)
+        self.assertIsNone(ns.session_log)
+
+    def test_no_args_passes_via_parser(self):
+        parser = eval_runner.build_parser()
+        ns = parser.parse_args([])
+        self.assertIsNone(ns.session_log)
+        self.assertFalse(ns.golden_diff)
 
     def test_session_log_rejects_dim_filter(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=Path("/x.jsonl"), write_session_report=False,
-            golden_diff=False, write_regression_report=False,
-            dim="review", case=None,
-        )
+        """`--session-log + --dim` is rejected: per-dim filters only apply
+        to the per-dim `run_eval` path, not the session-log judge.
+        Lives in `_validate_cli_args` because argparse on the runtime
+        Python (3.13) does not expose `conflicts_with` for declaratively
+        expressing this cross-group conflict.
+        """
         with self.assertRaises(SystemExit):
-            eval_runner._validate_cli_args(ns)
+            eval_runner._validate_cli_args(self._ns(
+                session_log=Path("/x.jsonl"),
+                dim="review",
+            ))
+
+    def test_session_log_rejects_case_filter(self):
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(self._ns(
+                session_log=Path("/x.jsonl"),
+                case="foo",
+            ))
+
+    # ---- prerequisite checks (still in _validate_cli_args) ------------
+
+    def test_write_session_report_requires_session_log(self):
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(self._ns(
+                write_session_report=True,
+            ))
+
+    def test_write_regression_report_requires_golden_diff(self):
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(self._ns(
+                write_regression_report=True,
+            ))
 
     def test_no_args_passes(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=None, write_session_report=False,
-            golden_diff=False, write_regression_report=False,
-            dim=None, case=None,
-        )
         # Plain per-dim run with no extras → no error
-        eval_runner._validate_cli_args(ns)
+        eval_runner._validate_cli_args(self._ns())
 
     def test_session_log_alone_passes(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=Path("/x.jsonl"), write_session_report=False,
-            golden_diff=False, write_regression_report=False,
-            dim=None, case=None,
-        )
-        eval_runner._validate_cli_args(ns)
+        eval_runner._validate_cli_args(self._ns(
+            session_log=Path("/x.jsonl"),
+        ))
 
     def test_golden_diff_alone_passes(self):
-        import argparse
-        ns = argparse.Namespace(
-            session_log=None, write_session_report=False,
-            golden_diff=True, write_regression_report=False,
-            dim=None, case=None,
-        )
-        eval_runner._validate_cli_args(ns)
+        eval_runner._validate_cli_args(self._ns(
+            golden_diff=True,
+        ))
 
 
 # helpers used by TestReportDictsPreserved (removed — inlined via setUp)

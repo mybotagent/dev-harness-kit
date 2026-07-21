@@ -23,6 +23,7 @@ Two opt-in dims (NOT auto-invoked, default OFF):
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import logging
@@ -1054,23 +1055,68 @@ def write_regression_report(project_root: Path, reg: Dict) -> Path:
 # ---------- CLI mode validation (issue #310) ----------
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Build the `python -m eval_runner` / `python eval_runner.py` parser.
+
+    Exposed so tests (and callers reusing the CLI structure) can build a
+    parser without spawning a subprocess. `--session-log` and `--golden-diff`
+    go into a `add_mutually_exclusive_group()` so argparse itself rejects
+    `--session-log + --golden-diff` with exit 2, replacing the previous
+    post-hoc `parser.error()` workaround that silently relied on
+    precedence-based selection in `main()`.
+
+    Note: `--session-log` against `--dim` / `--case` is still enforced in
+    `_validate_cli_args` because the runtime Python (3.13) argparse does
+    not yet expose `conflicts_with` on `add_argument`.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description="Run agent-behavior eval")
+    parser.add_argument("--project-root", default=".", help="project root")
+    parser.add_argument("--dry-run", action="store_true", help="skip LLM calls")
+    parser.add_argument(
+        "--dim",
+        choices=SUPPORTED_DIMS,
+        help="restrict to one dimension (default: all)",
+    )
+    parser.add_argument("--case", help="restrict to a single case_id")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--session-log",
+        metavar="PATH",
+        help="opt-in: judge a session log on the 8-axis session rubric",
+    )
+    mode.add_argument(
+        "--golden-diff",
+        action="store_true",
+        help="opt-in: diff the run_eval result against eval/golden/*.json",
+    )
+    parser.add_argument(
+        "--write-session-report",
+        action="store_true",
+        help="with --session-log, write .dev-kit/session-eval-report.md",
+    )
+    parser.add_argument(
+        "--write-regression-report",
+        action="store_true",
+        help="with --golden-diff, write .dev-kit/regression-report.md",
+    )
+    return parser
+
+
 def _validate_cli_args(args) -> None:
     """Reject mutually-exclusive / missing-prerequisite flag combos.
 
-    The CLI is the user-facing surface — a silent typo (e.g.
-    `--write-session-report` without `--session-log`) must error
-    loudly instead of producing a misleading summary. Mutually-
-    exclusive combinations:
+    argparse itself enforces the `--session-log` ⟂ `--golden-diff`
+    mutex (via `add_mutually_exclusive_group`); this function keeps the
+    remaining post-parse checks:
 
-      - `--session-log` ⟂ `--golden-diff`
-      - `--session-log` ⟂ `--dim` / `--case` (per-dim filters only
-        apply to the per-dim run path)
       - `--write-session-report` requires `--session-log`
       - `--write-regression-report` requires `--golden-diff`
+      - `--session-log` rejects `--dim` / `--case` (per-dim filters
+        only apply to the per-dim `run_eval` path)
 
     Raises `SystemExit` (via argparse error) on the first violation.
     """
-    import argparse
     has_session = bool(getattr(args, "session_log", None))
     has_golden = bool(getattr(args, "golden_diff", False))
     has_write_session = bool(getattr(args, "write_session_report", False))
@@ -1088,11 +1134,6 @@ def _validate_cli_args(args) -> None:
         parser.error(
             "--write-regression-report requires --golden-diff",
         )
-    if has_session and has_golden:
-        parser = argparse.ArgumentParser()
-        parser.error(
-            "--session-log and --golden-diff are mutually exclusive",
-        )
     if has_session and (has_dim or has_case):
         parser = argparse.ArgumentParser()
         parser.error(
@@ -1101,36 +1142,7 @@ def _validate_cli_args(args) -> None:
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Run agent-behavior eval")
-    parser.add_argument("--project-root", default=".", help="project root")
-    parser.add_argument("--dry-run", action="store_true", help="skip LLM calls")
-    parser.add_argument(
-        "--dim",
-        choices=SUPPORTED_DIMS,
-        help="restrict to one dimension (default: all)",
-    )
-    parser.add_argument("--case", help="restrict to a single case_id")
-    parser.add_argument(
-        "--session-log",
-        metavar="PATH",
-        help="opt-in: judge a session log on the 8-axis session rubric",
-    )
-    parser.add_argument(
-        "--golden-diff",
-        action="store_true",
-        help="opt-in: diff the run_eval result against eval/golden/*.json",
-    )
-    parser.add_argument(
-        "--write-session-report",
-        action="store_true",
-        help="with --session-log, write .dev-kit/session-eval-report.md",
-    )
-    parser.add_argument(
-        "--write-regression-report",
-        action="store_true",
-        help="with --golden-diff, write .dev-kit/regression-report.md",
-    )
+    parser = build_parser()
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
     _validate_cli_args(args)
