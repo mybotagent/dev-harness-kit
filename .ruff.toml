@@ -6,4 +6,22 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [lint.per-file-ignores]
+# Tests import under mutated sys.path — the E402 (module-level import not
+# at top) is intentional and uniform across the test suite.
 "tests/**/*.py" = ["E402"]
+
+# /dev-kit:review's bug fixtures intentionally contain names that "look
+# broken" — undefined references, swallowed exceptions, hard-coded paths.
+# These are the corpus the review-skill agent reads to flag real bugs in
+# real PRs; ruff linting them as live Python code mislabels fixtures as
+# source. Skip the rule families that depend on whether code is meant
+# to run, keep the ones a typo could introduce (E/W whitespace, bare
+# except). W292 (no newline at end of file) is structural and kept too.
+"skills/review/fixtures/**/*.py" = ["F821", "F841", "E722"]
+
+# /dev-kit:ci-setup templates install CI workflows into target projects.
+# They reach into globals deliberately (pytest plugin hooks, argparse
+# shims) and are not shipped as importable libraries. Ignore the same
+# families as the review fixtures above.
+"templates/ci/scripts/*.py" = ["F821", "F841", "E722"]
+"templates/ci/tests/*.py" = ["E402", "F821", "F841", "E722"]
