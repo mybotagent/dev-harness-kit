@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 # When run as ``python3 tools/session_monitor.py`` the script's own dir is
 # already ``sys.path[0]``; the explicit insert also covers ``import
@@ -353,77 +353,140 @@ def _enrich_branches_from_worktrees(sessions: list[Session],
 def build_agent_graph(path: Path) -> AgentGraph:
     """Stream one session's jsonl into a parent -> sub-agent graph.
 
-    In the main transcript, ``tool_use`` blocks with ``name == "Agent"`` are
-    the spawn edges. ``isSidechain: true`` lines are the sub-agent execution
-    transcripts. Sidechain lines are grouped into chains by walking
-    ``parentUuid`` links; the k-th spawn is correlated to the k-th chain by
-    encounter order (a documented heuristic -- the wire log does not carry the
-    parent tool_use id into the sidechain). Codex logs have no sidechains and
-    yield an empty node list."""
-    root_prompt = ""
-    nodes: list[AgentNode] = []
-    chains: dict[str, dict] = {}
-    order: list[str] = []
-    uuid_to_root: dict[str, dict] = {}
+    Composes three pure steps (decoding, edge collection, correlation)
+    so each layer can be tested in isolation:
 
+    1. :func:`_decode_transcript` -- reads + parses jsonl records,
+       skipping blank / malformed lines with a narrow exception set.
+    2. :func:`_collect_spawn_nodes` -- walks assistant ``Agent``
+       ``tool_use`` blocks in encounter order.
+    3. :func:`_collect_sidechain_chains` -- groups ``isSidechain``
+       lines by walking ``parentUuid`` links.
+    4. :func:`_correlate_nodes_to_chains` -- pairs spawn nodes to
+       chains positionally (the wire log does not carry the parent
+       tool_use id into the sidechain).
+
+    Codex logs have no sidechains and yield an empty node list.
+    """
     if not Path(path).is_file():
-        return AgentGraph(session_id=Path(path).stem, root_user_prompt="", nodes=[])
+        return AgentGraph(session_id=Path(path).stem,
+                          root_user_prompt="", nodes=[])
+    records = list(_decode_transcript(path))
+    root_prompt = _extract_root_prompt(records)
+    nodes = _collect_spawn_nodes(records)
+    chains = _collect_sidechain_chains(records)
+    _correlate_nodes_to_chains(nodes, chains)
+    return AgentGraph(session_id=Path(path).stem,
+                      root_user_prompt=root_prompt, nodes=nodes)
 
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+
+def _decode_transcript(path: Path) -> Iterable[dict]:
+    """Yield parsed jsonl records from a session log.
+
+    Skips blank lines and lines that fail to parse. Exceptions are
+    narrowed to the realistic failure set: ``OSError`` (file open /
+    read) and ``json.JSONDecodeError`` (parse). Anything else (e.g.
+    ``AttributeError`` from a bug upstream) propagates so the failure
+    is visible during development rather than silently dropped."""
+    p = Path(path)
+    if not p.is_file():
+        return
+    try:
+        fh = open(p, "r", encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    try:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
             try:
                 obj = json.loads(line)
-            except Exception:
+            except json.JSONDecodeError:
                 continue
+            yield obj
+    finally:
+        fh.close()
 
-            if obj.get("isSidechain"):
-                uuid = obj.get("uuid") or ""
-                parent = obj.get("parentUuid")
-                root = uuid_to_root.get(parent) if parent else None
-                if root is None:
-                    root = uuid or f"chain-{len(order)}"
-                    order.append(root)
-                    chains[root] = {"turns": 0, "last_ts": None}
-                if uuid:
-                    uuid_to_root[uuid] = root
-                chains[root]["turns"] += 1
-                ts = tea.parse_iso(obj.get("timestamp", "") or "")
-                if ts and (chains[root]["last_ts"] is None
-                           or ts > chains[root]["last_ts"]):
-                    chains[root]["last_ts"] = ts
+
+def _extract_root_prompt(records: list[dict]) -> str:
+    """Return the first ``user`` message's text, truncated to 200 chars.
+
+    Empty string when no user message is present (e.g. Codex-only
+    transcripts whose first line is ``session_meta``)."""
+    for obj in records:
+        if obj.get("type") == "user":
+            return _first_user_text(obj.get("message") or {})[:200]
+    return ""
+
+
+def _collect_spawn_nodes(records: list[dict]) -> list[AgentNode]:
+    """Extract ``Agent`` ``tool_use`` spawn edges from the main
+    transcript (non-sidechain ``assistant`` turns), in encounter order."""
+    nodes: list[AgentNode] = []
+    for obj in records:
+        if obj.get("isSidechain"):
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        content = (obj.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for blk in content:
+            if not (isinstance(blk, dict)
+                    and blk.get("type") == "tool_use"
+                    and blk.get("name") == "Agent"):
                 continue
+            inp = blk.get("input") or {}
+            nodes.append(AgentNode(
+                tool_use_id=blk.get("id", "") or "",
+                subagent_type=(inp.get("subagent_type")
+                               or inp.get("agentType") or ""),
+                description=inp.get("description", "") or "",
+                prompt_excerpt=(inp.get("prompt", "") or "")[:200],
+            ))
+    return nodes
 
-            typ = obj.get("type")
-            msg = obj.get("message") or {}
-            if not root_prompt and typ == "user":
-                root_prompt = _first_user_text(msg)[:200]
-            if typ == "assistant":
-                content = msg.get("content")
-                if isinstance(content, list):
-                    for blk in content:
-                        if (isinstance(blk, dict)
-                                and blk.get("type") == "tool_use"
-                                and blk.get("name") == "Agent"):
-                            inp = blk.get("input") or {}
-                            nodes.append(AgentNode(
-                                tool_use_id=blk.get("id", "") or "",
-                                subagent_type=(inp.get("subagent_type")
-                                               or inp.get("agentType") or ""),
-                                description=inp.get("description", "") or "",
-                                prompt_excerpt=(inp.get("prompt", "") or "")[:200],
-                            ))
 
+def _collect_sidechain_chains(records: list[dict]) -> list[tuple[str, dict]]:
+    """Group ``isSidechain`` records into chains by walking ``parentUuid``
+    links. Returns ``[(chain_id, {"turns": int, "last_ts": dt}), ...]``
+    in encounter order. Orphan records (``parentUuid`` pointing at
+    nothing) seed a new chain."""
+    chains: dict[str, dict] = {}
+    order: list[str] = []
+    uuid_to_root: dict[str, str] = {}
+    for obj in records:
+        if not obj.get("isSidechain"):
+            continue
+        uuid = obj.get("uuid") or ""
+        parent = obj.get("parentUuid")
+        root = uuid_to_root.get(parent) if parent else None
+        if root is None:
+            root = uuid or f"chain-{len(order)}"
+            order.append(root)
+            chains[root] = {"turns": 0, "last_ts": None}
+        if uuid:
+            uuid_to_root[uuid] = root
+        chains[root]["turns"] += 1
+        ts = tea.parse_iso(obj.get("timestamp", "") or "")
+        cur = chains[root]["last_ts"]
+        if ts and (cur is None or ts > cur):
+            chains[root]["last_ts"] = ts
+    return [(cid, chains[cid]) for cid in order]
+
+
+def _correlate_nodes_to_chains(nodes: list[AgentNode],
+                               chains: list[tuple[str, dict]]) -> None:
+    """Attach each chain's ``turns`` + ``last_ts`` to the spawn node at
+    the same index. Chains with no matching spawn are dropped; spawns
+    with no matching chain keep ``turn_count=0``. Mutates ``nodes`` in
+    place; returns nothing."""
     for i, node in enumerate(nodes):
-        if i < len(order):
-            ch = chains[order[i]]
-            node.turn_count = ch["turns"]
-            node.last_ts = ch["last_ts"]
-
-    return AgentGraph(session_id=Path(path).stem,
-                      root_user_prompt=root_prompt, nodes=nodes)
+        if i < len(chains):
+            _cid, meta = chains[i]
+            node.turn_count = meta.get("turns", 0) or 0
+            node.last_ts = meta.get("last_ts")
 
 
 def _first_user_text(msg: dict) -> str:
@@ -1187,6 +1250,29 @@ def parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _validate_modes(args) -> list[str]:
+    """Return the active mode flags, or raise SystemExit(2) when more
+    than one is set.
+
+    Modes are mutually exclusive at the CLI layer: ``--list``,
+    ``--json``, ``--print-resume-command``, and ``--cli-setup`` each
+    route the program to a distinct handler. The legacy code let
+    precedence silently pick the first match (e.g. ``--list --json``
+    would print the listing and ignore ``--json``); the explicit
+    conflict detector surfaces the misuse so callers can fix the
+    invocation. ``--cli-setup`` short-circuits via its own early
+    handler and is excluded from the data-mode conflict check.
+    """
+    data_modes = ("list", "json", "print_resume_command")
+    active = [name for name in data_modes if getattr(args, name)]
+    if len(active) > 1:
+        flags = ", ".join(f"--{n.replace('_', '-')}" for n in active)
+        print(f"[session-monitor] conflicting mode flags: {flags}. "
+              f"Pick exactly one.", file=sys.stderr)
+        raise SystemExit(2)
+    return active
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
 
@@ -1212,6 +1298,8 @@ def main(argv=None) -> int:
         skill_agg = skill_usage.aggregate_skill_usage(
             str(logs_dir / '**' / '*.jsonl'), window,
             include_per_cwd=True)
+
+    _validate_modes(args)
 
     if args.list:
         print_plain_listing(model, logs_dir, skill_usage_agg=skill_agg)
