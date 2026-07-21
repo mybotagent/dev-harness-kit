@@ -39,18 +39,18 @@ from pathlib import Path
 try:
     from .ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        _read_env_key,
         detect_owner_repo,
         gh_secret_set_command,
+        read_env_key,
         read_provider,
         required_secrets_for_provider,
     )
 except ImportError:
     from ci_setup import (  # type: ignore  # noqa: E402
         PROVIDER_SECRETS,
-        _read_env_key,
         detect_owner_repo,
         gh_secret_set_command,
+        read_env_key,
         read_provider,
         required_secrets_for_provider,
     )
@@ -589,10 +589,10 @@ def _check_provider_declared(target: Path) -> list[Check]:
     env_val = os.environ.get("CI_REVIEW_PROVIDER", "").strip().lower()
     env_file_val = ""
     if (target / ".env").is_file():
-        env_file_val = _read_env_key(target / ".env", "CI_REVIEW_PROVIDER").lower()
+        env_file_val = read_env_key(target / ".env", "CI_REVIEW_PROVIDER").lower()
     example_val = ""
     if (target / ".env.example").is_file():
-        example_val = _read_env_key(target / ".env.example", "CI_REVIEW_PROVIDER").lower()
+        example_val = read_env_key(target / ".env.example", "CI_REVIEW_PROVIDER").lower()
 
     resolved = next(
         (v for v in (env_val, env_file_val, example_val) if v in PROVIDER_SECRETS),

@@ -61,28 +61,14 @@ from llm_pricing import pricing_for as _loader_pricing_for  # noqa: E402
 DEFAULT_PRICING_KEY = "sonnet"
 
 # Loader returns the sonnet fallback row when the model id does not
-# resolve. We mirror the lookup path through the merged PRICING dict so
-# we can detect the fallback vs an actual match.
+# resolve. We delegate the "is this id known?" check to the public
+# ``lib.llm_pricing.is_known_model`` (issue #310 overarch) so cost_gate
+# no longer reaches into ``_pricing_cache`` (a private lru_cache).
 import llm_pricing as _llm_pricing  # noqa: E402
 
 _UNKNOWN_MODELS: List[str] = []
 
 
-
-
-def _looks_like_known(model_id: str) -> bool:
-    """Return True if model_id resolves to a non-fallback PRICING row."""
-    if not model_id:
-        return False
-    pricing = _llm_pricing._pricing_cache()
-    mid = model_id.lower()
-    if mid in pricing:
-        return True
-    norm_mid = mid.replace("-", "").replace(".", "").replace("_", "")
-    for key in sorted(pricing.keys(), key=len, reverse=True):
-        if key and key.replace("-", "").replace(".", "").replace("_", "") in norm_mid:
-            return True
-    return False
 
 
 def pricing_for(model_id: str, *, return_unknown: bool = False):
@@ -98,7 +84,7 @@ def pricing_for(model_id: str, *, return_unknown: bool = False):
         if return_unknown:
             return _loader_pricing_for(""), list(_UNKNOWN_MODELS)
         return _loader_pricing_for("")
-    if not _looks_like_known(model_id):
+    if not _llm_pricing.is_known_model(model_id):
         _UNKNOWN_MODELS.append(model_id)
     row = _loader_pricing_for(model_id)
     if return_unknown:

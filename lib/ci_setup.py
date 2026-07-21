@@ -29,7 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple
 
-import yaml
+# `yaml` is imported lazily inside `_lint_if_block_scalar_hashes()` so
+# the rest of ci_setup (and consumers that only call install_ci_config /
+# read_provider / plugin_version) can load without PyYAML installed.
+# The `bin/install.sh` consumer ships yaml as a runtime dep, but
+# partial-import consumers and CI lint step should not require it for
+# the install path.
 
 # Atomic write helper. Dual-import supports both shapes:
 #   * source repo: `lib/__init__.py` makes `lib` a package, so intra-package
@@ -40,9 +45,9 @@ import yaml
 #     `<target>/` is on sys.path, which the consumer-side invocations
 #     guarantee).
 try:
-    from .atomic import atomic_write_json  # type: ignore
+    from .atomic import atomic_write_json, read_json_or_default  # type: ignore
 except ImportError:
-    from atomic import atomic_write_json  # type: ignore
+    from atomic import atomic_write_json, read_json_or_default  # type: ignore
 
 # Plugin root (resolved via __file__ so the module is location-independent).
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -218,7 +223,7 @@ def gh_secret_set_command(repo: str, secret_name: str) -> str:
     return f"gh secret set {secret_name} --repo {repo}"
 
 
-def _read_env_key(path: Path, key: str) -> str:
+def read_env_key(path: Path, key: str) -> str:
     """Return the last `KEY=...` value from a dotenv-style file.
 
     Skips blank lines and `#` comments. Does NOT handle multi-line values
@@ -239,6 +244,14 @@ def _read_env_key(path: Path, key: str) -> str:
         if k.strip() == key:
             out = v.strip().strip('"').strip("'")
     return out
+
+
+# Private back-compat alias — same function object. New callers should
+# use the public name `read_env_key` (issue #310 overarch: cross-module
+# coupling on a private symbol). Removal of the private alias is a
+# follow-up; pinning it here keeps the promotion zero-risk for existing
+# callers (`lib/ci_doctor.py` already updated to the public name).
+_read_env_key = read_env_key
 
 
 def read_provider(target_dir: Path | None = None) -> str:
@@ -263,7 +276,7 @@ def read_provider(target_dir: Path | None = None) -> str:
         candidates.append(env_val)
     if target_dir is not None:
         for env_name in (".env", ".env.example"):
-            v = _read_env_key(target_dir / env_name, "CI_REVIEW_PROVIDER").lower()
+            v = read_env_key(target_dir / env_name, "CI_REVIEW_PROVIDER").lower()
             if v:
                 candidates.append(v)
     for c in candidates:
@@ -546,12 +559,7 @@ def _resolve_prior_marker(target: Path) -> Tuple[Path, dict]:
     on the first install or a corrupted prior marker.
     """
     marker_path = target / MARKER_REL
-    if not marker_path.is_file():
-        return marker_path, {}
-    try:
-        return marker_path, json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return marker_path, {}
+    return marker_path, read_json_or_default(marker_path, {})
 
 
 def _is_already_installed(target: Path, marker_path: Path, force: bool) -> bool:
@@ -834,6 +842,10 @@ def _lint_if_block_scalar_hashes(content: str, rel: str) -> List[str]:
     `run:` shell-script blocks or `prompt:` markdown blocks are fine — those
     go through bash / markdown parsers, not the GitHub expression parser.
     """
+    # Lazy import: PyYAML is only needed for the lint path; the install
+    # path (install_ci_config / read_provider / plugin_version) must not
+    # require it.
+    import yaml  # type: ignore
     out: List[str] = []
     try:
         doc = yaml.safe_load(content)
