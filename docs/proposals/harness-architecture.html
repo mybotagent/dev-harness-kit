@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Architecture Proposal — dev-harness-kit</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --fg: #1d1d1f;
+  --bg: #fbfbfd;
+  --muted: #5b5b62;
+  --border: #d2d2d7;
+  --card-bg: #ffffff;
+  --th-bg: #f5f5f7;
+  --row-alt: #fafafa;
+  --code-bg: #f5f5f7;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.08);
+  --ok: #1f8a3b;
+  --warn: #a06400;
+  --bad: #b03030;
+  --callout-bg: rgba(10, 132, 255, 0.06);
+  --callout-border: #0a84ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f5f5f7;
+    --bg: #1c1c1e;
+    --muted: #aeaeb2;
+    --border: #38383a;
+    --card-bg: #2c2c2e;
+    --th-bg: #3a3a3c;
+    --row-alt: #232325;
+    --code-bg: #2c2c2e;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok: #4cd964;
+    --warn: #ff9f0a;
+    --bad: #ff453a;
+    --callout-bg: rgba(10, 132, 255, 0.14);
+    --callout-border: #0a84ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+h2 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; margin: 3.5rem 0 1rem; }
+h3 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 0.6rem; }
+p { margin: 0.7rem 0; }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0 0 2.5rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin: 1.2rem 0 2rem; }
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+  box-shadow: var(--shadow);
+}
+.card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.card .value { font-size: 1.1rem; font-weight: 600; margin-top: 0.3rem; }
+.card .value strong { color: var(--accent); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+th, td { padding: 0.7rem 0.9rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--th-bg); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+tr:nth-child(even) td { background: var(--row-alt); }
+td code, th code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.88em; }
+.callout {
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-border);
+  border-radius: 6px;
+  padding: 0.9rem 1.2rem;
+  margin: 1.5rem 0;
+}
+.callout .label { font-weight: 600; margin-bottom: 0.3rem; display: block; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li > strong { color: var(--accent); }
+code { font-family: 'SF Mono', Menlo, Consolas, monospace; background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code-bg); padding: 0.9rem 1.1rem; border-radius: 8px; overflow-x: auto; font-size: 0.88em; line-height: 1.5; }
+.section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.toc {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.5rem;
+  margin: 0 0 3rem;
+  font-size: 0.95rem;
+}
+.toc strong { display: block; margin-bottom: 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.toc ol { margin: 0; padding-left: 1.2rem; }
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+}
+.tag-ok { background: rgba(31, 138, 59, 0.12); color: var(--ok); }
+.tag-warn { background: rgba(160, 100, 0, 0.12); color: var(--warn); }
+.tag-bad { background: rgba(176, 48, 48, 0.12); color: var(--bad); }
+.tag-info { background: var(--accent-soft); color: var(--accent); }
+footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<h1>Harness Architecture Proposal</h1>
+<p class="meta">dev-harness-kit · discussion thread for <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · 2026-07-21</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ol>
+<li><a href="#summary">TL;DR</a></li>
+<li><a href="#when-mcp">When MCP harness is needed</a></li>
+<li><a href="#compare">MCP vs document harness</a></li>
+<li><a href="#hackathon">Hackathon principles mapped</a></li>
+<li><a href="#types">Harness types — fit for dev-harness-kit</a></li>
+<li><a href="#strategy">Strategic direction — models-eat-harness</a></li>
+<li><a href="#recommendation">Recommendation</a></li>
+<li><a href="#open">Open questions</a></li>
+</ol>
+</div>
+
+<h2 id="summary">1. TL;DR</h2>
+
+<div class="callout">
+<span class="label">One sentence</span>
+MCP harness wins over document harness exactly when the loop needs <strong>live tool integration, multi-actor coordination, or cross-runtime protocol</strong> — otherwise document harness (CLAUDE.md / rules / skills) is sufficient and the model absorbs it for free.
+</div>
+
+<div class="cards">
+<div class="card">
+<div class="label">Document harness</div>
+<div class="value">Static rules, model reads.</div>
+</div>
+<div class="card">
+<div class="label">MCP harness</div>
+<div class="value">Runtime dispatch, protocol-based.</div>
+</div>
+<div class="card">
+<div class="label">Hooks</div>
+<div class="value">Deterministic guards — durable.</div>
+</div>
+<div class="card">
+<div class="label">ACP / agents</div>
+<div class="value">Multi-agent coordination surface.</div>
+</div>
+</div>
+
+<p>For the three loops called out in the maintainer's question (validation, interview, research), MCP harness fits where the loop crosses actor boundaries or needs live data; document harness fits when the loop is single-actor reasoning with static context.</p>
+
+<hr class="section-divider">
+
+<h2 id="when-mcp">2. When MCP harness is most needed</h2>
+
+<p>The maintainer's three priority loops have different MCP-fit profiles:</p>
+
+<table>
+<thead>
+<tr><th>Loop</th><th>What it does</th><th>MCP fit</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Validation loop</strong></td>
+<td>AI-judge + human-judge agents score artifacts, loop until threshold passes</td>
+<td><span class="tag tag-ok">High</span></td>
+<td>Multi-actor coordination; needs shared artifact state across judges; tool calls to real APIs to verify (not mock)</td>
+</tr>
+<tr>
+<td><strong>Interview loop</strong></td>
+<td>Agent interviews user / stakeholder to gather context</td>
+<td><span class="tag tag-info">Medium</span></td>
+<td>Structured turn-taking fits protocol transport; but single-actor works too if the harness owns the question template</td>
+</tr>
+<tr>
+<td><strong>Research loop</strong></td>
+<td>Fan-out N parallel research agents, dedupe, synthesize</td>
+<td><span class="tag tag-ok">High</span></td>
+<td>N-actor fan-out, shared deduplication state, external tool calls (web / docs / API) — exactly what MCP transport gives</td>
+</tr>
+</tbody>
+</table>
+
+<p>MCP harness becomes <strong>necessary</strong> (not just nice-to-have) when <em>any</em> of these is true:</p>
+
+<ul>
+<li><strong>Cross-runtime protocol</strong> — Claude Code + Codex + future SDKs all speak the same wire protocol. Document harness is per-runtime.</li>
+<li><strong>Live tool integration</strong> — MCP servers (Playwright, Stripe, custom in-house tools) expose live capabilities. Document harness can't dispatch to them.</li>
+<li><strong>Multi-actor coordination</strong> — 3+ agents, structured dispatch, tool-call consensus. Document harness is single-actor.</li>
+<li><strong>Validation against real data</strong> — "test with real API" instead of mock. MCP servers provide real data sources.</li>
+<li><strong>Persistent context across sessions</strong> — MCP state lives in a server. Document harness is session-bound.</li>
+</ul>
+
+<p>If <em>none</em> of the above applies to a given workflow, document harness is the right surface and the model absorbs it for free.</p>
+
+<hr class="section-divider">
+
+<h2 id="compare">3. MCP vs document harness</h2>
+
+<table>
+<thead>
+<tr><th>Aspect</th><th>Document harness</th><th>MCP harness</th></tr>
+</thead>
+<tbody>
+<tr><td>Knowledge source</td><td><code>CLAUDE.md</code> / <code>AGENTS.md</code> / <code>rules/</code></td><td>MCP servers (typed resources + tools)</td></tr>
+<tr><td>Update mechanism</td><td>Edit file, restart session</td><td>Restart server / runtime call</td></tr>
+<tr><td>Multi-actor</td><td>Per-actor copy of rules</td><td>Shared server, single source</td></tr>
+<tr><td>Tool dispatch</td><td>Inline code in model output</td><td>Tool registration protocol</td></tr>
+<tr><td>Audit trail</td><td>Git history on the doc</td><td>Server logs (structured)</td></tr>
+<tr><td>Real-time data</td><td>No (static)</td><td>Yes (live tools)</td></tr>
+<tr><td>Cross-runtime</td><td>Per-runtime</td><td>Wire-protocol standard</td></tr>
+<tr><td>Model-absorbs risk</td><td>High (pure reasoning)</td><td>Low (protocol / dispatch)</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">Pick rule of thumb</span>
+Reach for MCP when the loop crosses actor boundaries or touches external state. Reach for documents when the loop is reasoning over a static corpus. They are complements, not competitors — a healthy harness uses both, with the boundary defined by <em>where state lives</em> (file vs server).
+</div>
+
+<hr class="section-divider">
+
+<h2 id="hackathon">4. Hackathon principles mapped to dev-harness-kit</h2>
+
+<p>The maintainer's transcript (the AX Talent War hackathon — 1% acceptance, "context + verification + scaffolding" thesis) maps cleanly onto dev-harness-kit's existing surface.</p>
+
+<h3>Context — "재료가 요리를 결정한다"</h3>
+<p>The agent is already smart. Good context produces good output. dev-harness-kit provides context through:</p>
+<ul>
+<li><code>skills/&lt;name&gt;/SKILL.md</code> — structured workflow context per skill</li>
+<li><code>rules/</code> — cross-cutting rules (git-workflow, session-hygiene, skill-authoring, test-files)</li>
+<li><code>CLAUDE.md</code> / <code>AGENTS.md</code> — global iron laws and stage state</li>
+<li><code>docs/</code> — deep reference (ACP-DISPATCH, COST-ANALYSIS, ADRs, hook-coverage)</li>
+</ul>
+<p>The hackathon's "first prompt is an interview, not a task" maps to <code>/dev-kit:onboard</code> + the interview-loop primitive discussed in §2.</p>
+
+<h3>Verification — "Mock 심사위원을 만들다"</h3>
+<p>Build the judging system before the solution. dev-harness-kit already has this in skeleton form:</p>
+<ul>
+<li><strong>Deterministic guards (enforcement alpha)</strong>: <code>hooks/slop-detector.sh</code>, <code>hooks/secret-scan.sh</code>, <code>hooks/tdd-guard.sh</code>, <code>hooks/bash-guard.sh</code>, <code>hooks/worktree-guard.sh</code>, <code>hooks/stop-verify.sh</code> — the "judge is always running" layer</li>
+<li><strong>Multi-dim review (state alpha)</strong>: <code>/dev-kit:review</code>, <code>/dev-kit:security</code>, <code>/dev-kit:eval</code> — fan-out to per-dimension agents with adversarial verification</li>
+<li><strong>Eval-Repair loop</strong>: <code>/dev-kit:repair</code> — golden → judge → root-cause → fix → judge → A/B → diff → human-approve. The hackathon's 7-round mock-judge loop is the same shape.</li>
+</ul>
+<p>What's <em>missing</em>: the AI-judge / human-judge split as separate skills (the hackathon's "AI judge + human judge = 36 sub-agents" pattern). Adding this is the validation-loop primitive from §2.</p>
+
+<h3>Scaffolding — "공통 구조로 병렬 처리"</h3>
+<p>Same scaffold enables parallelism. dev-harness-kit implements this via:</p>
+<ul>
+<li><strong>State machine</strong>: <code>bootstrap → plan → design → build → review → security → ship</code> — same pipeline regardless of task</li>
+<li><strong>Worktree-per-task</strong>: <code>hooks/worktree-auto-cut.sh</code> + <code>hooks/worktree-guard.sh</code> — physical isolation so parallel agents don't collide</li>
+<li><strong>Fan-out primitive</strong>: <code>tools/parallel_dispatch.py</code> — fan-out + dedupe + verifier + synthesize (closes #177)</li>
+<li><strong>Shared scaffolding assets</strong>: <code>lib/analysis-core</code>, <code>lib/eval_runner.py</code>, <code>lib/render_report_html.py</code> — common engines across skills</li>
+</ul>
+<p>The hackathon's "interview template + scoring rubric + hand-off doc, reused across 3 companies" is structurally identical to <code>lib/analysis-core</code>'s dimension registry — one definition, many consumers.</p>
+
+<hr class="section-divider">
+
+<h2 id="types">5. Harness types — fit for dev-harness-kit</h2>
+
+<p>The maintainer listed several harness shapes. Each maps to a specific surface in this repo:</p>
+
+<table>
+<thead>
+<tr><th>Type</th><th>What it is</th><th>Dev-harness-kit surface</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Command (prompt wrapper)</strong></td>
+<td>Slash command that wraps a prompt</td>
+<td><code>/dev-kit:build</code>, <code>/dev-kit:plan</code>, <code>/dev-kit:ship</code> …</td>
+<td><span class="tag tag-ok">Shipped</span></td>
+</tr>
+<tr>
+<td><strong>Skill bundle</strong></td>
+<td>Structured workflow bundle with frontmatter</td>
+<td><code>skills/&lt;name&gt;/SKILL.md</code></td>
+<td><span class="tag tag-ok">Shipped</span></td>
+</tr>
+<tr>
+<td><strong>Hook</strong></td>
+<td>Deterministic guardrail on tool calls</td>
+<td><code>hooks/*.sh</code> (PreToolUse / PostToolUse / Stop)</td>
+<td><span class="tag tag-ok">Shipped · durable</span></td>
+</tr>
+<tr>
+<td><strong>Document</strong></td>
+<td>CLAUDE.md / AGENTS.md / rules</td>
+<td><code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>rules/</code></td>
+<td><span class="tag tag-warn">Shipped · model-absorbs</span></td>
+</tr>
+<tr>
+<td><strong>CLI</strong></td>
+<td>Standalone executable</td>
+<td><code>bin/*</code></td>
+<td><span class="tag tag-ok">Shipped</span></td>
+</tr>
+<tr>
+<td><strong>Document (heavy)</strong></td>
+<td>Long-form design docs, ADRs</td>
+<td><code>docs/</code>, <code>docs/adr/</code></td>
+<td><span class="tag tag-ok">Shipped</span></td>
+</tr>
+<tr>
+<td><strong>MCP</strong></td>
+<td>Wire-protocol harness, runtime dispatch</td>
+<td><em>(this issue)</em></td>
+<td><span class="tag tag-bad">Not built</span></td>
+</tr>
+<tr>
+<td><strong>Agents (ACP)</strong></td>
+<td>Multi-agent coordination protocol</td>
+<td><code>docs/ACP-DISPATCH.md</code>, <code>docs/acp-harness.md</code></td>
+<td><span class="tag tag-info">Designed · partial</span></td>
+</tr>
+</tbody>
+</table>
+
+<p>Two observations from this map:</p>
+<ol>
+<li><strong>Hooks and CLI are the durable surface</strong> — they encode deterministic guards and external I/O that next-gen models can't absorb.</li>
+<li><strong>Document harness is the absorption target</strong> — the model's native context-loading makes <code>CLAUDE.md</code> + <code>rules/</code> the easiest layer for a model upgrade to subsume. Don't over-invest there.</li>
+</ol>
+
+<hr class="section-divider">
+
+<h2 id="strategy">6. Strategic direction — "models are eating the harness"</h2>
+
+<p>The AI Times article (2026-07-09, citing Noam Brown at OpenAI and Logan Kilpatrick at Google): next-gen models will absorb most current harness functionality within months. CLAUDE.md Iron Laws L6 + L7 already anticipate this:</p>
+
+<blockquote>
+<strong>L6</strong>: New skills must declare <code>alpha: state|enforcement|analysis</code>. Reasoning-only <code>analysis</code> skills are tolerated only for distinct user intents — minimize new instances.<br>
+<strong>L7</strong>: A skill's alpha is the part the model can't self-impose. Don't spend alpha on reasoning the next-gen model will absorb.
+</blockquote>
+
+<h3>Defensible alpha (the things models can't absorb)</h3>
+<ol>
+<li><strong>Enforcement hooks</strong> — PreToolUse / PostToolUse / Stop hooks short-circuit the model's tool calls. The model can't absorb what prevents it from acting.</li>
+<li><strong>State machines</strong> — <code>bootstrap → plan → design → build → review → security → ship</code> state with persisted progress across sessions. Format-stuck value.</li>
+<li><strong>Cost attribution</strong> — <code>/dev-kit:cost-gate</code> reads real provider pricing + USD spend. Real money is the spine that doesn't model-collapse.</li>
+<li><strong>External truth</strong> — <code>/dev-kit:ci-doctor</code> (live <code>gh</code> API), <code>/dev-kit:cost-gate</code> (real pricing) — what the model can't make up.</li>
+</ol>
+
+<h3>Things models WILL absorb</h3>
+<ol>
+<li>Pure reasoning skills (<code>analysis</code> alpha): <code>inspect</code>, <code>review</code>, <code>prune-propose</code>, <code>docs-maintenance</code>, <code>refactor</code>, <code>prune</code> — collapse into model capability within the next model generation.</li>
+<li>Static document harness — model reads CLAUDE.md natively, applies it.</li>
+</ol>
+
+<h3>Where MCP harness fits the thesis</h3>
+<p>MCP harness is a <strong>dispatch surface</strong>, not a reasoning surface. Dispatch = "where does the tool call go?" = protocol, transport, routing. The model doesn't dispatch; the runtime does. So MCP harness is <em>durable</em> against model improvements — but the surface is small. The four trigger conditions in the original #280 body remain the right adoption guard. Don't over-build.</p>
+
+<hr class="section-divider">
+
+<h2 id="recommendation">7. Recommendation</h2>
+
+<div class="callout">
+<span class="label">Recommended first move</span>
+Land a <strong>minimal in-process MCP harness</strong> as <code>lib/mcp_harness.py</code> with three loop primitives wired in: <em>validation</em>, <em>interview</em>, <em>research</em>. Defer supervisor/sidecar forms until trigger condition 3 (≥ 2 MCP servers) actually fires.
+</div>
+
+<h3>Form: in-process</h3>
+<p>One Python module loaded by the consumer's runtime. No new process, no IPC, no socket. The trade-off (weak crash isolation) doesn't bite until MCP servers exist — and at that point the boundary question is <em>where the MCP server runs</em>, not whether the dispatcher survives its crash.</p>
+
+<h3>Dispatch / transport separation</h3>
+<p>Keep the <strong>dispatch surface</strong> (what gets called) separate from the <strong>transport</strong> (how it gets called). Supervisor/sidecar later swap the transport without re-doing dispatch. This is the seam that matters most.</p>
+
+<h3>Use cases — implement first</h3>
+
+<table>
+<thead>
+<tr><th>Primitive</th><th>What it does</th><th>Existing reuse</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Validation loop</strong></td>
+<td>Dispatch to AI-judge + human-judge agents, collect verdicts, gate the loop on threshold</td>
+<td>Extend <code>/dev-kit:repair</code> (Eval-Repair loop already has the shape); split judge into <code>judge-ai</code> + <code>judge-human</code> skills</td>
+</tr>
+<tr>
+<td><strong>Interview loop</strong></td>
+<td>Structured agent interviews user / stakeholder; persists answers; hands off to next stage</td>
+<td>New; reuses <code>/dev-kit:onboard</code>'s structured-question surface; emits <code>hand-off/&lt;step&gt;.md</code></td>
+</tr>
+<tr>
+<td><strong>Research loop</strong></td>
+<td>Dispatch N parallel research agents, dedupe, synthesize</td>
+<td>Reuses <code>tools/parallel_dispatch.py</code> (fan-out + dedupe + verifier + synthesize)</td>
+</tr>
+</tbody>
+</table>
+
+<h3>Lifecycle</h3>
+<ul>
+<li><strong>Global install once</strong> — harness lives in dev-harness-kit, not per-worktree</li>
+<li><strong>Per-worktree enable</strong> — <code>hooks/worktree-auto-cut.sh</code> calls <code>mcp-harness.enable</code></li>
+<li><strong>Disable</strong> — on merge / worktree removal</li>
+</ul>
+
+<h3>Boundary with <code>hooks/*</code></h3>
+<table>
+<thead>
+<tr><th>Layer</th><th>Owns</th></tr>
+</thead>
+<tbody>
+<tr><td><code>hooks/*</code></td>
+<td>Auth gate, secret scan, slop detector, tdd/bash guard, stop verify, worktree guard</td></tr>
+<tr><td><code>lib/mcp_harness.py</code></td>
+<td>Tool dispatch, validation-loop coordination, research fan-out, interview turn-taking</td></tr>
+</tbody>
+</table>
+<p>They don't overlap. Hooks are deterministic gates; MCP harness is structured dispatch. The seam is clear: <em>hooks decide whether to allow a tool call; MCP harness decides which tool to call next.</em></p>
+
+<hr class="section-divider">
+
+<h2 id="open">8. Open questions for issue #280 thread</h2>
+
+<ol>
+<li>What does MCP harness do on day one — tool registration only, or full dispatch (validation / interview / research loops)?</li>
+<li>Does it own <code>hooks/*</code> responsibilities or sit beside them with a defined boundary?</li>
+<li>Is <code>docs/ACP-DISPATCH.md</code> adjacent enough that ACP dispatch + MCP dispatch should share a transport?</li>
+<li>Should the 4-trigger adoption guard be redefined — e.g. "adopt when validation / interview / research loops need cross-runtime coordination," rather than the original four?</li>
+<li>Does the validation loop need a separate <code>judge-ai</code> / <code>judge-human</code> skill split (hackathon transcript's "AI judge + human judge = 36 sub-agents" pattern), or is one combined judge enough?</li>
+</ol>
+
+<footer>
+Generated 2026-07-21 · discussion thread for <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:harness-proposal</code>
+</footer>
+
+</body>
+</html>
