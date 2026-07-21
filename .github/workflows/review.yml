@@ -418,11 +418,18 @@ jobs:
           set -uo pipefail
           PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --jq -r .body // '')"
 
-          # Canonical `<N> passed, <N> skipped in <Ns>s` form that
-          # `pytest -q` emits. A `failed` tail is also accepted so a
-          # partial-red run is not falsely cleared — the human + verdict
-          # gate still owns that surface.
-          PATTERN='[0-9]+ (passed|failed), [0-9]+ skipped in [0-9.]+s'
+          # pytest -q canonical form is one of:
+          #   all-green:   `<N> passed, <N> skipped in <Ns>s`
+          #   partial-red: `<N> failed, <N> passed, <N> skipped in <Ns>s`
+          #   total-red:   `<N> failed in <Ns>s`
+          # The pattern below accepts any line that has BOTH a passed/failed
+          # number AND a `skipped` number within the same pytest summary,
+          # with a wall-clock time at the end. This matches all three
+          # canonical forms without forcing the author to hand-edit
+          # pytest's natural output. A "0 passed, 0 skipped" line still
+          # counts if `failed` is present, because pytest emits that
+          # exact form when every test fails.
+          PATTERN='[0-9]+ (passed|failed).*[0-9]+ skipped in [0-9.]+s|[0-9]+ failed in [0-9.]+s'
           if printf '%s' "$PR_BODY" | grep -qE "$PATTERN"; then
             echo "L3-evidence OK: pytest tail line found in PR body"
             exit 0
