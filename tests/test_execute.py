@@ -350,6 +350,28 @@ class TestRunSequential(unittest.TestCase):
         self.assertIn("step 2 skipped", body)
         self.assertIn("user paused", body)
 
+    def test_record_skipped_blocked_emits_phase_in_handoff(self):
+        """Issue #310: `_record_skipped_blocked` must surface the phase in
+        the emitted hand-off line so multi-phase builds can distinguish
+        identical step numbers across phases (e.g. step 2 in phase ``0-mvp``
+        vs step 2 in phase ``1-polish`` both blocked at the same time)."""
+        root = self._make_blocked_root()
+        execute._record_skipped_blocked(
+            root, phase="0-mvp", step=2, reason="user paused",
+        )
+        handoff = root / ".dev-kit" / "hand-off" / "build→review.md"
+        self.assertTrue(handoff.exists(), "handoff file must be created")
+        body = handoff.read_text(encoding="utf-8")
+        self.assertIn("0-mvp", body, "phase string must be in the emitted line")
+        # The line containing phase must reference the same step we're recording
+        # so multi-phase builds can grep `phase=` and `step=` to disambiguate.
+        relevant = [ln for ln in body.splitlines() if "0-mvp" in ln]
+        self.assertTrue(relevant, "no line in the handoff mentions the phase")
+        self.assertTrue(
+            any("step 2" in ln for ln in relevant),
+            "emitted phase line must still name the step number",
+        )
+
     def test_pending_step_creates_worktree_and_invokes_claude(self):
         with patch.object(execute.subprocess, "run") as mr:
             mr.return_value = self._fake_proc(stdout="all green", stderr="")
