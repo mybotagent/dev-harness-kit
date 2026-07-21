@@ -2464,6 +2464,360 @@ def build_view_model(
     }
 
 
+# ---------------------------------------------------------------------------
+# Per-panel renderers — small pure functions, each consuming a slice of the
+# view_model. ``render_dashboard`` is the orchestrator that joins them.
+# Issue #321 / smell-10: every per-panel aggregation lives in
+# ``build_view_model``; the HTML path now reads panels instead of
+# recomputing them, so JSON + HTML cannot drift.
+# ---------------------------------------------------------------------------
+
+
+def _worktree_state_pill(state: str) -> str:
+    """State column pill — visually distinct from the warning chips.
+
+    Fresh worktrees are "good" (neutral blue/info tone via ``pill-good``)
+    because they are the user's most useful state, not a cleanup target.
+    Merged + gone are cleanup candidates (warn / bad). Unknown is bad
+    because the user can't tell what state the worktree is in.
+    """
+    cls = {
+        "main": "pill-good",
+        "live": "pill-good",
+        "fresh": "pill-good",
+        "merged": "pill-warn",
+        "gone": "pill-bad",
+        "unknown": "pill-bad",
+    }.get(state, "pill-bad")
+    return f"<span class='pill {cls}'>{html.escape(state)}</span>"
+
+
+def _render_cost_by_repo_panel(rows: list[dict]) -> str:
+    """Render Cost by Repository table rows from ``view_model['cost_by_repo']``."""
+    return "".join(
+        f"<tr><td>{html.escape(r['name'])}</td>"
+        f"<td style='text-align:right'>{r['sessions']}</td>"
+        f"<td style='text-align:right'>${r['cost_usd']:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{r['share'] * 100:.1f}%'></span></div></td></tr>"
+        for r in rows
+    )
+
+
+def _render_cost_by_branch_panel(rows: list[dict]) -> str:
+    """Render Cost by Branch table rows from ``view_model['cost_by_branch']``."""
+    return "".join(
+        f"<tr><td>{html.escape(r['name'])}</td>"
+        f"<td style='text-align:right'>{r['sessions']}</td>"
+        f"<td style='text-align:right'>${r['cost_usd']:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{r['share'] * 100:.1f}%'></span></div></td></tr>"
+        for r in rows
+    )
+
+
+def _render_cost_by_worktree_panel(rows: list[dict]) -> str:
+    """Render Cost by Worktree table rows from
+    ``view_model['cost_by_worktree_rows']`` (which already carries
+    ``branch_tip`` / ``branch_name`` from ``wt_meta`` and a state column
+    driven by session stamps + ``wt_meta`` fallback).
+    """
+    parts: list[str] = []
+    for r in rows:
+        state = r.get("state", "unknown")
+        parts.append(
+            f"<tr><td>{html.escape(r['name'])}</td>"
+            f"<td style='text-align:right'>{r['sessions']}</td>"
+            f"<td style='text-align:right'>${r['cost_usd']:.2f}</td>"
+            f"<td><div class='bar'><span style='width:{r.get('cost_share', 0) * 100:.1f}%'></span></div></td>"
+            f"<td>{_worktree_state_pill(state)}</td></tr>"
+        )
+    return "".join(parts)
+
+
+def _render_cost_by_tool_panel(rows: list[dict]) -> tuple[str, str]:
+    """Render Cost by Tool table + the "Read is #1" warning chip.
+
+    Reads from ``view_model['cost_by_tool']``. Returns
+    ``(rows_html, read_warning_html)`` — the warning chip is empty when
+    Read isn't the top tool.
+    """
+    rows_html = "".join(
+        f"<tr><td>{html.escape(r['name'])}</td>"
+        f"<td style='text-align:right'>{r['calls']}</td>"
+        f"<td style='text-align:right'>${r['cost_usd']:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{r['share'] * 100:.1f}%'></span></div></td></tr>"
+        for r in rows
+    )
+    read_warning_html = ""
+    if rows and rows[0]["name"] == "Read":
+        read_warning_html = (
+            '<div class="warning warn" style="margin-top:12px">'
+            '🚨 Read 툴이 툴 비용 1위입니다 — 대용량 파일 반복 읽기를 의심하세요.'
+            '</div>'
+        )
+    return rows_html, read_warning_html
+
+
+def _render_cost_by_model_panel(
+    rows: list[dict], unknown_models: list[str],
+) -> tuple[str, str]:
+    """Render Cost by Model table + the "unknown model id" warning chip.
+
+    Reads from ``view_model['cost_by_model']`` plus the
+    ``unknown_models`` list. Returns
+    ``(rows_html, unknown_model_html)``.
+    """
+    rows_html = "".join(
+        f"<tr><td>{html.escape(r['name'])}</td>"
+        f"<td style='text-align:right'>{r['sessions']}</td>"
+        f"<td style='text-align:right'>{r['tokens']:,}</td>"
+        f"<td style='text-align:right'>${r['cost_usd']:.2f}</td>"
+        f"<td><div class='bar'><span style='width:{r['share'] * 100:.1f}%'></span></div></td></tr>"
+        for r in rows
+    )
+    unknown_model_html = ""
+    if unknown_models:
+        items = "".join(f"<li>{html.escape(m)}</li>" for m in unknown_models)
+        unknown_model_html = (
+            '<div class="warning warn" style="margin-top:12px">'
+            '⚠ Unknown model id(s) — falling back to Sonnet pricing:'
+            f'<ul style="margin:6px 0 0 18px;padding:0">{items}</ul></div>'
+        )
+    return rows_html, unknown_model_html
+
+
+def _render_cache_ttl_panel(cache_ttl: dict) -> str:
+    """Render the Cache TTL mix panel's write-rows block.
+
+    Reads from ``view_model['cache_ttl']``. Three render states:
+
+      a) ``cache_ttl['state'] == 'empty'`` — no cache-write activity
+      b) ``cache_ttl['state'] == 'legacy'`` — legacy unsplit bucket only
+      c) ``cache_ttl['state'] == 'split'`` — 5m + 1h buckets present
+    """
+    ttl_5m = cache_ttl["ttl_5m"]
+    ttl_1h = cache_ttl["ttl_1h"]
+    ttl_legacy = cache_ttl["ttl_legacy"]
+    ttl_state = cache_ttl["state"]
+    if ttl_state == "empty":
+        return (
+            '<div class="ttl-name">cache_write</div>'
+            '<div class="ttl-empty" '
+            'style="background:var(--panel-2);border-radius:4px;'
+            'padding:6px 10px;color:var(--muted);font-size:11px">'
+            'no cache-write activity captured this period'
+            '</div><div class="ttl-pct">—</div>'
+        )
+    if ttl_state == "legacy":
+        return (
+            '<div class="ttl-name">cache_write (TTL unspecified, priced at 5m)</div>'
+            f'<div class="bar writelegacy"><span style="width:{cache_ttl["legacy_pct"]:.1f}%"></span></div>'
+            f'<div class="ttl-pct">{ttl_legacy:,}</div>'
+        )
+    return (
+        '<div class="ttl-name">write 5m TTL</div>'
+        f'<div class="bar write5m"><span style="width:{cache_ttl["write5m_pct"]:.1f}%"></span></div>'
+        f'<div class="ttl-pct">{ttl_5m:,}</div>'
+        '<div class="ttl-name">write 1h TTL</div>'
+        f'<div class="bar write1h"><span style="width:{cache_ttl["write1h_pct"]:.1f}%"></span></div>'
+        f'<div class="ttl-pct">{ttl_1h:,}</div>'
+    )
+
+
+def _render_cost_gate_banner(status: str, violations: list[dict]) -> str:
+    """Render the Cost Gate banner."""
+    if not violations:
+        return (
+            f'<div class="cost-gate {status}">'
+            f'<span class="label">Cost Gate:</span> all sessions within '
+            f'tokens/cost thresholds.'
+            f'</div>'
+        )
+    items = "".join(
+        f"<li><code>{html.escape(v['session_id'][:8])}</code> — {html.escape(v['reason'])} "
+        f"(cost=${v['cost']:.2f})</li>"
+        for v in violations
+    )
+    return (
+        f'<div class="cost-gate {status}">'
+        f'<span class="label">Cost Gate: {status.upper()}</span>'
+        f'{len(violations)} session(s) exceeded thresholds:'
+        f'<ul>{items}</ul></div>'
+    )
+
+
+def _render_session_row(
+    session: dict, score: dict, warns: list["Warning"],
+) -> str:
+    """Render one Active/Inactive session row."""
+    cost = _session_cost(session)
+    hit = score["cache_hit_ratio"]
+    started = session["first_ts"].strftime("%Y-%m-%d %H:%M") if session["first_ts"] else "—"
+    sscore = score["total"]
+    grade = score["grade"]
+    pill_cls = "pill-good" if sscore >= 75 else ("pill-warn" if sscore >= 50 else "pill-bad")
+    total_tools = sum(session["tool_counts"].values())
+    warn_chips = " ".join(
+        f"<span class='pill {'pill-bad' if w.level == 'critical' else 'pill-warn'}'>{html.escape(w.code)}</span>"
+        for w in warns
+    ) or "<span class='muted'>—</span>"
+    wt_state = session.get("worktree_state", "unknown")
+    wt_cell = f"{html.escape(session.get('worktree') or '—')} {_worktree_state_pill(wt_state)}"
+    return (
+        f"<tr><td><code>{html.escape(session['session_id'][:8])}</code></td>"
+        f"<td>{html.escape(session.get('branch') or '—')}</td>"
+        f"<td>{wt_cell}</td>"
+        f"<td>{html.escape(session['model'] or '?')}</td>"
+        f"<td class='muted'>{html.escape(started)}</td>"
+        f"<td style='text-align:right'>{session['input_tokens']:,}</td>"
+        f"<td style='text-align:right'>{session['output_tokens']:,}</td>"
+        f"<td style='text-align:right'>{total_tools:,}</td>"
+        f"<td style='text-align:right'>{hit:.0%}</td>"
+        f"<td style='text-align:right'>${cost:.2f}</td>"
+        f"<td style='text-align:right'><span class='pill {pill_cls}'>{sscore:.0f}</span>"
+        f"<span class='grade grade-{grade}'>{grade}</span></td>"
+        f"<td>{warn_chips}</td></tr>"
+    )
+
+
+def _split_sessions_into_active_inactive(
+    scored: list[tuple[dict, dict]],
+    warnings_per_session: list[list["Warning"]],
+) -> tuple[list, list, int, int]:
+    """Split (scored, warns) pairs into Active vs Inactive blocks.
+
+    Filters zero-turn sessions out of both blocks (they carry no signal
+    but stay in ``scored`` for the Transcript Index). Returns
+    ``(active_pairs, inactive_pairs, active_count, inactive_count)``.
+    """
+    active: list = []
+    inactive: list = []
+    for (s, sc), warns in zip(scored, warnings_per_session):
+        if _is_zero_turn_session(s):
+            continue
+        if s.get("worktree_state") in STALE_WORKTREE_STATES:
+            inactive.append(((s, sc), warns))
+        else:
+            active.append(((s, sc), warns))
+    return active, inactive, len(active), len(inactive)
+
+
+def _render_session_rows(pairs: list) -> str:
+    """Render one block of (session, score, warns) pairs as <tr> rows."""
+    if not pairs:
+        return "<tr><td colspan='12' class='muted'>No sessions.</td></tr>"
+    parts = [
+        _render_session_row(s, sc, warns)
+        for ((s, sc), warns) in pairs
+    ]
+    return "\n".join(parts)
+
+
+def _render_transcript_index(
+    scored: list[tuple[dict, dict]], transcripts_dirname: str,
+) -> str:
+    """Render the Transcript Index table — one row per worktree."""
+    ti_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s, _ in scored:
+        wt = s.get("worktree") or "(unknown)"
+        ti_costs[wt][0] += 1
+        ti_costs[wt][1] += _session_cost(s)
+    ti_sorted = sorted(ti_costs, key=lambda k: -ti_costs[k][1])
+    if "(main)" in ti_sorted:
+        ti_sorted.remove("(main)")
+        ti_sorted = ["(main)"] + ti_sorted
+    rows: list[str] = []
+    for wt in ti_sorted:
+        if transcripts_dirname:
+            href = f"{transcripts_dirname}/{_safe_seg(wt)}/index.html"
+            open_cell = f"<a href='{html.escape(href)}'>open →</a>"
+        else:
+            open_cell = "<span class='muted'>—</span>"
+        rows.append(
+            f"<tr><td>{html.escape(wt)}</td>"
+            f"<td style='text-align:right'>{int(ti_costs[wt][0])}</td>"
+            f"<td style='text-align:right'>${ti_costs[wt][1]:.2f}</td>"
+            f"<td>{open_cell}</td></tr>"
+        )
+    return "".join(rows) or "<tr><td colspan='4' class='muted'>No sessions.</td></tr>"
+
+
+def _render_warnings_panel(
+    warnings_per_session: list[list["Warning"]],
+) -> tuple[str, set[str]]:
+    """Render the warnings list (deduped by code) + return the fired codes.
+
+    Returns ``(warnings_html, fired_codes)`` — ``fired_codes`` is also
+    consumed by ``_render_optimization_items`` to mark recommendations
+    as "do" vs "don't".
+    """
+    seen_codes: set[str] = set()
+    blocks: list[str] = []
+    for warns in warnings_per_session:
+        for w in warns:
+            if w.code in seen_codes:
+                continue
+            seen_codes.add(w.code)
+            css = "warning" if w.level == "critical" else "warning warn"
+            blocks.append(f'<div class="{css}">{html.escape(w.message)}</div>')
+    warnings_html = "\n".join(blocks) or '<div class="muted">No anti-patterns detected.</div>'
+    return warnings_html, seen_codes
+
+
+def _render_roi_actions(
+    warnings_per_session: list[list["Warning"]],
+) -> str:
+    """Render the ROI Actions ranked list (top 20 by $ save)."""
+    candidates: list[tuple[float, str, str, str, int]] = []
+    for warns in warnings_per_session:
+        for w in warns:
+            if w.estimated_save_usd > 0:
+                candidates.append(
+                    (w.estimated_save_usd, w.code, w.session_id,
+                     w.evidence, w.priority),
+                )
+    candidates.sort(key=lambda x: -x[0])
+    if not candidates:
+        return ('<li class="muted">No reclaimable savings detected — '
+                'cache hit and tool usage are within targets.</li>')
+    return "".join(
+        f"<li title='{html.escape(WARNING_RECOMMENDATIONS.get(code, ''))}'>"
+        f"<span class='rank'>#{i+1}</span>"
+        f"<span class='save'>${save:.2f}</span>"
+        f"<span class='code'>{html.escape(code)}</span>"
+        f"<span class='sid'><code>{html.escape(sid[:8]) if sid else '—'}</code></span>"
+        f"<span class='evidence'>{html.escape(evidence) if evidence else '—'}</span>"
+        f"<span class='muted'>(P{prio})</span></li>"
+        for i, (save, code, sid, evidence, prio) in enumerate(candidates[:20])
+    )
+
+
+def _render_optimization_items(fired_codes: set[str]) -> str:
+    """Render the Recommended Optimizations do/don't list."""
+    opt_items: list[str] = []
+    for code in WARNING_RECOMMENDATIONS:
+        if code in fired_codes:
+            opt_items.append(f'<li class="do">{html.escape(WARNING_RECOMMENDATIONS[code])}</li>')
+        else:
+            opt_items.append(f'<li class="dont muted-item">{html.escape(WARNING_DONT.get(code, ""))}</li>')
+    return "\n".join(opt_items)
+
+
+def _build_dashboard_subtitle(
+    repo: str, days: int, scored: list[tuple[dict, dict]],
+    active_count: int, inactive_count: int, worktree_filter: str,
+) -> str:
+    """Build the dashboard subtitle line."""
+    subtitle_parts = [
+        html.escape(repo),
+        f"last {days} days",
+        f"{len(scored)} sessions ({active_count} active · {inactive_count} inactive)",
+        f"generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+    ]
+    if worktree_filter:
+        subtitle_parts.insert(1, f"worktree={html.escape(worktree_filter)}")
+    return " · ".join(subtitle_parts)
+
+
 def render_dashboard(repo: str, days: int, sessions: list[dict],
                      scored: list[tuple[dict, dict]],
                      warnings_per_session: list[list["Warning"]],
@@ -2477,491 +2831,116 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
                      worktree_filter: str = "",
                      transcripts_dirname: str = "",
                      *, view_model: dict | None = None) -> str:
-    """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``.
+    """Compose the HTML dashboard.
 
-    ``estimated`` may be a legacy single float (sum) or a dict from the new
-    ``estimated_savings()`` with ``cache_miss / dup_read / model_downgrade / total``.
-    ``cost_gate`` is ``(status, violations)`` from ``enforce_cost_gate()``.
-    ``all_sessions_in_window`` is the unfiltered-by-repo set used for the
-    per-repo panel — fixes the collapse-to-one-row bug.
+    Issue #321 / smell-10: when ``view_model`` is supplied, every
+    per-panel number is read from it (no recomputation) — JSON + HTML
+    cannot drift on per-panel totals. When ``view_model`` is omitted,
+    the function falls back to building one inline so existing direct
+    callers stay compatible. ``main()`` always passes the snapshot's
+    ``view_model``.
 
-    ``wt_meta`` is the per-worktree classification map (dirname → {state, ...})
-    used to populate the State column on the worktree panel and to drive the
-    stale-chip prefix on Sessions rows. ``stale_cost`` + ``stale_pct`` are
-    pre-computed in ``main()`` and feed the 5th Overview tile.
-    ``worktree_filter`` is echoed onto the subtitle when non-empty.
-
-    ``view_model`` is the pre-aggregated dashboard data from
-    ``build_view_model(...)``. When supplied, ``render_dashboard``
-    consumes its panels instead of re-aggregating the inputs — the
-    JSON + HTML sinks then share the same numbers (issue #310). When
-    omitted, the function falls back to its pre-split behavior so
-    existing direct callers stay compatible.
+    Per-panel aggregation lives in :func:`build_view_model` (single
+    source of truth). This function is a thin orchestrator over the
+    per-panel renderers above.
     """
-    wt_meta = wt_meta or {}
     if isinstance(estimated, (int, float)):
         estimated = {
             "cache_miss": float(estimated), "dup_read": 0.0,
             "model_downgrade": 0.0, "total": float(estimated),
         }
 
-    session_costs: list[float] = []
-    for s, _ in scored:
-        session_costs.append(cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        ))
-    total_cost = sum(session_costs)
-    total_tokens = sum(
-        s["input_tokens"] + s["output_tokens"]
-        + s["cache_write_tokens"] + s["cache_read_tokens"]
-        for s, _ in scored
+    # Legacy fallback: build the view-model inline so direct callers
+    # without ``view_model=`` (e.g. older tests) still work.
+    if view_model is None:
+        view_model = build_view_model(
+            repo=repo, days=days,
+            sessions=sessions, scored=scored,
+            warnings_per_session=warnings_per_session,
+            estimated=estimated,
+            cost_gate=cost_gate,
+            all_sessions_in_window=all_sessions_in_window,
+            unknown_models=unknown_models,
+            wt_meta=wt_meta,
+            stale_cost=stale_cost,
+            stale_pct=stale_pct,
+        )
+
+    vm = view_model
+    totals = vm["totals"]
+    unknown_models_list = vm["unknown_models"]
+    gate_status = vm["cost_gate"]["status"]
+    gate_violations = vm["cost_gate"]["violations"]
+
+    # Per-panel renderers — each reads from vm (no recomputation).
+    repo_rows = _render_cost_by_repo_panel(vm["cost_by_repo"])
+    branch_rows = _render_cost_by_branch_panel(vm["cost_by_branch"])
+    worktree_rows = _render_cost_by_worktree_panel(vm["cost_by_worktree_rows"])
+    tool_rows, read_warning_html = _render_cost_by_tool_panel(vm["cost_by_tool"])
+    model_rows, unknown_model_html = _render_cost_by_model_panel(
+        vm["cost_by_model"], unknown_models_list,
     )
+    ttl_middle_html = _render_cache_ttl_panel(vm["cache_ttl"])
+    cost_gate_banner = _render_cost_gate_banner(gate_status, gate_violations)
 
-    avg_score = mean(sc["total"] for _, sc in scored) if scored else 0.0
-    avg_cache = mean(sc["cache"] for _, sc in scored) if scored else 0.0
-    avg_density = mean(sc["density"] for _, sc in scored) if scored else 0.0
-    avg_redundancy = mean(sc["redundancy"] for _, sc in scored) if scored else 0.0
-    avg_economy = mean(sc["economy"] for _, sc in scored) if scored else 0.0
-    avg_cache_hit = mean(sc["cache_hit_ratio"] for _, sc in scored) if scored else 0.0
-    avg_grade = grade_for(avg_score)
-
-    # Cost by repo — use the unfiltered-by-repo session set so the panel
-    # is not a single self-row.
-    repo_pool = all_sessions_in_window if all_sessions_in_window is not None else sessions
-    repo_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for s in repo_pool:
-        c = cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        repo_costs[s["repo"]][0] += 1
-        repo_costs[s["repo"]][1] += c
-    repo_total_for_share = sum(rc[1] for rc in repo_costs.values()) or 1.0
-    repo_rows_html = "".join(
-        f"<tr><td>{html.escape(rr)}</td><td style='text-align:right'>{int(repo_costs[rr][0])}</td>"
-        f"<td style='text-align:right'>${repo_costs[rr][1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(repo_costs[rr][1] / repo_total_for_share * 100):.1f}%'></span></div></td></tr>"
-        for rr in sorted(repo_costs, key=lambda k: -repo_costs[k][1])
+    # Session table split — derived from scored/warnings_per_session
+    # (view_model only carries the COUNT split, not the row-level split).
+    active_pairs, inactive_pairs, active_count, inactive_count = (
+        _split_sessions_into_active_inactive(scored, warnings_per_session)
     )
+    active_session_rows = _render_session_rows(active_pairs)
+    inactive_session_rows = _render_session_rows(inactive_pairs)
 
-    # Cost by branch — mirrors the repo panel, sourced from the unfiltered-by-repo
-    # window so a --branch filter doesn't collapse this to one self-row.
-    branch_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for s in repo_pool:
-        c = cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        bkey = s.get("branch") or "(unknown)"
-        branch_costs[bkey][0] += 1
-        branch_costs[bkey][1] += c
-    branch_total_for_share = sum(bc[1] for bc in branch_costs.values()) or 1.0
-    branch_rows_html = "".join(
-        f"<tr><td>{html.escape(b)}</td><td style='text-align:right'>{int(branch_costs[b][0])}</td>"
-        f"<td style='text-align:right'>${branch_costs[b][1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(branch_costs[b][1] / branch_total_for_share * 100):.1f}%'></span></div></td></tr>"
-        for b in sorted(branch_costs, key=lambda k: -branch_costs[k][1])
+    # Warnings / ROI / optimizations — derived from warnings_per_session.
+    warnings_html, fired_codes = _render_warnings_panel(warnings_per_session)
+    roi_items = _render_roi_actions(warnings_per_session)
+    optimize_items = _render_optimization_items(fired_codes)
+
+    # Transcript Index — derived from scored (transcripts are per-session).
+    transcript_index_rows = _render_transcript_index(scored, transcripts_dirname)
+
+    subtitle = _build_dashboard_subtitle(
+        repo, days, scored, active_count, inactive_count, worktree_filter,
     )
-
-    # Cost by worktree — same source as the branch panel (unfiltered-by-repo
-    # window) so a --worktree filter doesn't collapse it to one self-row.
-    worktree_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for s in repo_pool:
-        c = cost_usd(
-            s["model"],
-            input_tokens=s["input_tokens"],
-            output_tokens=s["output_tokens"],
-            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-            cache_write_tokens=s["cache_write_tokens"],
-            cache_read_tokens=s["cache_read_tokens"],
-        )
-        wkey = s.get("worktree") or "(unknown)"
-        worktree_costs[wkey][0] += 1
-        worktree_costs[wkey][1] += c
-    worktree_total_for_share = sum(wc[1] for wc in worktree_costs.values()) or 1.0
-
-    # Per-worktree state — derived from the per-session stamp first
-    # (authoritative: each session carries its own worktree_state), with the
-    # wt_meta map as a fallback for worktrees seen via cost but not in the
-    # scored window (rare; defensive).
-    per_wt_state: dict[str, str] = {}
-    for s, _ in scored:
-        wt = s.get("worktree") or "(unknown)"
-        per_wt_state.setdefault(wt, s.get("worktree_state", "unknown"))
-
-    def _worktree_state_pill(state: str) -> str:
-        """State column pill — visually distinct from the warning chips.
-
-        Fresh worktrees are "good" (neutral blue/info tone via ``pill-good``)
-        because they are the user's most useful state, not a cleanup target.
-        Merged + gone are cleanup candidates (warn / bad). Unknown is bad
-        because the user can't tell what state the worktree is in.
-        """
-        cls = {
-            "main": "pill-good",
-            "live": "pill-good",
-            "fresh": "pill-good",
-            "merged": "pill-warn",
-            "gone": "pill-bad",
-            "unknown": "pill-bad",
-        }.get(state, "pill-bad")
-        return f"<span class='pill {cls}'>{html.escape(state)}</span>"
-
-    def _state_for(wkey: str) -> str:
-        return (
-            per_wt_state.get(wkey)
-            or (wt_meta.get(wkey) or {}).get("state", "unknown")
-            or "unknown"
-        )
-
-    # Union of session-seen worktrees + every disk worktree (from wt_meta)
-    # so no worktree dir is hidden just because no session landed in it
-    # during the window. Zero-cost rows are how live/merged/gone worktrees
-    # the user forgot about show up. (main) pinned to the top.
-    all_wts = set(worktree_costs) | set(wt_meta)
-    sorted_wts = sorted(
-        all_wts,
-        key=lambda k: -worktree_costs.get(k, [0, 0.0])[1],
-    )
-    if "(main)" in sorted_wts:
-        sorted_wts.remove("(main)")
-        sorted_wts = ["(main)"] + sorted_wts
-    worktree_rows_html = "".join(
-        f"<tr><td>{html.escape(w)}</td>"
-        f"<td style='text-align:right'>{int(worktree_costs.get(w, [0, 0.0])[0])}</td>"
-        f"<td style='text-align:right'>${worktree_costs.get(w, [0, 0.0])[1]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(worktree_costs.get(w, [0, 0.0])[1] / worktree_total_for_share * 100):.1f}%'></span></div></td>"
-        f"<td>{_worktree_state_pill(_state_for(w))}</td></tr>"
-        for w in sorted_wts
-    )
-
-    # Cost by tool (imputed — see evaluate_warnings comment for the heuristic)
-    tool_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for s, _ in scored:
-        for name, n in s["tool_counts"].items():
-            est = n * DEFAULT_DUP_READ_TOKENS * pricing_for(s["model"])["in"] / 1_000_000
-            tool_costs[name][0] += n
-            tool_costs[name][1] += est
-    total_tool_cost = sum(c[1] for c in tool_costs.values()) or 1.0
-    sorted_tools = sorted(tool_costs.items(), key=lambda kv: -kv[1][1])
-    tool_rows_html = "".join(
-        f"<tr><td>{html.escape(name)}</td><td style='text-align:right'>{int(calls)}</td>"
-        f"<td style='text-align:right'>${cost:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(cost / total_tool_cost * 100):.1f}%'></span></div></td></tr>"
-        for name, (calls, cost) in sorted_tools
-    )
-    read_warning_html = ""
-    if sorted_tools and sorted_tools[0][0] == "Read":
-        read_warning_html = (
-            '<div class="warning warn" style="margin-top:12px">'
-            '🚨 Read 툴이 툴 비용 1위입니다 — 대용량 파일 반복 읽기를 의심하세요.'
-            '</div>'
-        )
-
-    # Cost by Model — group sessions by their dominant model id.
-    model_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0.0])
-    # accumulator: [sessions, total_tokens, cost]
-    for s, c in zip(sessions, [cost_usd(
-        s["model"],
-        input_tokens=s["input_tokens"],
-        output_tokens=s["output_tokens"],
-        cache_write_5m_tokens=s.get("ephemeral_5m", 0),
-        cache_write_1h_tokens=s.get("ephemeral_1h", 0),
-        cache_write_tokens=s["cache_write_tokens"],
-        cache_read_tokens=s["cache_read_tokens"],
-    ) for s in sessions]):
-        tokens = s["input_tokens"] + s["output_tokens"] + s["cache_write_tokens"] + s["cache_read_tokens"]
-        model_costs[s["model"] or "(unknown)"][0] += 1
-        model_costs[s["model"] or "(unknown)"][1] += tokens
-        model_costs[s["model"] or "(unknown)"][2] += c
-    model_total_for_share = sum(mc[2] for mc in model_costs.values()) or 1.0
-    model_rows_html = "".join(
-        f"<tr><td>{html.escape(m)}</td>"
-        f"<td style='text-align:right'>{int(model_costs[m][0])}</td>"
-        f"<td style='text-align:right'>{int(model_costs[m][1]):,}</td>"
-        f"<td style='text-align:right'>${model_costs[m][2]:.2f}</td>"
-        f"<td><div class='bar'><span style='width:{(model_costs[m][2] / model_total_for_share * 100):.1f}%'></span></div></td></tr>"
-        for m in sorted(model_costs, key=lambda k: -model_costs[k][2])
-    )
-    unknown_model_html = ""
-    if unknown_models:
-        items = "".join(f"<li>{html.escape(m)}</li>" for m in sorted(unknown_models))
-        unknown_model_html = (
-            f'<div class="warning warn" style="margin-top:12px">'
-            f'⚠ Unknown model id(s) — falling back to Sonnet pricing:'
-            f'<ul style="margin:6px 0 0 18px;padding:0">{items}</ul></div>'
-        )
-
-    # Cache TTL mix panel
-    ttl_read  = sum(s["cache_read_tokens"] for s, _ in scored)
-    ttl_5m    = sum(s.get("ephemeral_5m", 0) for s, _ in scored)
-    ttl_1h    = sum(s.get("ephemeral_1h", 0) for s, _ in scored)
-    # Legacy bucket = cache_write tokens that the upstream provider did not
-    # break down into 5m vs 1h. Priced at the 5m rate by cost_usd; shown
-    # here so the dashboard doesn't silently swallow it.
-    ttl_legacy = max(0, sum(
-        s["cache_write_tokens"] - s.get("ephemeral_5m", 0) - s.get("ephemeral_1h", 0)
-        for s, _ in scored
-    ))
-    ttl_miss  = sum(s["input_tokens"] for s, _ in scored)
-    ttl_writes_total = ttl_5m + ttl_1h + ttl_legacy
-    ttl_total = (ttl_read + ttl_writes_total + ttl_miss) or 1
-    ttl_read_pct = ttl_read / ttl_total * 100
-    ttl_5m_pct   = ttl_5m   / ttl_total * 100
-    ttl_1h_pct   = ttl_1h   / ttl_total * 100
-    ttl_legacy_pct = ttl_legacy / ttl_total * 100
-    ttl_miss_pct = ttl_miss / ttl_total * 100
-
-    # Three render states for the write-rows of the TTL mix panel:
-    #   a) ttl_writes_total == 0             -> single annotation row
-    #   b) ttl_5m == ttl_1h == 0, legacy > 0 -> single combined "TTL unspecified" bar
-    #   c) any 5m/1h bucket populated        -> existing 4-bar layout
-    if ttl_writes_total == 0:
-        ttl_middle_html = (
-            '<div class="ttl-name">cache_write</div>'
-            '<div class="ttl-empty" '
-            'style="background:var(--panel-2);border-radius:4px;'
-            'padding:6px 10px;color:var(--muted);font-size:11px">'
-            'no cache-write activity captured this period'
-            '</div><div class="ttl-pct">—</div>'
-        )
-    elif ttl_5m == 0 and ttl_1h == 0:
-        ttl_middle_html = (
-            '<div class="ttl-name">cache_write (TTL unspecified, priced at 5m)</div>'
-            f'<div class="bar writelegacy"><span style="width:{ttl_legacy_pct:.1f}%"></span></div>'
-            f'<div class="ttl-pct">{ttl_legacy:,}</div>'
-        )
-    else:
-        ttl_middle_html = (
-            '<div class="ttl-name">write 5m TTL</div>'
-            f'<div class="bar write5m"><span style="width:{ttl_5m_pct:.1f}%"></span></div>'
-            f'<div class="ttl-pct">{ttl_5m:,}</div>'
-            '<div class="ttl-name">write 1h TTL</div>'
-            f'<div class="bar write1h"><span style="width:{ttl_1h_pct:.1f}%"></span></div>'
-            f'<div class="ttl-pct">{ttl_1h:,}</div>'
-        )
-
-    # Cost Gate banner
-    gate_status, gate_violations = cost_gate
-    if not gate_violations:
-        cost_gate_banner = (
-            f'<div class="cost-gate {gate_status}">'
-            f'<span class="label">Cost Gate:</span> all sessions within '
-            f'tokens/cost thresholds.'
-            f'</div>'
-        )
-    else:
-        items = "".join(
-            f"<li><code>{html.escape(v['session_id'][:8])}</code> — {html.escape(v['reason'])} "
-            f"(cost=${v['cost']:.2f})</li>"
-            for v in gate_violations
-        )
-        cost_gate_banner = (
-            f'<div class="cost-gate {gate_status}">'
-            f'<span class="label">Cost Gate: {gate_status.upper()}</span>'
-            f'{len(gate_violations)} session(s) exceeded thresholds:'
-            f'<ul>{items}</ul></div>'
-        )
-
-    # Session rows — split into Active (main/live/fresh) vs Inactive
-    # (merged/gone, i.e. the branch's work is done) so stale work stops
-    # crowding the same table as sessions still worth acting on. The
-    # Worktree cell reuses _worktree_state_pill (already built for the
-    # Cost by Worktree panel above) instead of a redundant boolean chip.
-    def _session_rows_html(pairs: list[tuple[tuple[dict, dict], list["Warning"]]]) -> str:
-        parts: list[str] = []
-        for (s, sc), warns in pairs:
-            cost = _session_cost(s)
-            hit = sc["cache_hit_ratio"]
-            started = s["first_ts"].strftime("%Y-%m-%d %H:%M") if s["first_ts"] else "—"
-            score = sc["total"]
-            grade = sc["grade"]
-            pill_cls = "pill-good" if score >= 75 else ("pill-warn" if score >= 50 else "pill-bad")
-            total_tools = sum(s["tool_counts"].values())
-            warn_chips = " ".join(
-                f"<span class='pill {'pill-bad' if w.level=='critical' else 'pill-warn'}'>{html.escape(w.code)}</span>"
-                for w in warns
-            ) or "<span class='muted'>—</span>"
-            wt_state = s.get("worktree_state", "unknown")
-            wt_cell = f"{html.escape(s.get('worktree') or '—')} {_worktree_state_pill(wt_state)}"
-            parts.append(
-                f"<tr><td><code>{html.escape(s['session_id'][:8])}</code></td>"
-                f"<td>{html.escape(s.get('branch') or '—')}</td>"
-                f"<td>{wt_cell}</td>"
-                f"<td>{html.escape(s['model'] or '?')}</td>"
-                f"<td class='muted'>{html.escape(started)}</td>"
-                f"<td style='text-align:right'>{s['input_tokens']:,}</td>"
-                f"<td style='text-align:right'>{s['output_tokens']:,}</td>"
-                f"<td style='text-align:right'>{total_tools:,}</td>"
-                f"<td style='text-align:right'>{hit:.0%}</td>"
-                f"<td style='text-align:right'>${cost:.2f}</td>"
-                f"<td style='text-align:right'><span class='pill {pill_cls}'>{score:.0f}</span>"
-                f"<span class='grade grade-{grade}'>{grade}</span></td>"
-                f"<td>{warn_chips}</td></tr>"
-            )
-        return "\n".join(parts) or "<tr><td colspan='12' class='muted'>No sessions.</td></tr>"
-
-    # Zero-turn sessions (user started, never got a reply) carry no signal
-    # and clutter both panels. Filter them out at render time, but keep
-    # them in `scored` so the Transcript Index stays complete.
-    active_pairs = [
-        (sw, warns) for sw, warns in zip(scored, warnings_per_session)
-        if sw[0].get("worktree_state") not in STALE_WORKTREE_STATES
-        and not _is_zero_turn_session(sw[0])
-    ]
-    inactive_pairs = [
-        (sw, warns) for sw, warns in zip(scored, warnings_per_session)
-        if sw[0].get("worktree_state") in STALE_WORKTREE_STATES
-        and not _is_zero_turn_session(sw[0])
-    ]
-    active_count = len(active_pairs)
-    inactive_count = len(inactive_pairs)
-    active_session_rows_html = _session_rows_html(active_pairs)
-    inactive_session_rows_html = _session_rows_html(inactive_pairs)
-
-    # Transcript Index — one row per worktree, linking to its sidecar index
-    # page (which lazily lists that worktree's sessions). Mirrors the Cost by
-    # Worktree ordering: (main) pinned first, then by descending cost. When
-    # transcripts are disabled (--no-transcripts) the Open cell is inert.
-    ti_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-    for s, _ in scored:
-        wt = s.get("worktree") or "(unknown)"
-        ti_costs[wt][0] += 1
-        ti_costs[wt][1] += _session_cost(s)
-    ti_sorted = sorted(ti_costs, key=lambda k: -ti_costs[k][1])
-    if "(main)" in ti_sorted:
-        ti_sorted.remove("(main)")
-        ti_sorted = ["(main)"] + ti_sorted
-    ti_rows: list[str] = []
-    for wt in ti_sorted:
-        if transcripts_dirname:
-            href = f"{transcripts_dirname}/{_safe_seg(wt)}/index.html"
-            open_cell = f"<a href='{html.escape(href)}'>open →</a>"
-        else:
-            open_cell = "<span class='muted'>—</span>"
-        ti_rows.append(
-            f"<tr><td>{html.escape(wt)}</td>"
-            f"<td style='text-align:right'>{int(ti_costs[wt][0])}</td>"
-            f"<td style='text-align:right'>${ti_costs[wt][1]:.2f}</td>"
-            f"<td>{open_cell}</td></tr>"
-        )
-    transcript_index_rows = "".join(ti_rows) or "<tr><td colspan='4' class='muted'>No sessions.</td></tr>"
-
-    # Warnings list (deduped by code)
-    seen_codes: set[str] = set()
-    warn_blocks: list[str] = []
-    for warns in warnings_per_session:
-        for w in warns:
-            if w.code in seen_codes:
-                continue
-            seen_codes.add(w.code)
-            css = "warning" if w.level == "critical" else "warning warn"
-            warn_blocks.append(f'<div class="{css}">{html.escape(w.message)}</div>')
-    warnings_html = "\n".join(warn_blocks) or '<div class="muted">No anti-patterns detected.</div>'
-
-    # ROI Actions ranked by $ save — one row per (session, warning) instance,
-    # not a generic per-code paragraph. Each row names the exact session and
-    # the concrete number/file/text that drove the estimate (w.evidence),
-    # so "what do I actually do" is answerable without opening the session.
-    # The full recommendation text rides along as a hover `title` (no JS
-    # needed) for anyone who wants the longer explanation.
-    roi_candidates: list[tuple[float, str, str, str, int]] = []   # (save, code, session_id, evidence, priority)
-    for warns in warnings_per_session:
-        for w in warns:
-            if w.estimated_save_usd > 0:
-                roi_candidates.append((w.estimated_save_usd, w.code, w.session_id, w.evidence, w.priority))
-    roi_candidates.sort(key=lambda x: -x[0])
-    if roi_candidates:
-        roi_items = "".join(
-            f"<li title='{html.escape(WARNING_RECOMMENDATIONS.get(code, ''))}'>"
-            f"<span class='rank'>#{i+1}</span>"
-            f"<span class='save'>${save:.2f}</span>"
-            f"<span class='code'>{html.escape(code)}</span>"
-            f"<span class='sid'><code>{html.escape(sid[:8]) if sid else '—'}</code></span>"
-            f"<span class='evidence'>{html.escape(evidence) if evidence else '—'}</span>"
-            f"<span class='muted'>(P{prio})</span></li>"
-            for i, (save, code, sid, evidence, prio) in enumerate(roi_candidates[:20])
-        )
-    else:
-        roi_items = '<li class="muted">No reclaimable savings detected — cache hit and tool usage are within targets.</li>'
-
-    # Recommended Optimizations (do/don't) — show do for fired codes, dont for not-fired.
-    fired_codes = seen_codes
-    all_codes = list(WARNING_RECOMMENDATIONS.keys())
-    opt_items: list[str] = []
-    for code in all_codes:
-        if code in fired_codes:
-            opt_items.append(f'<li class="do">{html.escape(WARNING_RECOMMENDATIONS[code])}</li>')
-        else:
-            opt_items.append(f'<li class="dont muted-item">{html.escape(WARNING_DONT.get(code, ""))}</li>')
-    optimize_items = "\n".join(opt_items)
-
-    # Subtitle: existing fields plus optional worktree filter echo.
-    subtitle_parts = [
-        html.escape(repo),
-        f"last {days} days",
-        f"{len(scored)} sessions ({active_count} active · {inactive_count} inactive)",
-        f"generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-    ]
-    if worktree_filter:
-        subtitle_parts.insert(1, f"worktree={html.escape(worktree_filter)}")
-    subtitle = " · ".join(subtitle_parts)
 
     return HTML_TEMPLATE.format(
         repo=html.escape(repo),
         days=days,
-        session_count=len(scored),
-        repos_named=len({s["repo"] for s, _ in scored}),
+        session_count=totals["session_count"],
+        repos_named=totals["repos_named"],
         active_count=active_count,
         inactive_count=inactive_count,
-        total_cost=total_cost,
-        total_tokens=total_tokens,
-        avg_score=avg_score,
-        avg_grade=avg_grade,
-        avg_cache=avg_cache,
-        avg_density=avg_density,
-        avg_redundancy=avg_redundancy,
-        avg_economy=avg_economy,
-        avg_cache_hit=avg_cache_hit,
+        total_cost=totals["total_cost"],
+        total_tokens=totals["total_tokens"],
+        avg_score=totals["avg_score"],
+        avg_grade=totals["avg_grade"],
+        avg_cache=totals["avg_cache"],
+        avg_density=totals["avg_density"],
+        avg_redundancy=totals["avg_redundancy"],
+        avg_economy=totals["avg_economy"],
+        avg_cache_hit=totals["avg_cache_hit"],
         stale_cost=stale_cost,
         stale_pct=stale_pct,
         cost_gate_banner=cost_gate_banner,
-        repo_rows=repo_rows_html,
-        branch_rows=branch_rows_html,
-        worktree_rows=worktree_rows_html,
-        tool_rows=tool_rows_html,
+        repo_rows=repo_rows,
+        branch_rows=branch_rows,
+        worktree_rows=worktree_rows,
+        tool_rows=tool_rows,
         read_warning_html=read_warning_html,
-        model_rows=model_rows_html,
+        model_rows=model_rows,
         unknown_model_html=unknown_model_html,
-        ttl_read_tokens=ttl_read,
-        ttl_5m_tokens=ttl_5m,
-        ttl_1h_tokens=ttl_1h,
-        ttl_miss_tokens=ttl_miss,
-        ttl_read_pct=ttl_read_pct,
-        ttl_5m_pct=ttl_5m_pct,
-        ttl_1h_pct=ttl_1h_pct,
-        ttl_miss_pct=ttl_miss_pct,
+        ttl_read_tokens=vm["cache_ttl"]["ttl_read"],
+        ttl_5m_tokens=vm["cache_ttl"]["ttl_5m"],
+        ttl_1h_tokens=vm["cache_ttl"]["ttl_1h"],
+        ttl_miss_tokens=vm["cache_ttl"]["ttl_miss"],
+        ttl_read_pct=vm["cache_ttl"]["read_pct"],
+        ttl_5m_pct=vm["cache_ttl"]["write5m_pct"],
+        ttl_1h_pct=vm["cache_ttl"]["write1h_pct"],
+        ttl_miss_pct=vm["cache_ttl"]["miss_pct"],
         ttl_middle_html=ttl_middle_html,
         ttl_caveat=html.escape(CACHE_TTL_CAVEAT),
-        active_session_rows=active_session_rows_html,
-        inactive_session_rows=inactive_session_rows_html,
+        active_session_rows=active_session_rows,
+        inactive_session_rows=inactive_session_rows,
         transcript_index_rows=transcript_index_rows,
         warnings_html=warnings_html,
         estimated_total=estimated["total"],
