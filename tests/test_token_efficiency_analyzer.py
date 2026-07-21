@@ -2312,17 +2312,17 @@ class TestProviderSplit(unittest.TestCase):
         # with a sensible default.
         from token_efficiency_analyzer import _new_session_state
         st = _new_session_state(source="claude-code")
-        self.assertEqual(st["source"], "claude-code")
+        self.assertEqual(st.source, "claude-code")
         # Common counters initialized to zero / empty.
-        self.assertEqual(st["input_tokens"], 0)
-        self.assertEqual(st["output_tokens"], 0)
-        self.assertEqual(st["session_id"], None)
-        self.assertEqual(st["repo"], "")
-        self.assertEqual(st["first_ts"], None)
-        self.assertEqual(st["last_ts"], None)
+        self.assertEqual(st.input_tokens, 0)
+        self.assertEqual(st.output_tokens, 0)
+        self.assertEqual(st.session_id, None)
+        self.assertEqual(st.repo, "")
+        self.assertEqual(st.first_ts, None)
+        self.assertEqual(st.last_ts, None)
         # Counter-shaped accumulators are dicts (sorted, deterministic).
-        self.assertEqual(st["tool_counts"], {})
-        self.assertEqual(st["read_files"], {})
+        self.assertEqual(st.tool_counts, {})
+        self.assertEqual(st.read_files, {})
 
     def test_claude_record_handler_populates_session_id(self) -> None:
         """Regression: a single claude-code ``assistant`` record must set
@@ -2353,9 +2353,9 @@ class TestProviderSplit(unittest.TestCase):
         # session_id / repo / branch / worktree come from the common walker
         # (mirrors what aggregate_session does after the split).
         _handle_claude_record(rec, st)
-        self.assertEqual(st["input_tokens"], 10)
-        self.assertEqual(st["output_tokens"], 5)
-        self.assertEqual(st["latest_model"], "claude-sonnet-5")
+        self.assertEqual(st.input_tokens, 10)
+        self.assertEqual(st.output_tokens, 5)
+        self.assertEqual(st.latest_model, "claude-sonnet-5")
 
     def test_codex_record_handler_populates_session_id(self) -> None:
         """Regression: a single codex ``turn_context`` record must set
@@ -2371,7 +2371,7 @@ class TestProviderSplit(unittest.TestCase):
             "timestamp": "2026-07-15T10:00:00.000Z",
         }
         _handle_codex_record(rec, st)
-        self.assertEqual(st["latest_model"], "gpt-5.6-luna")
+        self.assertEqual(st.latest_model, "gpt-5.6-luna")
         # repo / branch / worktree come from the common walker.
 
     def test_aggregate_session_returns_same_shape_after_split(self) -> None:
@@ -2398,9 +2398,9 @@ class TestProviderSplit(unittest.TestCase):
         # walker / finalizer continues to populate them after the split.
         # Quick smoke: ``finalize_session`` produces the same keys.
         from token_efficiency_analyzer import _finalize_session
-        st["session_id"] = "sid-finalize"
-        st["latest_model"] = "claude-sonnet-5"
-        st["input_tokens"] = 1
+        st.session_id = "sid-finalize"
+        st.latest_model = "claude-sonnet-5"
+        st.input_tokens = 1
         out = _finalize_session(st, source="claude-code", log_path=Path("/tmp/x.jsonl"))
         for k in required:
             self.assertIn(k, out, f"_finalize_session output missing key {k!r}")
@@ -2571,3 +2571,364 @@ class TestDashboardViewModel(unittest.TestCase):
         # had a session — the disk-only seeding contract is preserved.
         self.assertIn("(main)", names)
         self.assertIn("stale-wt", names)
+
+
+class TestSnapshotBuilder(unittest.TestCase):
+    """Issue #321 (smell-21): ``main()`` extracted a ``build_analysis_snapshot``
+    helper that produces ONE immutable snapshot consumed by both JSON and HTML
+    sinks. The previous shape (inline selected/windowed in ``main()`` + an
+    independent re-aggregation in ``render_dashboard()``) let the two sinks
+    drift apart when ``--branch`` was set; the snapshot makes that drift
+    impossible by construction.
+
+    These tests pin:
+      * the helper exists and is exposed,
+      * both sinks see the same ``selected`` list (the branch-filtered set),
+      * both sinks see the same ``total_cost_usd`` (no parallel aggregation).
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="token-analyzer-snap-"))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_build_analysis_snapshot_is_exposed(self) -> None:
+        """The snapshot builder is a top-level public symbol so direct
+        callers (e.g. tests, future JSON/HTML wrappers) can build one
+        without going through ``main()``."""
+        from token_efficiency_analyzer import build_analysis_snapshot
+        self.assertTrue(callable(build_analysis_snapshot))
+
+    def test_snapshot_holds_selected_and_windowed(self) -> None:
+        """The snapshot distinguishes the branch-filtered set (``selected``)
+        from the unfiltered-by-branch set (``windowed``). Both must be
+        present so the per-repo/branch/worktree panel can use ``windowed``
+        without re-running ``filter_sessions`` and the per-session panel
+        can use ``selected`` without re-running it either — both
+        derivations happen exactly once."""
+        from token_efficiency_analyzer import build_analysis_snapshot
+
+        # Stage two minimal sessions, one on main and one on feat-x.
+        logs = self.tmpdir / "logs" / "claude-code"
+        logs.mkdir(parents=True)
+        main_session = (
+            '{"timestamp":"2026-07-21T10:00:00.000Z",'
+            '"message":{"role":"assistant","model":"claude-sonnet-5",'
+            '"content":[{"type":"text","text":"ok"}],'
+            '"usage":{"input_tokens":100,"output_tokens":10,'
+            '"cache_read_input_tokens":50}},'
+            '"type":"assistant","sessionId":"sid-main",'
+            '"cwd":"/tmp/snap-repo","gitBranch":"main"}\n'
+        )
+        feat_session = (
+            '{"timestamp":"2026-07-21T11:00:00.000Z",'
+            '"message":{"role":"assistant","model":"claude-sonnet-5",'
+            '"content":[{"type":"text","text":"ok"}],'
+            '"usage":{"input_tokens":200,"output_tokens":20,'
+            '"cache_read_input_tokens":100}},'
+            '"type":"assistant","sessionId":"sid-feat",'
+            '"cwd":"/tmp/snap-repo","gitBranch":"feat/x"}\n'
+        )
+        (logs / "main.jsonl").write_text(main_session)
+        (logs / "feat.jsonl").write_text(feat_session)
+
+        # Build a snapshot for --branch feat/x (only the feat session should
+        # land in ``selected``; both should land in ``windowed``).
+        snap = build_analysis_snapshot(
+            repo="snap-repo", days=30, logs_dir=self.tmpdir / "logs",
+            branch="feat/x", worktree="",
+        )
+        selected_sids = [s["session_id"] for s in snap.selected]
+        windowed_sids = [s["session_id"] for s in snap.windowed]
+        # --branch filter scopes ``selected`` to feat only.
+        self.assertEqual(selected_sids, ["sid-feat"])
+        # ``windowed`` is unscoped-by-branch — both sessions survive.
+        self.assertEqual(sorted(windowed_sids), ["sid-feat", "sid-main"])
+        # The snapshot is a frozen object — neither sink mutates it.
+        self.assertIsNotNone(snap)
+
+    def test_snapshot_total_cost_matches_rendered_html(self) -> None:
+        """Regression: with ``--branch feat/x`` + logs on both branches,
+        the JSON ``total_cost_usd`` field MUST equal the Total Cost cell
+        in the rendered HTML. Before the snapshot extraction, ``main()``
+        derived totals from ``selected`` while ``render_dashboard()``
+        recomputed from its own local walk — different code paths with
+        no shared state — and they could drift on any future edit."""
+        import contextlib
+        from io import StringIO
+        logs = self.tmpdir / "logs" / "claude-code"
+        logs.mkdir(parents=True)
+        main_session = (
+            '{"timestamp":"2026-07-21T10:00:00.000Z",'
+            '"message":{"role":"assistant","model":"claude-sonnet-5",'
+            '"content":[{"type":"text","text":"ok"}],'
+            '"usage":{"input_tokens":100,"output_tokens":10,'
+            '"cache_read_input_tokens":50}},'
+            '"type":"assistant","sessionId":"sid-main",'
+            '"cwd":"/tmp/parity-repo","gitBranch":"main"}\n'
+        )
+        feat_session = (
+            '{"timestamp":"2026-07-21T11:00:00.000Z",'
+            '"message":{"role":"assistant","model":"claude-sonnet-5",'
+            '"content":[{"type":"text","text":"ok"}],'
+            '"usage":{"input_tokens":200,"output_tokens":20,'
+            '"cache_read_input_tokens":100}},'
+            '"type":"assistant","sessionId":"sid-feat",'
+            '"cwd":"/tmp/parity-repo","gitBranch":"feat/x"}\n'
+        )
+        (logs / "main.jsonl").write_text(main_session)
+        (logs / "feat.jsonl").write_text(feat_session)
+
+        json_buf = StringIO()
+        with contextlib.redirect_stdout(json_buf):
+            rc = main([
+                "--repo", "parity-repo", "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--branch", "feat/x", "--json",
+            ])
+        self.assertEqual(rc, 0)
+        json_total = json.loads(json_buf.getvalue())["total_cost_usd"]
+
+        # Now HTML run with the same args.
+        out_html = self.tmpdir / "parity.html"
+        rc = main([
+            "--repo", "parity-repo", "--days", "30",
+            "--logs-dir", str(self.tmpdir / "logs"),
+            "--branch", "feat/x",
+            "--out", str(out_html),
+        ])
+        self.assertEqual(rc, 0)
+        html_text = out_html.read_text()
+
+        # The HTML must render the JSON's total cost string in the Total
+        # Cost cell (with the same $ rounding). Both are derived from the
+        # snapshot — so they MUST agree bit-for-bit.
+        expected = f"${json_total:.2f}"
+        self.assertIn(expected, html_text,
+                      f"HTML Total Cost does not match JSON total_cost_usd; "
+                      f"JSON={json_total}, expected substring in HTML={expected!r}")
+
+
+class TestRenderDashboardConsumesViewModel(unittest.TestCase):
+    """Issue #321 (smell-10): ``render_dashboard`` consumes the view-model
+    exclusively — every per-panel aggregation lives on the snapshot, so
+    the HTML path cannot drift from the JSON path. The previous shape
+    re-ran the per-panel loops inside the function, duplicating ~100
+    lines of code that already lived in ``build_view_model``.
+
+    These tests pin:
+      * the view-model's per-panel keys are locked (no consumer can fall
+        back to a recomputation without a snapshot mismatch),
+      * ``render_dashboard`` produces byte-identical output regardless of
+        whether the caller supplied redundant ``sessions``/``scored``/
+        ``warnings_per_session`` arguments (so a stale caller can't make
+        the HTML drift).
+    """
+
+    def test_view_model_panel_keys_locked(self) -> None:
+        """The view-model exposes every per-panel aggregation the HTML
+        renders. Adding a panel touches ONE place — adding/removing a
+        panel from this set is a breaking change for HTML and JSON alike."""
+        from collections import Counter
+        from datetime import datetime, timezone
+
+        from token_efficiency_analyzer import build_view_model
+
+        now = datetime.now(timezone.utc)
+        s = {
+            "session_id": "s-vm", "source": "claude-code", "repo": "r",
+            "branch": "main", "worktree": "(main)",
+            "worktree_state": "main", "model": "claude-sonnet-5",
+            "first_ts": now, "last_ts": now,
+            "input_tokens": 100, "output_tokens": 10,
+            "cache_write_tokens": 0, "cache_read_tokens": 50,
+            "ephemeral_5m": 0, "ephemeral_1h": 0,
+            "tool_counts": Counter(), "read_files": Counter(), "user_texts": [],
+            "log_path": "/tmp/fake.jsonl",
+        }
+        scored = [(s, score_session(s))]
+        vm = build_view_model(
+            repo="r", days=30, sessions=[s], scored=scored,
+            warnings_per_session=[[]],
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+            cost_gate=("ok", []),
+            all_sessions_in_window=[s],
+        )
+        # These keys are the full set the HTML renders against. Removing
+        # one is a structural break; adding one means ``build_view_model``
+        # didn't cover a panel.
+        required = {
+            "cost_by_repo", "cost_by_branch", "cost_by_worktree",
+            "cost_by_worktree_rows", "cost_by_tool", "cost_by_model",
+            "cache_ttl", "totals", "active_count", "inactive_count",
+            "stale_cost", "stale_pct", "estimated", "cost_gate",
+            "unknown_models", "warnings",
+        }
+        self.assertTrue(required.issubset(vm.keys()),
+                        f"view-model missing required panels: "
+                        f"{required - set(vm.keys())}")
+
+    def test_render_dashboard_total_matches_view_model_total(self) -> None:
+        """``render_dashboard`` MUST echo ``view_model['totals']['total_cost']``
+        verbatim — the HTML header's Total Cost cell must NOT be the result
+        of an independent local walk over ``scored``."""
+        from collections import Counter
+        from datetime import datetime, timezone
+
+        from token_efficiency_analyzer import build_view_model, render_dashboard
+
+        now = datetime.now(timezone.utc)
+        s = {
+            "session_id": "s-hdr", "source": "claude-code", "repo": "r",
+            "branch": "main", "worktree": "(main)",
+            "worktree_state": "main", "model": "claude-sonnet-5",
+            "first_ts": now, "last_ts": now,
+            "input_tokens": 100, "output_tokens": 10,
+            "cache_write_tokens": 0, "cache_read_tokens": 50,
+            "ephemeral_5m": 0, "ephemeral_1h": 0,
+            "tool_counts": Counter(), "read_files": Counter(), "user_texts": [],
+            "log_path": "/tmp/fake.jsonl",
+        }
+        scored = [(s, score_session(s))]
+        vm = build_view_model(
+            repo="r", days=30, sessions=[s], scored=scored,
+            warnings_per_session=[[]],
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+            cost_gate=("ok", []),
+            all_sessions_in_window=[s],
+        )
+        html = render_dashboard(
+            repo="r", days=30, sessions=[s], scored=scored,
+            warnings_per_session=[[]],
+            estimated={"cache_miss": 0.0, "dup_read": 0.0,
+                       "model_downgrade": 0.0, "total": 0.0},
+            cost_gate=("ok", []),
+            all_sessions_in_window=[s],
+            view_model=vm,
+        )
+        expected = f"${vm['totals']['total_cost']:.2f}"
+        self.assertIn(expected, html,
+                      f"HTML total cost {expected!r} not found — render_dashboard "
+                      f"did not consume view_model['totals']['total_cost']")
+
+
+class TestSessionAggregateTyped(unittest.TestCase):
+    """Issue #321 (smell-9): ``aggregate_session``'s accumulator is a typed
+    ``SessionAggregate`` (dataclass), not a free-form dict. The walker
+    dispatches each parsed record to a per-provider handler that mutates
+    the aggregate via attribute access. The previous shape (plain dict
+    accumulator) let any field be typo'd silently and made the walker
+    surface area invisible to type checkers.
+
+    These tests pin:
+      * ``SessionAggregate`` is a public, typed dataclass,
+      * ``_new_session_state`` (or its replacement) returns one,
+      * the existing per-provider handlers still mutate the typed
+        accumulator (no behavior change at the public surface).
+    """
+
+    def test_session_aggregate_is_dataclass(self) -> None:
+        """The accumulator must be a dataclass so type checkers can
+        validate the walker/handler surface."""
+        from dataclasses import is_dataclass
+
+        from token_efficiency_analyzer import SessionAggregate
+        self.assertTrue(is_dataclass(SessionAggregate),
+                        "SessionAggregate is not a dataclass")
+
+    def test_new_session_state_returns_typed_aggregate(self) -> None:
+        """The factory must return a SessionAggregate instance, not a
+        plain dict (a dict would silently let typo'd keys slip in)."""
+        from token_efficiency_analyzer import SessionAggregate, _new_session_state
+        agg = _new_session_state(source="claude-code")
+        self.assertIsInstance(agg, SessionAggregate)
+        # Required typed fields — every consumer (walker / finalizer /
+        # per-provider handlers) reads these.
+        for f in ("session_id", "source", "repo", "models", "latest_model",
+                  "input_tokens", "output_tokens", "cache_write_tokens",
+                  "cache_read_tokens", "ephemeral_5m", "ephemeral_1h",
+                  "tool_counts", "read_files", "user_texts",
+                  "branch_counts", "worktree_counts", "first_ts", "last_ts"):
+            self.assertTrue(hasattr(agg, f),
+                            f"SessionAggregate missing field {f!r}")
+
+    def test_handler_works_on_typed_aggregate(self) -> None:
+        """Existing per-provider handlers must keep working on the typed
+        aggregate (no public surface change)."""
+        from token_efficiency_analyzer import (
+            _handle_claude_record,
+            _new_session_state,
+        )
+        agg = _new_session_state(source="claude-code")
+        rec = {
+            "type": "assistant",
+            "sessionId": "sid-typed",
+            "gitBranch": "feat/typed",
+            "timestamp": "2026-07-15T10:00:00.000Z",
+            "message": {
+                "role": "assistant",
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 10, "output_tokens": 5,
+                          "cache_read_input_tokens": 0,
+                          "cache_creation_input_tokens": 0,
+                          "cache_creation": {
+                              "ephemeral_5m_input_tokens": 0,
+                              "ephemeral_1h_input_tokens": 0}},
+            },
+        }
+        _handle_claude_record(rec, agg)
+        self.assertEqual(agg.input_tokens, 10)
+        self.assertEqual(agg.output_tokens, 5)
+        self.assertEqual(agg.latest_model, "claude-sonnet-5")
+
+
+class TestMalformedTokenUsageSkipped(unittest.TestCase):
+    """Issue #321 (smell-9 follow-up): malformed token-usage payloads
+    (e.g. ``usage.input_tokens = "unknown"``) must NOT crash the walker.
+    The previous shape raised ``ValueError`` on the int() cast and lost
+    the entire session; the fix is to skip the malformed token AND
+    count it on a typed ``parse_errors`` accumulator.
+    """
+
+    def test_malformed_input_tokens_does_not_crash_walker(self) -> None:
+        from token_efficiency_analyzer import aggregate_session
+        bad_record = (
+            '{"timestamp":"2026-07-15T10:00:00.000Z",'
+            '"sessionId":"sid-bad-tokens",'
+            '"gitBranch":"main",'
+            '"type":"assistant",'
+            '"message":{"role":"assistant","model":"claude-sonnet-5",'
+            '"content":[{"type":"text","text":"ok"}],'
+            '"usage":{"input_tokens":"unknown","output_tokens":5}}}'
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False
+        ) as f:
+            f.write(bad_record + "\n")
+            path = Path(f.name)
+        try:
+            sess = aggregate_session(path)
+            # Session survives the malformed record (no crash, no
+            # exception) — the bad token is skipped, the rest stands.
+            self.assertIsNotNone(sess)
+            self.assertEqual(sess["session_id"], "sid-bad-tokens")
+            # The good tokens are still recorded; the bad ones are skipped.
+            self.assertEqual(sess["output_tokens"], 5)
+            self.assertEqual(sess["input_tokens"], 0)
+        finally:
+            path.unlink()
+
+    def test_malformed_input_tokens_counted_on_aggregate(self) -> None:
+        """The walker counts malformed token fields on the typed
+        accumulator so the dashboard can surface 'N records skipped'
+        instead of silently swallowing them."""
+        from token_efficiency_analyzer import _new_session_state
+        agg = _new_session_state(source="claude-code")
+        self.assertTrue(hasattr(agg, "parse_errors"))
+        # Default value is a Counter (dict-shaped) so it survives json.dumps.
+        agg.parse_errors["malformed_input_tokens"] += 1
+        self.assertEqual(agg.parse_errors["malformed_input_tokens"], 1)

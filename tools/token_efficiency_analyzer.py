@@ -809,43 +809,74 @@ def _aggregate_worktree_rows(
     return [{**r, "cost_usd": round(r["cost_usd"], 4)} for r in rows]
 
 
-def _new_session_state(source: str) -> dict:
-    """Build a fresh ``SessionState`` accumulator for one JSONL walk.
+@dataclass
+class SessionAggregate:
+    """Typed accumulator for one JSONL walk — ``aggregate_session``'s
+    in-flight state (issue #321 / smell-9).
 
-    The accumulator is a plain dict (not a dataclass) so the per-record
-    handlers can mutate it via ``state[key] = value`` without an
-    attribute-access surface area. Keys mirror the final ``aggregate_session``
-    output, plus a few internal counters that the finalizer drops (e.g.
-    ``branch_counts``, ``worktree_counts``).
+    Replaces the previous dict-of-strings accumulator. Each field is
+    named and typed so:
+      * typo'd field accesses surface immediately under a type checker
+        instead of silently producing zero totals,
+      * ``parse_errors`` (Counter) gives the dashboard a real signal
+        when a record carries a malformed token field (e.g.
+        ``usage.input_tokens = "unknown"``) — the walker SKIPS the
+        malformed field, counts it, and continues instead of crashing
+        the whole session.
     """
-    return {
-        "session_id": None,
-        "repo": "",
-        "source": source,
-        "models": Counter(),
-        "latest_model": "",
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_write_tokens": 0,
-        "cache_read_tokens": 0,
-        "ephemeral_5m": 0,
-        "ephemeral_1h": 0,
-        "tool_counts": Counter(),
-        "read_files": Counter(),
-        "user_texts": [],
-        "branch_counts": Counter(),
-        "worktree_counts": Counter(),
-        "first_ts": None,
-        "last_ts": None,
-    }
+    session_id: str | None = None
+    repo: str = ""
+    source: str = ""
+    models: Counter = None  # type: ignore[assignment]  # filled in __post_init__
+    latest_model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+    ephemeral_5m: int = 0
+    ephemeral_1h: int = 0
+    tool_counts: Counter = None  # type: ignore[assignment]
+    read_files: Counter = None  # type: ignore[assignment]
+    user_texts: list = None  # type: ignore[assignment]
+    branch_counts: Counter = None  # type: ignore[assignment]
+    worktree_counts: Counter = None  # type: ignore[assignment]
+    first_ts: datetime | None = None
+    last_ts: datetime | None = None
+    # Skipped / malformed-record counters — issue #321 smell-9.
+    # ``parse_errors`` is exposed on the final aggregate via a JSON-safe
+    # plain dict (Counters don't json.dumps without a converter).
+    parse_errors: Counter = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        # Mutable defaults must be constructed per-instance.
+        self.models = Counter()
+        self.tool_counts = Counter()
+        self.read_files = Counter()
+        self.user_texts = []
+        self.branch_counts = Counter()
+        self.worktree_counts = Counter()
+        self.parse_errors = Counter()
 
 
-def _harvest_common(rec: dict, st: dict, fallback_session_id: str) -> None:
+def _new_session_state(source: str) -> SessionAggregate:
+    """Build a fresh ``SessionAggregate`` accumulator for one JSONL walk.
+
+    The accumulator is a typed dataclass (issue #321 / smell-9) so the
+    per-record handlers can mutate it via attribute access (``agg.x = v``)
+    without a stringly-typed surface area; type checkers validate every
+    field the walker / finalizer reads. ``parse_errors`` starts at zero
+    and counts malformed token fields the walker skipped.
+    """
+    return SessionAggregate(source=source)
+
+
+def _harvest_common(rec: dict, st: SessionAggregate, fallback_session_id: str) -> None:
     """Common per-record harvest shared by both providers.
 
-    Mutates ``st`` to update timestamps, session id, repo, branch
-    counter, and worktree counter. Provider-specific record handling
-    is dispatched AFTER this harvest so ``st`` is always coherent.
+    Mutates ``st`` (a :class:`SessionAggregate`) to update timestamps,
+    session id, repo, branch counter, and worktree counter.
+    Provider-specific record handling is dispatched AFTER this harvest
+    so ``st`` is always coherent.
     """
     # codex puts timestamp inside the payload — not at the record top
     # level. Harvest that too when the top-level field is empty so
@@ -857,71 +888,103 @@ def _harvest_common(rec: dict, st: dict, fallback_session_id: str) -> None:
             _ts_raw = _rc_payload.get("timestamp")
     ts = parse_iso(_ts_raw or "")
     if ts is not None:
-        if st["first_ts"] is None or ts < st["first_ts"]:
-            st["first_ts"] = ts
-        if st["last_ts"] is None or ts > st["last_ts"]:
-            st["last_ts"] = ts
+        if st.first_ts is None or ts < st.first_ts:
+            st.first_ts = ts
+        if st.last_ts is None or ts > st.last_ts:
+            st.last_ts = ts
 
-    if st["session_id"] is None:
-        st["session_id"] = (
+    if st.session_id is None:
+        st.session_id = (
             rec.get("sessionId")
             or rec.get("session_id")
             or _codex_nested_field(rec, "sessionId")
             or _codex_nested_field(rec, "session_id")
             or fallback_session_id
         )
-    if not st["repo"]:
+    if not st.repo:
         # codex rollouts put cwd at session_meta.payload.cwd or
         # turn_context.payload.cwd — NOT at the record top level.
         _rcwd = _codex_nested_field(rec, "cwd")
-        st["repo"] = repo_from_cwd(_rcwd)
+        st.repo = repo_from_cwd(_rcwd)
     gb = rec.get("gitBranch")
     if isinstance(gb, str) and gb.strip():
-        st["branch_counts"][gb.strip()] += 1
+        st.branch_counts[gb.strip()] += 1
     cwd_raw = _codex_nested_field(rec, "cwd")
     if isinstance(cwd_raw, str) and cwd_raw.strip():
-        st["worktree_counts"][worktree_from_cwd(cwd_raw)] += 1
+        st.worktree_counts[worktree_from_cwd(cwd_raw)] += 1
 
 
-def _handle_claude_record(rec: dict, st: dict) -> None:
+def _safe_int(value, *, counter: Counter, label: str) -> int:
+    """Coerce a token-usage field to int, skipping malformed values.
+
+    Returns 0 for ``None`` / empty / non-int-castable input and
+    increments ``counter[label]`` for each skipped value so the
+    dashboard can surface a 'N records skipped' signal instead of
+    silently swallowing bad data (issue #321 / smell-9 follow-up).
+    """
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        counter[label] += 1
+        return 0
+
+
+def _handle_claude_record(rec: dict, st: SessionAggregate) -> None:
     """Apply one claude-code JSONL record to ``st``.
 
     Handles ``assistant`` (model + usage + tool_use) and ``user``
     (text content) record types. Other record types are ignored.
+    Malformed token-usage fields are SKIPPED + counted on
+    ``st.parse_errors`` (issue #321 / smell-9) so a stray
+    ``usage.input_tokens = "unknown"`` never crashes the walker.
     """
     msg = rec.get("message") or {}
     rec_type = rec.get("type")
     if rec_type == "assistant":
         m = msg.get("model")
         if m:
-            st["models"][m] += 1
-            st["latest_model"] = m
+            st.models[m] += 1
+            st.latest_model = m
         u = msg.get("usage") or {}
         # input_tokens = non-cached input (cache missed)
-        st["input_tokens"]       += int(u.get("input_tokens") or 0)
-        st["output_tokens"]      += int(u.get("output_tokens") or 0)
-        st["cache_write_tokens"] += int(u.get("cache_creation_input_tokens") or 0)
-        st["cache_read_tokens"]  += int(u.get("cache_read_input_tokens") or 0)
+        st.input_tokens       += _safe_int(u.get("input_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_input_tokens")
+        st.output_tokens      += _safe_int(u.get("output_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_output_tokens")
+        st.cache_write_tokens += _safe_int(u.get("cache_creation_input_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_cache_creation_input_tokens")
+        st.cache_read_tokens  += _safe_int(u.get("cache_read_input_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_cache_read_input_tokens")
         cc = u.get("cache_creation") or {}
-        st["ephemeral_5m"] += int(cc.get("ephemeral_5m_input_tokens") or 0)
-        st["ephemeral_1h"] += int(cc.get("ephemeral_1h_input_tokens") or 0)
+        st.ephemeral_5m += _safe_int(cc.get("ephemeral_5m_input_tokens"),
+                                      counter=st.parse_errors,
+                                      label="malformed_ephemeral_5m")
+        st.ephemeral_1h += _safe_int(cc.get("ephemeral_1h_input_tokens"),
+                                      counter=st.parse_errors,
+                                      label="malformed_ephemeral_1h")
 
         for blk in (msg.get("content") or []):
             if not isinstance(blk, dict):
                 continue
             if blk.get("type") == "tool_use":
                 name = blk.get("name") or "?"
-                st["tool_counts"][name] += 1
+                st.tool_counts[name] += 1
                 if name == "Read":
                     inp = blk.get("input") or {}
                     fp = inp.get("file_path") or inp.get("path") or ""
                     if fp:
-                        st["read_files"][fp] += 1
+                        st.read_files[fp] += 1
     elif rec_type == "user":
         c = msg.get("content")
         if isinstance(c, str):
             if c.strip():
-                st["user_texts"].append(c.strip())
+                st.user_texts.append(c.strip())
         elif isinstance(c, list):
             parts: list[str] = []
             for blk in c:
@@ -931,10 +994,10 @@ def _handle_claude_record(rec: dict, st: dict) -> None:
                         parts.append(t)
             joined = "\n".join(parts).strip()
             if joined:
-                st["user_texts"].append(joined)
+                st.user_texts.append(joined)
 
 
-def _handle_codex_record(rec: dict, st: dict) -> None:
+def _handle_codex_record(rec: dict, st: SessionAggregate) -> None:
     """Apply one codex JSONL record to ``st``.
 
     Handles ``turn_context`` (model), ``event_msg`` (cumulative
@@ -950,8 +1013,8 @@ def _handle_codex_record(rec: dict, st: dict) -> None:
         if isinstance(tc_payload, dict):
             m = _codex_nested_field(rec, "model")
             if isinstance(m, str) and m:
-                st["models"][m] += 1
-                st["latest_model"] = m
+                st.models[m] += 1
+                st.latest_model = m
     elif rec_type == "event_msg":
         # codex: emit `token_count` (cumulative total_token_usage) and
         # `user_message` events. We overwrite (not accumulate) the token
@@ -965,18 +1028,26 @@ def _handle_codex_record(rec: dict, st: dict) -> None:
                 if isinstance(info, dict):
                     tot = info.get("total_token_usage") or {}
                     if isinstance(tot, dict):
-                        in_raw = int(tot.get("input_tokens") or 0)
-                        cached = int(tot.get("cached_input_tokens") or 0)
-                        out_raw = int(tot.get("output_tokens") or 0)
-                        reason = int(tot.get("reasoning_output_tokens") or 0)
-                        st["input_tokens"] = max(in_raw - cached, 0)
-                        st["cache_read_tokens"] = cached
-                        st["output_tokens"] = out_raw + reason
-                        st["cache_write_tokens"] = 0
+                        in_raw = _safe_int(tot.get("input_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_input_tokens")
+                        cached = _safe_int(tot.get("cached_input_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_cached_input_tokens")
+                        out_raw = _safe_int(tot.get("output_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_output_tokens")
+                        reason = _safe_int(tot.get("reasoning_output_tokens"),
+                                            counter=st.parse_errors,
+                                            label="malformed_reasoning_output_tokens")
+                        st.input_tokens = max(in_raw - cached, 0)
+                        st.cache_read_tokens = cached
+                        st.output_tokens = out_raw + reason
+                        st.cache_write_tokens = 0
             elif ptype == "user_message":
                 msg_text = em_payload.get("message")
                 if isinstance(msg_text, str) and msg_text.strip():
-                    st["user_texts"].append(msg_text.strip())
+                    st.user_texts.append(msg_text.strip())
     elif rec_type == "response_item":
         # codex tool calls: function_call + custom_tool_call.
         ri_payload = rec.get("payload") or {}
@@ -984,15 +1055,15 @@ def _handle_codex_record(rec: dict, st: dict) -> None:
             rtype = ri_payload.get("type")
             if rtype in ("function_call", "custom_tool_call"):
                 name = ri_payload.get("name") or "?"
-                st["tool_counts"][name] += 1
+                st.tool_counts[name] += 1
                 if name == "Read":
                     inp = ri_payload.get("input") or {}
                     fp = inp.get("file_path") or inp.get("path") or ""
                     if fp:
-                        st["read_files"][fp] += 1
+                        st.read_files[fp] += 1
 
 
-def _resolve_branch(st: dict, path: Path) -> str:
+def _resolve_branch(st: SessionAggregate, path: Path) -> str:
     """Branch fallback chain shared by both providers.
 
     Prefer the wire-format ``gitBranch`` (most-common across lines).
@@ -1001,13 +1072,13 @@ def _resolve_branch(st: dict, path: Path) -> str:
     tool subdir itself) — those bucket under ``"main"`` so they
     aren't mis-attributed to a tool dir.
     """
-    if st["branch_counts"]:
-        return st["branch_counts"].most_common(1)[0][0]
+    if st.branch_counts:
+        return st.branch_counts.most_common(1)[0][0]
     parent = path.parent.name
     return "main" if parent in _KNOWN_SOURCES else (parent or "main")
 
 
-def _resolve_worktree(st: dict, path: Path) -> str:
+def _resolve_worktree(st: SessionAggregate, path: Path) -> str:
     """Worktree fallback chain shared by both providers.
 
     Prefer the file path (authoritative — cwd can misattribute when
@@ -1018,11 +1089,11 @@ def _resolve_worktree(st: dict, path: Path) -> str:
     """
     worktree = worktree_from_path(path)
     if worktree == "(main)":
-        return st["worktree_counts"].most_common(1)[0][0] if st["worktree_counts"] else "(unknown)"
+        return st.worktree_counts.most_common(1)[0][0] if st.worktree_counts else "(unknown)"
     return worktree
 
 
-def _finalize_session(st: dict, *, source: str, log_path: Path) -> dict | None:
+def _finalize_session(st: SessionAggregate, *, source: str, log_path: Path) -> dict | None:
     """Build the final aggregate_session dict from the accumulator.
 
     Returns None when ``session_id`` is still None (the JSONL had no
@@ -1030,33 +1101,36 @@ def _finalize_session(st: dict, *, source: str, log_path: Path) -> dict | None:
     ``{session_id, source, repo, branch, worktree, model, first_ts,
     last_ts, input_tokens, output_tokens, cache_write_tokens,
     cache_read_tokens, ephemeral_5m, ephemeral_1h, tool_counts,
-    read_files, user_texts, log_path}`` dict.
+    read_files, user_texts, parse_errors, log_path}`` dict.
     """
-    if st["session_id"] is None:
+    if st.session_id is None:
         return None
     branch = _resolve_branch(st, log_path)
     worktree = _resolve_worktree(st, log_path)
     return {
-        "session_id": st["session_id"],
+        "session_id": st.session_id,
         "source": source,
-        "repo": st["repo"] or log_path.stem.split("__")[0],
+        "repo": st.repo or log_path.stem.split("__")[0],
         "branch": branch,
         "worktree": worktree,
         # A session can switch models. The dashboard's Active Sessions row
         # should show the model that handled the latest turn, not the model
         # that appeared most often earlier in the session.
-        "model": st["latest_model"] or (st["models"].most_common(1)[0][0] if st["models"] else ""),
-        "first_ts": st["first_ts"],
-        "last_ts": st["last_ts"],
-        "input_tokens": st["input_tokens"],
-        "output_tokens": st["output_tokens"],
-        "cache_write_tokens": st["cache_write_tokens"],
-        "cache_read_tokens": st["cache_read_tokens"],
-        "ephemeral_5m": st["ephemeral_5m"],
-        "ephemeral_1h": st["ephemeral_1h"],
-        "tool_counts": st["tool_counts"],
-        "read_files": st["read_files"],
-        "user_texts": st["user_texts"],
+        "model": st.latest_model or (st.models.most_common(1)[0][0] if st.models else ""),
+        "first_ts": st.first_ts,
+        "last_ts": st.last_ts,
+        "input_tokens": st.input_tokens,
+        "output_tokens": st.output_tokens,
+        "cache_write_tokens": st.cache_write_tokens,
+        "cache_read_tokens": st.cache_read_tokens,
+        "ephemeral_5m": st.ephemeral_5m,
+        "ephemeral_1h": st.ephemeral_1h,
+        "tool_counts": st.tool_counts,
+        "read_files": st.read_files,
+        "user_texts": st.user_texts,
+        # Issue #321 / smell-9: surface skipped malformed fields to the
+        # caller (JSON-serializable plain dict, not a Counter).
+        "parse_errors": dict(st.parse_errors),
         "log_path": str(log_path),
     }
 
