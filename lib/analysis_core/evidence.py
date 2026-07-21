@@ -124,6 +124,21 @@ _KNOWN_SEVERITIES = {s.value for s in Severity}
 _ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 
 
+def _coerce_proof_value(raw: Any) -> Optional[bool]:
+    """Strict bool coercion for `deletion_proof` entries.
+
+    Accept only True/False or 0/1 ints — every other type is dropped.
+    The strict gate at the parser boundary means the engine can rely
+    on `proof[key]` being a real bool (or missing) instead of a
+    truthy string like `"yes"` that would silently enable a `git rm`.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, int) and raw in (0, 1):
+        return bool(raw)
+    return None
+
+
 def parse_candidate(
     candidate: Dict[str, Any], dim_fallback: str = ""
 ) -> Evidence:
@@ -189,7 +204,16 @@ def parse_candidate(
         proof_raw = None
     deletion_proof: Optional[Dict[str, bool]] = None
     if proof_raw is not None:
-        deletion_proof = {str(k): bool(v) for k, v in proof_raw.items()}
+        # Strict bool coercion: a non-bool value (e.g. "yes", None, {})
+        # is dropped entirely so the engine's whole-file proof check
+        # cannot be tricked by a truthy string.
+        deletion_proof = {}
+        for k, raw_v in proof_raw.items():
+            coerced = _coerce_proof_value(raw_v)
+            if coerced is not None:
+                deletion_proof[str(k)] = coerced
+        if not deletion_proof:
+            deletion_proof = None
 
     return Evidence(
         file=file,

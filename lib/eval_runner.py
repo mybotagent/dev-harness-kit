@@ -108,6 +108,22 @@ def exception_rot(case: Dict, axes: tuple, exc: Exception) -> CaseResult:
     )
 
 
+def _coerce_score(raw: object) -> Optional[float]:
+    """Coerce a raw axis-score value to a float, or None on failure.
+
+    Shared between `_judge_case` (per-dim scores from the LLM) and
+    `run_golden_diff` (golden baseline scores from JSON). Returns None
+    for non-numeric inputs so the caller can skip the axis entirely
+    instead of silently treating bad data as 0.0.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------- discovery ----------
 
 def discover_cases(project_root: Path) -> List[Dict]:
@@ -213,8 +229,12 @@ def _judge_case(
     )
     scores = raw.get("scores") or {}
     # Keep only the requested dim's axes (drop any extra fields the model
-    # might emit). Missing axes default to 0 so the verdict is well-defined.
-    scores = {ax: float(scores.get(ax, 0.0)) for ax in axes}
+    # might emit). Use the shared coercion helper so the same logic
+    # applies to both per-dim judge scores and golden baseline scores.
+    scores = {
+        ax: (float(v) if (v := _coerce_score(scores.get(ax))) is not None else 0.0)
+        for ax in axes
+    }
     score = llm_judge.score_aggregate(scores) if scores else 0.0
     verdict = llm_judge.verdict_from_score(score) if score > 0 else "ROT"
     return real_result(
@@ -470,12 +490,40 @@ def _session_id_from_log(path: Path) -> str:
     return sid or path.stem
 
 
+def _extract_root_prompt(msg: Dict) -> str:
+    """Pull the first text-like root prompt out of a `message` payload.
+
+    Accepts both shapes Claude / Codex use:
+      - `content: "string"`           → return the string
+      - `content: [{"type":"text", "text": "..."}, ...]` → return the
+        first text block (or first string block, legacy shape).
+    Returns "" when no text is present so the caller can skip the
+    "ROOT USER PROMPT:" header cleanly.
+    """
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                return blk.get("text", "") or ""
+            if isinstance(blk, str) and blk:
+                return blk
+    return ""
+
+
 def _summarize_session_log(path: Path, max_chars: int = 12_000) -> str:
     """Render a session log into a compact text block suitable for the
     LLM judge prompt. Includes root user prompt, assistant turn count,
     tool_use names + counts, sidechain (sub-agent) summary, and the last
     assistant text excerpt. Truncates to ``max_chars`` to keep the
     prompt bounded.
+
+    Per-field extraction is delegated to small helpers (`_extract_root_prompt`,
+    the tool-count + last-text accumulation in `_collect_assistant_turn`)
+    so the top-level function reads as: open → loop → render.
     """
     if not path.is_file():
         return ""
@@ -502,30 +550,12 @@ def _summarize_session_log(path: Path, max_chars: int = 12_000) -> str:
                 typ = obj.get("type")
                 msg = obj.get("message") or {}
                 if typ == "user" and not root_prompt:
-                    content = msg.get("content")
-                    if isinstance(content, str):
-                        root_prompt = content
-                    elif isinstance(content, list):
-                        for blk in content:
-                            if (isinstance(blk, dict)
-                                    and blk.get("type") == "text"):
-                                root_prompt = blk.get("text", "") or ""
-                                break
-                            if isinstance(blk, str):
-                                root_prompt = blk
-                                break
+                    root_prompt = _extract_root_prompt(msg)
                 if typ == "assistant":
                     turn_count += 1
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        for blk in content:
-                            if not isinstance(blk, dict):
-                                continue
-                            if blk.get("type") == "tool_use":
-                                name = blk.get("name", "?") or "?"
-                                tool_counts[name] = tool_counts.get(name, 0) + 1
-                            if blk.get("type") == "text":
-                                last_assistant_text = blk.get("text", "") or ""
+                    last_assistant_text = _collect_assistant_turn(
+                        msg, tool_counts, last_assistant_text,
+                    )
     except OSError:
         return ""
 
@@ -553,18 +583,69 @@ def _summarize_session_log(path: Path, max_chars: int = 12_000) -> str:
     return body[:max_chars]
 
 
-def _session_cache_path(project_root: Path, session_id: str) -> Path:
+def _collect_assistant_turn(
+    msg: Dict, tool_counts: Dict[str, int], last_assistant_text: str,
+) -> str:
+    """Update tool-use counters + last-text from one assistant message.
+
+    Mutates `tool_counts` in place; returns the (possibly updated)
+    `last_assistant_text`. Splitting this out of `_summarize_session_log`
+    keeps the parent loop readable.
+    """
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return last_assistant_text
+    for blk in content:
+        if not isinstance(blk, dict):
+            continue
+        if blk.get("type") == "tool_use":
+            name = blk.get("name", "?") or "?"
+            tool_counts[name] = tool_counts.get(name, 0) + 1
+        if blk.get("type") == "text":
+            last_assistant_text = blk.get("text", "") or ""
+    return last_assistant_text
+
+
+def _session_cache_key(log_path: Path, session_id: str) -> str:
+    """Build a content-aware cache key for a session log.
+
+    Two logs with the same `sessionId` but different content MUST NOT
+    share a cache entry — the rubric is the session, but the inputs
+    differ. The key includes the session_id plus a content hash of the
+    log file (sha256 of the full text). On OSError (missing/unreadable
+    log) the hash falls back to ``"missing"`` so cache lookups stay
+    deterministic for error-path runs.
+    """
+    try:
+        blob = log_path.read_bytes()
+    except OSError:
+        blob = b""
+    digest = hashlib.sha256(blob).hexdigest()[:12]
+    return f"{session_id}-{digest}"
+
+
+def _session_cache_path(
+    project_root: Path, session_id: str, log_path: Optional[Path] = None,
+) -> Path:
     """Per-session judge cache. Located under
     ``.dev-kit/cache/session-eval/<sid>.json`` so it can be gitignored
     and survives across runs without leaking into eval/.
+
+    When `log_path` is supplied, the path includes a content hash so
+    mutated logs do not reuse a stale verdict. Backward-compatible:
+    callers without a `log_path` get the legacy session_id-only path.
     """
+    if log_path is not None:
+        session_id = _session_cache_key(log_path, session_id)
     p = project_root / ".dev-kit" / "cache" / "session-eval" / f"{session_id}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
-def _load_session_cache(project_root: Path, session_id: str) -> Optional[Dict]:
-    p = _session_cache_path(project_root, session_id)
+def _load_session_cache(
+    project_root: Path, session_id: str, log_path: Optional[Path] = None,
+) -> Optional[Dict]:
+    p = _session_cache_path(project_root, session_id, log_path)
     if not p.exists():
         return None
     try:
@@ -573,9 +654,55 @@ def _load_session_cache(project_root: Path, session_id: str) -> Optional[Dict]:
         return None
 
 
-def _save_session_cache(project_root: Path, session_id: str, data: Dict) -> None:
-    p = _session_cache_path(project_root, session_id)
+def _save_session_cache(
+    project_root: Path, session_id: str, data: Dict,
+    log_path: Optional[Path] = None,
+) -> None:
+    p = _session_cache_path(project_root, session_id, log_path)
     atomic_write_json(p, data)
+
+
+def _session_report(
+    *,
+    session_id: str,
+    log_path: str,
+    scores: Dict[str, float],
+    verdict: str,
+    score: float,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    raw: str = "",
+    error: Optional[str] = None,
+    cached: bool = False,
+) -> Dict:
+    """Centralized builder for the session-log report dict.
+
+    All four branches of `run_session_dim` (dry-run / empty-log / real
+    LLM call / exception) route through here so the public shape stays
+    identical regardless of how the verdict was produced. `summary` is
+    the canonical short shape consumers key off; kept attached so a
+    single dict carry enough context for both reporters and JSON
+    consumers.
+    """
+    report: Dict = {
+        "session_id": session_id,
+        "log_path": log_path,
+        "scores": dict(scores),
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "raw": raw,
+        "verdict": verdict,
+        "score": score,
+        "error": error,
+        "cached": cached,
+    }
+    report["summary"] = {
+        "verdict": verdict,
+        "score": score,
+        "cached": cached,
+        "axes": len(report["scores"]),
+    }
+    return report
 
 
 def run_session_dim(
@@ -587,62 +714,52 @@ def run_session_dim(
 ) -> Dict:
     """Judge a session log against the 8-axis session rubric.
 
-    Cost: 1 LLM call per session_id (cached). Opt-in only — never wired
-    into CI. Returns a dict with ``session_id``, ``scores`` (8 axes,
-    0-10), ``score`` (mean), ``verdict`` (OK / DRIFT_WARNING / ROT /
-    SKIPPED), ``cached`` (bool), and the standard ``tokens_in`` /
+    Cost: 1 LLM call per session_id (cached, content-aware). Opt-in only —
+    never wired into CI. Returns a dict with ``session_id``, ``scores``
+    (8 axes, 0-10), ``score`` (mean), ``verdict`` (OK / DRIFT_WARNING /
+    ROT / SKIPPED), ``cached`` (bool), and the standard ``tokens_in`` /
     ``tokens_out`` / ``raw`` / ``error`` fields.
 
     Dry-run / no api_key: returns score=7.0 / DRIFT_WARNING / cached=False
     without touching the network — same shape as the per-dim dry-run path.
     """
     sid = _session_id_from_log(session_log_path)
-    # Cache lookup keyed on session_id; first session_id wins even if a
-    # later log path differs, since the rubric is the session itself.
     if config is None:
         config = llm_judge.load_config(project_root)
-    cached = _load_session_cache(project_root, sid) if sid else None
+    # Cache lookup keyed on (session_id, content_hash) so two logs with
+    # the same sessionId but different content do not share a verdict.
+    cached = (
+        _load_session_cache(project_root, sid, session_log_path)
+        if sid else None
+    )
     if cached is not None:
         return {**cached, "cached": True}
 
     axes = SESSION_AXES
     if dry_run or not config.get("api_key"):
         scores = {ax: 7.0 for ax in axes}
-        report = {
-            "session_id": sid,
-            "log_path": str(session_log_path),
-            "scores": scores,
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "raw": "DRY_RUN",
-            "verdict": "DRIFT_WARNING",
-            "score": llm_judge.score_aggregate(scores),
-            "error": None,
-            "cached": False,
-        }
-        report["summary"] = {"verdict": report["verdict"],
-                             "score": report["score"],
-                             "cached": False,
-                             "axes": len(scores)}
-        return report
+        return _session_report(
+            session_id=sid,
+            log_path=str(session_log_path),
+            scores=scores,
+            verdict="DRIFT_WARNING",
+            score=llm_judge.score_aggregate(scores),
+            raw="DRY_RUN",
+            cached=False,
+        )
 
     body = _summarize_session_log(session_log_path)
     if not body:
-        report = {
-            "session_id": sid,
-            "log_path": str(session_log_path),
-            "scores": {ax: 0.0 for ax in axes},
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "raw": "EMPTY_LOG",
-            "verdict": "ROT",
-            "score": 0.0,
-            "error": "empty or unreadable session log",
-            "cached": False,
-        }
-        report["summary"] = {"verdict": "ROT", "score": 0.0,
-                             "cached": False, "axes": 0}
-        return report
+        return _session_report(
+            session_id=sid,
+            log_path=str(session_log_path),
+            scores={ax: 0.0 for ax in axes},
+            verdict="ROT",
+            score=0.0,
+            raw="EMPTY_LOG",
+            error="empty or unreadable session log",
+            cached=False,
+        )
 
     substitutions = {
         "SESSION_ID": sid,
@@ -670,46 +787,44 @@ def run_session_dim(
             base_url=config.get("base_url", "https://api.minimax.io/anthropic"),
         )
         scores = raw.get("scores") or {}
-        scores = {ax: float(scores.get(ax, 0.0)) for ax in axes}
+        scores = {
+            ax: (float(v) if (v := _coerce_score(scores.get(ax))) is not None else 0.0)
+            for ax in axes
+        }
         score = llm_judge.score_aggregate(scores) if scores else 0.0
         verdict = llm_judge.verdict_from_score(score) if score > 0 else "ROT"
-        report = {
-            "session_id": sid,
-            "log_path": str(session_log_path),
-            "scores": scores,
-            "tokens_in": raw.get("tokens_in", 0),
-            "tokens_out": raw.get("tokens_out", 0),
-            "raw": (raw.get("raw") or "")[:500],
-            "verdict": verdict,
-            "score": score,
-            "error": None,
-            "cached": False,
-        }
+        report = _session_report(
+            session_id=sid,
+            log_path=str(session_log_path),
+            scores=scores,
+            verdict=verdict,
+            score=score,
+            tokens_in=raw.get("tokens_in", 0),
+            tokens_out=raw.get("tokens_out", 0),
+            raw=(raw.get("raw") or "")[:500],
+            cached=False,
+        )
     except Exception as e:
-        report = {
-            "session_id": sid,
-            "log_path": str(session_log_path),
-            "scores": {ax: 0.0 for ax in axes},
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "raw": str(e),
-            "verdict": "ROT",
-            "score": 0.0,
-            "error": str(e),
-            "cached": False,
-        }
+        report = _session_report(
+            session_id=sid,
+            log_path=str(session_log_path),
+            scores={ax: 0.0 for ax in axes},
+            verdict="ROT",
+            score=0.0,
+            raw=str(e),
+            error=str(e),
+            cached=False,
+        )
     # Cache successful judgments only (don't poison the cache on ROT).
     if sid and report["verdict"] != "ROT":
         try:
-            _save_session_cache(project_root, sid, {
-                k: v for k, v in report.items() if k != "cached"
-            })
+            _save_session_cache(
+                project_root, sid,
+                {k: v for k, v in report.items() if k != "cached"},
+                session_log_path,
+            )
         except OSError:
             pass
-    report["summary"] = {"verdict": report["verdict"],
-                         "score": report["score"],
-                         "cached": report["cached"],
-                         "axes": len(report["scores"])}
     return report
 
 
@@ -825,11 +940,12 @@ def run_golden_diff(
         baseline_scores = (golden.get("expected") or {}).get("scores") or {}
         cur_scores = cur.get("scores") or {}
         for ax, base_val in baseline_scores.items():
-            try:
-                base_f = float(base_val)
-            except (TypeError, ValueError):
+            base_f = _coerce_score(base_val)
+            if base_f is None:
                 continue
-            cur_f = float(cur_scores.get(ax, 0.0))
+            cur_f = _coerce_score(cur_scores.get(ax, 0.0))
+            if cur_f is None:
+                cur_f = 0.0
             delta = cur_f - base_f
             if delta < -0.5:  # only meaningful regressions
                 markers.append({
@@ -922,6 +1038,55 @@ def write_regression_report(project_root: Path, reg: Dict) -> Path:
     return path
 
 
+# ---------- CLI mode validation (issue #310) ----------
+
+
+def _validate_cli_args(args) -> None:
+    """Reject mutually-exclusive / missing-prerequisite flag combos.
+
+    The CLI is the user-facing surface — a silent typo (e.g.
+    `--write-session-report` without `--session-log`) must error
+    loudly instead of producing a misleading summary. Mutually-
+    exclusive combinations:
+
+      - `--session-log` ⟂ `--golden-diff`
+      - `--session-log` ⟂ `--dim` / `--case` (per-dim filters only
+        apply to the per-dim run path)
+      - `--write-session-report` requires `--session-log`
+      - `--write-regression-report` requires `--golden-diff`
+
+    Raises `SystemExit` (via argparse error) on the first violation.
+    """
+    import argparse
+    has_session = bool(getattr(args, "session_log", None))
+    has_golden = bool(getattr(args, "golden_diff", False))
+    has_write_session = bool(getattr(args, "write_session_report", False))
+    has_write_regression = bool(getattr(args, "write_regression_report", False))
+    has_dim = getattr(args, "dim", None)
+    has_case = getattr(args, "case", None)
+
+    if has_write_session and not has_session:
+        parser = argparse.ArgumentParser()
+        parser.error(
+            "--write-session-report requires --session-log",
+        )
+    if has_write_regression and not has_golden:
+        parser = argparse.ArgumentParser()
+        parser.error(
+            "--write-regression-report requires --golden-diff",
+        )
+    if has_session and has_golden:
+        parser = argparse.ArgumentParser()
+        parser.error(
+            "--session-log and --golden-diff are mutually exclusive",
+        )
+    if has_session and (has_dim or has_case):
+        parser = argparse.ArgumentParser()
+        parser.error(
+            "--session-log cannot be combined with --dim / --case",
+        )
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run agent-behavior eval")
@@ -955,6 +1120,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
+    _validate_cli_args(args)
 
     if args.session_log:
         sess_path = Path(args.session_log).resolve()

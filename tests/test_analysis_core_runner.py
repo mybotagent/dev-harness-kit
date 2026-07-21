@@ -52,6 +52,27 @@ def _build_synth_repo() -> Path:
     return root
 
 
+class TestRunAnalysisKeywordOnly(unittest.TestCase):
+    """`candidates` and `verdicts` are keyword-only optional args on
+    `run_analysis`. Positional use of these parameters is rejected so a
+    future caller cannot accidentally swap order under refactor.
+    """
+
+    def test_candidates_positional_raises(self):
+        with self.assertRaises(TypeError):
+            run_analysis(
+                ["correctness"], "read-only", [],
+                {"correctness": []},  # candidates positional → reject
+            )
+
+    def test_verdicts_positional_raises(self):
+        with self.assertRaises(TypeError):
+            run_analysis(
+                ["correctness"], "read-only", [],
+                None, [],  # verdicts positional → reject
+            )
+
+
 class TestRunAnalysis(unittest.TestCase):
     def test_run_analysis_review_keeps_real_finds(self):
         """Review-mode run on a synthetic repo with realistic candidate stream."""
@@ -211,7 +232,7 @@ class TestEmitSuggestedDiffs(unittest.TestCase):
                     "failure_scenario": "no callers",
                     "deletion_scope": "whole-file",
                     "deletion_root_cause": "orphan module",
-                    "deletion_proof": {"no_importers": True, "no_callers": True},
+                    "deletion_proof": {"no_importers": True, "no_callers": True, "no_references": True, "no_runtime_calls": True},
                     "fix_hint": "rm a.py",
                 },
             ],
@@ -367,13 +388,13 @@ class TestScopeEnforcement(unittest.TestCase):
             "severity": "major", "confidence": "high", "title": "long method",
             "tldr": "too big", "failure_scenario": "unmaintainable",
         }]}
-        result = run_analysis(["smell"], "delete", [repo], candidates)
+        result = run_analysis(["smell"], "delete", [repo], candidates=candidates)
         self.assertEqual(result.findings[0].dim, "smell")
         self.assertEqual(emit_suggested_diffs(result), [])
 
     def test_dimension_severity_floor_is_enforced(self):
         repo = _build_synth_repo()
-        result = run_analysis(["owasp-a05"], "read-only", [repo], {"owasp-a05": [{
+        result = run_analysis(["owasp-a05"], "read-only", [repo], candidates={"owasp-a05": [{
             "file": str(repo / "a.py"), "line": 1, "severity": "nit",
             "confidence": "high", "title": "noise", "tldr": "noise",
             "failure_scenario": "not actionable",
@@ -428,7 +449,7 @@ class TestPerDimModeRespect(unittest.TestCase):
                     "failure_scenario": "no callers",
                     "deletion_scope": "whole-file",
                     "deletion_root_cause": "orphan module",
-                    "deletion_proof": {"no_importers": True, "no_callers": True},
+                    "deletion_proof": {"no_importers": True, "no_callers": True, "no_references": True, "no_runtime_calls": True},
                     "fix_hint": "rm b.py",
                 },
             ],
@@ -780,7 +801,7 @@ class TestDeleteModePromotesLineEvidence(unittest.TestCase):
                     "fix_hint": "rm a.py",
                     "deletion_scope": "whole-file",
                     "deletion_root_cause": "orphan module",
-                    "deletion_proof": {"no_importers": True, "no_callers": True},
+                    "deletion_proof": {"no_importers": True, "no_callers": True, "no_references": True, "no_runtime_calls": True},
                 },
             ],
         }
@@ -803,7 +824,7 @@ class TestDeleteModePromotesLineEvidence(unittest.TestCase):
 class TestDeleteModeRequiresWholeFileProof(unittest.TestCase):
     def test_line_finding_never_emits_git_rm_without_proof(self):
         repo = _build_synth_repo()
-        result = run_analysis(["dead"], "delete", [repo], {"dead": [{
+        result = run_analysis(["dead"], "delete", [repo], candidates={"dead": [{
             "file": str(repo / "a.py"), "line": 4, "severity": "major",
             "confidence": "high", "title": "unused export", "tldr": "line only",
             "failure_scenario": "one export is unused", "fix_hint": "remove export",
@@ -815,7 +836,7 @@ class TestDeleteModeRequiresWholeFileProof(unittest.TestCase):
 
     def test_whole_file_requires_no_importer_and_no_caller_proof(self):
         repo = _build_synth_repo()
-        result = run_analysis(["dead"], "delete", [repo], {"dead": [{
+        result = run_analysis(["dead"], "delete", [repo], candidates={"dead": [{
             "file": str(repo / "a.py"), "line": 0, "severity": "major",
             "confidence": "high", "title": "orphan module", "tldr": "unused",
             "failure_scenario": "module is unreachable", "deletion_scope": "whole-file",
@@ -836,7 +857,7 @@ class TestResultContracts(unittest.TestCase):
              "severity": "critical", "confidence": "high", "title": "critical",
              "tldr": "critical", "failure_scenario": "critical"},
         ]}
-        result = run_analysis(["correctness"], "read-only", [repo], candidates,
+        result = run_analysis(["correctness"], "read-only", [repo], candidates=candidates,
             verdicts=[("critical-id", "REJECTED", "not reproducible"),
                       ("major-id", "CONFIRMED", "reproduced")])
         self.assertEqual([f.evidence_id for f in result.findings], ["major-id"])
@@ -849,7 +870,7 @@ class TestResultContracts(unittest.TestCase):
         secret_root.mkdir()
         source = secret_root / "a.py"
         source.write_text("x = 1\n", encoding="utf-8")
-        result = run_analysis(["correctness"], "read-only", [secret_root], {"correctness": [{
+        result = run_analysis(["correctness"], "read-only", [secret_root], candidates={"correctness": [{
             "file": str(source), "line": 1, "severity": "major", "confidence": "high",
             "title": "x", "tldr": "x", "failure_scenario": "y"
         }]})
@@ -864,12 +885,12 @@ class TestResultContracts(unittest.TestCase):
                     "confidence": "high", "title": severity, "tldr": severity,
                     "failure_scenario": severity}
         self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
-            {"correctness": [candidate(1, "major")]}).verdict, "Critical")
+            candidates={"correctness": [candidate(1, "major")]}).verdict, "Critical")
         self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
-            {"correctness": [candidate(1, "minor"), candidate(2, "minor")] }).verdict,
+            candidates={"correctness": [candidate(1, "minor"), candidate(2, "minor")] }).verdict,
             "Minor drift")
         self.assertEqual(run_analysis(["correctness"], "read-only", [repo],
-            {"correctness": [candidate(1, "minor"), candidate(2, "minor"), candidate(3, "minor")] }).verdict,
+            candidates={"correctness": [candidate(1, "minor"), candidate(2, "minor"), candidate(3, "minor")] }).verdict,
             "Major drift")
 
 
