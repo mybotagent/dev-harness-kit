@@ -371,6 +371,80 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - name: Touch-probe (does this PR touch production code?)
+        id: touch_probe
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The L3 evidence gate below only enforces the pytest tail when
+          # this PR actually exercises tests. For docs/infra-only PRs (a
+          # README typo, a workflow tweak, a rules-file add) pytest is not
+          # the right evidence — accept the PR with a non-blocking note.
+          #
+          # Logic: re-list the PR's touched files via `gh api` and check
+          # whether any of them lives under a production root. If yes,
+          # touch_probe.touches_prod = 'true' and the gate below stays in
+          # force. If no, the verdict + human-gate owns approval.
+          TOUCHES="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+              --json files --jq '.files[].path' 2>/dev/null \
+            | grep -E '^(lib|tools|hooks|skills|\.githooks|\.claude|\.codex|\.github)/' \
+            || true)"
+          if [ -n "$TOUCHES" ]; then
+            echo "touches_prod=true"
+            echo "touches_prod=true" >> "$GITHUB_OUTPUT"
+            echo "Touched production roots:"
+            printf '  %s\n' $TOUCHES | head -10
+          else
+            echo "touches_prod=false (docs/infra-only PR; L3 evidence advisory only)"
+          fi
+
+      - name: L3 evidence gate (PR body must quote test count)
+        # Per CLAUDE.md §1 L3: "No completion claim without quoted exit
+        # code / test count / build log." For PRs that touch production
+        # code, the PR body MUST include a quoted pytest tail line matching
+        # the strict format below. This is a stricter check than the
+        # human-only "did you remember to paste it?" that the previous
+        # template relied on — the regex here is also the format the
+        # template's "Iron Law L3" fenced block invites the author to
+        # paste, so template and gate are in lockstep.
+        #
+        # For docs/infra-only PRs (touches_prod != 'true'), this step is
+        # advisory — it logs ::notice:: but does NOT fail the gate. The
+        # human + verdict-gate still owns approval.
+        env:
+          TOUCHES_PROD: ${{ steps.touch_probe.outputs.touches_prod || '' }}
+        run: |
+          set -uo pipefail
+          PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json body --jq '.body // ""')"
+
+          # pytest -q canonical form is one of:
+          #   all-green:   `<N> passed, <N> skipped in <Ns>s`
+          #   partial-red: `<N> failed, <N> passed, <N> skipped in <Ns>s`
+          #   total-red:   `<N> failed in <Ns>s`
+          # The pattern below accepts any line that has BOTH a passed/failed
+          # number AND a `skipped` number within the same pytest summary,
+          # with a wall-clock time at the end. This matches all three
+          # canonical forms without forcing the author to hand-edit
+          # pytest's natural output.
+          PATTERN='[0-9]+ (passed|failed).*[0-9]+ skipped in [0-9.]+s|[0-9]+ failed in [0-9.]+s'
+          if printf '%s' "$PR_BODY" | grep -qE "$PATTERN"; then
+            echo "L3-evidence OK: pytest tail line found in PR body"
+            exit 0
+          fi
+
+          if [ "$TOUCHES_PROD" = "true" ]; then
+            echo "::error::PR body lacks a quoted pytest tail line."
+            echo "::error::Required (Iron Law L3):  '<N> passed, <N> skipped in <Ns>s'"
+            echo "::error::Use the .github/pull_request_template.md 'Iron Law L3' section,"
+            echo "::error::paste the EXACT line from your local pytest run (not a paraphrase)."
+            exit 1
+          else
+            echo "::notice::docs/infra-only PR; L3 evidence is advisory here."
+            echo "  (PR did not touch lib/, tools/, hooks/, skills/, .githooks/, .claude/, .codex/, .github/.)"
+            echo "  Consider still pasting a pytest tail if you ran any local verification."
+          fi
+
       - name: Combined verdict gate
         run: |
           # Read verdicts directly from each job's outputs (set by the
