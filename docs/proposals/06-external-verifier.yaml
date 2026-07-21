@@ -1,0 +1,153 @@
+title: "06 — 리서치 하네스 (외부 검증기 + Phase 0–3 에스컬레이션)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [research, verification, citation, escalation, l7]
+sections:
+  - title: 정의
+    body: |
+      **리서치 하네스**는 플랜을 **외부 자료**로 검증한다. 단순 검색이
+      아니라 **루브릭 우선**으로 동작한다:
+      1. "어떤 차원을 검증할 것인가" 정의 → 명시적 루브릭
+      2. N개 (≥3) 독립 웹 쿼리 팬아웃
+      3. 인용 + 교차검증 (N 소스 합의)
+      4. 종합은 **모델이 제안**, verification 게이트가 검증
+
+      insane-search의 Phase 0–3 에스컬레이션을 차용하되, MCP 서버로
+      재구성 (Claude plugin 배포는 기각).
+
+  - title: Phase 0–3 에스컬레이션 (insane-search 차용)
+    body: |
+      | Phase | 동작 | 비용 | 종료 |
+      |-------|------|------|------|
+      | **0 Skip** | `lcs://research/cache` 룩업 | 1 회 | 캐시 적중 |
+      | **1 경량** | HTTP GET + OGP/JSON-LD 파싱 | 요청 + 파싱 | 메타 추출 |
+      | **2 헤드리스** | `requests-html` / `curl_cffi` | 부팅 1회 | JS 렌더링 |
+      | **3 풀 헤드리스** | Playwright | 풀 브라우저 | 렌더링 또는 인증 만남 |
+
+      각 단계 **앞**에 verification 게이트: URL 유효성, 도메인 권위,
+      1차/2차 자료 분류, N 소스 합의. 미달 시 단계 재시도 또는 리서치
+      거부.
+
+      **인증/페이월 만나면 즉시 중단** (insane-search의 경계 그대로).
+
+  - title: insane-search와의 차이
+    body: |
+      | 측면 | insane-search | 본 리서치 하네스 |
+      |------|----------------|------------------|
+      | 배포 | Claude `/plugin` | MCP 서버 (런타임 무지) |
+      | 트리거 | 도구 실패 훅 | 명시적 호출 (`/dev-kit:research <claim>`) |
+      | 비용 | 호스트 자동 설치 | 표준 라이브러리 + 어댑터 |
+      | 정합성 | 단일 결과 | N 소스 합의 게이트 |
+      | 인용 | OGP 메타만 | URL + 시각 + 출처 종류 강제 |
+      | 종합 | (없음) | 모델 제안, 게이트 검증 |
+
+  - title: verification 게이트 (결정 6 잠금)
+    body: |
+      각 단계 / 최종 결과에 verification 게이트가 강제된다:
+
+      ```python
+      def verify(sources: list[Source],
+                 rubric: ResearchRubric) -> VerificationResult:
+          # URL 유효성 (HEAD 요청)
+          # 도메인 권위 (루브릭: 1차 / 2차 / 비권위)
+          # 1차 / 2차 자료 분류
+          # N 소스 합의 (≥ 3개 같은 결론 = 신뢰 상향)
+          # 단일 출처 신뢰 하향 + 명시적 경고
+          # 인용 누락 = 거부
+      ```
+
+      **단일 출처 경고**가 미해결이면 리서치 결과 게시 거부. 단, 정보가
+      단일 출처에서만 가능한 경우는 (예: 미공개 내부 문서) 명시적
+      표시 후 통과.
+
+  - title: 인용 강제 (결정 5)
+    body: |
+      **모든 주장에 인용 필수**:
+      - URL
+      - 검색 시각 (ISO 8601)
+      - 출처 종류 (1차 / 2차 / 비권위)
+      - 접근 방법 (HTTP / 인증 / 내부)
+
+      인용 없는 주장 = **게시 거부**. 단, 명시적 "주관적 판단" 마킹
+      의 경우는 인용 면제 (예: 모델의 디자인 결정).
+
+  - title: N 소스 합의 패턴
+    body: |
+      ```
+        루브릭 정의 (검증 차원 N개)
+            │
+            ▼
+        N=3개 쿼리 팬아웃 (`tools/parallel_dispatch.py`)
+            │  각 쿼리는 다른 쿼리 + 다른 소스
+            ▼
+        N개 응답 수집 → URL 인용 추출
+            │
+            ▼
+        비교: 동일 결론?
+        ├── 모두 일치 → 신뢰 상향 + 종합 진행
+        ├── 2-of-3 일치 → 부분 합의 + 명시
+        └── 1-of-3 일치 → 신뢰 하향 + 경고 표시
+            │
+            ▼
+        종합 (모델이 초안), 게이트가 검증
+            │
+            ▼
+        결정: 게시 / 부분 게시 + 경고 / 거부
+      ```
+
+  - title: 흡수 위험 (L7)
+    body: |
+      | 컴포넌트 | 위험 | 비고 |
+      |----------|------|------|
+      | **루브릭 정의** | 낮음 | YAML; 명시적 |
+      | **쿼리 생성** (모델이 어떤 쿼리 던질지) | **중간** | **얇게**: 모델이 제안, 엔진이 디스패치; 결정적 부분이 자연스레 강제 |
+      | **웹 페치** | 매우 낮음 | 실제 I/O |
+      | **교차검증** | 낮음 | 포맷 고정 N-소스 합의 |
+      | **인용 강제** | 매우 낮음 | 결정적 |
+      | **종합** | **높음** — 흡수 가능 | **얇게**: 엔진은 출처만 수집; 종합은 모델이 초안, 게이트가 검증 |
+
+      **결정적 강제**: verification 게이트, 인용 강제, N 소스 합의.
+      모델이 흡수할 수 없다.
+
+  - title: 런타임 중립성 (결정 8)
+    body: |
+      - 리서치 엔진 (`lib/research_engine.py`): 순수 함수 → 자동 중립
+      - 팬아웃: `tools/parallel_dispatch.py` 추상화 → 자동 중립
+      - 캐시: `lcs://research/cache` (LCS 위) → 자동 중립
+      - 헤드리스 도구: 표준 Python 라이브러리 (어디서나 설치 가능)
+
+      **런타임 의존 없음**. 결정 8 자동 만족.
+
+  - title: 인터페이스 (의사)
+    body: |
+      ```python
+      # lib/research_engine.py
+      def verify_claim(claim: str,
+                      rubric: ResearchRubric = DEFAULT,
+                      max_phase: int = 4) -> ResearchReport:
+          """Returns cited report with phase-escalation + verification."""
+
+      class ResearchRubric:
+          dimensions: list[RubricDimension]
+          n_sources_for_agreement: int = 3
+          require_citations: bool = True
+      ```
+
+      `max_phase`는 단계 상한 (기본 4 = Phase 0–3 모두). 사용자가
+      비용 절감을 위해 낮출 수 있다 (예: `max_phase=2` = Phase 0–1만).
+
+  - title: LCS 통합
+    body: |
+      - **캐시**: `lcs://research/cache` (v2 추가 리소스). 동일/유사
+        쿼리 결과가 있으면 Phase 0에서 즉시 반환.
+      - **결과의 영속화**: 리서치 결과는 `lcs://research/cache/<query-hash>`
+        에 저장. 다른 에이전트가 재사용.
+
+  - title: Related
+    body: |
+      - `02-live-context-server.html` — `lcs://research/cache` (v2)
+      - `07-runtime-portability.html` — 헤드리스 도구의 런타임 의존 분석
+      - `08-external-references.html` — insane-search 에스컬레이션 차용 근거, hermes 자가 평가 기각
+      - `10-decision-record.html` — 결정 5 (인용 강제), 결정 6 (verification 게이트), 결정 7 (4단계)
+      - `11-migration-phases.html` — Phase 5

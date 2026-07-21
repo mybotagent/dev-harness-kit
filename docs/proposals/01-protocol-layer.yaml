@@ -1,0 +1,93 @@
+title: "01 — MCP: Model Context Protocol (와이어 프로토콜 계층)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [mcp, protocol, runtime-portability, l7]
+sections:
+  - title: 정의
+    body: |
+      **MCP (Model Context Protocol)**는 AI 모델을 외부 도구와 데이터
+      소스에 연결하는 **공개 표준 와이어 프로토콜**이다. 이 저장소에서는
+      MCP를 **사용할 뿐 구축하지 않는다** — Claude Code, Codex, 미래 SDK
+      모두 MCP를 지원한다.
+
+      - **전송**: JSON-RPC over stdio (또는 HTTP/SSE)
+      - **프리미티브**: `resources` (read, URI), `tools` (write, named),
+        `prompts` (templated), `sampling` (server→client LLM call)
+      - **라이프사이클**: initialize → capability negotiation → request/
+        response/notification → shutdown
+      - **에코시스템**: Claude Code (client) + Codex (client) + LCS (server)
+        + GitHub MCP (server) + Stripe MCP (server) + ...
+
+      MCP는 **문법**이지 **어휘가 아니다**. 특정 리소스 / 도구 / 스키마를
+      정의하지 않는다 — 그것은 서버의 몫 (이 저장소에서는 LCS).
+
+  - title: 이 시스템에서의 역할
+    body: |
+      MCP는 LCS가 다른 모든 하네스의 **통신 계층**이다. LCS는 MCP 위에서
+      동작하는 한 서버이고, 평가 / 플랜 가치 / 리서치 / 인터뷰 / 하네스
+      감사는 모두 LCS가 노출하는 리소스를 MCP 클라이언트로 읽는다.
+
+      ```
+        에이전트 런타임 (Claude Code / Codex)
+            │
+            │  JSON-RPC over stdio (MCP)
+            ▼
+        LCS 서버 ──► git CLI / gh CLI / fs / 런타임 어댑터
+        평가 엔진
+        플랜 가치 엔진
+        리서치 엔진 (Phase 0–3)
+        인터뷰 엔진
+        하네스 감사
+      ```
+
+  - title: 왜 이걸 단독 주제로 다루는가
+    body: |
+      1. **런타임 중립성의 기초**: MCP가 이미 모든 런타임에서 지원되므로
+         LCS를 MCP 위에서 만들면 결정 8 (단일 런타임 종속 = 기각)을
+         자동으로 만족한다.
+      2. **alpha 흡수 위험 매우 낮음**: 와이어 포맷은 추론이 아니다. 다음
+         모델이 흡수하지 않는다 (L7 정렬).
+      3. **벤더 종속 회피**: insane-search가 Claude `/plugin` 배포에
+         묶이는 것과 달리, MCP 서버는 한 번 만들면 어떤 런타임에서든
+         자동 동작.
+
+  - title: 런타임 중립성 (결정 8과의 관계)
+    body: |
+      MCP는 결정 8 (단일 런타임 종속 = 기각)의 *기반*이다. LCS가 MCP
+      서버로 구현되면 Claude Code에서도 Codex에서도 동일하게 동작한다.
+      추가 런타임 어댑터가 불필요하다.
+
+      단, MCP가 결정 8을 **완전히** 보장하지는 않는다 — LCS가 런타임별
+      토큰 로그 포맷처럼 런타임 의존 데이터를 다룰 때는 어댑터 계층이
+      추가로 필요하다. 자세한 분류: `07-runtime-portability.html`.
+
+  - title: 흡수 위험 분석 (L7 정렬)
+    body: |
+      | MCP 컴포넌트 | 위험 | 왜 |
+      |--------------|------|-----|
+      | 와이어 포맷 (JSON-RPC) | 매우 낮음 | 프로토콜 — 모델은 프로토콜을 합성 불가 |
+      | 핸드셰이크 / capability negotiation | 매우 낮음 | 포맷 고정 |
+      | 에러 코드 / 라이프사이클 | 매우 낮음 | RFC처럼 안정적 |
+      | 리소스 / 도구 프리미티브 | 낮음 | 추상 정의 — 서버 구현은 별개 |
+
+      **결론**: MCP 자체는 alpha 흡수 위험이 **0**에 가깝다. 우리가
+      기각해야 할 것은 MCP가 아니다 — MCP *위의 어휘*(서버 구현)를
+      어떻게 정의하느냐가 차별점이다.
+
+  - title: 이 제안에서의 출시 작업
+    body: |
+      MCP 자체는 출시할 것이 없다 — 이미 모든 런타임이 지원한다. 우리가
+      해야 할 일:
+
+      1. **LCS가 MCP 규격 서버로 구현됨** (Phase 1, `02-live-context-server.html`)
+      2. **다른 엔진이 LCS의 MCP 리소스를 소비** (Phase 3–6)
+      3. **런타임 어댑터가 MCP 통합을 망치지 않도록** (Phase 0,
+         `07-runtime-portability.html`)
+
+      ## Related
+      - `02-live-context-server.html` — MCP 위의 첫 번째 서버
+      - `07-runtime-portability.html` — 결정 8 어댑터 계층
+      - `09-consolidated-architecture.html` — 통합 아키텍처
+      - `08-external-references.html` — insane-search의 Claude 종속 배포 기각 근거
+      - Issue #280 — 이 제안이 종료함

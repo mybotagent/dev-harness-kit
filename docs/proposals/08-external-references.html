@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 — 외부 참조 비판 (insane-search / hermes / AEGIS)</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --fg: #1d1d1f;
+  --bg: #fbfbfd;
+  --muted: #5b5b62;
+  --border: #d2d2d7;
+  --card-bg: #ffffff;
+  --th-bg: #f5f5f7;
+  --row-alt: #fafafa;
+  --code-bg: #f5f5f7;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.08);
+  --ok: #1f8a3b;
+  --warn: #a06400;
+  --bad: #b03030;
+  --callout-bg: rgba(10, 132, 255, 0.06);
+  --callout-border: #0a84ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f5f5f7;
+    --bg: #1c1c1e;
+    --muted: #aeaeb2;
+    --border: #38383a;
+    --card-bg: #2c2c2e;
+    --th-bg: #3a3a3c;
+    --row-alt: #232325;
+    --code-bg: #2c2c2e;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok: #4cd964;
+    --warn: #ff9f0a;
+    --bad: #ff453a;
+    --callout-bg: rgba(10, 132, 255, 0.14);
+    --callout-border: #0a84ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+h2 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; margin: 3.5rem 0 1rem; }
+h3 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 0.6rem; }
+p { margin: 0.7rem 0; }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0 0 2.5rem; }
+.tags { margin: 0 0 1.5rem; }
+.tag {
+  display: inline-block;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+}
+.tag-ok { background: rgba(31, 138, 59, 0.12); color: var(--ok); }
+.tag-warn { background: rgba(160, 100, 0, 0.12); color: var(--warn); }
+.tag-bad { background: rgba(176, 48, 48, 0.12); color: var(--bad); }
+.tag-info { background: var(--accent-soft); color: var(--accent); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+th, td { padding: 0.7rem 0.9rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--th-bg); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+tr:nth-child(even) td { background: var(--row-alt); }
+td code, th code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.88em; }
+.callout {
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-border);
+  border-radius: 6px;
+  padding: 0.9rem 1.2rem;
+  margin: 1.5rem 0;
+}
+.callout .label { font-weight: 600; margin-bottom: 0.3rem; display: block; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li > strong { color: var(--accent); }
+code { font-family: 'SF Mono', Menlo, Consolas, monospace; background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code-bg); padding: 0.9rem 1.1rem; border-radius: 8px; overflow-x: auto; font-size: 0.88em; line-height: 1.5; }
+pre code { background: transparent; padding: 0; }
+blockquote {
+  border-left: 3px solid var(--border);
+  margin: 1rem 0;
+  padding: 0.2rem 1rem;
+  color: var(--muted);
+}
+.section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.toc {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.5rem;
+  margin: 0 0 3rem;
+  font-size: 0.95rem;
+}
+.toc strong { display: block; margin-bottom: 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.toc ol { margin: 0; padding-left: 1.2rem; }
+footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>08 — 외부 참조 비판 (insane-search / hermes / AEGIS)</h1>
+<p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
+<div class="tags"><span class="tag tag-info">insane-search</span><span class="tag tag-info">hermes</span><span class="tag tag-info">aegis</span><span class="tag tag-info">external-references</span><span class="tag tag-info">borrow</span><span class="tag tag-info">reject</span></div>
+<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">왜 외부 참조를 비판적으로 평가하는가</a></li><li><a href="#sec-1">insane-search (fivetaku)</a></li><li><a href="#sec-2">hermes-agent (nousresearch)</a></li><li><a href="#sec-3">HarnessX / AEGIS (Xiaomi, AI Times 2026-07-21)</a></li><li><a href="#sec-4">차용 vs 기각 매트릭스 (요약)</a></li><li><a href="#sec-5">1절 종합 — 우리가 *안* 만드는 것</a></li><li><a href="#sec-6">Related</a></li></ol></div>
+<h2 id="sec-0">왜 외부 참조를 비판적으로 평가하는가</h2>
+<p>3개의 외부 참조 (insane-search, hermes-agent, HarnessX/AEGIS)는 모두 우리 시스템의 비슷한 영역을 다룬다. 하지만 <strong>L7 (alpha 흡수) 과 결정 8 (런타임 중립)</strong> 의 잠금에 따라 각 참조에서 <strong>차용 / 부분 수용 / 기각</strong>을 명확히 구분한다.</p>
+<p>이 평가는 본 시스템의 <strong>전략적 결계선 (strategic boundary)</strong> 이다. 무비판적 수용은 alpha 표류를 가져온다.</p>
+<hr class="section-divider">
+
+<h2 id="sec-1">insane-search (fivetaku)</h2>
+<h3>무엇을 하는가</h3>
+<p>Claude Code plugin. 일반 fetch가 막힐 때 Phase 0→3로 에스컬레이션 (특수 공개 엔드포인트 → 경량 프로브 → TLS impersonation → 실제 헤드리스). OGP/JSON-LD 스캔으로 부분 페이지에서도 메타 추출. 로그인·페이월 만나면 즉시 중단.</p>
+<h3>Claude 종속의 진짜 이유</h3>
+<ol><li><code>/plugin</code> 배포 채널 (Claude 마켓플레이스)</li><li>도구 실패 훅에 의한 자동 트리거 (Claude Code 전용)</li><li><code>curl_cffi</code>, <code>yt-dlp</code>, 헤드리스 브라우저의 auto-install 호스트</li></ol>
+<p>가정</p>
+<h3>차용</h3>
+<ul><li><strong>4단계 에스컬레이션 로직</strong> (Phase 0: 캐시, Phase 1: 경량</li></ul>
+<p>프로브, Phase 2: 헤드리스, Phase 3: 풀 헤드리스)</p>
+<ul><li><strong>"인증/페이월 만나면 중단"</strong> 경계 — 강한 규율</li><li><strong>OGP/JSON-LD 스캔</strong> — 메타 추출 패턴</li></ul>
+<h3>기각</h3>
+<ul><li><strong>Claude `/plugin` 배포</strong> (insane-search의 결정 3 위반)</li><li><strong>도구 실패 훅 트리거</strong> (Claude Code 종속)</li><li><strong>호스트 자동 설치</strong> (portability 위험)</li></ul>
+<h3>우리 통합 방식</h3>
+<p>Phase 0–3 로직은 MCP 서버의 리소스로 노출 (<code>lcs://research/cache</code> + 리서치 엔진). 호스트 의존 도구는 표준 Python 인터페이스 (<code>insane_search.fetch(url, mode=...)</code>)로. <strong>런타임 무지</strong>.</p>
+<hr class="section-divider">
+
+<h2 id="sec-2">hermes-agent (nousresearch)</h2>
+<h3>무엇을 한다고 주장하는가</h3>
+<p>"Closed learning loop" — 에이전트가 세션을 요약하고, 복잡한 작업 후 스킬을 자동 생성하며, 사용 중 스킬이 자가 개선.</p>
+<h3>문서화된 것</h3>
+<ul><li>세션 검색 (FTS5 + LLM 요약)</li><li>사용자 모델링 (Honcho 통합)</li><li>스킬 자가 개선 (메커니즘 <strong>미명시</strong>)</li><li>트라제토리 데이터 생성 (다음 모델 학습용)</li></ul>
+<h3>문서화되지 않은 것 (심각)</h3>
+<ul><li><strong>루브릭 없음</strong></li><li><strong>자동 벤치마크 없음</strong></li><li><strong>자기 비판 / 판사 / 평가자 없음</strong></li><li><strong>자기 산출물의 합격/불합격 지표 없음</strong></li></ul>
+<h3>결론 (비판적)</h3>
+<p>"Closed learning loop"는 <strong>닫힌 방향이 잘못됨</strong> — 외부 검증 없이 에이전트가 자기 LLM으로 자기 산출물을 평가한다. 이건 우리 결정 2 (자가 평가 = 기각)가 <em>방지하도록</em> 설계된 패턴이다.</p>
+<h3>차용</h3>
+<ul><li><strong>자기 개선 비전</strong> (메모리 + 스킬) — Phase 7 (harness-audit)에서</li></ul>
+<p>부분 수용</p>
+<ul><li><strong>사용자 모델링</strong> (Honcho 통합 아이디어)</li></ul>
+<h3>기각</h3>
+<ul><li><strong>자가 평가 메커니즘</strong> — 외부 검증 부재 (결정 2 위반)</li><li><strong>트라제토리 학습</strong> — 우리 규모 무관</li></ul>
+<h3>우리 통합 방식</h3>
+<p>hermes의 자기 개선 비전은 <strong>인터뷰 + 리서치 + 평가</strong>가 외부 검증 슬롯을 채운다. hermes 식 자가 평가는 <strong>기각</strong>.</p>
+<hr class="section-divider">
+
+<h2 id="sec-3">HarnessX / AEGIS (Xiaomi, AI Times 2026-07-21)</h2>
+<h3>무엇을 하는가</h3>
+<p>하네스(프롬프트 / 도구 / 메모리 / 제어 흐름) 자체를 evolvable 객체로 다룬다. 4단계 엔진:</p>
+<ol><li><strong>Digester</strong> — 실행 로그를 요약해 실패 원인 추출</li><li><strong>Planner</strong> — 구조적 개선 제안 (프롬프트만이 아니라)</li><li><strong>Evolver</strong> — 실제 하네스 코드 편집 생성</li><li><strong>Critic + verification 게이트</strong> — reward hacking과 회귀 차단</li></ol>
+<p><strong>결과</strong>: 15개 모델/벤치마크 쌍 평균 +14.5%, 작은 오픈웨이트에서 최대 +44%.</p>
+<h3>우리 규모에 대한 3가지 결정적 문제</h3>
+<ol><li><strong>메타 에이전트로 Opus 4.6 필요</strong> — 프로덕션 예산 초과</li><li><strong>하네스 코드 자동 생성</strong> — L7 흡수 위험 (결정 1 위반)</li><li><strong>"개선"의 공개 루브릭 없음</strong> — verification 게이트가 내부적,</li></ol>
+<p>표류 가능</p>
+<h3>우리 등가물 (이미 구축 중)</h3>
+<table><thead><tr><th>AEGIS 계층</th><th>우리 등가물</th></tr></thead><tbody><tr><td>Digester</td><td><code>eval</code> + <code>inspect</code> (산출물 → 발견)</td></tr><tr><td>Planner</td><td><code>plan</code> + <code>interview</code> (모호함 해소 + 구조 제안)</td></tr><tr><td>Evolver</td><td><strong>기각</strong> — 인간이 코드, 기계가 비판</td></tr><tr><td>Critic + verification 게이트</td><td>Plan-value 평가 (<code>no-go</code>) + Evaluation (다중 판사) + 리서치 verification</td></tr></tbody></table>
+<h3>차용</h3>
+<ul><li><strong>Critic + verification 게이트 패턴</strong> (결정 6에 잠금)</li><li><strong>Digester → Planner → Evolver → Critic</strong> 파이프라인의 <em>구조</em></li><li><strong>"하네스를 evolvable 객체로 본다"는 시각</strong></li></ul>
+<h3>기각</h3>
+<ul><li><strong>자동 하네스 코드 생성 (Evolver)</strong> — 결정 1 (L7 흡수)</li><li><strong>Opus-class 메타 에이전트 의존</strong> — 결정 4</li><li><strong>내부 verification 게이트</strong> — 결정 6 반대</li></ul>
+<hr class="section-divider">
+
+<h2 id="sec-4">차용 vs 기각 매트릭스 (요약)</h2>
+<table><thead><tr><th>참조</th><th>차용</th><th>기각</th></tr></thead><tbody><tr><td><strong>insane-search</strong></td><td>4단계 에스컬레이션, 인증 경계, OGP/JSON-LD</td><td>Claude plugin 배포, 호스트 자동 설치</td></tr><tr><td><strong>hermes-agent</strong></td><td>자기 개선 비전, 사용자 모델링</td><td>자가 평가 메커니즘</td></tr><tr><td><strong>HarnessX/AEGIS</strong></td><td>Critic + verification 게이트, 파이프라인 구조</td><td>자동 코드 생성, Opus 메타</td></tr></tbody></table>
+<p>이 모든 결정을 L7 (결정 1–2, 4) + 결정 8 (3) + 결정 6 (verification 게이트 잠금)이 일관되게 강제한다.</p>
+<hr class="section-divider">
+
+<h2 id="sec-5">1절 종합 — 우리가 *안* 만드는 것</h2>
+<p>이 평가는 <strong>무엇을 만들지 않을 것인지</strong>가 무엇을 만들지 않을 것만큼 중요하다는 것을 강조한다.</p>
+<p><strong>명시적으로 기각</strong> (이 외부 참조의 어느 부분에도):</p>
+<ul><li>Claude <code>/plugin</code> 배포 (insane-search)</li><li>자동 하네스 코드 생성 (AEGIS Evolver)</li><li>Opus-class 메타 에이전트 (AEGIS Planner/Editor)</li><li>자가 평가 (hermes)</li><li>단일 런타임 종속 (결정 8)</li></ul>
+<p>*<em>이 기각이 우리가 </em>씬하게<em> 만드는 핵심</em>*.</p>
+<hr class="section-divider">
+
+<h2 id="sec-6">Related</h2>
+<ul><li><code>06-external-verifier.html</code> — 리서치의 4단계 에스컬레이션 (insane-search 차용)</li><li><code>05-value-gate.html</code> — 플랜 가치 평가의 verification 게이트 (AEGIS Critic 차용)</li><li><code>04-quality-judge.html</code> — 다중 판사 (AEGIS Critic 패턴 차용)</li><li><code>03-ambiguity-resolver.html</code> — 자기 평가 기각의 이유 (hermes에 대한 응답)</li><li><code>10-decision-record.html</code> — 차용/기각을 결정하는 8개 잠금</li><li><code>11-migration-phases.html</code> — Phase 5가 insane-search 에스컬레이션 출시</li></ul>
+
+<hr class="section-divider">
+
+<footer>Generated 2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+</body>
+</html>
