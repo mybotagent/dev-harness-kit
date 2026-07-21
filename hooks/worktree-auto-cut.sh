@@ -46,8 +46,8 @@ fallback_context() {
   local reason="$1"
   local ctx="worktree auto-cut unavailable
   reason:  $reason
-  action:  do not edit the main checkout; resolve the reason, then run:
-           git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main
+  action:  do not edit the main checkout; resolve the reason, then cut the worktree via the canonical helper:
+           python3 -c \"from lib.git_worktree import cut_worktree; from pathlib import Path; cut_worktree(repo_root=Path.cwd(), branch='<type>/<slug>', worktree_path=Path('.worktrees/<slug>'), base='origin/main')\"
   Codex:   after the worktree exists, spawn a subagent with that path as cwd and pass the original task prompt"
   jq -nc --arg ctx "$ctx" \
     '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
@@ -225,15 +225,67 @@ if [ -d "$WT_PATH" ]; then
   exit 0
 fi
 
-# Auto-cut. The hook-level timeout (30s in hooks.json) bounds the
-# whole operation. `git worktree add` is normally <2s; if it spikes
-# (e.g. huge repos) the hook just gets killed by the harness. Note:
-# no `timeout(1)` wrapper because macOS does not ship coreutils
-# `timeout` by default — the wrapper would rc=127 on every Mac.
-if ! git worktree add -b "$BRANCH" "$WT_PATH" "$MAIN_REF" >/dev/null 2>&1; then
-  # Clean up partial state on failure.
-  git worktree remove --force "$WT_PATH" 2>/dev/null || true
-  git branch -D "$BRANCH" 2>/dev/null || true
+# Auto-cut. Routed through the canonical ``lib.git_worktree.cut_worktree``
+# helper (issue #322) so the safe-mode contract (fail closed when branch
+# or dir exists; preserve pre-existing branches on failure) matches
+# ``lib/execute.py`` and ``lib/acp_dispatch.py``. A future contract
+# change must therefore touch one place, not three. The hook-level
+# timeout (30s in hooks.json) bounds the whole operation; ``cut_worktree``
+# itself is normally <2s. Note: no ``timeout(1)`` wrapper because macOS
+# does not ship coreutils ``timeout`` by default — the wrapper would
+# rc=127 on every Mac.
+#
+# We pass the four arguments via argv (not shell interpolation) so the
+# heredoc body is literal text — no risk of a branch name containing
+# shell metacharacters breaking the embedded Python. ``<<'PYEOF'``
+# (with quoted delimiter) is the form that disables interpolation.
+#
+# Import path: the helper lives at ``<plugin_root>/lib/git_worktree.py``.
+# We resolve the plugin root from the hook's own path
+# (``${BASH_SOURCE[0]%/*}/..``) and prepend ``<plugin_root>/lib`` to
+# ``PYTHONPATH`` so the embedded ``from git_worktree import cut_worktree``
+# resolves regardless of the consumer project's cwd. The hook also
+# passes ``<plugin_root>/lib`` via argv as a belt-and-suspenders second
+# path entry — that handles the rare case where the shell strips
+# ``PYTHONPATH`` on exec (e.g. some sandboxed invocations).
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+LIB_DIR="$PLUGIN_ROOT/lib"
+export PYTHONPATH="$LIB_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
+if ! python3 - "$REPO_ROOT" "$BRANCH" "$WT_PATH" "$MAIN_REF" "$LIB_DIR" <<'PYEOF'
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1])
+branch = sys.argv[2]
+wt_path = Path(sys.argv[3])
+base = sys.argv[4]
+lib_dir = sys.argv[5]
+
+# Belt-and-suspenders: ensure the helper is importable even when
+# PYTHONPATH was stripped by the calling shell (rare on macOS/Linux
+# but possible inside some sandbox invocations).
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+
+from git_worktree import cut_worktree  # noqa: E402
+
+try:
+    cut_worktree(
+        repo_root=repo_root,
+        branch=branch,
+        worktree_path=wt_path,
+        base=base,
+    )
+except Exception as exc:
+    # Surface the failure to the shell via a non-zero exit so the
+    # enclosing `if !` triggers the fallback envelope. The exact
+    # error text is preserved in cut_worktree's exception (the
+    # helper passes git's stderr through verbatim).
+    print(f"cut_worktree failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+then
   fallback_context "git worktree add failed for branch $BRANCH"
   exit 0
 fi
@@ -242,7 +294,6 @@ fi
 # worktree so the delegated subagent's work is captured. Falls
 # through silently if either script is missing (e.g. dev-kit plugin
 # not yet installed in the consumer project).
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG_SETUP="$PLUGIN_ROOT/skills/log/scripts/log-setup.sh"
 LOG_ON="$PLUGIN_ROOT/skills/log/scripts/log-on.sh"
 
@@ -261,8 +312,8 @@ CTX="worktree auto-cut ready
   Claude Code next: open a new session in $WT_PATH
   Codex next: spawn a subagent with cwd=$WT_PATH and branch=$BRANCH
   handoff: pass the original task prompt and this worktree path to the client-specific worker
-  fallback: if any of the above fails, run:
-            git fetch origin main && git worktree add -b $BRANCH $WT_PATH $MAIN_REF"
+  fallback: if any of the above fails, re-run the canonical helper:
+            python3 -c \"from lib.git_worktree import cut_worktree; cut_worktree(repo_root=Path('$REPO_ROOT'), branch='$BRANCH', worktree_path=Path('$WT_PATH'), base='$MAIN_REF')\""
 jq -nc --arg ctx "$CTX" \
   '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$ctx}}'
 exit 0
