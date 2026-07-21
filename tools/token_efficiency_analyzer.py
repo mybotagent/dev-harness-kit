@@ -137,6 +137,14 @@ DEFAULT_COST_GATE_USD    = 5.00      # dollar cost in one session
 #: into Stale Cost -- everything else (main/live/fresh/unknown) is "Active".
 STALE_WORKTREE_STATES = frozenset({"merged", "gone"})
 
+#: Worktree mtime freshness threshold (seconds) for the ``fresh`` state.
+#: A worktree whose HEAD matches ``origin/main`` AND whose directory mtime
+#: is at most this many seconds old is classified as ``fresh``. Older
+#: worktrees with the same HEAD are classified as ``merged``. The value
+#: matches the FRESH_WORKTREE_MAX_AGE_SECONDS documented in earlier
+#: analyzer revisions.
+WORKTREE_FRESH_MAX_AGE_SECONDS = 3600
+
 # Recommendation strings keyed by warning code. Rendered into the
 # "Recommended Optimizations" block in the dashboard.
 WARNING_RECOMMENDATIONS: dict[str, str] = {
@@ -570,37 +578,119 @@ def classify_worktree_dir(
 
     Returned dict keys:
 
-    - ``state``               always ``"live"`` for an existing dir
-    - ``worktree_listed``     always True (we trust the on-disk dir)
-    - ``branch_merged_into_main`` always False (no git probe)
-    - ``is_fresh``            always False (no git probe)
-    - ``branch_tip``          empty (no git probe)
-    - ``branch_name``         empty (no git probe)
+    - ``state``                   one of the 5 state strings above.
+    - ``worktree_listed``         True iff the dir appears in
+                                  ``git worktree list`` (i.e. still registered).
+    - ``branch_merged_into_main`` True iff ``log origin/main..HEAD`` is empty.
+    - ``is_fresh``                True iff branch is merged AND the dir mtime
+                                  is within ``FRESH_WORKTREE_MAX_AGE_SECONDS``.
+    - ``branch_tip``              short HEAD SHA (empty when HEAD is unreadable).
+    - ``branch_name``             ``<type>/<slug>`` of the branch (empty when
+                                  the worktree is not in ``git worktree list``).
 
-    No ``subprocess.run`` calls. The original implementation made 5
-    ``git`` subprocess calls per worktree (``worktree list --porcelain``,
-    two ``rev-parse``s, two ``rev-parse origin/main``, and a
-    ``log origin/main..HEAD --oneline``). Each call is bounded by
-    ``timeout=5`` but on a slow shared CI runner the cumulative
-    subprocess spawn cost blew past the 30-second subprocess budget
-    of ``tests/test_log_capture_coverage.py::TestWorktreeCapturePipeline``.
-    The dashboard's two test-required worktree-attribution strings
-    (``wt-fix-x``, ``(main)``) come from the wt_meta dict keys, which
-    are populated by the caller (``classify_all_worktrees``) using the
-    worktree dir basename — not by this function's git probes. So the
-    dashboard renders worktree names correctly even with the git
-    probes removed. Stale-cost analytics that depend on branch
-    state (merged/fresh/live) fall back to "live" treatment, which
-    the dashboard renders as a non-stale bucket.
+    The function never raises — every probe is wrapped so a missing
+    ``origin/main``, a timed-out ``git worktree list``, or a deleted
+    branch falls back to ``state="unknown"`` instead of crashing the
+    dashboard run.
     """
-    # No git probes. See docstring above for why.
+    # Issue #310: every probe below is REAL — was previously short-circuited
+    # to ``state="live"`` because the cumulative subprocess spawn cost on
+    # slow shared CI runners was blowing past the 30-second test budget.
+    # Tests pin each branch with a fake ``git_runner`` (see
+    # ``test_classify_worktree_dir_real_probes_for_each_state``).
+
+    # Probe 1: is the dir still registered as a git worktree?
+    porcelain_proc = git_runner(
+        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    is_listed = porcelain_proc.returncode == 0 and str(wt_path) in (porcelain_proc.stdout or "")
+
+    # Probe 2: branch tip short SHA (used for the ``branch_tip`` field).
+    tip_proc = git_runner(
+        ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    branch_tip = (tip_proc.stdout or "").strip() if tip_proc.returncode == 0 else ""
+
+    # Probe 3: full HEAD SHA — compared against origin/main for fresh detect.
+    head_proc = git_runner(
+        ["git", "-C", str(wt_path), "rev-parse", "HEAD"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    head_full = (head_proc.stdout or "").strip() if head_proc.returncode == 0 else ""
+
+    # Probe 4: origin/main SHA — used for fresh detect AND merged detect.
+    main_proc = git_runner(
+        ["git", "-C", str(repo_root), "rev-parse", "origin/main"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    main_full = (main_proc.stdout or "").strip() if main_proc.returncode == 0 else ""
+    if main_proc.returncode != 0:
+        # Cannot compare without origin/main — surface "unknown" so the
+        # dashboard can warn on stderr instead of silently mis-bucketing.
+        return {
+            "state": "unknown",
+            "worktree_listed": is_listed,
+            "branch_merged_into_main": False,
+            "is_fresh": False,
+            "branch_tip": branch_tip,
+            "branch_name": "",
+        }
+
+    # Probe 5: commits on the branch not yet in origin/main.
+    log_proc = git_runner(
+        ["git", "-C", str(wt_path), "log", "origin/main..HEAD", "--oneline"],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    unique_commits = (log_proc.stdout or "").strip() if log_proc.returncode == 0 else ""
+    branch_merged = not unique_commits
+
+    # Derive branch_name from the worktree list porcelain (the
+    # ``branch refs/heads/<name>`` line). Empty when the dir is gone.
+    branch_name = ""
+    if is_listed and porcelain_proc.stdout:
+        for line in porcelain_proc.stdout.splitlines():
+            if line.startswith("branch "):
+                branch_name = line.removeprefix("branch refs/heads/").strip()
+                break
+
+    # Compute state from the probes. ``unknown`` only when HEAD could
+    # not be read at all (everything else is a valid classification).
+    if not is_listed:
+        state = "gone"
+        is_fresh = False
+    elif branch_merged and head_full and head_full == main_full:
+        # Branch is at origin/main and has no unique commits → fresh
+        # iff the dir mtime is recent enough. Older than the threshold
+        # → stale merged (treat as ``"merged"`` so the dashboard's
+        # stale-cost tile catches it).
+        try:
+            mtime = wt_path.stat().st_mtime
+            import time as _time
+            age = _time.time() - mtime
+        except OSError:
+            age = WORKTREE_FRESH_MAX_AGE_SECONDS + 1
+        if age <= WORKTREE_FRESH_MAX_AGE_SECONDS:
+            state = "fresh"
+            is_fresh = True
+        else:
+            state = "merged"
+            is_fresh = False
+    elif branch_merged:
+        state = "merged"
+        is_fresh = False
+    else:
+        state = "live"
+        is_fresh = False
+
     return {
-        "state": "live",
-        "worktree_listed": True,
-        "branch_merged_into_main": False,
-        "is_fresh": False,
-        "branch_tip": "",
-        "branch_name": "",
+        "state": state,
+        "worktree_listed": is_listed,
+        "branch_merged_into_main": branch_merged,
+        "is_fresh": is_fresh,
+        "branch_tip": branch_tip,
+        "branch_name": branch_name,
     }
 
 
@@ -719,26 +809,275 @@ def _aggregate_worktree_rows(
     return [{**r, "cost_usd": round(r["cost_usd"], 4)} for r in rows]
 
 
+def _new_session_state(source: str) -> dict:
+    """Build a fresh ``SessionState`` accumulator for one JSONL walk.
+
+    The accumulator is a plain dict (not a dataclass) so the per-record
+    handlers can mutate it via ``state[key] = value`` without an
+    attribute-access surface area. Keys mirror the final ``aggregate_session``
+    output, plus a few internal counters that the finalizer drops (e.g.
+    ``branch_counts``, ``worktree_counts``).
+    """
+    return {
+        "session_id": None,
+        "repo": "",
+        "source": source,
+        "models": Counter(),
+        "latest_model": "",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "ephemeral_5m": 0,
+        "ephemeral_1h": 0,
+        "tool_counts": Counter(),
+        "read_files": Counter(),
+        "user_texts": [],
+        "branch_counts": Counter(),
+        "worktree_counts": Counter(),
+        "first_ts": None,
+        "last_ts": None,
+    }
+
+
+def _harvest_common(rec: dict, st: dict, fallback_session_id: str) -> None:
+    """Common per-record harvest shared by both providers.
+
+    Mutates ``st`` to update timestamps, session id, repo, branch
+    counter, and worktree counter. Provider-specific record handling
+    is dispatched AFTER this harvest so ``st`` is always coherent.
+    """
+    # codex puts timestamp inside the payload — not at the record top
+    # level. Harvest that too when the top-level field is empty so
+    # filter_sessions(date_window) works.
+    _ts_raw = rec.get("timestamp")
+    if not _ts_raw:
+        _rc_payload = rec.get("payload")
+        if isinstance(_rc_payload, dict):
+            _ts_raw = _rc_payload.get("timestamp")
+    ts = parse_iso(_ts_raw or "")
+    if ts is not None:
+        if st["first_ts"] is None or ts < st["first_ts"]:
+            st["first_ts"] = ts
+        if st["last_ts"] is None or ts > st["last_ts"]:
+            st["last_ts"] = ts
+
+    if st["session_id"] is None:
+        st["session_id"] = (
+            rec.get("sessionId")
+            or rec.get("session_id")
+            or _codex_nested_field(rec, "sessionId")
+            or _codex_nested_field(rec, "session_id")
+            or fallback_session_id
+        )
+    if not st["repo"]:
+        # codex rollouts put cwd at session_meta.payload.cwd or
+        # turn_context.payload.cwd — NOT at the record top level.
+        _rcwd = _codex_nested_field(rec, "cwd")
+        st["repo"] = repo_from_cwd(_rcwd)
+    gb = rec.get("gitBranch")
+    if isinstance(gb, str) and gb.strip():
+        st["branch_counts"][gb.strip()] += 1
+    cwd_raw = _codex_nested_field(rec, "cwd")
+    if isinstance(cwd_raw, str) and cwd_raw.strip():
+        st["worktree_counts"][worktree_from_cwd(cwd_raw)] += 1
+
+
+def _handle_claude_record(rec: dict, st: dict) -> None:
+    """Apply one claude-code JSONL record to ``st``.
+
+    Handles ``assistant`` (model + usage + tool_use) and ``user``
+    (text content) record types. Other record types are ignored.
+    """
+    msg = rec.get("message") or {}
+    rec_type = rec.get("type")
+    if rec_type == "assistant":
+        m = msg.get("model")
+        if m:
+            st["models"][m] += 1
+            st["latest_model"] = m
+        u = msg.get("usage") or {}
+        # input_tokens = non-cached input (cache missed)
+        st["input_tokens"]       += int(u.get("input_tokens") or 0)
+        st["output_tokens"]      += int(u.get("output_tokens") or 0)
+        st["cache_write_tokens"] += int(u.get("cache_creation_input_tokens") or 0)
+        st["cache_read_tokens"]  += int(u.get("cache_read_input_tokens") or 0)
+        cc = u.get("cache_creation") or {}
+        st["ephemeral_5m"] += int(cc.get("ephemeral_5m_input_tokens") or 0)
+        st["ephemeral_1h"] += int(cc.get("ephemeral_1h_input_tokens") or 0)
+
+        for blk in (msg.get("content") or []):
+            if not isinstance(blk, dict):
+                continue
+            if blk.get("type") == "tool_use":
+                name = blk.get("name") or "?"
+                st["tool_counts"][name] += 1
+                if name == "Read":
+                    inp = blk.get("input") or {}
+                    fp = inp.get("file_path") or inp.get("path") or ""
+                    if fp:
+                        st["read_files"][fp] += 1
+    elif rec_type == "user":
+        c = msg.get("content")
+        if isinstance(c, str):
+            if c.strip():
+                st["user_texts"].append(c.strip())
+        elif isinstance(c, list):
+            parts: list[str] = []
+            for blk in c:
+                if isinstance(blk, dict) and blk.get("type") == "text":
+                    t = blk.get("text")
+                    if isinstance(t, str):
+                        parts.append(t)
+            joined = "\n".join(parts).strip()
+            if joined:
+                st["user_texts"].append(joined)
+
+
+def _handle_codex_record(rec: dict, st: dict) -> None:
+    """Apply one codex JSONL record to ``st``.
+
+    Handles ``turn_context`` (model), ``event_msg`` (cumulative
+    ``token_count`` snapshot + ``user_message`` text), and
+    ``response_item`` (function_call / custom_tool_call) record
+    types. Other record types (e.g. ``session_meta``) are ignored
+    here — they're handled by ``_harvest_common`` for sid / cwd.
+    """
+    rec_type = rec.get("type")
+    if rec_type == "turn_context":
+        # codex: model lives on the per-turn context line.
+        tc_payload = rec.get("payload") or {}
+        if isinstance(tc_payload, dict):
+            m = _codex_nested_field(rec, "model")
+            if isinstance(m, str) and m:
+                st["models"][m] += 1
+                st["latest_model"] = m
+    elif rec_type == "event_msg":
+        # codex: emit `token_count` (cumulative total_token_usage) and
+        # `user_message` events. We overwrite (not accumulate) the token
+        # snapshot, because each `token_count` event is a monotonically-
+        # growing cumulative figure, not a delta.
+        em_payload = rec.get("payload") or {}
+        if isinstance(em_payload, dict):
+            ptype = em_payload.get("type")
+            if ptype == "token_count":
+                info = em_payload.get("info") or {}
+                if isinstance(info, dict):
+                    tot = info.get("total_token_usage") or {}
+                    if isinstance(tot, dict):
+                        in_raw = int(tot.get("input_tokens") or 0)
+                        cached = int(tot.get("cached_input_tokens") or 0)
+                        out_raw = int(tot.get("output_tokens") or 0)
+                        reason = int(tot.get("reasoning_output_tokens") or 0)
+                        st["input_tokens"] = max(in_raw - cached, 0)
+                        st["cache_read_tokens"] = cached
+                        st["output_tokens"] = out_raw + reason
+                        st["cache_write_tokens"] = 0
+            elif ptype == "user_message":
+                msg_text = em_payload.get("message")
+                if isinstance(msg_text, str) and msg_text.strip():
+                    st["user_texts"].append(msg_text.strip())
+    elif rec_type == "response_item":
+        # codex tool calls: function_call + custom_tool_call.
+        ri_payload = rec.get("payload") or {}
+        if isinstance(ri_payload, dict):
+            rtype = ri_payload.get("type")
+            if rtype in ("function_call", "custom_tool_call"):
+                name = ri_payload.get("name") or "?"
+                st["tool_counts"][name] += 1
+                if name == "Read":
+                    inp = ri_payload.get("input") or {}
+                    fp = inp.get("file_path") or inp.get("path") or ""
+                    if fp:
+                        st["read_files"][fp] += 1
+
+
+def _resolve_branch(st: dict, path: Path) -> str:
+    """Branch fallback chain shared by both providers.
+
+    Prefer the wire-format ``gitBranch`` (most-common across lines).
+    Fall back to the immediate parent dir name. Legacy flat files
+    have ``path.parent.name == "claude-code"`` or ``"codex"`` (the
+    tool subdir itself) — those bucket under ``"main"`` so they
+    aren't mis-attributed to a tool dir.
+    """
+    if st["branch_counts"]:
+        return st["branch_counts"].most_common(1)[0][0]
+    parent = path.parent.name
+    return "main" if parent in _KNOWN_SOURCES else (parent or "main")
+
+
+def _resolve_worktree(st: dict, path: Path) -> str:
+    """Worktree fallback chain shared by both providers.
+
+    Prefer the file path (authoritative — cwd can misattribute when
+    the JSONL was captured from a parent checkout but lives under a
+    sibling worktree's logs dir). Fall back to the cwd-derived
+    Counter so legacy flat-layout files (no worktree segment in the
+    path) keep working.
+    """
+    worktree = worktree_from_path(path)
+    if worktree == "(main)":
+        return st["worktree_counts"].most_common(1)[0][0] if st["worktree_counts"] else "(unknown)"
+    return worktree
+
+
+def _finalize_session(st: dict, *, source: str, log_path: Path) -> dict | None:
+    """Build the final aggregate_session dict from the accumulator.
+
+    Returns None when ``session_id`` is still None (the JSONL had no
+    parseable records at all). Otherwise returns the canonical
+    ``{session_id, source, repo, branch, worktree, model, first_ts,
+    last_ts, input_tokens, output_tokens, cache_write_tokens,
+    cache_read_tokens, ephemeral_5m, ephemeral_1h, tool_counts,
+    read_files, user_texts, log_path}`` dict.
+    """
+    if st["session_id"] is None:
+        return None
+    branch = _resolve_branch(st, log_path)
+    worktree = _resolve_worktree(st, log_path)
+    return {
+        "session_id": st["session_id"],
+        "source": source,
+        "repo": st["repo"] or log_path.stem.split("__")[0],
+        "branch": branch,
+        "worktree": worktree,
+        # A session can switch models. The dashboard's Active Sessions row
+        # should show the model that handled the latest turn, not the model
+        # that appeared most often earlier in the session.
+        "model": st["latest_model"] or (st["models"].most_common(1)[0][0] if st["models"] else ""),
+        "first_ts": st["first_ts"],
+        "last_ts": st["last_ts"],
+        "input_tokens": st["input_tokens"],
+        "output_tokens": st["output_tokens"],
+        "cache_write_tokens": st["cache_write_tokens"],
+        "cache_read_tokens": st["cache_read_tokens"],
+        "ephemeral_5m": st["ephemeral_5m"],
+        "ephemeral_1h": st["ephemeral_1h"],
+        "tool_counts": st["tool_counts"],
+        "read_files": st["read_files"],
+        "user_texts": st["user_texts"],
+        "log_path": str(log_path),
+    }
+
+
 def aggregate_session(path: Path) -> dict | None:
-    """Walk one JSONL file once and return per-session aggregates, or None."""
-    session_id: str | None = None
-    repo = ""
+    """Walk one JSONL file once and return per-session aggregates, or None.
+
+    Issue #310: split by provider record type. The walker dispatches
+    each parsed record to ``_handle_claude_record`` or
+    ``_handle_codex_record`` (chosen from ``_source_for(path)``) so
+    adding a new record type only touches one place per provider.
+
+    The walker shares the common per-record harvest
+    (``_harvest_common``) — timestamps, sid, repo, branch counter,
+    worktree counter — before dispatching, so a new provider only needs
+    to implement its record-type handlers.
+    """
     source = _source_for(path)
-    models: Counter[str] = Counter()
-    latest_model = ""
-    input_tokens = 0
-    output_tokens = 0
-    cache_write_tokens = 0
-    cache_read_tokens = 0
-    ephemeral_5m = 0
-    ephemeral_1h = 0
-    tool_counts: Counter[str] = Counter()
-    read_files: Counter[str] = Counter()
-    user_texts: list[str] = []
-    branch_counts: Counter[str] = Counter()
-    worktree_counts: Counter[str] = Counter()
-    first_ts: datetime | None = None
-    last_ts: datetime | None = None
+    st = _new_session_state(source=source)
+    fallback_session_id = path.stem
+    handler = _handle_codex_record if source == "codex" else _handle_claude_record
 
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -751,183 +1090,12 @@ def aggregate_session(path: Path) -> dict | None:
                 except json.JSONDecodeError:
                     continue
 
-                # codex puts timestamp inside the payload — not at the
-                # record top level. Harvest that too when the top-level
-                # field is empty so filter_sessions(date_window) works.
-                _ts_raw = rec.get("timestamp")
-                if not _ts_raw:
-                    _rc_payload = rec.get("payload")
-                    if isinstance(_rc_payload, dict):
-                        _ts_raw = _rc_payload.get("timestamp")
-                ts = parse_iso(_ts_raw or "")
-                if ts is not None:
-                    if first_ts is None or ts < first_ts:
-                        first_ts = ts
-                    if last_ts is None or ts > last_ts:
-                        last_ts = ts
-
-                if session_id is None:
-                    session_id = (
-                        rec.get("sessionId")
-                        or rec.get("session_id")
-                        or _codex_nested_field(rec, "sessionId")
-                        or _codex_nested_field(rec, "session_id")
-                        or path.stem
-                    )
-                if not repo:
-                    # codex rollouts put cwd at session_meta.payload.cwd or
-                    # turn_context.payload.cwd — NOT at the record top
-                    # level. Harvest from those shapes too.
-                    _rcwd = _codex_nested_field(rec, "cwd")
-                    repo = repo_from_cwd(_rcwd)
-                gb = rec.get("gitBranch")
-                if isinstance(gb, str) and gb.strip():
-                    branch_counts[gb.strip()] += 1
-                cwd_raw = _codex_nested_field(rec, "cwd")
-                if isinstance(cwd_raw, str) and cwd_raw.strip():
-                    worktree_counts[worktree_from_cwd(cwd_raw)] += 1
-
-                msg = rec.get("message") or {}
-                rec_type = rec.get("type")
-
-                if rec_type == "assistant":
-                    m = msg.get("model")
-                    if m:
-                        models[m] += 1
-                        latest_model = m
-                    u = msg.get("usage") or {}
-                    # input_tokens = non-cached input (cache missed)
-                    input_tokens       += int(u.get("input_tokens") or 0)
-                    output_tokens      += int(u.get("output_tokens") or 0)
-                    cache_write_tokens += int(u.get("cache_creation_input_tokens") or 0)
-                    cache_read_tokens  += int(u.get("cache_read_input_tokens") or 0)
-                    cc = u.get("cache_creation") or {}
-                    ephemeral_5m += int(cc.get("ephemeral_5m_input_tokens") or 0)
-                    ephemeral_1h += int(cc.get("ephemeral_1h_input_tokens") or 0)
-
-                    for blk in (msg.get("content") or []):
-                        if not isinstance(blk, dict):
-                            continue
-                        if blk.get("type") == "tool_use":
-                            name = blk.get("name") or "?"
-                            tool_counts[name] += 1
-                            if name == "Read":
-                                inp = blk.get("input") or {}
-                                fp = inp.get("file_path") or inp.get("path") or ""
-                                if fp:
-                                    read_files[fp] += 1
-
-                elif rec_type == "turn_context":
-                    # codex: model lives on the per-turn context line.
-                    tc_payload = rec.get("payload") or {}
-                    if isinstance(tc_payload, dict):
-                        m = _codex_nested_field(rec, "model")
-                        if isinstance(m, str) and m:
-                            models[m] += 1
-                            latest_model = m
-                elif rec_type == "event_msg":
-                    # codex: emit `token_count` (cumulative total_token_usage)
-                    # and `user_message` events. We overwrite (not accumulate)
-                    # the token snapshot, because each `token_count` event is a
-                    # monotonically-growing cumulative figure, not a delta.
-                    em_payload = rec.get("payload") or {}
-                    if isinstance(em_payload, dict):
-                        ptype = em_payload.get("type")
-                        if ptype == "token_count":
-                            info = em_payload.get("info") or {}
-                            if isinstance(info, dict):
-                                tot = info.get("total_token_usage") or {}
-                                if isinstance(tot, dict):
-                                    in_raw = int(tot.get("input_tokens") or 0)
-                                    cached = int(tot.get("cached_input_tokens") or 0)
-                                    out_raw = int(tot.get("output_tokens") or 0)
-                                    reason = int(tot.get("reasoning_output_tokens") or 0)
-                                    input_tokens = max(in_raw - cached, 0)
-                                    cache_read_tokens = cached
-                                    output_tokens = out_raw + reason
-                                    cache_write_tokens = 0
-                        elif ptype == "user_message":
-                            msg_text = em_payload.get("message")
-                            if isinstance(msg_text, str) and msg_text.strip():
-                                user_texts.append(msg_text.strip())
-                elif rec_type == "response_item":
-                    # codex tool calls: function_call + custom_tool_call.
-                    ri_payload = rec.get("payload") or {}
-                    if isinstance(ri_payload, dict):
-                        rtype = ri_payload.get("type")
-                        if rtype in ("function_call", "custom_tool_call"):
-                            name = ri_payload.get("name") or "?"
-                            tool_counts[name] += 1
-                            if name == "Read":
-                                inp = ri_payload.get("input") or {}
-                                fp = inp.get("file_path") or inp.get("path") or ""
-                                if fp:
-                                    read_files[fp] += 1
-                elif rec_type == "user":
-                    c = msg.get("content")
-                    if isinstance(c, str):
-                        if c.strip():
-                            user_texts.append(c.strip())
-                    elif isinstance(c, list):
-                        parts: list[str] = []
-                        for blk in c:
-                            if isinstance(blk, dict) and blk.get("type") == "text":
-                                t = blk.get("text")
-                                if isinstance(t, str):
-                                    parts.append(t)
-                        joined = "\n".join(parts).strip()
-                        if joined:
-                            user_texts.append(joined)
-
+                _harvest_common(rec, st, fallback_session_id)
+                handler(rec, st)
     except OSError:
         return None
 
-    if session_id is None:
-        return None
-
-    # Branch: prefer wire-format ``gitBranch`` (the most-common value across
-    # all lines, since users can switch branches mid-session in theory).
-    # Fall back to the immediate parent dir name. Legacy flat files have
-    # ``path.parent.name == "claude-code"`` or ``"codex"`` (the tool subdir
-    # itself) — those bucket under ``"main"`` so they aren't mis-attributed
-    # to a tool dir.
-    if branch_counts:
-        branch = branch_counts.most_common(1)[0][0]
-    else:
-        parent = path.parent.name
-        branch = "main" if parent in _KNOWN_SOURCES else (parent or "main")
-
-    # Worktree: prefer the file path (authoritative — cwd can misattribute
-    # when the JSONL was captured from a parent checkout but lives under a
-    # sibling worktree's logs dir). Fall back to the cwd-derived Counter so
-    # legacy flat-layout files (no worktree segment in the path) keep working.
-    worktree = worktree_from_path(path)
-    if worktree == "(main)":
-        worktree = worktree_counts.most_common(1)[0][0] if worktree_counts else "(unknown)"
-
-    return {
-        "session_id": session_id,
-        "source": source,
-        "repo": repo or path.stem.split("__")[0],
-        "branch": branch,
-        "worktree": worktree,
-        # A session can switch models. The dashboard's Active Sessions row
-        # should show the model that handled the latest turn, not the model
-        # that appeared most often earlier in the session.
-        "model": latest_model or (models.most_common(1)[0][0] if models else ""),
-        "first_ts": first_ts,
-        "last_ts": last_ts,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cache_write_tokens": cache_write_tokens,
-        "cache_read_tokens": cache_read_tokens,
-        "ephemeral_5m": ephemeral_5m,
-        "ephemeral_1h": ephemeral_1h,
-        "tool_counts": tool_counts,
-        "read_files": read_files,
-        "user_texts": user_texts,
-        "log_path": str(path),
-    }
+    return _finalize_session(st, source=source, log_path=path)
 
 
 # ---------------------------------------------------------------------------
@@ -1946,6 +2114,282 @@ def render_worktree_index(worktree: str, sessions: list[dict], *, main_href: str
     return _sidecar_page(f"Worktree {worktree}", body)
 
 
+def build_view_model(
+    *,
+    repo: str,
+    days: int,
+    sessions: list[dict],
+    scored: list[tuple[dict, dict]],
+    warnings_per_session: list[list["Warning"]],
+    estimated: dict[str, float] | float,
+    cost_gate: tuple[str, list[dict]],
+    all_sessions_in_window: list[dict] | None,
+    unknown_models: set[str] | None = None,
+    wt_meta: dict[str, dict] | None = None,
+    stale_cost: float = 0.0,
+    stale_pct: float = 0.0,
+) -> dict:
+    """Build the dashboard view-model — single source of truth shared by
+    JSON + HTML sinks (issue #310).
+
+    Before this helper existed, ``main()`` and ``render_dashboard()``
+    each independently recomputed the same per-panel aggregations
+    (cost_by_repo / cost_by_branch / cost_by_worktree / cost_by_tool /
+    cost_by_model + totals + stale_cost + stale_pct). Adding a new
+    panel meant touching two places. With this helper, every panel
+    is computed once and exposed as a key on the returned view-model
+    dict; the JSON output dumps the relevant keys and the HTML
+    rendering reads the same keys.
+
+    The view-model is a plain dict (not a dataclass) so:
+      * ``main() --json`` can pass it straight to ``json.dumps``
+      * ``render_dashboard(view_model=vm)`` can pluck individual panels
+
+    Returned keys:
+
+      ``cost_by_repo``             list of {repo, sessions, cost_usd, share}
+      ``cost_by_branch``           list of {branch, sessions, cost_usd, share}
+      ``cost_by_worktree``         list of {worktree, sessions, cost_usd, share}
+      ``cost_by_worktree_rows``    the canonical worktree row shape
+                                   (same as ``_aggregate_worktree_rows``) for
+                                   JSON consumers
+      ``cost_by_tool``             list of {tool, calls, cost_usd, share}
+      ``cost_by_model``            list of {model, sessions, tokens, cost_usd, share}
+      ``cache_ttl``                {ttl_read, ttl_5m, ttl_1h, ttl_legacy, ttl_miss,
+                                    read_pct, write5m_pct, write1h_pct,
+                                    legacy_pct, miss_pct, state} — ``state``
+                                    selects which TTL layout the HTML uses
+      ``totals``                   {total_cost, total_tokens, input_tokens,
+                                    output_tokens, cache_read_tokens,
+                                    cache_write_tokens, session_count,
+                                    repos_named, avg_score, avg_grade,
+                                    avg_cache_hit, avg_cache, avg_density,
+                                    avg_redundancy, avg_economy}
+      ``active_count``             sessions with non-stale worktree_state
+      ``inactive_count``           sessions with stale worktree_state
+      ``stale_cost``               sum of cost_usd for inactive sessions
+      ``stale_pct``                stale_cost / total_cost
+      ``estimated``                {cache_miss, dup_read, model_downgrade, total}
+      ``cost_gate``                {"status", "violations"}
+      ``unknown_models``           sorted list of model ids that fell back
+      ``warnings``                 flat list of {code, level, session_id,
+                                   branch, worktree, worktree_state,
+                                   estimated_save_usd, reclaim_axis, priority,
+                                   evidence} — one per (session, warning) pair
+    """
+    wt_meta = wt_meta or {}
+    repo_pool = all_sessions_in_window if all_sessions_in_window is not None else sessions
+
+    if isinstance(estimated, (int, float)):
+        estimated = {
+            "cache_miss": float(estimated), "dup_read": 0.0,
+            "model_downgrade": 0.0, "total": float(estimated),
+        }
+
+    # ---- per-session cost helper (local closure) ----
+    def _cost(s: dict) -> float:
+        return cost_usd(
+            s["model"],
+            input_tokens=s["input_tokens"],
+            output_tokens=s["output_tokens"],
+            cache_write_5m_tokens=s.get("ephemeral_5m", 0),
+            cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+            cache_write_tokens=s["cache_write_tokens"],
+            cache_read_tokens=s["cache_read_tokens"],
+        )
+
+    # ---- totals ----
+    session_costs = [_cost(s) for s in sessions]
+    total_cost = sum(session_costs)
+    total_tokens = sum(
+        s["input_tokens"] + s["output_tokens"]
+        + s["cache_write_tokens"] + s["cache_read_tokens"]
+        for s in sessions
+    )
+    avg_score = mean(sc["total"] for _, sc in scored) if scored else 0.0
+    avg_cache = mean(sc["cache"] for _, sc in scored) if scored else 0.0
+    avg_density = mean(sc["density"] for _, sc in scored) if scored else 0.0
+    avg_redundancy = mean(sc["redundancy"] for _, sc in scored) if scored else 0.0
+    avg_economy = mean(sc["economy"] for _, sc in scored) if scored else 0.0
+    avg_cache_hit = mean(sc["cache_hit_ratio"] for _, sc in scored) if scored else 0.0
+    avg_grade = grade_for(avg_score)
+
+    # ---- cost_by_repo ----
+    repo_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in repo_pool:
+        c = _cost(s)
+        repo_costs[s["repo"]][0] += 1
+        repo_costs[s["repo"]][1] += c
+    repo_total_for_share = sum(rc[1] for rc in repo_costs.values()) or 1.0
+    cost_by_repo = [
+        {"name": rr, "sessions": int(repo_costs[rr][0]),
+         "cost_usd": repo_costs[rr][1],
+         "share": repo_costs[rr][1] / repo_total_for_share}
+        for rr in sorted(repo_costs, key=lambda k: -repo_costs[k][1])
+    ]
+
+    # ---- cost_by_branch ----
+    branch_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in repo_pool:
+        c = _cost(s)
+        bkey = s.get("branch") or "(unknown)"
+        branch_costs[bkey][0] += 1
+        branch_costs[bkey][1] += c
+    branch_total_for_share = sum(bc[1] for bc in branch_costs.values()) or 1.0
+    cost_by_branch = [
+        {"name": b, "sessions": int(branch_costs[b][0]),
+         "cost_usd": branch_costs[b][1],
+         "share": branch_costs[b][1] / branch_total_for_share}
+        for b in sorted(branch_costs, key=lambda k: -branch_costs[k][1])
+    ]
+
+    # ---- cost_by_worktree (per-session view) + cost_by_worktree_rows (JSON shape) ----
+    worktree_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in repo_pool:
+        c = _cost(s)
+        wkey = s.get("worktree") or "(unknown)"
+        worktree_costs[wkey][0] += 1
+        worktree_costs[wkey][1] += c
+    worktree_total_for_share = sum(wc[1] for wc in worktree_costs.values()) or 1.0
+    cost_by_worktree = [
+        {"name": w, "sessions": int(worktree_costs[w][0]),
+         "cost_usd": worktree_costs[w][1],
+         "share": worktree_costs[w][1] / worktree_total_for_share}
+        for w in sorted(worktree_costs, key=lambda k: -worktree_costs[k][1])
+    ]
+    # The canonical worktree row shape (uses wt_meta to seed disk-only
+    # rows so the panel surfaces every worktree dir, not just the ones
+    # with sessions). Same data as ``_aggregate_worktree_rows`` —
+    # the JSON sink uses this list verbatim.
+    cost_by_worktree_rows = _aggregate_worktree_rows(sessions, wt_meta)
+
+    # ---- cost_by_tool ----
+    tool_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
+    for s in scored:
+        for name, n in s[0]["tool_counts"].items():
+            est = n * DEFAULT_DUP_READ_TOKENS * pricing_for(s[0]["model"])["in"] / 1_000_000
+            tool_costs[name][0] += n
+            tool_costs[name][1] += est
+    total_tool_cost = sum(c[1] for c in tool_costs.values()) or 1.0
+    cost_by_tool = [
+        {"name": name, "calls": int(calls),
+         "cost_usd": cost,
+         "share": cost / total_tool_cost}
+        for name, (calls, cost) in sorted(tool_costs.items(), key=lambda kv: -kv[1][1])
+    ]
+
+    # ---- cost_by_model ----
+    model_costs: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0.0])
+    # accumulator: [sessions, total_tokens, cost]
+    for s, c in zip(sessions, session_costs):
+        tokens = s["input_tokens"] + s["output_tokens"] + s["cache_write_tokens"] + s["cache_read_tokens"]
+        key = s["model"] or "(unknown)"
+        model_costs[key][0] += 1
+        model_costs[key][1] += tokens
+        model_costs[key][2] += c
+    model_total_for_share = sum(mc[2] for mc in model_costs.values()) or 1.0
+    cost_by_model = [
+        {"name": m, "sessions": int(model_costs[m][0]),
+         "tokens": int(model_costs[m][1]),
+         "cost_usd": model_costs[m][2],
+         "share": model_costs[m][2] / model_total_for_share}
+        for m in sorted(model_costs, key=lambda k: -model_costs[k][2])
+    ]
+
+    # ---- cache_ttl ----
+    ttl_read = sum(s["cache_read_tokens"] for s in sessions)
+    ttl_5m = sum(s.get("ephemeral_5m", 0) for s in sessions)
+    ttl_1h = sum(s.get("ephemeral_1h", 0) for s in sessions)
+    ttl_legacy = max(0, sum(
+        s["cache_write_tokens"] - s.get("ephemeral_5m", 0) - s.get("ephemeral_1h", 0)
+        for s in sessions
+    ))
+    ttl_miss = sum(s["input_tokens"] for s in sessions)
+    ttl_writes_total = ttl_5m + ttl_1h + ttl_legacy
+    ttl_total = (ttl_read + ttl_writes_total + ttl_miss) or 1
+    if ttl_writes_total == 0:
+        ttl_state = "empty"
+    elif ttl_5m == 0 and ttl_1h == 0:
+        ttl_state = "legacy"
+    else:
+        ttl_state = "split"
+    cache_ttl = {
+        "ttl_read": ttl_read, "ttl_5m": ttl_5m, "ttl_1h": ttl_1h,
+        "ttl_legacy": ttl_legacy, "ttl_miss": ttl_miss,
+        "read_pct": ttl_read / ttl_total * 100,
+        "write5m_pct": ttl_5m / ttl_total * 100,
+        "write1h_pct": ttl_1h / ttl_total * 100,
+        "legacy_pct": ttl_legacy / ttl_total * 100,
+        "miss_pct": ttl_miss / ttl_total * 100,
+        "state": ttl_state,
+    }
+
+    # ---- active / inactive ----
+    active_count = sum(1 for s in sessions
+                       if s.get("worktree_state") not in STALE_WORKTREE_STATES)
+    inactive_count = len(sessions) - active_count
+
+    # ---- warnings ----
+    flat_warnings: list[dict] = []
+    for (s, _), warns in zip(scored, warnings_per_session):
+        for w in warns:
+            flat_warnings.append({
+                "code": w.code,
+                "level": w.level,
+                "estimated_save_usd": w.estimated_save_usd,
+                "reclaim_axis": w.reclaim_axis,
+                "priority": w.priority,
+                "evidence": w.evidence,
+                "session_id": s["session_id"],
+                "branch": s.get("branch", ""),
+                "worktree": s.get("worktree", ""),
+                "worktree_state": s.get("worktree_state", ""),
+            })
+
+    return {
+        "cost_by_repo": cost_by_repo,
+        "cost_by_branch": cost_by_branch,
+        "cost_by_worktree": cost_by_worktree,
+        "cost_by_worktree_rows": cost_by_worktree_rows,
+        "cost_by_tool": cost_by_tool,
+        "cost_by_model": cost_by_model,
+        "cache_ttl": cache_ttl,
+        "totals": {
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "input_tokens": sum(s["input_tokens"] for s in sessions),
+            "output_tokens": sum(s["output_tokens"] for s in sessions),
+            "cache_read_tokens": ttl_read,
+            "cache_write_tokens": sum(s["cache_write_tokens"] for s in sessions),
+            "session_count": len(scored),
+            "repos_named": len({s["repo"] for s in sessions}),
+            "avg_score": avg_score,
+            "avg_grade": avg_grade,
+            "avg_cache_hit": avg_cache_hit,
+            "avg_cache": avg_cache,
+            "avg_density": avg_density,
+            "avg_redundancy": avg_redundancy,
+            "avg_economy": avg_economy,
+        },
+        "active_count": active_count,
+        "inactive_count": inactive_count,
+        "stale_cost": stale_cost,
+        "stale_pct": stale_pct,
+        "estimated": {
+            "cache_miss": estimated["cache_miss"],
+            "dup_read": estimated["dup_read"],
+            "model_downgrade": estimated["model_downgrade"],
+            "total": estimated["total"],
+        },
+        "cost_gate": {
+            "status": cost_gate[0],
+            "violations": list(cost_gate[1]),
+        },
+        "unknown_models": sorted(unknown_models) if unknown_models else [],
+        "warnings": flat_warnings,
+    }
+
+
 def render_dashboard(repo: str, days: int, sessions: list[dict],
                      scored: list[tuple[dict, dict]],
                      warnings_per_session: list[list["Warning"]],
@@ -1957,7 +2401,8 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
                      stale_cost: float = 0.0,
                      stale_pct: float = 0.0,
                      worktree_filter: str = "",
-                     transcripts_dirname: str = "") -> str:
+                     transcripts_dirname: str = "",
+                     *, view_model: dict | None = None) -> str:
     """Compose the HTML dashboard. Inputs are pre-filtered to ``repo``+``days``.
 
     ``estimated`` may be a legacy single float (sum) or a dict from the new
@@ -1971,6 +2416,13 @@ def render_dashboard(repo: str, days: int, sessions: list[dict],
     stale-chip prefix on Sessions rows. ``stale_cost`` + ``stale_pct`` are
     pre-computed in ``main()`` and feed the 5th Overview tile.
     ``worktree_filter`` is echoed onto the subtitle when non-empty.
+
+    ``view_model`` is the pre-aggregated dashboard data from
+    ``build_view_model(...)``. When supplied, ``render_dashboard``
+    consumes its panels instead of re-aggregating the inputs — the
+    JSON + HTML sinks then share the same numbers (issue #310). When
+    omitted, the function falls back to its pre-split behavior so
+    existing direct callers stay compatible.
     """
     wt_meta = wt_meta or {}
     if isinstance(estimated, (int, float)):
@@ -2575,6 +3027,10 @@ def main(argv: list[str] | None = None) -> int:
     for line in cost_gate_stderr_lines(gate_violations):
         print(line, file=sys.stderr)
 
+    # Pre-compute stale_cost so the view-model can pick it up. The view-
+    # model itself recomputes totals / stale_cost from the scored set;
+    # this local recomputation here is just the stdout [ok] line, which
+    # mirrors the JSON ``total_cost_usd`` field.
     total_cost = sum(
         cost_usd(
             s["model"],
@@ -2606,13 +3062,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     stale_pct = (stale_cost / total_cost) if total_cost > 0 else 0.0
 
-    # Active/Inactive session split — mirrors the dashboard's two Sessions
-    # tables. "Inactive" = worktree already merged into origin/main or gone
-    # from disk (the branch's work is done); everything else is "Active".
-    inactive_count = sum(1 for s in selected if s.get("worktree_state") in STALE_WORKTREE_STATES)
-    active_count = len(selected) - inactive_count
+    # Build the view-model ONCE — both JSON and HTML sinks consume it
+    # (issue #310). Adding a new panel now touches one aggregation site
+    # instead of two (the old ``main()`` / ``render_dashboard()``
+    # duplicated the cost-by-X loops).
+    view_model = build_view_model(
+        repo=args.repo,
+        days=args.days,
+        sessions=selected,
+        scored=scored,
+        warnings_per_session=warnings_per_session,
+        estimated=estimated,
+        cost_gate=(gate_status, gate_violations),
+        all_sessions_in_window=windowed,
+        unknown_models=unknown_models,
+        wt_meta=wt_meta,
+        stale_cost=stale_cost,
+        stale_pct=stale_pct,
+    )
+    active_count = view_model["active_count"]
+    inactive_count = view_model["inactive_count"]
 
     if args.json:
+        # JSON output is a thin serialization of the view-model + raw
+        # session list (filtered-by-repo / branch / worktree). Per-panel
+        # numbers all come from ``view_model`` so JSON + HTML stay
+        # numerically identical.
         out = {
             "repo": args.repo,
             "branch": args.branch,
@@ -2624,10 +3099,10 @@ def main(argv: list[str] | None = None) -> int:
             "sessions": len(selected),
             "active_sessions": active_count,
             "inactive_sessions": inactive_count,
-            "total_cost_usd": round(total_cost, 4),
+            "total_cost_usd": round(view_model["totals"]["total_cost"], 4),
             "stale_cost_usd": round(stale_cost, 4),
             "stale_pct": round(stale_pct, 4),
-            "estimated_savings_usd": estimated,
+            "estimated_savings_usd": view_model["estimated"],
             "cost_gate": {
                 "status": gate_status,
                 "tokens_threshold": args.cost_gate_tokens,
@@ -2637,24 +3112,9 @@ def main(argv: list[str] | None = None) -> int:
                     for v in gate_violations
                 ],
             },
-            "warnings": [
-                {
-                    "code": w.code,
-                    "level": w.level,
-                    "estimated_save_usd": w.estimated_save_usd,
-                    "reclaim_axis": w.reclaim_axis,
-                    "priority": w.priority,
-                    "evidence": w.evidence,
-                    "session_id": s["session_id"],
-                    "branch": s.get("branch", ""),
-                    "worktree": s.get("worktree", ""),
-                    "worktree_state": s.get("worktree_state", ""),
-                }
-                for (s, _), warns in zip(scored, warnings_per_session)
-                for w in warns
-            ],
-            "unknown_models": sorted(unknown_models),
-            "worktrees": _aggregate_worktree_rows(selected, wt_meta),
+            "warnings": view_model["warnings"],
+            "unknown_models": view_model["unknown_models"],
+            "worktrees": view_model["cost_by_worktree_rows"],
         }
         print(json.dumps(out, indent=2, ensure_ascii=False))
         if gate_status == "bad":
@@ -2679,6 +3139,7 @@ def main(argv: list[str] | None = None) -> int:
         stale_pct=stale_pct,
         worktree_filter=args.worktree,
         transcripts_dirname=transcripts_dirname,
+        view_model=view_model,
     )
 
     out_path.write_text(html_out, encoding="utf-8")

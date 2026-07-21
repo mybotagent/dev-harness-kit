@@ -191,6 +191,7 @@ def run_analysis(
     dimensions: Sequence[Dimension | str],
     mode: str,
     paths: Iterable[Path | str],
+    *,
     candidates: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
     verdicts: Optional[Sequence[Tuple[Any, Any, str]]] = None,
 ) -> AnalysisResult:
@@ -347,6 +348,12 @@ def render_markdown(result: AnalysisResult) -> str:
 def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
     """Translate kept findings into mutation commands per the mode.
 
+    Thin dispatcher (issue #310): delegates per-mode logic to
+    `_diffs_for_delete` and `_diffs_for_rewrite` so the gate logic for
+    each mutation mode is readable in isolation. Per-dim mode gating
+    still happens here so a single dim cannot request both `git rm`
+    AND a `# rewrite:` for the same finding.
+
     - delete:    `rm <file>` / `git rm <file>` for each non-zero finding
                  whose Dimension.mode == "delete". Rewrite-only dims
                  never get a `git rm`, even when the engine is asked
@@ -360,84 +367,124 @@ def emit_suggested_diffs(result: AnalysisResult) -> List[SuggestedDiff]:
     rewrite-only dims (dup, smell, overeng, overarch, cleancode).
     Letting delete-mode emit `git rm` for a refactoring smell would
     destroy a valid source file. The per-dim mode is the gate.
-
-    Mode-intent — "delete" means delete the WHOLE FILE, not a single
-    line. When mode == "delete" and the evidence is line-level (a set
-    line or a spans tuple), the engine promotes the evidence to
-    file-level by clearing the line anchor before recording the diff.
-    The rendered diff therefore always reads as "delete the file", never
-    as "delete line N of X".
     """
     if result.mode == "read-only":
         return []
     dim_by_name = {d.name: d for d in result.dimensions}
     out: List[SuggestedDiff] = []
-    seen_files: set = set()
     for f in result.findings:
         d = dim_by_name.get(f.dim)
-        if d is None:
-            continue
-        if d.mode != result.mode:
+        if d is None or d.mode != result.mode:
             continue  # dim does not support this mutation mode
         if result.mode == "delete":
-            # Whole-file proof is REQUIRED before emitting `git rm`. A
-            # `dead` / `tokenbudget` / `slop` finding may legitimately
-            # describe ONE unused export, a comment block, or a verbose
-            # docstring — none of those justify deleting the whole file.
-            proof = f.deletion_proof or {}
-            if f.deletion_scope != "whole-file":
-                # Line-level delete: emit a `# delete-line:` patch anchored
-                # on the original line so the human reviewer knows the
-                # suggestion is a removal of that line, not the file.
-                out.append(
-                    SuggestedDiff(
-                        file=_mask_secrets(f.file),
-                        line=f.line,
-                        dim=f.dim,
-                        command=f"# delete-line {f.line} in {_mask_secrets(f.file)}",
-                        reason=_mask_secrets(f.failure_scenario),
-                    )
-                )
-                continue
-            if not (proof.get("no_importers") and proof.get("no_callers")):
-                out.append(
-                    SuggestedDiff(
-                        file=_mask_secrets(f.file),
-                        line=None,
-                        dim=f.dim,
-                        command=(
-                            "# delete-blocked: requires no_importers AND no_callers "
-                            f"proof (got {proof or '{}'})"
-                        ),
-                        reason=_mask_secrets(f.failure_scenario),
-                    )
-                )
-                continue
-            if f.file in seen_files:
-                continue
-            seen_files.add(f.file)
-            out.append(
-                SuggestedDiff(
-                    file=_mask_secrets(f.file),
-                    line=None,
-                    dim=f.dim,
-                    command=f"git rm {_mask_secrets(f.file)}",
-                    reason=_mask_secrets(f.failure_scenario),
-                )
-            )
+            out.extend(_diffs_for_delete(f))
         elif result.mode == "rewrite":
-            # Schema boundary: emit `f.fix` (verbatim code/patch) into
-            # the diff stream. NEVER emit `f.fix_hint` into a diff —
-            # `fix_hint` is for reports only. Fall back to `fix_hint`
-            # only when `f.fix` is absent (legacy data path).
-            patch_text = f.fix if f.fix else (f.fix_hint or "see scenario")
-            out.append(
-                SuggestedDiff(
-                    file=_mask_secrets(f.file),
-                    line=f.line,
-                    dim=f.dim,
-                    command=f"# rewrite: {_mask_secrets(patch_text)}",
-                    reason=_mask_secrets(f.failure_scenario),
-                )
-            )
+            out.append(_diff_for_rewrite(f))
     return out
+
+
+# The four safety booleans required on a whole-file deletion proof.
+# Each must be a True value for `git rm` to fire; a missing or False
+# key means the proof is incomplete and the engine surfaces a
+# `# delete-blocked:` advisory instead.
+_WHOLE_FILE_PROOF_KEYS = (
+    "no_importers",
+    "no_callers",
+    "no_references",
+    "no_runtime_calls",
+)
+
+
+def _whole_file_proof_complete(proof: Dict[str, bool]) -> bool:
+    """Strict gate: every required safety key is present AND truthy.
+
+    Strict mode (issue #310): a proof missing any of the four required
+    keys is incomplete. Truthy values only — `None`/missing/falsey
+    blocks the deletion. The parser already coerces values to bool so
+    by this point every key that survives IS a real bool.
+    """
+    return all(bool(proof.get(k)) for k in _WHOLE_FILE_PROOF_KEYS)
+
+
+def _diff_for_line_delete(f: Evidence) -> SuggestedDiff:
+    """Line-level delete suggestion: emit `# delete-line N` patch.
+
+    Used when `deletion_scope != "whole-file"` — a single line, a set
+    of lines, or a spans tuple. The human reviewer can tell the
+    suggestion is a removal of that specific line, not the file.
+    """
+    return SuggestedDiff(
+        file=_mask_secrets(f.file),
+        line=f.line,
+        dim=f.dim,
+        command=f"# delete-line {f.line} in {_mask_secrets(f.file)}",
+        reason=_mask_secrets(f.failure_scenario),
+    )
+
+
+def _diff_for_delete_blocked(f: Evidence, proof: Dict[str, bool]) -> SuggestedDiff:
+    """Whole-file proof is incomplete: emit `# delete-blocked:` advisory.
+
+    Reasons this fires:
+      - `deletion_scope != "whole-file"` (already filtered upstream)
+      - any of the four required proof keys is missing or False
+    """
+    missing = [k for k in _WHOLE_FILE_PROOF_KEYS if not proof.get(k)]
+    return SuggestedDiff(
+        file=_mask_secrets(f.file),
+        line=None,
+        dim=f.dim,
+        command=(
+            "# delete-blocked: requires "
+            + " AND ".join(_WHOLE_FILE_PROOF_KEYS)
+            + f" proof (missing/false: {missing or '[]'})"
+        ),
+        reason=_mask_secrets(f.failure_scenario),
+    )
+
+
+def _diff_for_git_rm(f: Evidence) -> SuggestedDiff:
+    """Whole-file deletion with complete proof: emit `git rm`."""
+    return SuggestedDiff(
+        file=_mask_secrets(f.file),
+        line=None,
+        dim=f.dim,
+        command=f"git rm {_mask_secrets(f.file)}",
+        reason=_mask_secrets(f.failure_scenario),
+    )
+
+
+def _diffs_for_delete(f: Evidence) -> List[SuggestedDiff]:
+    """Per-finding delete-mode dispatch (split helper for issue #310).
+
+    Sequence:
+      1. Line-level evidence → `# delete-line N` (no proof required).
+      2. Whole-file evidence with incomplete proof → `# delete-blocked`.
+      3. Whole-file evidence with complete proof → `git rm`. Each
+         file appears at most once in the output even if multiple
+         findings point at it.
+    """
+    proof = f.deletion_proof or {}
+    if f.deletion_scope != "whole-file":
+        return [_diff_for_line_delete(f)]
+    if not _whole_file_proof_complete(proof):
+        return [_diff_for_delete_blocked(f, proof)]
+    return [_diff_for_git_rm(f)]
+
+
+def _diff_for_rewrite(f: Evidence) -> SuggestedDiff:
+    """Rewrite-mode suggestion: emit `# rewrite: <fix>` patch.
+
+    Schema boundary: emit `f.fix` (verbatim code/patch) into the diff
+    stream. NEVER emit `f.fix_hint` into a diff — `fix_hint` is for
+    reports only. Fall back to `fix_hint` only when `f.fix` is absent
+    (legacy data path).
+    """
+    patch_text = f.fix if f.fix else (f.fix_hint or "see scenario")
+    return SuggestedDiff(
+        file=_mask_secrets(f.file),
+        line=f.line,
+        dim=f.dim,
+        command=f"# rewrite: {_mask_secrets(patch_text)}",
+        reason=_mask_secrets(f.failure_scenario),
+    )

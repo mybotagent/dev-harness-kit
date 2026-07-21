@@ -352,3 +352,75 @@ def clear_cache() -> None:
     _pricing_cache.cache_clear()
 
 
+def pricing_keys() -> List[str]:  # type: ignore[name-defined]  # legacy test-only helper
+    """Return every key the loader currently resolves — for assertion in tests.
+
+    Legacy helper kept as a stable SSOT lookup for existing test code. New
+    callers should prefer ``iter_known_ids`` which returns the same set
+    without going through the deprecated back-compat alias.
+    """
+    return sorted(set(_pricing_cache()) | set(LEGACY_FALLBACK))
+
+
+# ---------------------------------------------------------------------------
+# Public lookup surface (issue #310 overarch)
+#
+# Cross-module callers (notably ``lib/cost_gate.py``) used to reach into
+# ``_pricing_cache`` — a private ``lru_cache``-backed function whose
+# internals (cache lifetime, key normalization, fallback merge) were
+# implementation details. Exposing ``is_known_model`` + ``iter_known_ids``
+# lets consumers ask "does this id resolve?" and "give me the full set
+# of resolvable ids" without coupling to the cache shape.
+#
+# The legacy fallback dict is folded into both lookups so the public
+# surface stays consistent: a legacy alias (e.g. ``opus``) is known iff
+# it has a row in either the JSON-loaded pricing or the LEGACY_FALLBACK.
+# ---------------------------------------------------------------------------
+
+def _normalize_for_lookup(s: str) -> str:
+    """Mirror ``pricing_for``'s normalization (case-fold + strip `-`/`.`/`_`)."""
+    return s.lower().replace("-", "").replace(".", "").replace("_", "")
+
+
+def is_known_model(model_id: str) -> bool:
+    """Return True iff ``model_id`` resolves to a non-fallback PRICING row.
+
+    Public replacement for the cost_gate-side
+    ``_looks_like_known(model_id)`` helper that previously reached into
+    ``_pricing_cache``. Mirrors the longest-prefix-first substring
+    matching in ``pricing_for`` so the two answers agree for every id
+    that the loader can resolve. Unknown ids return False (no stderr
+    WARN — callers that want the WARN can call ``pricing_for`` directly).
+    """
+    if not model_id:
+        return False
+    pricing = _pricing_cache()
+    mid = model_id.lower()
+    if mid in pricing:
+        return True
+    norm_mid = _normalize_for_lookup(mid)
+    for key in sorted(pricing.keys(), key=len, reverse=True):
+        if key and _normalize_for_lookup(key) in norm_mid:
+            return True
+    # Legacy fallback: same matchers as pricing_for's fallback path.
+    if mid in LEGACY_FALLBACK:
+        return True
+    for key in sorted(LEGACY_FALLBACK.keys(), key=len, reverse=True):
+        if key and _normalize_for_lookup(key) in norm_mid:
+            return True
+    return False
+
+
+def iter_known_ids() -> List[str]:
+    """Return every id the loader currently resolves (sorted, deduped).
+
+    Combines the JSON-loaded PRICING rows with the legacy fallback
+    aliases so callers iterating the known set see exactly the same
+    names ``pricing_for`` would accept. Used by cost_gate's
+    "unknown-model" tracker (no longer needs to scan both dicts
+    internally) and by tests asserting the loader surface.
+
+    Cheap: the result is rebuilt on every call from the cached pricing
+    dict + the constant legacy fallback. No filesystem I/O.
+    """
+    return sorted(set(_pricing_cache()) | set(LEGACY_FALLBACK))

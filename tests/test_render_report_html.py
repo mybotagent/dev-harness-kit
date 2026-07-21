@@ -373,5 +373,116 @@ class TestComposeHtml(unittest.TestCase):
         self.assertLess(len(logic_lines), 30, f"render() too long: {len(logic_lines)} lines\n{source}")
 
 
+class TestRoundTripParsingContract(unittest.TestCase):
+    """Stable structured parsing contract:
+
+      - The structured dataclasses (`EvalData`, `InspectData`) are the
+        public boundary. Downstream consumers should not re-parse raw
+        markdown — the contract is "parse once, then operate on the
+        dataclass".
+      - `parse_*_sections` MUST be deterministic: feeding the same
+        markdown twice yields structurally equal dataclasses.
+      - The dataclasses expose a fixed key set so consumers can iterate
+        without guarding against missing keys.
+    """
+
+    def test_parse_eval_sections_is_deterministic(self):
+        a = render_report_html.parse_eval_sections(EVAL_MIN)
+        b = render_report_html.parse_eval_sections(EVAL_MIN)
+        # Structurally equal: same summary counts, same per_dim_blocks
+        # list, same per_case list.
+        self.assertEqual(a.summary, b.summary)
+        self.assertEqual(a.per_dim_blocks, b.per_dim_blocks)
+        self.assertEqual(a.per_case, b.per_case)
+
+    def test_parse_inspect_sections_is_deterministic(self):
+        a = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        b = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertEqual(a.header, b.header)
+        self.assertEqual(a.findings_high, b.findings_high)
+        self.assertEqual(a.findings_med, b.findings_med)
+        self.assertEqual(a.findings_low, b.findings_low)
+        self.assertEqual(a.per_dim, b.per_dim)
+
+    def test_eval_data_key_set_is_locked(self):
+        # New keys would silently break consumers; this assertion
+        # forces a conscious decision to extend the dataclass.
+        d = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertEqual(
+            set(d.__dataclass_fields__),
+            {"summary", "per_dim_blocks", "per_case"},
+        )
+
+    def test_inspect_data_key_set_is_locked(self):
+        d = render_report_html.parse_inspect_sections(INSPECT_MIN)
+        self.assertEqual(
+            set(d.__dataclass_fields__),
+            {"header", "findings_high", "findings_med",
+             "findings_low", "per_dim"},
+        )
+
+    def test_finding_block_preserves_dash_in_value(self):
+        # A finding's `Scenario:` value can contain "--" (multi-line
+        # scenario). Re-parsing the markdown rendered from the parsed
+        # data should NOT lose any finding or scramble its fields.
+        body = (
+            "## HIGH (1)\n"
+            "\n"
+            "- [HIGH | CONFIRMED] bad title -- src/x.py:1\n"
+            "  Dim: dead\n"
+            "  TL;DR: short\n"
+            "  Scenario: line one -- line two\n"
+            "  Fix: rm it\n"
+        )
+        parsed = render_report_html._parse_inspect_findings(body)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["title"], "bad title")
+        self.assertEqual(parsed[0]["anchor"], "src/x.py:1")
+        self.assertEqual(parsed[0]["Dim"], "dead")
+        # The trailing "--" fragment of the multi-line Scenario is
+        # stripped, so the captured value is just the first line.
+        self.assertEqual(parsed[0]["Scenario"], "line one")
+        self.assertEqual(parsed[0]["Fix"], "rm it")
+
+    def test_summary_keys_are_stable(self):
+        # Summary parser drops keys it doesn't recognize so adding new
+        # keys to the eval runner doesn't poison downstream counts.
+        # Lock the recognized set so consumers can rely on it.
+        d = render_report_html.parse_eval_sections(EVAL_MIN)
+        # Only OK/DRIFT_WARNING/ROT/SKIPPED survive the regex; "Total"
+        # is dropped (regex needs single-word key).
+        self.assertEqual(
+            set(d.summary.keys()),
+            {"OK", "DRIFT_WARNING", "ROT", "SKIPPED"},
+        )
+
+    def test_per_case_block_keys_are_stable(self):
+        # Each per-case row dict has the same key set so consumers can
+        # index without KeyError.
+        d = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertGreater(len(d.per_case), 0)
+        for row in d.per_case:
+            self.assertEqual(
+                set(row.keys()),
+                {"verdict", "case_id", "dim", "score", "axes"},
+            )
+
+    def test_per_dim_blocks_shape_is_stable(self):
+        # per_dim_blocks is a list of 4-tuples
+        # (dim, n, overall, [(axis, mean), ...]) — the inner axes list
+        # is a list of 2-tuples.
+        d = render_report_html.parse_eval_sections(EVAL_MIN)
+        self.assertGreater(len(d.per_dim_blocks), 0)
+        for blk in d.per_dim_blocks:
+            self.assertEqual(len(blk), 4)
+            dim, n, overall, axes = blk
+            self.assertIsInstance(dim, str)
+            self.assertIsInstance(n, int)
+            self.assertIsInstance(overall, (int, float))
+            self.assertIsInstance(axes, list)
+            for ax in axes:
+                self.assertEqual(len(ax), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

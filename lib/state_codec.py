@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from atomic import atomic_write_json, atomic_write_text, now_iso  # noqa: E402
+from atomic import (  # noqa: E402
+    atomic_write_json,
+    atomic_write_text,
+    now_iso,
+    read_json_or_default,
+)
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -23,19 +28,18 @@ SCHEMA_VERSION = "1.0.0"
 def read_state(project_root: Path) -> Dict:
     """Read .dev-kit/state.json. Returns default if missing."""
     state_path = project_root / ".dev-kit" / "state.json"
-    if not state_path.exists():
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "project": project_root.name,
-            "current_stage": "bootstrap",
-            "current_step": 1,
-            "last_transition_at": now_iso(),
-            "hand_off_chain": [],
-            "loop_log_path": str(project_root / ".dev-kit" / "loop-log.json"),
-            "shortcut_used": None,
-            "claude_md_sha": None,
-        }
-    return json.loads(state_path.read_text(encoding="utf-8"))
+    default: Dict = {
+        "schema_version": SCHEMA_VERSION,
+        "project": project_root.name,
+        "current_stage": "bootstrap",
+        "current_step": 1,
+        "last_transition_at": now_iso(),
+        "hand_off_chain": [],
+        "loop_log_path": str(project_root / ".dev-kit" / "loop-log.json"),
+        "shortcut_used": None,
+        "claude_md_sha": None,
+    }
+    return read_json_or_default(state_path, default)
 
 
 def write_state(project_root: Path, state: Dict) -> None:

@@ -326,5 +326,94 @@ class TestIterLogs(unittest.TestCase):
             self.assertEqual(walked, [])
 
 
+class TestNormalizeToolUses(unittest.TestCase):
+    """`_iter_tool_uses(record)` flattens Claude/Codex tool_use blocks
+    into a uniform sequence so the aggregation loop does not have to
+    branch on record shape.
+
+    Claude-Code nests blocks under ``record.message.content`` (list of
+    dicts). Codex nests them under ``record.payload`` (sometimes a list
+    itself). Some intermediate builds nest one level deeper (``content``
+    inside a wrapper). The normalizer must yield each block exactly
+    once and skip non-tool-use / non-dict entries silently."""
+
+    def test_claude_message_content_blocks(self):
+        rec = {"message": {"content": [
+            {"type": "text", "text": "hi"},
+            {"type": "tool_use", "id": "t1", "name": "Skill",
+             "input": {"skill": "dev-kit:foo"}},
+        ]}}
+        out = list(skill_usage._iter_tool_uses(rec))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["input"]["skill"], "dev-kit:foo")
+
+    def test_codex_payload_list(self):
+        rec = {"payload": [
+            {"type": "tool_use", "name": "Skill",
+             "input": {"skill": "dev-kit:bar"}},
+        ]}
+        out = list(skill_usage._iter_tool_uses(rec))
+        self.assertEqual(out[0]["input"]["skill"], "dev-kit:bar")
+
+    def test_codex_payload_dict_with_tool_uses_key(self):
+        rec = {"payload": {"tool_uses": [
+            {"type": "tool_use", "name": "Skill",
+             "input": {"skill": "dev-kit:baz"}},
+        ]}}
+        out = list(skill_usage._iter_tool_uses(rec))
+        self.assertEqual(out[0]["input"]["skill"], "dev-kit:baz")
+
+    def test_nested_content_is_flattened(self):
+        """Some Codex/Claude builds wrap blocks one level deeper
+        (e.g. ``content`` inside a top-level dict). The normalizer
+        must walk both layers."""
+        rec = {"message": {"content": {"content": [
+            {"type": "tool_use", "name": "Skill",
+             "input": {"skill": "dev-kit:deep"}},
+        ]}}}
+        out = list(skill_usage._iter_tool_uses(rec))
+        self.assertEqual(out[0]["input"]["skill"], "dev-kit:deep")
+
+    def test_skips_non_tool_use_blocks(self):
+        rec = {"message": {"content": [
+            {"type": "text", "text": "ignored"},
+            {"type": "tool_use", "name": "Read", "input": {}},
+        ]}}
+        out = list(skill_usage._iter_tool_uses(rec))
+        # Normalizer yields tool_use blocks of any name; the
+        # aggregator (not the normalizer) filters by name=="Skill".
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["name"], "Read")
+
+    def test_no_message_no_payload_yields_empty(self):
+        self.assertEqual(list(skill_usage._iter_tool_uses({})), [])
+        self.assertEqual(list(skill_usage._iter_tool_uses(
+            {"type": "user", "message": "hi"})), [])
+
+    def test_aggregation_picks_up_codex_skill_kicks(self):
+        """End-to-end: a Codex-shaped record carrying a Skill tool_use
+        must bump ``invocations`` for that skill, matching the Claude
+        contract. Without normalization the Codex kick would silently
+        be dropped because ``message.content`` is absent."""
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl",
+                                         delete=False) as fh:
+            fh.write(json.dumps({
+                "type": "event_msg",
+                "timestamp": "2026-07-15T10:00:00.000Z",
+                "cwd": "/r",
+                "payload": [
+                    {"type": "tool_use", "name": "Skill",
+                     "input": {"skill": "dev-kit:codex-only"}},
+                ],
+            }) + "\n")
+            path = fh.name
+        try:
+            agg = skill_usage.aggregate_skill_usage(path, window_days=30)
+            self.assertEqual(agg["dev-kit:codex-only"]["invocations"], 1)
+            self.assertEqual(agg["dev-kit:codex-only"]["turns"], 0)
+        finally:
+            Path(path).unlink()
+
+
 if __name__ == "__main__":
     unittest.main()

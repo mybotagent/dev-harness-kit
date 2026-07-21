@@ -365,5 +365,294 @@ class TestRunEvalDispatcher(unittest.TestCase):
         )
 
 
+# --- shared helpers (issue #310 slice) -------------------------------------
+
+
+class TestCoerceScore(unittest.TestCase):
+    """`_coerce_score` is the shared coercion used by both `_judge_case`
+    and `run_golden_diff`. Coerce-or-None is the contract: any non-numeric
+    input returns None so the caller can drop or skip it.
+    """
+
+    def test_numeric_inputs_pass_through(self):
+        self.assertEqual(eval_runner._coerce_score(1.0), 1.0)
+        self.assertEqual(eval_runner._coerce_score(0), 0.0)
+        self.assertEqual(eval_runner._coerce_score("3.5"), 3.5)
+
+    def test_non_numeric_inputs_return_none(self):
+        self.assertIsNone(eval_runner._coerce_score("nope"))
+        self.assertIsNone(eval_runner._coerce_score(None))
+        self.assertIsNone(eval_runner._coerce_score({}))
+
+
+class TestSessionReportBuilder(unittest.TestCase):
+    """`_session_report(...)` is the centralized builder used by every
+    branch of `run_session_dim`. Same shape for dry-run / empty / real /
+    exception paths — only the inputs differ.
+    """
+
+    def test_session_report_keys_locked(self):
+        # The public report dict has the documented field set; if you
+        # add or rename a field, downstream consumers break.
+        keys = set(eval_runner._session_report(
+            session_id="sid", log_path="/x/y.jsonl",
+            scores={"a": 1.0}, verdict="OK", score=1.0,
+            tokens_in=0, tokens_out=0, raw="", error=None,
+            cached=False,
+        ).keys())
+        self.assertTrue(
+            {"session_id", "log_path", "scores", "tokens_in", "tokens_out",
+             "raw", "verdict", "score", "error", "cached", "summary"}
+            <= keys,
+            f"missing keys: {keys}",
+        )
+
+    def test_session_report_summary_is_attached(self):
+        r = eval_runner._session_report(
+            session_id="sid", log_path="/x", scores={"a": 9.0, "b": 8.0},
+            verdict="OK", score=8.5,
+            tokens_in=10, tokens_out=5, raw="{}", error=None, cached=False,
+        )
+        # `summary` is the canonical short shape consumers key off.
+        self.assertIn("summary", r)
+        self.assertEqual(r["summary"]["verdict"], "OK")
+        self.assertEqual(r["summary"]["cached"], False)
+        self.assertEqual(r["summary"]["axes"], 2)
+
+
+class TestSummarizeSessionLogNormalized(unittest.TestCase):
+    """`_summarize_session_log` is split into per-field helpers so the
+    main function reads top-down without embedded nested loops.
+    """
+
+    def test_root_prompt_extracted_from_string_content(self):
+        msg = {"content": "hello"}
+        self.assertEqual(eval_runner._extract_root_prompt(msg), "hello")
+
+    def test_root_prompt_extracted_from_block_list(self):
+        msg = {"content": [
+            {"type": "text", "text": "first"},
+            {"type": "tool_use", "name": "Read"},
+        ]}
+        self.assertEqual(eval_runner._extract_root_prompt(msg), "first")
+
+    def test_root_prompt_extracted_from_text_blocks(self):
+        msg = {"content": [
+            {"type": "text", "text": "block-text"},
+        ]}
+        self.assertEqual(eval_runner._extract_root_prompt(msg), "block-text")
+
+    def test_root_prompt_returns_empty_for_other_shapes(self):
+        self.assertEqual(eval_runner._extract_root_prompt({}), "")
+        self.assertEqual(eval_runner._extract_root_prompt(None), "")
+
+
+class TestSessionCacheContentAware(unittest.TestCase):
+    """The cache key must include log content (mtime+size is enough)
+    so two logs with the same session_id but different content don't
+    share a stale cache entry. Stale cache = silently-wrong verdict.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.log = self.root / "session.jsonl"
+        self.log.write_text(
+            '{"sessionId":"sid-A","type":"user",'
+            '"message":{"content":"hello"}}\n',
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_cache_key_includes_log_path_and_size(self):
+        key_a = eval_runner._session_cache_key(self.log, "sid-A")
+        # Same session id, different log path → distinct key
+        other = self.root / "other.jsonl"
+        other.write_text('{"sessionId":"sid-A"}\n', encoding="utf-8")
+        key_b = eval_runner._session_cache_key(other, "sid-A")
+        self.assertNotEqual(key_a, key_b)
+
+    def test_cache_path_includes_content_hash(self):
+        # The cache file path is keyed off (session_id, content_hash).
+        p1 = eval_runner._session_cache_path(self.root, "sid-A", self.log)
+        # Mutating the log file (different size/content) produces a
+        # different cache path so stale entries are bypassed.
+        self.log.write_text(
+            '{"sessionId":"sid-A","type":"user",'
+            '"message":{"content":"hello"}}\n'
+            '{"type":"assistant","message":{"content":"more"}}\n',
+            encoding="utf-8",
+        )
+        p2 = eval_runner._session_cache_path(self.root, "sid-A", self.log)
+        self.assertNotEqual(p1, p2)
+
+    def test_cache_hit_invalidated_when_log_changes(self):
+        # Run 1: cache populated
+        config = {
+            "provider": "minimax", "model": "x",
+            "api_key": "fake-key",
+            "base_url": "https://api.minimax.io/anthropic",
+        }
+        scores_high = {ax: 9.0 for ax in eval_runner.SESSION_AXES}
+        with patch.object(llm_judge, "call_judge", return_value={
+            "scores": scores_high,
+            "tokens_in": 1, "tokens_out": 1, "raw": "{}",
+        }):
+            eval_runner.run_session_dim(self.root, self.log, config=config)
+        # Mutate log (different content)
+        self.log.write_text(
+            '{"sessionId":"sid-A","type":"user",'
+            '"message":{"content":"DIFFERENT"}}\n',
+            encoding="utf-8",
+        )
+        scores_low = {ax: 4.0 for ax in eval_runner.SESSION_AXES}
+        with patch.object(llm_judge, "call_judge", return_value={
+            "scores": scores_low,
+            "tokens_in": 1, "tokens_out": 1, "raw": "{}",
+        }) as mock_judge:
+            r2 = eval_runner.run_session_dim(
+                self.root, self.log, config=config,
+            )
+        # Second call hits the LLM because cache was content-keyed.
+        self.assertEqual(mock_judge.call_count, 1)
+        self.assertFalse(r2["cached"])
+        self.assertEqual(r2["score"], 4.0)
+
+
+class TestReportDictsPreserved(unittest.TestCase):
+    """The public report dicts MUST keep their existing shape — every
+    downstream consumer keys off them.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        for dim in ("review", "security", "plan"):
+            (self.root / "eval" / "cases" / dim).mkdir(parents=True)
+            (self.root / "eval" / "transcripts" / dim).mkdir(parents=True)
+        _seed_case(self.root, "review", "review-01", "x", {"verdict": "OK"})
+        _seed_transcript(
+            self.root, "review", "review-01", {"verdict": "Approve"},
+        )
+        self.log_path = self.root / "session.jsonl"
+        self.log_path.write_text(
+            '{"sessionId":"sid","type":"user",'
+            '"message":{"content":"hi"}}\n',
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_run_eval_summary_keys_locked(self):
+        report = eval_runner.run_eval(self.root, dry_run=True)
+        self.assertEqual(set(report.keys()),
+                         {"results", "config", "summary"})
+        self.assertEqual(
+            set(report["summary"].keys()),
+            {"OK", "DRIFT_WARNING", "ROT", "SKIPPED"},
+        )
+
+    def test_run_session_dim_keys_locked(self):
+        report = eval_runner.run_session_dim(
+            self.root, self.log_path, dry_run=True,
+        )
+        self.assertEqual(
+            set(report.keys()),
+            {"session_id", "log_path", "scores", "tokens_in", "tokens_out",
+             "raw", "verdict", "score", "error", "cached", "summary"},
+        )
+
+    def test_run_golden_diff_keys_locked(self):
+        run = {"results": [], "summary": {}, "config": {}}
+        reg = eval_runner.run_golden_diff(self.root, run)
+        self.assertEqual(
+            set(reg.keys()),
+            {"markers", "added", "removed", "summary",
+             "config", "baseline_hashes"},
+        )
+
+
+class TestCliConflictRejection(unittest.TestCase):
+    """`_validate_cli_args` rejects mutually-exclusive flag combinations
+    and missing prerequisites. The CLI is the user-facing surface — a
+    silent typo (e.g. `--session-log` with no log path) must error, not
+    produce a misleading summary.
+    """
+
+    def test_write_session_report_requires_session_log(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=None, write_session_report=True,
+            golden_diff=False, write_regression_report=False,
+            dim=None, case=None,
+        )
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(ns)
+
+    def test_write_regression_report_requires_golden_diff(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=None, write_session_report=False,
+            golden_diff=False, write_regression_report=True,
+            dim=None, case=None,
+        )
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(ns)
+
+    def test_session_log_and_golden_diff_mutually_exclusive(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=Path("/x.jsonl"), write_session_report=False,
+            golden_diff=True, write_regression_report=False,
+            dim=None, case=None,
+        )
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(ns)
+
+    def test_session_log_rejects_dim_filter(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=Path("/x.jsonl"), write_session_report=False,
+            golden_diff=False, write_regression_report=False,
+            dim="review", case=None,
+        )
+        with self.assertRaises(SystemExit):
+            eval_runner._validate_cli_args(ns)
+
+    def test_no_args_passes(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=None, write_session_report=False,
+            golden_diff=False, write_regression_report=False,
+            dim=None, case=None,
+        )
+        # Plain per-dim run with no extras → no error
+        eval_runner._validate_cli_args(ns)
+
+    def test_session_log_alone_passes(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=Path("/x.jsonl"), write_session_report=False,
+            golden_diff=False, write_regression_report=False,
+            dim=None, case=None,
+        )
+        eval_runner._validate_cli_args(ns)
+
+    def test_golden_diff_alone_passes(self):
+        import argparse
+        ns = argparse.Namespace(
+            session_log=None, write_session_report=False,
+            golden_diff=True, write_regression_report=False,
+            dim=None, case=None,
+        )
+        eval_runner._validate_cli_args(ns)
+
+
+# helpers used by TestReportDictsPreserved (removed — inlined via setUp)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

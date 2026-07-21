@@ -164,6 +164,75 @@ def _bump_cwd(rec: dict, cwd: str, *, turns: int, invocations: int,
         bucket["last_seen"] = ts_str
 
 
+def _iter_tool_uses(record: dict):
+    """Yield ``tool_use`` blocks from a Claude-Code or Codex record.
+
+    Claude-Code nests blocks under ``record.message.content`` (list of
+    dicts, each with ``type=="tool_use"``). Codex nests blocks under
+    ``record.payload`` (either a list of blocks or a dict carrying a
+    ``tool_uses`` list). Some intermediate builds wrap blocks one
+    level deeper (``content`` inside a wrapper dict). This normalizer
+    flattens those shapes so the aggregation loop can iterate over a
+    uniform sequence of blocks without branching on record origin.
+
+    Non-dict entries, ``text`` blocks, and records with neither
+    ``message`` nor ``payload`` are silently skipped -- the
+    aggregator treats tool_use counts as a partial signal and any
+    malformed block is the same as a missing one.
+    """
+    # Claude-Code shape: message.content is a list of blocks (or a
+    # wrapper dict that itself carries a content list).
+    msg = record.get("message") or {}
+    content = msg.get("content") if isinstance(msg, dict) else None
+    yield from _flatten_block_list(_unwrap_blocks(content))
+
+    # Codex shape: payload may be a list, a dict with ``tool_uses``,
+    # or nested one level deeper. Walk both layouts so future Codex
+    # schemas keep working without touching the aggregator.
+    payload = record.get("payload")
+    if isinstance(payload, list):
+        yield from _flatten_block_list(payload)
+    elif isinstance(payload, dict):
+        yield from _flatten_block_list(payload.get("tool_uses"))
+        yield from _flatten_block_list(_unwrap_blocks(payload.get("content")))
+
+
+def _unwrap_blocks(value):
+    """Return ``value`` if it is a list of blocks; otherwise, if it
+    is a dict that itself carries a ``content`` or ``tool_uses``
+    list, return that inner list. Anything else returns ``None``."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        inner = value.get("content")
+        if isinstance(inner, list):
+            return inner
+        inner = value.get("tool_uses")
+        if isinstance(inner, list):
+            return inner
+    return None
+
+
+def _flatten_block_list(items) -> Iterable[dict]:
+    """Yield each dict in ``items`` whose ``type`` is ``"tool_use"``.
+
+    Non-list inputs, non-dict members, and non-tool_use blocks are
+    silently skipped. ``items`` may itself contain nested lists (rare
+    but seen in Codex payloads); the loop recurses one level.
+    """
+    if not isinstance(items, list):
+        return
+    for blk in items:
+        if isinstance(blk, list):
+            yield from _flatten_block_list(blk)
+            continue
+        if not isinstance(blk, dict):
+            continue
+        if blk.get("type") != "tool_use":
+            continue
+        yield blk
+
+
 def aggregate_skill_usage(logs_glob: str,
                           window_days: int | None = 30,
                           *,
@@ -224,15 +293,11 @@ def aggregate_skill_usage(logs_glob: str,
                                   ts_str=ts_str)
 
                 # ---- Skill tool_use -> invocations (explicit kicks) ----
-                msg = obj.get("message") or {}
-                content = msg.get("content")
-                if not isinstance(content, list):
-                    continue
-                for blk in content:
-                    if not isinstance(blk, dict):
-                        continue
-                    if blk.get("type") != "tool_use":
-                        continue
+                # Walk every tool_use block the record carries, regardless
+                # of whether it came from Claude-Code (message.content) or
+                # Codex (payload.*). The normalizer flattens both shapes
+                # so the per-block filter below stays single-purpose.
+                for blk in _iter_tool_uses(obj):
                     if blk.get("name") != "Skill":
                         continue
                     inp = blk.get("input") or {}

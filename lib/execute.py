@@ -26,6 +26,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
+from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 SCHEMA_VERSION = "1.0.0"
 # Sub-agent stdout marker. If the per-step `claude -p` emits this line, the
@@ -388,9 +389,26 @@ def _step_pre_spawn(
     """
     wt = root / ".worktrees" / f"{phase}-step{step_num}"
     branch = f"{worktree_branch}-step{step_num}"
-    subprocess.run(
-        ["git", "worktree", "add", "-B", branch, str(wt), "origin/main"],
-        cwd=str(root), check=True, capture_output=True, text=True,
+    # Per-step reset semantics: ``-B`` resets the branch ref to
+    # ``origin/main`` so a previous failed run's stale branch at the
+    # same name does not block the new step. The worktree dir still
+    # must NOT exist (preserve historical invariant — a stale dir
+    # means a previous run was interrupted, surface that to the user
+    # rather than silently clobber). Routed through the canonical
+    # ``cut_worktree`` helper so the policy is shared with future
+    # callers (issue #310).
+    #
+    # Pass ``subprocess.run`` from this module's namespace so tests that
+    # patch ``execute.subprocess.run`` to verify the worktree-add call
+    # pattern still observe the call (the helper's default would route
+    # through ``git_worktree.subprocess.run``, bypassing the patch).
+    cut_worktree(
+        repo_root=root,
+        branch=branch,
+        worktree_path=wt,
+        reset_branch=True,
+        overwrite_worktree=False,
+        git_runner=subprocess.run,
     )
     preamble_path = root / "phases" / phase / f"step{step_num}.md"
     preamble = preamble_path.read_text(encoding="utf-8") if preamble_path.exists() else ""

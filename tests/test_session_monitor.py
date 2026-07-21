@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -936,6 +936,156 @@ class TestSkillUsageFlag(unittest.TestCase):
         # Fixture has no attributionSkill -> aggregate is empty.
         self.assertEqual(payload["skill_usage_total"], {})
 
+
+class TestDecodeTranscript(unittest.TestCase):
+    """Pure-decoder split: `_decode_transcript(path)` yields parsed
+    records from a jsonl session log with narrow exception handling.
+
+    The split separates transcript IO/JSON decoding (this function)
+    from spawn/sidechain correlation (the rest of build_agent_graph),
+    so each layer can be tested in isolation. Malformed lines and
+    IO failures are skipped narrowly: only `OSError` (file open /
+    read) and `json.JSONDecodeError` (parse) are swallowed. Anything
+    else (e.g. ``AttributeError`` from a bug upstream) propagates."""
+
+    def _write(self, lines):
+        fh = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        fh.write("\n".join(lines) + "\n")
+        fh.close()
+        self.addCleanup(lambda: Path(fh.name).unlink(missing_ok=True))
+        return Path(fh.name)
+
+    def test_yields_each_parseable_record(self):
+        p = self._write([
+            json.dumps({"type": "user", "uuid": "u1"}),
+            json.dumps({"type": "assistant", "uuid": "a1"}),
+        ])
+        out = list(sm._decode_transcript(p))
+        self.assertEqual([r["uuid"] for r in out], ["u1", "a1"])
+
+    def test_skips_blank_lines(self):
+        p = self._write(["", json.dumps({"type": "user", "uuid": "u1"}), ""])
+        out = list(sm._decode_transcript(p))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["uuid"], "u1")
+
+    def test_skips_malformed_json_without_crashing(self):
+        p = self._write([
+            "not json",
+            json.dumps({"type": "user", "uuid": "u1"}),
+            "{broken",
+        ])
+        out = list(sm._decode_transcript(p))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["uuid"], "u1")
+
+    def test_missing_file_yields_empty(self):
+        out = list(sm._decode_transcript(FIXTURES / "no-such-file.jsonl"))
+        self.assertEqual(out, [])
+
+    def test_build_agent_graph_still_matches_fixture(self):
+        """End-to-end: refactor preserves the existing fixture contract."""
+        g = sm.build_agent_graph(FIXTURES / "cc-subagents.jsonl")
+        self.assertEqual(len(g.nodes), 2)
+        self.assertEqual(g.nodes[0].subagent_type, "Explore")
+        self.assertEqual(g.nodes[1].subagent_type, "Plan")
+
+
+class TestCorrelateNodesToChains(unittest.TestCase):
+    """Pure correlation step: pair spawn nodes to sidechain chains by
+    encounter order. Each spawn edge attaches the matching chain's
+    turn_count + last_ts. Orphan chains (no matching spawn) are dropped;
+    orphan spawns (no matching chain) keep turn_count=0."""
+
+    def _node(self, tool_use_id, subagent_type="Explore"):
+        return sm.AgentNode(tool_use_id=tool_use_id,
+                            subagent_type=subagent_type, description="",
+                            prompt_excerpt="")
+
+    def test_pairs_in_order(self):
+        nodes = [self._node("n1"), self._node("n2")]
+        chains = [
+            ("c1", {"turns": 2, "last_ts": NOW}),
+            ("c2", {"turns": 3, "last_ts": NOW}),
+        ]
+        sm._correlate_nodes_to_chains(nodes, chains)
+        self.assertEqual(nodes[0].turn_count, 2)
+        self.assertEqual(nodes[1].turn_count, 3)
+
+    def test_orphan_chain_dropped(self):
+        nodes = [self._node("n1")]
+        chains = [
+            ("c1", {"turns": 2, "last_ts": NOW}),
+            ("c2", {"turns": 9, "last_ts": NOW}),
+        ]
+        sm._correlate_nodes_to_chains(nodes, chains)
+        self.assertEqual(nodes[0].turn_count, 2)
+        self.assertEqual(len(nodes), 1)
+
+    def test_orphan_spawn_keeps_zero_turn_count(self):
+        nodes = [self._node("n1"), self._node("n2")]
+        chains = [("c1", {"turns": 5, "last_ts": NOW})]
+        sm._correlate_nodes_to_chains(nodes, chains)
+        self.assertEqual(nodes[0].turn_count, 5)
+        self.assertEqual(nodes[1].turn_count, 0)
+
+
+class TestModeValidation(unittest.TestCase):
+    """main() rejects conflicting mode flags with a clear error and
+    exit code 2. The legacy precedence path silently picked one
+    (--list before --json before --print-resume-command); the explicit
+    validation makes the conflict visible so callers can fix the
+    invocation. Single-mode behavior is unchanged."""
+
+    def _run(self, *argv):
+        original = sm.discover_repo_root
+        sm.discover_repo_root = lambda *a, **kw: Path("/repo")
+        out, err = io.StringIO(), io.StringIO()
+        rc = None
+        try:
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = sm.main(["--logs-dir", "/tmp/nope", *argv])
+            except SystemExit as exc:
+                rc = exc.code if isinstance(exc.code, int) else 1
+        finally:
+            sm.discover_repo_root = original
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_no_mode_does_not_conflict(self):
+        rc, _, err = self._run("--days", "1")
+        self.assertNotEqual(rc, 2)
+        self.assertNotIn("conflicting mode", err.lower())
+
+    def test_single_mode_still_works(self):
+        rc, out, _ = self._run("--list")
+        self.assertEqual(rc, 0)
+        self.assertIn("no sessions", out)
+
+    def test_list_plus_json_conflict(self):
+        rc, _, err = self._run("--list", "--json")
+        self.assertEqual(rc, 2)
+        self.assertIn("conflicting mode", err.lower())
+        self.assertIn("--list", err)
+        self.assertIn("--json", err)
+
+    def test_json_plus_print_resume_command_conflict(self):
+        rc, _, err = self._run("--json", "--print-resume-command")
+        self.assertEqual(rc, 2)
+        self.assertIn("conflicting mode", err.lower())
+
+    def test_three_modes_conflict(self):
+        rc, _, err = self._run("--list", "--json", "--print-resume-command")
+        self.assertEqual(rc, 2)
+        self.assertIn("conflicting mode", err.lower())
+
+    def test_cli_setup_short_circuits_without_conflict(self):
+        # --cli-setup is mutually exclusive with data modes but handled
+        # by its own short-circuit; verify the conflict detector does not
+        # fire when only --cli-setup is set alongside a non-conflicting
+        # helper flag like --dry-run.
+        rc, _, _ = self._run("--cli-setup", "--dry-run")
+        self.assertNotEqual(rc, 2)
 
 
 if __name__ == "__main__":

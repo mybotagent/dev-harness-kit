@@ -19,6 +19,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from lib.analysis_core import (  # noqa: E402
+    emit_suggested_diffs,
+    run_analysis,
+)
 from lib.analysis_core.evidence import (  # noqa: E402
     SEVERITY_ORDER,
     Severity,
@@ -34,6 +38,17 @@ from lib.analysis_core.fp_filter import (  # noqa: E402
     deterministic_filter,
     threshold_by_mode,
 )
+
+
+def _build_synth_repo() -> Path:
+    """Tiny 3-file repo for runner-driven tests."""
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="ac-evi-")
+    root = Path(tmp)
+    (root / "a.py").write_text("x = 0\n", encoding="utf-8")
+    (root / "b.py").write_text("y = 1\n", encoding="utf-8")
+    (root / "c.py").write_text("z = 2\n", encoding="utf-8")
+    return root
 
 
 def _cand(**over):
@@ -184,6 +199,91 @@ class TestThresholdByMode(unittest.TestCase):
         ]
         out = threshold_by_mode(items, "rewrite")
         self.assertEqual(len(out), 1)
+
+
+class TestDeletionProofStrictBooleans(unittest.TestCase):
+    """`deletion_proof` is the safety gate for whole-file deletion. The
+    parser must reject non-boolean values so a malformed proof can never
+    silently enable a `git rm`. Required keys are `no_importers`,
+    `no_callers`, `no_references`, `no_runtime_calls`; missing keys or
+    non-bool values are dropped from the stored proof.
+    """
+
+    def test_proof_non_bool_value_dropped(self):
+        # "yes" is truthy in Python but not a real bool; the parser must
+        # drop it so the engine's proof check fails closed.
+        e = parse_candidate(_cand(
+            deletion_scope="whole-file",
+            deletion_proof={"no_importers": True, "no_callers": "yes"},
+        ))
+        self.assertIsNotNone(e.deletion_proof)
+        self.assertIn("no_importers", e.deletion_proof)
+        self.assertNotIn("no_callers", e.deletion_proof)
+        self.assertIs(e.deletion_proof["no_importers"], True)
+
+    def test_proof_dict_coerced_to_bool(self):
+        # Coerce other truthy values (1, "true") to True, falsy (0, "") to False.
+        e = parse_candidate(_cand(
+            deletion_scope="whole-file",
+            deletion_proof={"no_importers": 1, "no_callers": 0},
+        ))
+        self.assertEqual(e.deletion_proof["no_importers"], True)
+        self.assertEqual(e.deletion_proof["no_callers"], False)
+
+    def test_proof_keys_normalized_to_str(self):
+        e = parse_candidate(_cand(
+            deletion_scope="whole-file",
+            deletion_proof={"no_importers": True, "no_callers": True,
+                            "no_references": True, "no_runtime_calls": True},
+        ))
+        # All four safety keys present and bool.
+        for k in ("no_importers", "no_callers", "no_references", "no_runtime_calls"):
+            self.assertIn(k, e.deletion_proof)
+            self.assertIsInstance(e.deletion_proof[k], bool)
+
+
+class TestDeleteModeRejectsPartialProof(unittest.TestCase):
+    """The whole-file deletion gate requires ALL FOUR safety booleans:
+    `no_importers AND no_callers AND no_references AND no_runtime_calls`.
+    A missing key means the proof is incomplete and the engine must
+    emit a `# delete-blocked:` diff instead of `git rm`.
+    """
+
+    def test_missing_no_references_blocks_git_rm(self):
+        repo = _build_synth_repo()
+        result = run_analysis(["dead"], "delete", [repo], candidates={"dead": [{
+            "file": str(repo / "a.py"), "line": 0, "severity": "major",
+            "confidence": "high", "title": "x", "tldr": "t",
+            "failure_scenario": "orphan module",
+            "deletion_scope": "whole-file",
+            "deletion_root_cause": "orphan module",
+            "deletion_proof": {
+                "no_importers": True, "no_callers": True,
+                # no_references: MISSING -> whole-file proof incomplete
+                "no_runtime_calls": True,
+            },
+        }]})
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        self.assertNotIn("git rm", diffs[0].command)
+        self.assertIn("delete-blocked", diffs[0].command)
+
+    def test_full_four_key_proof_emits_git_rm(self):
+        repo = _build_synth_repo()
+        result = run_analysis(["dead"], "delete", [repo], candidates={"dead": [{
+            "file": str(repo / "a.py"), "line": 0, "severity": "major",
+            "confidence": "high", "title": "x", "tldr": "t",
+            "failure_scenario": "orphan module",
+            "deletion_scope": "whole-file",
+            "deletion_root_cause": "orphan module",
+            "deletion_proof": {
+                "no_importers": True, "no_callers": True,
+                "no_references": True, "no_runtime_calls": True,
+            },
+        }]})
+        diffs = emit_suggested_diffs(result)
+        self.assertEqual(len(diffs), 1)
+        self.assertIn("git rm", diffs[0].command)
 
 
 class TestParseCandidateOptionalFields(unittest.TestCase):

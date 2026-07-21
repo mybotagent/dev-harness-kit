@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Dict
 
 try:
-    from .atomic import atomic_write_json  # type: ignore  # noqa: E402
+    from .atomic import atomic_write_json, read_json_or_default  # type: ignore  # noqa: E402
 except ImportError:
-    from atomic import atomic_write_json  # type: ignore  # noqa: E402
+    from atomic import atomic_write_json, read_json_or_default  # type: ignore  # noqa: E402
 
 DEFAULT_MATRIX: Dict[str, Dict[str, object]] = {
     "bootstrap": {
@@ -97,17 +97,16 @@ def load_matrix(project_root: Path) -> Dict:
     mutate should use `ensure_matrix` first.
     """
     path = project_root / ".dev-kit" / ".active-hooks.json"
-    if not path.exists():
-        return {
-            "schema_version": "1.0.0",
-            "matrix": DEFAULT_MATRIX,
-            "override": {
-                "disabled_hooks": [],
-                "strict_mode": False,
-                "env_override": {},
-            },
-        }
-    return json.loads(path.read_text(encoding="utf-8"))
+    default: Dict = {
+        "schema_version": "1.0.0",
+        "matrix": DEFAULT_MATRIX,
+        "override": {
+            "disabled_hooks": [],
+            "strict_mode": False,
+            "env_override": {},
+        },
+    }
+    return read_json_or_default(path, default)
 
 
 # Back-compat alias: read_matrix historically returned a fresh init on miss.
