@@ -81,7 +81,7 @@ Per CLAUDE.md Iron Law L6, every new skill must declare an `alpha:` field. The p
 
 ## Iron Law
 
-**Defensive HTML escaping on every interpolated value.** The renderer escapes titles, anchors, free-text fields, and link URLs. A title with `<script>` in it renders as `&lt;script&gt;` -- the browser never executes it. The contract is enforced by `tests/test_proposal_skill.py:test_html_escapes_user_content`.
+**Defensive HTML escaping on every interpolated value.** The renderer escapes titles, anchors, free-text fields, and link URLs. A title with `<script>` in it renders as `&lt;script&gt;` — the browser never executes it. The contract is enforced by the `HtmlEscapeTests` class in `tests/test_proposal_skill.py` (e.g. `test_script_in_title_escaped`, `test_script_in_body_escaped`, `test_link_href_escapes_quotes`, `test_ampersand_escaped`, `test_less_than_greater_than_escaped`).
 
 **No `<script>` tag, no external assets, inline CSS only.** The output is safe to email, archive, or open from `file://`. Mirrors the `/dev-kit:report` invariant.
 

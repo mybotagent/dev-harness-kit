@@ -513,10 +513,16 @@ def _toc(p: Proposal) -> str:
     )
 
 
-def render(p: Proposal) -> str:
+def render(p: Proposal, now: Optional[str] = None) -> str:
     """Render a `Proposal` value object to a self-contained HTML document.
 
-    Pure function: no I/O, deterministic given the same input.
+    Pure function: no I/O, deterministic given the same input and `now`.
+
+    Args:
+        p: the proposal value object.
+        now: ISO-format date string for the footer. If `None` (default),
+            uses today's date in KST. Pass a fixed string for deterministic
+            tests / batch regeneration.
     """
     sections_html: List[str] = []
     for i, sec in enumerate(p.sections):
@@ -532,7 +538,8 @@ def render(p: Proposal) -> str:
         )
         tags_html = f'<div class="tags">{tag_chips}</div>'
 
-    now = datetime.now(KST).strftime("%Y-%m-%d")
+    if now is None:
+        now = datetime.now(KST).strftime("%Y-%m-%d")
     footer_issue = (
         f' · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/{p.issue}">'
         f'issue #{p.issue}</a>'

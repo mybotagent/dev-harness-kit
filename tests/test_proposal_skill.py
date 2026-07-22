@@ -389,6 +389,35 @@ class RenderFromYamlTests(unittest.TestCase):
         ]:
             self.assertIn(title, html, f"missing section: {title}")
 
+    def test_render_is_deterministic_when_now_is_fixed(self):
+        """Passing a fixed `now` makes render() deterministic so two
+        back-to-back calls produce byte-identical output. Reviewer
+        finding (PR #319 minor 3): the prior default of `datetime.now()`
+        embedded wall-clock time in the footer.
+        """
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        # Use a date that's clearly NOT today so the test is stable
+        # regardless of when it runs (today is KST-dependent):
+        FIXED = "1999-12-31"
+        out1 = rph.render(p, now=FIXED)
+        out2 = rph.render(p, now=FIXED)
+        self.assertEqual(out1, out2)
+        self.assertIn(FIXED, out1)
+        # Default (now=None) embeds today's date — must differ from
+        # the fixed date we passed:
+        out3 = rph.render(p)
+        self.assertNotEqual(out1, out3)
+
+    def test_render_default_now_is_today(self):
+        """Default `now=None` produces today's date in the footer."""
+        import datetime as _dt
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        out = rph.render(p)
+        today_kst = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).strftime("%Y-%m-%d")
+        self.assertIn(today_kst, out)
+
 
 if __name__ == "__main__":
     unittest.main()
