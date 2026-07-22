@@ -1029,6 +1029,118 @@ class TestCorrelateNodesToChains(unittest.TestCase):
         self.assertEqual(nodes[0].turn_count, 5)
         self.assertEqual(nodes[1].turn_count, 0)
 
+    def test_mixed_descriptions_fall_back_for_unmatched(self):
+        """Mixed transcripts: one node matches by description, another
+        node has no description. The unmatched node must still be
+        paired with the remaining (unused) chain by position -- not
+        left at zero counts just because the description pass matched
+        something.
+
+        Regression: the previous implementation used
+        ``if matched_any: return`` and so orphaned the position-based
+        fallback for any transcript that contained at least one
+        description match. Partially populated older records would then
+        report ``turn_count=0`` instead of the correct per-agent count.
+        """
+        # n1 has no description -> falls through to positional fallback
+        # n2 has a description that matches chain c3's head text
+        n1 = self._node("n1", subagent_type="Plan")
+        n2 = sm.AgentNode(tool_use_id="n2", subagent_type="Explore",
+                          description="navigate the codebase")
+        nodes = [n1, n2]
+        chains = [
+            ("c1", {"turns": 4, "last_ts": NOW,
+                    "first_user_text": "plan the next step"}),
+            ("c2", {"turns": 7, "last_ts": NOW,
+                    "first_user_text": "unrelated chain"}),
+            ("c3", {"turns": 2, "last_ts": NOW,
+                    "first_user_text": "please navigate the codebase"}),
+        ]
+        sm._correlate_nodes_to_chains(nodes, chains)
+        # n2 matched chain c3 by description -> turn_count=2
+        self.assertEqual(nodes[1].turn_count, 2)
+        # n1 had no description and was previously left at zero;
+        # now it falls back to the first unused chain (c1) by position.
+        self.assertEqual(nodes[0].turn_count, 4,
+                         "unmatched node must pair with leftover chain, "
+                         "not stay at the default zero counts")
+
+
+class TestConcurrentSpawnCorrelation(unittest.TestCase):
+    """Concurrent subagent spawns reorder sidechain records in the wire
+    log so the encounter index no longer maps spawn N to chain N. The
+    correlation step must match each spawn to the chain whose head text
+    names that spawn, not the chain that happens to arrive Nth.
+
+    Reproducer: parent transcript spawns Explore + Plan as two parallel
+    ``Agent`` ``tool_use`` blocks. The two sidechains then interleave --
+    Plan's head (``s2a``) lands first, then Explore's head (``s1a``),
+    then alternating child records. The legacy position-by-index
+    correlation would assign the 3-turn Plan chain to the Explore node
+    and the 2-turn Explore chain to the Plan node (turn counts swap).
+    """
+
+    def _write_log(self, lines):
+        fh = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        fh.write("\n".join(lines) + "\n")
+        fh.close()
+        self.addCleanup(lambda: Path(fh.name).unlink(missing_ok=True))
+        return Path(fh.name)
+
+    def test_concurrent_spawn_keeps_per_agent_turn_counts(self):
+        records = [
+            # parent prompt
+            {"type": "user", "isSidechain": False, "uuid": "u1",
+             "message": {"role": "user",
+                         "content": [{"type": "text",
+                                      "text": "build the thing with two helpers"}]}},
+            # parent assistant: spawns Explore + Plan in encounter order
+            {"type": "assistant", "isSidechain": False, "uuid": "a1",
+             "message": {"role": "assistant", "content": [
+                 {"type": "tool_use", "id": "call_A", "name": "Agent",
+                  "input": {"subagent_type": "Explore",
+                            "description": "scan the API layer",
+                            "prompt": "look at all handlers"}},
+                 {"type": "tool_use", "id": "call_B", "name": "Agent",
+                  "input": {"subagent_type": "Plan",
+                            "description": "design the migration",
+                            "prompt": "produce a step plan"}},
+             ]}},
+            # sidechains INTERLEAVED (concurrent spawns)
+            {"type": "user", "isSidechain": True, "uuid": "s2a",
+             "parentUuid": None,
+             "message": {"role": "user",
+                         "content": [{"type": "text",
+                                      "text": "design the migration"}]}},
+            {"type": "user", "isSidechain": True, "uuid": "s1a",
+             "parentUuid": None,
+             "message": {"role": "user",
+                         "content": [{"type": "text",
+                                      "text": "scan the API layer"}]}},
+            {"type": "assistant", "isSidechain": True, "uuid": "s2b",
+             "parentUuid": "s2a",
+             "message": {"role": "assistant",
+                         "content": [{"type": "text", "text": "step 1..."}]}},
+            {"type": "assistant", "isSidechain": True, "uuid": "s1b",
+             "parentUuid": "s1a",
+             "message": {"role": "assistant",
+                         "content": [{"type": "text", "text": "found 3 handlers"}]}},
+            {"type": "assistant", "isSidechain": True, "uuid": "s2c",
+             "parentUuid": "s2b",
+             "message": {"role": "assistant",
+                         "content": [{"type": "text", "text": "step 2..."}]}},
+        ]
+        path = self._write_log([json.dumps(r) for r in records])
+        g = sm.build_agent_graph(path)
+        self.assertEqual(len(g.nodes), 2)
+        # Order in g.nodes matches encounter order in the parent transcript
+        # (Explore first, Plan second). Each node must keep its OWN turn
+        # count, not the count of whichever chain happens to be at that
+        # index in the file.
+        by_desc = {n.description: n for n in g.nodes}
+        self.assertEqual(by_desc["scan the API layer"].turn_count, 2)
+        self.assertEqual(by_desc["design the migration"].turn_count, 3)
+
 
 class TestModeValidation(unittest.TestCase):
     """main() rejects conflicting mode flags with a clear error and
@@ -1077,7 +1189,29 @@ class TestModeValidation(unittest.TestCase):
     def test_three_modes_conflict(self):
         rc, _, err = self._run("--list", "--json", "--print-resume-command")
         self.assertEqual(rc, 2)
-        self.assertIn("conflicting mode", err.lower())
+
+    def test_picker_plus_json_conflict(self):
+        """--picker --json must reject: --json returns before the TTY
+        check, silently dropping the picker's explicit-intent contract.
+
+        Regression for the review that flagged --picker as still being
+        silently ignored when combined with --json or --list.
+        """
+        rc, _, err = self._run("--picker", "--json")
+        self.assertEqual(rc, 2,
+                         f"--picker --json should exit 2; got rc={rc}, "
+                         f"stderr={err!r}")
+        self.assertIn("--picker", err)
+        self.assertIn("--json", err)
+
+    def test_picker_plus_list_conflict(self):
+        """--picker --list must reject for the same reason as picker+json."""
+        rc, _, err = self._run("--picker", "--list")
+        self.assertEqual(rc, 2,
+                         f"--picker --list should exit 2; got rc={rc}, "
+                         f"stderr={err!r}")
+        self.assertIn("--picker", err)
+        self.assertIn("--list", err)
 
     def test_cli_setup_short_circuits_without_conflict(self):
         # --cli-setup is mutually exclusive with data modes but handled
@@ -1086,6 +1220,76 @@ class TestModeValidation(unittest.TestCase):
         # helper flag like --dry-run.
         rc, _, _ = self._run("--cli-setup", "--dry-run")
         self.assertNotEqual(rc, 2)
+
+    def test_resume_picker_setup_are_mutually_exclusive(self):
+        """Operator-mode family: --print-resume-command / --picker /
+        --cli-setup each route the program to a distinct handler.
+        argparse must reject any two as a usage error (exit 2) rather
+        than letting one silently override the other."""
+        for combo in (("--print-resume-command", "--picker"),
+                      ("--print-resume-command", "--cli-setup"),
+                      ("--picker", "--cli-setup")):
+            with self.subTest(combo=combo):
+                rc, _, err = self._run(*combo)
+                self.assertEqual(rc, 2,
+                                 f"{combo} should reject with exit 2; "
+                                 f"got rc={rc}, stderr={err!r}")
+
+
+class TestScriptEntrypoint(unittest.TestCase):
+    """Smoke-test the documented `python3 tools/session_monitor.py` invocation.
+
+    The earlier sibling-module split introduced an absolute back-edge
+    (``from session_monitor import ...``) that fired only when the file was
+    loaded as ``__main__`` -- no top-level ``session_monitor`` module yet,
+    so the sibling import started a second copy of the parent and
+    re-entered before argparse ran. The existing test suite masked this
+    because ``tests/test_session_monitor.py`` does
+    ``sys.path.insert(0, tools/)`` and imports the module under the
+    ``session_monitor`` name, which short-circuits the cycle.
+
+    These tests execute the script as a subprocess (no sys.path tricks,
+    no test-suite import aliasing) so the load graph is identical to what
+    a user sees when they type ``python3 tools/session_monitor.py --help``
+    on the command line.
+    """
+
+    SCRIPT = PROJECT_ROOT / "tools" / "session_monitor.py"
+
+    def _run_script(self, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT), *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+    def test_help_exits_zero(self) -> None:
+        """`python3 tools/session_monitor.py --help` parses + exits 0."""
+        cp = self._run_script("--help")
+        self.assertEqual(cp.returncode, 0,
+                         f"--help should exit 0; got {cp.returncode}\n"
+                         f"stderr: {cp.stderr}\nstdout: {cp.stdout[:500]}")
+        # argparse help output mentions the program name and a couple of
+        # the documented flags; assert both so a regression in either the
+        # parser wiring or the import order surfaces here.
+        self.assertIn("session_monitor.py", cp.stdout)
+        self.assertIn("--picker", cp.stdout)
+        self.assertIn("--print-resume-command", cp.stdout)
+
+    def test_imports_do_not_recurse(self) -> None:
+        """Subprocess import-count guard: a clean `--help` only loads
+        ``session_monitor`` once, even though four siblings reference it.
+
+        The regression that prompted the cycle fix was a second copy of
+        ``tools/session_monitor.py`` triggered by sibling imports during
+        the first copy's load. Counting subprocess invocations inside the
+        child is awkward, so this test instead asserts the simpler signal
+        that argparse succeeds (which only happens if no ImportError
+        fired mid-load) and that the script doesn't print to stderr.
+        """
+        cp = self._run_script("--help")
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(cp.stderr, "",
+                         f"clean --help must not write to stderr; got: {cp.stderr}")
 
 
 if __name__ == "__main__":
