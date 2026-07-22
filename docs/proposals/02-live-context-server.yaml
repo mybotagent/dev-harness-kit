@@ -1,0 +1,132 @@
+title: "02 — LCS: Live Context Server (상태 리더)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [lcs, mcp, state-reader, l7, runtime-portability]
+sections:
+  - title: 정의
+    body: |
+      **LCS (Live Context Server)**는 이 저장소가 직접 배포하는
+      **특정 MCP 서버**다. 라이브 상태를 타입이 지정된 URI-addressed
+      **리소스**로 노출한다. v1에서 도구는 0개 — 읽기 전용이다.
+
+      LCS는 MCP 위에서 동작한다 (MCP ≠ LCS — 자세한 구분은 §3 참조).
+      LCS는 **이 저장소의 첫 번째 MCP 서버**이며, 두 번째 서버 이후의
+      adoption 가드를 재정의하는 트리거다 (`11-migration-phases.html`
+      Phase 1 참조).
+
+  - title: LCS vs MCP (결정적 구분)
+    body: |
+      | 주장 | 참/거짓 |
+      |------|--------|
+      | "MCP는 Claude Code 기능이다" | ❌ MCP는 벤더 중립 프로토콜. Claude Code는 한 클라이언트. |
+      | "MCP가 `lcs://worktrees` 같은 리소스를 정의한다" | ❌ MCP는 *개념*만 정의. URI는 LCS의 선택. |
+      | "LCS가 MCP 프로토콜이다" | ❌ LCS는 MCP를 *사용*하는 한 서버. |
+      | "LCS 채택 = MCP 채택" | ❌ 반대 방향. LCS는 MCP를 요구; MCP는 LCS를 요구 안 함. |
+
+      **비유**: MCP는 HTTP이고 LCS는 `api.lcs.internal/...` — 한 번 만들면
+      다른 MCP 클라이언트가 모두 접근 가능.
+
+  - title: 리소스 (v1, 8개)
+    body: |
+      | URI | 의도 (에이전트가 묻는 질문) | 데이터 소스 |
+      |-----|----------------------------|------------|
+      | `lcs://worktrees` | 어떤 워크트리가 활성인가 | `git worktree list --porcelain` |
+      | `lcs://worktrees/<branch>` | 이 워크트리의 상태는 | `git -C <wt> status`, hooks.json |
+      | `lcs://branches/<name>` | origin과 동기화된가 | `git log`, 최신 CI |
+      | `lcs://pr/<number>` | PR이 통과 상태인가 | `gh pr view --json` |
+      | `lcs://sessions/<id>` | 이 세션이 무엇을 하는가 | 런타임 어댑터 (`sessions.py`) |
+      | `lcs://spend/<window>` | 토큰/USD가 어디로 가고 있는가 | 런타임 토큰 로그 어댑터 (`tokens.py`) |
+      | `lcs://hooks/coverage` | 어느 훅이 어느 이벤트에 와이어링되었는가 | `ls hooks/*.sh` + `jq hooks/hooks.json` |
+      | `lcs://interview/<session>` | 사용자가 무엇을 답했는가 | `hand-off/<step>.md` (v1) / MCS 도구 (v2) |
+
+  - title: 아키텍처
+    body: |
+      ```
+        에이전트 런타임 (Claude Code / Codex)
+            │
+            │  JSON-RPC over stdio (MCP)
+            ▼
+        LCS 서버 (`lib/lcs_server.py`)
+            │
+            ├─► 리소스 핸들러 (8개, `lib/lcs_resources/<name>.py`)
+            │
+            ├─► 스냅샷 캐시 (5초 TTL, 인메모리)
+            │
+            └─► 데이터 어댑터 (런타임 무지):
+                ├─ git CLI / gh CLI (어댑터 불필요)
+                ├─ fs (어댑터 불필요)
+                ├─ 런타임 토큰 로그 → `lib/runtime_adapters/tokens.py`
+                └─ 런타임 세션 이벤트 → `lib/runtime_adapters/sessions.py`
+      ```
+
+  - title: 라이프사이클
+    body: |
+      - **부트** (<500ms): 런타임이 세션 시작 시 LCS spawn. 초기 스캔:
+        `git worktree list --porcelain` + `gh pr list --json ...` +
+        `ls hooks/*.sh` + 런타임 토큰 로그. 병렬.
+      - **정상 상태** (<10ms p99): 인메모리 캐시에서 리소스 서빙.
+        TTL 만료 또는 `lcs://invalidate/<uri>` 호출 시 갱신.
+      - **셧다운**: 런타임 종료 시 LCS 종료. 영구 저장소 없음 (v1).
+        재시작 시 재스캔. v2에서 SQLite 옵션.
+      - **실패 모드**: 데이터 소스 불가 → `status: "partial"` + `null`
+        필드들. 크래시 아님.
+
+  - title: 셸아웃 → 타입 쿼리 (7개)
+    body: |
+      | 현재 셸아웃 | LCS 리소스 | 이득 |
+      |-------------|-----------|------|
+      | `git status` / `git worktree list` | `lcs://worktrees` | 한 번 읽기, 서브프로세스 없음, N 에이전트 간 스냅샷 일관 |
+      | `gh pr view <n>` | `lcs://pr/<n>` | `gh auth` 라운드트립 없음, `gh` 없는 환경 동작 |
+      | `git symbolic-ref --short HEAD` | `lcs://worktrees/<branch>` | 훅과 에이전트가 같은 진실 공유 |
+      | `tools/token_efficiency_analyzer.py --window today` | `lcs://spend/<window>` | 라이브, Python 부팅 없음 |
+      | `ls hooks/*.sh` + `jq '.matchers' hooks/hooks.json` | `lcs://hooks/coverage` | 두 셸아웃이 한 리소스로 |
+      | `cat .dev-kit/round-*/handoffs.md` | `lcs://interview/<session>` | 타입 스키마, 동시 읽기 안전 |
+      | `git log origin/main..HEAD --oneline` | `lcs://branches/<name>` | diff 미리 계산, 캐시 |
+
+  - title: 스키마 안정성 계약
+    body: |
+      URI는 안정적 계약. 페이로드 모양은 버전 관리.
+
+      - **추가 변경** (새 필드): 동일 URI, 버전 bump 없음
+      - **호환 깨는 변경** (이름 변경 / 제거 / 타입 변경): 신규 URI
+        `/v<n>` 부착. 구 URI는 구 모양 유지.
+      - **deprecation**: 구 URI의 페이로드에 `deprecated_at` 표시.
+        두 minor 버전 후 제거.
+
+  - title: 흡수 위험 (L7)
+    body: |
+      | 컴포넌트 | 위험 | 왜 |
+      |----------|------|-----|
+      | URI 라우팅 | 매우 낮음 | 포맷 고정 |
+      | 리소스 핸들러 (git/gh) | 매우 낮음 | 실제 I/O, 모델은 합성 불가 |
+      | 스냅샷 캐시 | 낮음 | 포맷 고정 (TTL) |
+      | URI 스키마 디자인 | 낮음 | 명시적 |
+      | 런타임 어댑터 (토큰/세션) | 매우 낮음 | 어댑터 자체는 형식 매핑 |
+      | 데이터 종합 / 추론 | **기각** — LCS는 종합하지 않음 | — |
+
+      **LCS는 데이터를 보유, 판단은 안 함**. 종합은
+      `lib/analysis-core/`의 몫 (L7 안전).
+
+  - title: 런타임 중립성 (결정 8)
+    body: |
+      LCS의 핵심 (URI 스키마, git/gh 읽기, 캐시 로직)은 **런타임 무지**다.
+      Claude Code와 Codex에서 **동일한 페이로드**를 반환한다.
+
+      런타임 의존 부분:
+      - **`lcs://sessions/<id>`** — `lib/runtime_adapters/sessions.py`가
+        런타임 세션 이벤트를 추상화
+      - **`lcs://spend/<window>`** — `lib/runtime_adapters/tokens.py`가
+        토큰 로그 포맷 차이를 흡수
+
+      런타임 어댑터가 없거나 실패하면 LCS는 `status: "partial"`로
+      응답하며 (셧다운하지 않음) 다른 리소스는 계속 동작.
+
+  - title: Related
+    body: |
+      - `01-protocol-layer.html` — MCP (LCS의 통신 계층)
+      - `07-runtime-portability.html` — 런타임 어댑터 (sesssions, tokens)
+      - `06-external-verifier.html` — 리서치 하네스가 `lcs://research/cache` 사용 (v2 확장)
+      - `03-ambiguity-resolver.html` — 인터뷰가 `lcs://interview/<session>`로 영속화
+      - `09-consolidated-architecture.html` — 통합 맥락
+      - `11-migration-phases.html` — Phase 1이 LCS 출시

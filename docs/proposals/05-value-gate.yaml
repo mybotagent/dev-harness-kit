@@ -1,0 +1,125 @@
+title: "05 — 플랜 가치 평가 하네스 (가치 게이트)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [plan-value, gate, verification, l7]
+sections:
+  - title: 정의
+    body: |
+      **플랜 가치 평가 하네스**는 인터뷰 하네스(`03-ambiguity-resolver`)
+      가 모호함을 해소한 뒤, 그 플랜이 **구현할 가치가 있는지** 별도로
+      판단한다. 평가 하네스(`04-quality-judge`)와 별개다.
+
+      - **인터뷰** = "이 플랜은 무엇인가?" (사실 확인)
+      - **평가** = "이 산출물의 품질은 어떤가?" (품질 채점)
+      - **플랜 가치 평가** = "이 플랜은 만들 가치가 있는가?" (가치 판단)
+
+      결정은 **proceed / revise / hold / kill** 중 하나. **proceed만이
+      빌드를 허용**.
+
+  - title: 가치 평가 루브릭 (6차원)
+    body: |
+      | 차원 | 정의 |
+      |------|------|
+      | **사용자 문제 적합도** | 이 플랜이 진짜 사용자가 겪는 문제를 해결하는가? |
+      | **ROI 추정** | 투자 (시간/비용) 대비 회수 (가치)가 합리적인가? |
+      | **기존 솔루션 대비 우위** | 이미 있는 도구 / 방식보다 나은가? |
+      | **팀 역량 부합** | 우리 팀이 실제로 구현·운영할 수 있는가? |
+      | **위험 대비 보상** | 실패 시 비용 대비 성공 시 이득이 큰가? |
+      | **측정 가능성** | 성공 / 실패를 어떻게 알 수 있는가? |
+
+      각 차원 1–5점. **가중 평균**으로 종합. 결정은 §4 참조.
+
+  - title: 결정 임계값
+    body: |
+      | 결정 | 조건 | 후속 행동 |
+      |------|------|----------|
+      | **proceed** | 모든 차원 ≥ 3, 평균 ≥ 4 | 빌드 진행 |
+      | **revise** | 일부 차원 < 3 | 플랜 재작성, 인터뷰로 회귀 |
+      | **hold** | 평균 3–4 | 일정 후 재평가 |
+      | **kill** | 평균 < 3, **또는** 위험 차원 < 2 (강제 하한) | 기록만, 폐기 |
+
+      **위험 하한 (위험 차원 < 2 → 무조건 kill)** 은 절대 규칙. 다른
+      차원이 만점이어도 위험이 너무 높으면 만들지 않는다.
+
+  - title: AEGIS Critic 패턴 (차용)
+    body: |
+      AEGIS / HarnessX의 "Critic + verification 게이트" 패턴을 차용한다
+      (자세한 비판은 `08-external-references.html`):
+
+      - **차용**: Critic = 본 하네스; verification 게이트 = 본 no-go
+        게이트
+      - **기각**: 자동 하네스 코드 생성 (Evolver); Opus 메타 에이전트
+
+      Critic이 "구현하지 말라"고 결정하면 빌드가 시작되지 않는다.
+      이게 결정적 강제 (enforcement)다.
+
+  - title: 인터페이스 (의사)
+    body: |
+      ```python
+      # lib/valuation_engine.py
+      class ValuationDecision(Enum):
+          PROCEED = "proceed"
+          REVISE = "revise"
+          HOLD = "hold"
+          KILL = "kill"
+
+      def valuate(plan: Plan,
+                  interview_answers: list[QA],
+                  rubric: ValuationRubric = DEFAULT) -> ValuationResult:
+          """Returns decision + per-dimension scores + reasoning."""
+      ```
+
+      결과는 `lcs://valuations/<plan-id>`에 영속화. `/dev-kit:build`가
+      빌드 시작 전 가장 최근 valuation을 읽어 PROCEED가 아니면 거부.
+
+  - title: 흡수 위험 (L7)
+    body: |
+      | 컴포넌트 | 위험 | 비고 |
+      |----------|------|------|
+      | **루브릭 정의** | 낮음 | YAML; 포맷 고정 |
+      | **결정 로직** (proceed/revise/hold/kill) | 낮음 | 규칙 기반 |
+      | **플랜 점수** (모델이 점수 매김) | **중간** | **얇게**: 모델이 점수 *제안*, 게이트가 결정 |
+      | **위험 하한 강제** | 매우 낮음 | 결정적 — 모델이 우회 불가 |
+
+      **결정적 강제 영역**: 위험 하한, 결정 로직, 빌드 게이트. 모델이
+      흡수할 수 없다.
+
+  - title: 런타임 중립성 (결정 8)
+    body: |
+      - 평가 엔진 (`lib/valuation_engine.py`): 순수 함수 → 자동 중립
+      - 빌드 게이트 통신: LCS `lcs://valuations/<plan-id>` → 자동 중립
+      - `/dev-kit:build` 결정 로직: 결정적 → 자동 중립
+
+      **어댑터 불필요**. 결정 8 영향 없음.
+
+  - title: 빌드 게이트 통합
+    body: |
+      `/dev-kit:build`는 다음 순서를 따른다:
+
+      1. 플랜 ID를 결정한다
+      2. `lcs://valuations/<plan-id>`를 읽는다
+      3. 가장 최근 valuation의 결정이:
+         - **PROCEED** → 빌드 진행
+         - **REVISE** → 거부 + "플랜 재작성 필요" 메시지
+         - **HOLD** → 거부 + "재평가 일정" 메시지
+         - **KILL** → 거부 + "기록 참조" 메시지
+
+      **하위 호환**: `--skip-valuation` 플래그로 valuation 없는 기존
+      빌드 호환. 플래그는 영구 옵션 (deprecate 안 함).
+
+  - title: 결정 8 강제 보장
+    body: |
+      결정 8 (런타임 중립성)을 만족하기 위해:
+      - valuation 결과는 **모든 런타임의 `/dev-kit:build`가 동일하게** 읽음
+      - LCS가 다중 런타임에서 동일 페이로드 반환
+      - 게이트 로직은 순수 함수 → 자동 중립
+
+  - title: Related
+    body: |
+      - `03-ambiguity-resolver.html` — 인터뷰가 입력으로 필요
+      - `04-quality-judge.html` — 공유 다중 판사 패턴
+      - `09-consolidated-architecture.html` — 경계 매트릭스
+      - `08-external-references.html` — AEGIS Critic + verification 게이트 차용
+      - `10-decision-record.html` — 결정 6 (verification 게이트)
+      - `11-migration-phases.html` — Phase 4

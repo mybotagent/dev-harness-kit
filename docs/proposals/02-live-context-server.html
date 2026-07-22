@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 — LCS: Live Context Server (상태 리더)</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --fg: #1d1d1f;
+  --bg: #fbfbfd;
+  --muted: #5b5b62;
+  --border: #d2d2d7;
+  --card-bg: #ffffff;
+  --th-bg: #f5f5f7;
+  --row-alt: #fafafa;
+  --code-bg: #f5f5f7;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.08);
+  --ok: #1f8a3b;
+  --warn: #a06400;
+  --bad: #b03030;
+  --callout-bg: rgba(10, 132, 255, 0.06);
+  --callout-border: #0a84ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f5f5f7;
+    --bg: #1c1c1e;
+    --muted: #aeaeb2;
+    --border: #38383a;
+    --card-bg: #2c2c2e;
+    --th-bg: #3a3a3c;
+    --row-alt: #232325;
+    --code-bg: #2c2c2e;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok: #4cd964;
+    --warn: #ff9f0a;
+    --bad: #ff453a;
+    --callout-bg: rgba(10, 132, 255, 0.14);
+    --callout-border: #0a84ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+h2 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; margin: 3.5rem 0 1rem; }
+h3 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 0.6rem; }
+p { margin: 0.7rem 0; }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0 0 2.5rem; }
+.tags { margin: 0 0 1.5rem; }
+.tag {
+  display: inline-block;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+}
+.tag-ok { background: rgba(31, 138, 59, 0.12); color: var(--ok); }
+.tag-warn { background: rgba(160, 100, 0, 0.12); color: var(--warn); }
+.tag-bad { background: rgba(176, 48, 48, 0.12); color: var(--bad); }
+.tag-info { background: var(--accent-soft); color: var(--accent); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+th, td { padding: 0.7rem 0.9rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--th-bg); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+tr:nth-child(even) td { background: var(--row-alt); }
+td code, th code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.88em; }
+.callout {
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-border);
+  border-radius: 6px;
+  padding: 0.9rem 1.2rem;
+  margin: 1.5rem 0;
+}
+.callout .label { font-weight: 600; margin-bottom: 0.3rem; display: block; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li > strong { color: var(--accent); }
+code { font-family: 'SF Mono', Menlo, Consolas, monospace; background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code-bg); padding: 0.9rem 1.1rem; border-radius: 8px; overflow-x: auto; font-size: 0.88em; line-height: 1.5; }
+pre code { background: transparent; padding: 0; }
+blockquote {
+  border-left: 3px solid var(--border);
+  margin: 1rem 0;
+  padding: 0.2rem 1rem;
+  color: var(--muted);
+}
+.section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.toc {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.5rem;
+  margin: 0 0 3rem;
+  font-size: 0.95rem;
+}
+.toc strong { display: block; margin-bottom: 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.toc ol { margin: 0; padding-left: 1.2rem; }
+footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>02 — LCS: Live Context Server (상태 리더)</h1>
+<p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
+<div class="tags"><span class="tag tag-info">lcs</span><span class="tag tag-info">mcp</span><span class="tag tag-info">state-reader</span><span class="tag tag-info">l7</span><span class="tag tag-info">runtime-portability</span></div>
+<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">LCS vs MCP (결정적 구분)</a></li><li><a href="#sec-2">리소스 (v1, 8개)</a></li><li><a href="#sec-3">아키텍처</a></li><li><a href="#sec-4">라이프사이클</a></li><li><a href="#sec-5">셸아웃 → 타입 쿼리 (7개)</a></li><li><a href="#sec-6">스키마 안정성 계약</a></li><li><a href="#sec-7">흡수 위험 (L7)</a></li><li><a href="#sec-8">런타임 중립성 (결정 8)</a></li><li><a href="#sec-9">Related</a></li></ol></div>
+<h2 id="sec-0">정의</h2>
+<p><strong>LCS (Live Context Server)</strong>는 이 저장소가 직접 배포하는 <strong>특정 MCP 서버</strong>다. 라이브 상태를 타입이 지정된 URI-addressed <strong>리소스</strong>로 노출한다. v1에서 도구는 0개 — 읽기 전용이다.</p>
+<p>LCS는 MCP 위에서 동작한다 (MCP ≠ LCS — 자세한 구분은 §3 참조). LCS는 <strong>이 저장소의 첫 번째 MCP 서버</strong>이며, 두 번째 서버 이후의 adoption 가드를 재정의하는 트리거다 (<code>11-migration-phases.html</code> Phase 1 참조).</p>
+<hr class="section-divider">
+
+<h2 id="sec-1">LCS vs MCP (결정적 구분)</h2>
+<table><thead><tr><th>주장</th><th>참/거짓</th></tr></thead><tbody><tr><td>"MCP는 Claude Code 기능이다"</td><td>❌ MCP는 벤더 중립 프로토콜. Claude Code는 한 클라이언트.</td></tr><tr><td>"MCP가 <code>lcs://worktrees</code> 같은 리소스를 정의한다"</td><td>❌ MCP는 <em>개념</em>만 정의. URI는 LCS의 선택.</td></tr><tr><td>"LCS가 MCP 프로토콜이다"</td><td>❌ LCS는 MCP를 <em>사용</em>하는 한 서버.</td></tr><tr><td>"LCS 채택 = MCP 채택"</td><td>❌ 반대 방향. LCS는 MCP를 요구; MCP는 LCS를 요구 안 함.</td></tr></tbody></table>
+<p><strong>비유</strong>: MCP는 HTTP이고 LCS는 <code>api.lcs.internal/...</code> — 한 번 만들면 다른 MCP 클라이언트가 모두 접근 가능.</p>
+<hr class="section-divider">
+
+<h2 id="sec-2">리소스 (v1, 8개)</h2>
+<table><thead><tr><th>URI</th><th>의도 (에이전트가 묻는 질문)</th><th>데이터 소스</th></tr></thead><tbody><tr><td><code>lcs://worktrees</code></td><td>어떤 워크트리가 활성인가</td><td><code>git worktree list --porcelain</code></td></tr><tr><td><code>lcs://worktrees/&lt;branch&gt;</code></td><td>이 워크트리의 상태는</td><td><code>git -C &lt;wt&gt; status</code>, hooks.json</td></tr><tr><td><code>lcs://branches/&lt;name&gt;</code></td><td>origin과 동기화된가</td><td><code>git log</code>, 최신 CI</td></tr><tr><td><code>lcs://pr/&lt;number&gt;</code></td><td>PR이 통과 상태인가</td><td><code>gh pr view --json</code></td></tr><tr><td><code>lcs://sessions/&lt;id&gt;</code></td><td>이 세션이 무엇을 하는가</td><td>런타임 어댑터 (<code>sessions.py</code>)</td></tr><tr><td><code>lcs://spend/&lt;window&gt;</code></td><td>토큰/USD가 어디로 가고 있는가</td><td>런타임 토큰 로그 어댑터 (<code>tokens.py</code>)</td></tr><tr><td><code>lcs://hooks/coverage</code></td><td>어느 훅이 어느 이벤트에 와이어링되었는가</td><td><code>ls hooks/*.sh</code> + <code>jq hooks/hooks.json</code></td></tr><tr><td><code>lcs://interview/&lt;session&gt;</code></td><td>사용자가 무엇을 답했는가</td><td><code>hand-off/&lt;step&gt;.md</code> (v1) / MCS 도구 (v2)</td></tr></tbody></table>
+<hr class="section-divider">
+
+<h2 id="sec-3">아키텍처</h2>
+<pre><code>  에이전트 런타임 (Claude Code / Codex)
+      │
+      │  JSON-RPC over stdio (MCP)
+      ▼
+  LCS 서버 (`lib/lcs_server.py`)
+      │
+      ├─► 리소스 핸들러 (8개, `lib/lcs_resources/&lt;name&gt;.py`)
+      │
+      ├─► 스냅샷 캐시 (5초 TTL, 인메모리)
+      │
+      └─► 데이터 어댑터 (런타임 무지):
+          ├─ git CLI / gh CLI (어댑터 불필요)
+          ├─ fs (어댑터 불필요)
+          ├─ 런타임 토큰 로그 → `lib/runtime_adapters/tokens.py`
+          └─ 런타임 세션 이벤트 → `lib/runtime_adapters/sessions.py`</code></pre>
+<hr class="section-divider">
+
+<h2 id="sec-4">라이프사이클</h2>
+<ul><li><strong>부트</strong> (&lt;500ms): 런타임이 세션 시작 시 LCS spawn. 초기 스캔:</li></ul>
+<p><code>git worktree list --porcelain</code> + <code>gh pr list --json ...</code> + <code>ls hooks/*.sh</code> + 런타임 토큰 로그. 병렬.</p>
+<ul><li><strong>정상 상태</strong> (&lt;10ms p99): 인메모리 캐시에서 리소스 서빙.</li></ul>
+<p>TTL 만료 또는 <code>lcs://invalidate/&lt;uri&gt;</code> 호출 시 갱신.</p>
+<ul><li><strong>셧다운</strong>: 런타임 종료 시 LCS 종료. 영구 저장소 없음 (v1).</li></ul>
+<p>재시작 시 재스캔. v2에서 SQLite 옵션.</p>
+<ul><li><strong>실패 모드</strong>: 데이터 소스 불가 → <code>status: "partial"</code> + <code>null</code></li></ul>
+<p>필드들. 크래시 아님.</p>
+<hr class="section-divider">
+
+<h2 id="sec-5">셸아웃 → 타입 쿼리 (7개)</h2>
+<table><thead><tr><th>현재 셸아웃</th><th>LCS 리소스</th><th>이득</th></tr></thead><tbody><tr><td><code>git status</code> / <code>git worktree list</code></td><td><code>lcs://worktrees</code></td><td>한 번 읽기, 서브프로세스 없음, N 에이전트 간 스냅샷 일관</td></tr><tr><td><code>gh pr view &lt;n&gt;</code></td><td><code>lcs://pr/&lt;n&gt;</code></td><td><code>gh auth</code> 라운드트립 없음, <code>gh</code> 없는 환경 동작</td></tr><tr><td><code>git symbolic-ref --short HEAD</code></td><td><code>lcs://worktrees/&lt;branch&gt;</code></td><td>훅과 에이전트가 같은 진실 공유</td></tr><tr><td><code>tools/token_efficiency_analyzer.py --window today</code></td><td><code>lcs://spend/&lt;window&gt;</code></td><td>라이브, Python 부팅 없음</td></tr><tr><td><code>ls hooks/*.sh</code> + <code>jq '.matchers' hooks/hooks.json</code></td><td><code>lcs://hooks/coverage</code></td><td>두 셸아웃이 한 리소스로</td></tr><tr><td><code>cat .dev-kit/round-*/handoffs.md</code></td><td><code>lcs://interview/&lt;session&gt;</code></td><td>타입 스키마, 동시 읽기 안전</td></tr><tr><td><code>git log origin/main..HEAD --oneline</code></td><td><code>lcs://branches/&lt;name&gt;</code></td><td>diff 미리 계산, 캐시</td></tr></tbody></table>
+<hr class="section-divider">
+
+<h2 id="sec-6">스키마 안정성 계약</h2>
+<p>URI는 안정적 계약. 페이로드 모양은 버전 관리.</p>
+<ul><li><strong>추가 변경</strong> (새 필드): 동일 URI, 버전 bump 없음</li><li><strong>호환 깨는 변경</strong> (이름 변경 / 제거 / 타입 변경): 신규 URI</li></ul>
+<p><code>/v&lt;n&gt;</code> 부착. 구 URI는 구 모양 유지.</p>
+<ul><li><strong>deprecation</strong>: 구 URI의 페이로드에 <code>deprecated_at</code> 표시.</li></ul>
+<p>두 minor 버전 후 제거.</p>
+<hr class="section-divider">
+
+<h2 id="sec-7">흡수 위험 (L7)</h2>
+<table><thead><tr><th>컴포넌트</th><th>위험</th><th>왜</th></tr></thead><tbody><tr><td>URI 라우팅</td><td>매우 낮음</td><td>포맷 고정</td></tr><tr><td>리소스 핸들러 (git/gh)</td><td>매우 낮음</td><td>실제 I/O, 모델은 합성 불가</td></tr><tr><td>스냅샷 캐시</td><td>낮음</td><td>포맷 고정 (TTL)</td></tr><tr><td>URI 스키마 디자인</td><td>낮음</td><td>명시적</td></tr><tr><td>런타임 어댑터 (토큰/세션)</td><td>매우 낮음</td><td>어댑터 자체는 형식 매핑</td></tr><tr><td>데이터 종합 / 추론</td><td><strong>기각</strong> — LCS는 종합하지 않음</td><td>—</td></tr></tbody></table>
+<p><strong>LCS는 데이터를 보유, 판단은 안 함</strong>. 종합은 <code>lib/analysis-core/</code>의 몫 (L7 안전).</p>
+<hr class="section-divider">
+
+<h2 id="sec-8">런타임 중립성 (결정 8)</h2>
+<p>LCS의 핵심 (URI 스키마, git/gh 읽기, 캐시 로직)은 <strong>런타임 무지</strong>다. Claude Code와 Codex에서 <strong>동일한 페이로드</strong>를 반환한다.</p>
+<p>런타임 의존 부분:</p>
+<ul><li><strong>`lcs://sessions/&lt;id&gt;`</strong> — <code>lib/runtime_adapters/sessions.py</code>가</li></ul>
+<p>런타임 세션 이벤트를 추상화</p>
+<ul><li><strong>`lcs://spend/&lt;window&gt;`</strong> — <code>lib/runtime_adapters/tokens.py</code>가</li></ul>
+<p>토큰 로그 포맷 차이를 흡수</p>
+<p>런타임 어댑터가 없거나 실패하면 LCS는 <code>status: "partial"</code>로 응답하며 (셧다운하지 않음) 다른 리소스는 계속 동작.</p>
+<hr class="section-divider">
+
+<h2 id="sec-9">Related</h2>
+<ul><li><code>01-protocol-layer.html</code> — MCP (LCS의 통신 계층)</li><li><code>07-runtime-portability.html</code> — 런타임 어댑터 (sesssions, tokens)</li><li><code>06-external-verifier.html</code> — 리서치 하네스가 <code>lcs://research/cache</code> 사용 (v2 확장)</li><li><code>03-ambiguity-resolver.html</code> — 인터뷰가 <code>lcs://interview/&lt;session&gt;</code>로 영속화</li><li><code>09-consolidated-architecture.html</code> — 통합 맥락</li><li><code>11-migration-phases.html</code> — Phase 1이 LCS 출시</li></ul>
+
+<hr class="section-divider">
+
+<footer>Generated 2026-07-22 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+</body>
+</html>

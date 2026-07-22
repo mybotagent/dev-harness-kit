@@ -1,0 +1,181 @@
+title: "09 — 통합 아키텍처 (6 하네스 + 어댑터 + 게이트)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [consolidated, architecture, boundary, alpha-accounting]
+sections:
+  - title: 정의
+    body: |
+      6개 하네스 + 결정 8 어댑터 계층의 **통합 관점**. 각 하네스의
+      개별 정의는 01–07을 참조. 이 파일은 **경계, 통합, alpha 회계**만.
+
+      각 하네스 = 한 가지 책임 = 한 가지 검증 게이트 = 한 방향.
+
+  - title: 6개 하네스 한 줄 요약
+    body: |
+      | 하네스 | 방향 | 핵심 목적 |
+      |--------|------|-----------|
+      | **MCP** (`01-protocol-layer.html`) | 프로토콜 | 런타임-무지 통신 |
+      | **LCS** (`02-live-context-server.html`) | 읽기 | 라이브 상태 노출 |
+      | **인터뷰** (`03-ambiguity-resolver.html`) | 명료화 | 모호함 해소 |
+      | **평가** (`04-quality-judge.html`) | 점수 | 품질 채점 |
+      | **플랜 가치** (`05-value-gate.html`) | 결정 + 게이트 | 구현 가치 판단 |
+      | **리서치** (`06-external-verifier.html`) | 검증 + 에스컬레이션 | 외부 자료 검증 |
+
+      **결정 8 (어댑터 계층)** (`07-runtime-portability.html`) —
+      런타임 무지 강제 인프라.
+
+  - title: 경계 매트릭스 (고유 책임 vs 비소유)
+    body: |
+      | 하네스 | 소유 | 소유하지 않음 |
+      |--------|------|--------------|
+      | MCP | 와이어 포맷, 프리미티브, 라이프사이클 | 특정 리소스/도구 |
+      | LCS | 라이브 저장소 상태 (워크트리, PR, 세션, spend, 훅) | 쓰기, 추론, 결정 |
+      | 인터뷰 | 모호함 해소, 질문 기록 | 가치 판단, 외부 검증, 자기 평가 |
+      | 평가 | 증거 기반 품질 판정, 적대적 교차검증 | proceed/kill, 플랜 재작성, 자기 평가 |
+      | 플랜 가치 | go/no-go + 근거 + 위험 하한 + verification 게이트 | 구현, 사실 확인, 자기 평가 |
+      | 리서치 | 외부 출처 인용, N 소스 합의, verification 게이트 | 내부 일관성, 가치 판단, 자동 코드 생성 |
+
+      **공통 비소유 = 자가 평가**. 결정 2가 잠금.
+
+  - title: 통합 매트릭스 (기존 표면에서 무엇이 쓰이는가)
+    body: |
+      ### 기존 파일 — 변경 없이 재사용
+      | 파일 | 누가 |
+      |------|-----|
+      | `tools/token_efficiency_analyzer.py` | LCS `lcs://spend` 데이터 소스 |
+      | `tools/parallel_dispatch.py` | 평가 / 플랜 가치 / 리서치 / 인터뷰의 팬아웃 |
+      | `lib/analysis-core/` | 평가 / 플랜 가치 / 리서치 종합 엔진 |
+      | `lib/render_report_html.py` + `bin/dev-kit-report.py` + `skills/report/SKILL.md` | 모든 하네스의 HTML 렌더링 패턴 |
+      | `lib/version-slot` | `lcs://branches/<name>/slot_version` |
+      | `lib/llm_judge.py` | 인터뷰 / 평가 / 플랜 가치 / 리서치의 LLM judge 호출 |
+      | `eval/prompts/judge-plan.md` | post-hoc plan judge (4축: spec_clarity, step_atomicity, ac_executability, dependency_ordering) |
+
+      ### 기존 파일 — 확장 (PR 분량)
+      | 파일 | 확장 |
+      |------|------|
+      | `lib/eval_runner.py` | `RUBRIC_REGISTRY` 추가 (Phase 3) |
+      | `lib/interview_engine.py` (신규, Phase 6) | plan skill의 5-field 안전 계약 구현 — `safety_valve=8`, `narrowed_delta`, `dedup_metric: identical-ambiguity-cycle=2`, status `ok`/`held` |
+      | `lib/analysis-core/cross_validate.py` (신규) | 리서치 교차검증 헬퍼 |
+      | `tools/parallel_dispatch.py` | `with_rubric` 옵션 추가 (Phase 5) |
+      | `docs/STAGES.md` | "valuate" 단계 추가 |
+      | `tests/test_smoke.py` | SKILL_COUNT 35 → 41 |
+      | `skills/interview/SKILL.md` (신규, Phase 6) | frontmatter에 5-field 안전 계약 선언 (plan 패턴, MUST-15) |
+
+      ### 신규 — Phase 0–7에서 도입
+      - `lib/runtime_adapters/{base,tokens,sessions,hooks,user_input,workspace,skill_install,claude_code,codex}.py`
+      - `lib/lcs_server.py` + `bin/dev-kit-lcs.py` + `lib/lcs_resources/*.py`
+      - `lib/{interview,valuation,research}_engine.py`
+      - `skills/{lcs,interview,valuate,evaluate,research,harness-audit}/SKILL.md`
+
+  - title: Lifecycle (모호함 해소 → 구현까지)
+    body: |
+      ```
+        ┌──────────────────────────────────────────────┐
+        │ 1. 인터뷰 (모호함 해소)
+        │    └─ 결정: 0개 모호함 도달 시 종료
+        └──────────────────────┬───────────────────────┘
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ 2. 플랜 가치 평가 (구현 가치)
+        │    └─ 결정: proceed | revise | hold | kill
+        └──────────────────────┬───────────────────────┘
+                               ▼ (PROCEED)
+        ┌──────────────────────────────────────────────┐
+        │ 3. 리서치 (외부 루브릭 검증, 4단계 에스컬레이션)
+        │    └─ 인용 + N 소스 합의 게이트
+        └──────────────────────┬───────────────────────┘
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ 4. 구현 (MCP + LCS 인프라 위)
+        │    └─ LCS로 상태 읽기, MCP 위에서 작업
+        └──────────────────────┬───────────────────────┘
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ 5. 평가 (3 대상, N 판사)
+        │    └─ 적대적 교차검증 + variance gate
+        └──────────────────────┬───────────────────────┘
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │ 6. 회고 (Phase 7 audit)
+        │    └─ 다음 라운드 입력
+        └──────────────────────────────────────────────┘
+      ```
+
+  - title: alpha 회계 (L7 정렬)
+    body: |
+      | 계층 | 흡수 위험 | alpha 배치 |
+      |------|----------|------------|
+      | **결정적 강제** (enforcement) | 매우 낮음 | **집중** |
+      | **외부 진실** (external truth) | 낮음 | **집중** |
+      | **상태 머신** (state machine) | 낮음 | **집중** |
+      | **추론** (reasoning) | **높음** | **기각** |
+
+      "AI가 하네스를 먹는다"는 명제(AI Times, Brown / Kilpatrick)에
+      따른 분류. 추론 비중이 큰 컴포넌트는 얇게 두거나 기각.
+
+      ## 결정적 강제 (강한 alpha)
+      - 결정 8 어댑터 인터페이스 (portability 강제)
+      - Phase 4·5 verification 게이트
+      - 적대적 교차검증 (Evaluation)
+      - 위험 하한 (Plan-value)
+      - 인용 강제 (Research)
+      - **인터뷰 루프의 5-field 안전 계약** (`safety_valve: 8`, `convergence: composite`,
+        `narrowed_delta: bool`, `dedup_metric: identical-ambiguity-cycle=2`,
+        `user_interrupt`) — 기존 plan skill에서 차용, 결정적 부분
+      - **status 결정 (`ok`/`held`) + 임계값 (`ambiguity_score <= 3`,
+        `value_score >= 3.0`, `evidence_count >= 3`)** — 결정적
+
+      ## 외부 진실 (알파 안정)
+      - LCS의 git/gh 읽기
+      - 리서치의 1차 자료
+      - 평가의 실제 데이터 채점
+      - 평가의 외부 sandbox (옵션)
+      - **기존 LLM judge 인프라** (`lib/llm_judge.py:call_judge`) 재사용
+
+      ## 상태 머신 (포맷 고정)
+      - 인터뷰의 5가지 질문 유형 + 종료 조건 (5-field 안전 계약)
+      - Build 단계의 valuation 게이트
+      - 하네스 감사 (Phase 7)의 read-only 합성
+
+      ## 얇게 유지 (high-risk model-driven, gate-verified)
+      - **인터뷰의 모호함 점수** (LLM judge 채점) — `skills/plan/SKILL.md` §2.3 패턴
+      - 인터뷰의 질문 문장
+      - 플랜 가치 평가의 점수 (model 제안)
+      - 리서치 종합 (model 제안, 게이트 검증)
+      - 평가의 점수 (model 제안, 적대적 검증)
+
+      ## 기각 (추론 비중 큰 부분)
+      - 자동 하네스 코드 생성 (결정 1) — AEGIS Evolver
+      - 자가 평가 (결정 2) — hermes 자가 루프
+      - Opus-class 메타 에이전트 (결정 4)
+      - 단일 런타임 종속 (결정 8)
+      - 벤더 종속 배포 (결정 3)
+
+  - title: 결정 8 영향 (런타임 중립성)
+    body: |
+      결정 8이 강제하는 어댑터 계층은 **일회성 비용으로 영구 보장**.
+      Phase 0에서 어댑터 인터페이스 + claude_code + codex 어댑터 1쌍
+      출시. 이후 모든 Phase는 자동 중립.
+
+      ```
+      결정 8 일회성 비용: ~500 LOC (어댑터 9개 파일 + CI 매트릭스)
+      이후 회수: 런타임 회귀 자동 차단; 결정 3 자동 만족; 신규 런타임
+      등장 시 어댑터 1파일 추가 (PR 1건)
+      ```
+
+  - title: 백워드 호환 전략
+    body: |
+      - `/dev-kit:plan` — `--skip-interview` 플래그 (영구 옵션)
+      - `/dev-kit:build` — `--skip-valuation` 플래그 (영구 옵션)
+      - `/dev-kit:eval` — 신규 차원 (harness/OS) opt-in 플래그
+      - Hooks — LCS 불가 시 기존 셸아웃 로직으로 fall through
+
+      **모든 신규 동작은 opt-out 가능**. 기존 워크플로는 변경 없음.
+
+  - title: Related
+    body: |
+      - 01–08: 각 하네스 / 어댑터 / 외부 참조 비판
+      - `10-decision-record.html`: 8개 잠금 결정
+      - `11-migration-phases.html`: Phase 0–7
+      - `12-open-questions.html`: 공개 질문

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06 — 리서치 하네스 (외부 검증기 + Phase 0–3 에스컬레이션)</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --fg: #1d1d1f;
+  --bg: #fbfbfd;
+  --muted: #5b5b62;
+  --border: #d2d2d7;
+  --card-bg: #ffffff;
+  --th-bg: #f5f5f7;
+  --row-alt: #fafafa;
+  --code-bg: #f5f5f7;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.08);
+  --ok: #1f8a3b;
+  --warn: #a06400;
+  --bad: #b03030;
+  --callout-bg: rgba(10, 132, 255, 0.06);
+  --callout-border: #0a84ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f5f5f7;
+    --bg: #1c1c1e;
+    --muted: #aeaeb2;
+    --border: #38383a;
+    --card-bg: #2c2c2e;
+    --th-bg: #3a3a3c;
+    --row-alt: #232325;
+    --code-bg: #2c2c2e;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok: #4cd964;
+    --warn: #ff9f0a;
+    --bad: #ff453a;
+    --callout-bg: rgba(10, 132, 255, 0.14);
+    --callout-border: #0a84ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 2.4rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+h2 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; margin: 3.5rem 0 1rem; }
+h3 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 0.6rem; }
+p { margin: 0.7rem 0; }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0 0 2.5rem; }
+.tags { margin: 0 0 1.5rem; }
+.tag {
+  display: inline-block;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+}
+.tag-ok { background: rgba(31, 138, 59, 0.12); color: var(--ok); }
+.tag-warn { background: rgba(160, 100, 0, 0.12); color: var(--warn); }
+.tag-bad { background: rgba(176, 48, 48, 0.12); color: var(--bad); }
+.tag-info { background: var(--accent-soft); color: var(--accent); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+th, td { padding: 0.7rem 0.9rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--th-bg); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+tr:nth-child(even) td { background: var(--row-alt); }
+td code, th code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 0.88em; }
+.callout {
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-border);
+  border-radius: 6px;
+  padding: 0.9rem 1.2rem;
+  margin: 1.5rem 0;
+}
+.callout .label { font-weight: 600; margin-bottom: 0.3rem; display: block; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li > strong { color: var(--accent); }
+code { font-family: 'SF Mono', Menlo, Consolas, monospace; background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code-bg); padding: 0.9rem 1.1rem; border-radius: 8px; overflow-x: auto; font-size: 0.88em; line-height: 1.5; }
+pre code { background: transparent; padding: 0; }
+blockquote {
+  border-left: 3px solid var(--border);
+  margin: 1rem 0;
+  padding: 0.2rem 1rem;
+  color: var(--muted);
+}
+.section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.toc {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.5rem;
+  margin: 0 0 3rem;
+  font-size: 0.95rem;
+}
+.toc strong { display: block; margin-bottom: 0.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.toc ol { margin: 0; padding-left: 1.2rem; }
+footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>06 — 리서치 하네스 (외부 검증기 + Phase 0–3 에스컬레이션)</h1>
+<p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
+<div class="tags"><span class="tag tag-info">research</span><span class="tag tag-info">verification</span><span class="tag tag-info">citation</span><span class="tag tag-info">escalation</span><span class="tag tag-info">l7</span></div>
+<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">Phase 0–3 에스컬레이션 (insane-search 차용)</a></li><li><a href="#sec-2">insane-search와의 차이</a></li><li><a href="#sec-3">verification 게이트 (결정 6 잠금)</a></li><li><a href="#sec-4">인용 강제 (결정 5)</a></li><li><a href="#sec-5">N 소스 합의 패턴</a></li><li><a href="#sec-6">흡수 위험 (L7)</a></li><li><a href="#sec-7">런타임 중립성 (결정 8)</a></li><li><a href="#sec-8">인터페이스 (의사)</a></li><li><a href="#sec-9">LCS 통합</a></li><li><a href="#sec-10">Related</a></li></ol></div>
+<h2 id="sec-0">정의</h2>
+<p><strong>리서치 하네스</strong>는 플랜을 <strong>외부 자료</strong>로 검증한다. 단순 검색이 아니라 <strong>루브릭 우선</strong>으로 동작한다:</p>
+<ol><li>"어떤 차원을 검증할 것인가" 정의 → 명시적 루브릭</li><li>N개 (≥3) 독립 웹 쿼리 팬아웃</li><li>인용 + 교차검증 (N 소스 합의)</li><li>종합은 <strong>모델이 제안</strong>, verification 게이트가 검증</li></ol>
+<p>insane-search의 Phase 0–3 에스컬레이션을 차용하되, MCP 서버로 재구성 (Claude plugin 배포는 기각).</p>
+<hr class="section-divider">
+
+<h2 id="sec-1">Phase 0–3 에스컬레이션 (insane-search 차용)</h2>
+<table><thead><tr><th>Phase</th><th>동작</th><th>비용</th><th>종료</th></tr></thead><tbody><tr><td><strong>0 Skip</strong></td><td><code>lcs://research/cache</code> 룩업</td><td>1 회</td><td>캐시 적중</td></tr><tr><td><strong>1 경량</strong></td><td>HTTP GET + OGP/JSON-LD 파싱</td><td>요청 + 파싱</td><td>메타 추출</td></tr><tr><td><strong>2 헤드리스</strong></td><td><code>requests-html</code> / <code>curl_cffi</code></td><td>부팅 1회</td><td>JS 렌더링</td></tr><tr><td><strong>3 풀 헤드리스</strong></td><td>Playwright</td><td>풀 브라우저</td><td>렌더링 또는 인증 만남</td></tr></tbody></table>
+<p>각 단계 <strong>앞</strong>에 verification 게이트: URL 유효성, 도메인 권위, 1차/2차 자료 분류, N 소스 합의. 미달 시 단계 재시도 또는 리서치 거부.</p>
+<p><strong>인증/페이월 만나면 즉시 중단</strong> (insane-search의 경계 그대로).</p>
+<hr class="section-divider">
+
+<h2 id="sec-2">insane-search와의 차이</h2>
+<table><thead><tr><th>측면</th><th>insane-search</th><th>본 리서치 하네스</th></tr></thead><tbody><tr><td>배포</td><td>Claude <code>/plugin</code></td><td>MCP 서버 (런타임 무지)</td></tr><tr><td>트리거</td><td>도구 실패 훅</td><td>명시적 호출 (<code>/dev-kit:research &lt;claim&gt;</code>)</td></tr><tr><td>비용</td><td>호스트 자동 설치</td><td>표준 라이브러리 + 어댑터</td></tr><tr><td>정합성</td><td>단일 결과</td><td>N 소스 합의 게이트</td></tr><tr><td>인용</td><td>OGP 메타만</td><td>URL + 시각 + 출처 종류 강제</td></tr><tr><td>종합</td><td>(없음)</td><td>모델 제안, 게이트 검증</td></tr></tbody></table>
+<hr class="section-divider">
+
+<h2 id="sec-3">verification 게이트 (결정 6 잠금)</h2>
+<p>각 단계 / 최종 결과에 verification 게이트가 강제된다:</p>
+<pre><code class="language-python">def verify(sources: list[Source],
+           rubric: ResearchRubric) -&gt; VerificationResult:
+    # URL 유효성 (HEAD 요청)
+    # 도메인 권위 (루브릭: 1차 / 2차 / 비권위)
+    # 1차 / 2차 자료 분류
+    # N 소스 합의 (≥ 3개 같은 결론 = 신뢰 상향)
+    # 단일 출처 신뢰 하향 + 명시적 경고
+    # 인용 누락 = 거부</code></pre>
+<p><strong>단일 출처 경고</strong>가 미해결이면 리서치 결과 게시 거부. 단, 정보가 단일 출처에서만 가능한 경우는 (예: 미공개 내부 문서) 명시적 표시 후 통과.</p>
+<hr class="section-divider">
+
+<h2 id="sec-4">인용 강제 (결정 5)</h2>
+<p><strong>모든 주장에 인용 필수</strong>:</p>
+<ul><li>URL</li><li>검색 시각 (ISO 8601)</li><li>출처 종류 (1차 / 2차 / 비권위)</li><li>접근 방법 (HTTP / 인증 / 내부)</li></ul>
+<p>인용 없는 주장 = <strong>게시 거부</strong>. 단, 명시적 "주관적 판단" 마킹 의 경우는 인용 면제 (예: 모델의 디자인 결정).</p>
+<hr class="section-divider">
+
+<h2 id="sec-5">N 소스 합의 패턴</h2>
+<pre><code>  루브릭 정의 (검증 차원 N개)
+      │
+      ▼
+  N=3개 쿼리 팬아웃 (`tools/parallel_dispatch.py`)
+      │  각 쿼리는 다른 쿼리 + 다른 소스
+      ▼
+  N개 응답 수집 → URL 인용 추출
+      │
+      ▼
+  비교: 동일 결론?
+  ├── 모두 일치 → 신뢰 상향 + 종합 진행
+  ├── 2-of-3 일치 → 부분 합의 + 명시
+  └── 1-of-3 일치 → 신뢰 하향 + 경고 표시
+      │
+      ▼
+  종합 (모델이 초안), 게이트가 검증
+      │
+      ▼
+  결정: 게시 / 부분 게시 + 경고 / 거부</code></pre>
+<hr class="section-divider">
+
+<h2 id="sec-6">흡수 위험 (L7)</h2>
+<table><thead><tr><th>컴포넌트</th><th>위험</th><th>비고</th></tr></thead><tbody><tr><td><strong>루브릭 정의</strong></td><td>낮음</td><td>YAML; 명시적</td></tr><tr><td><strong>쿼리 생성</strong> (모델이 어떤 쿼리 던질지)</td><td><strong>중간</strong></td><td><strong>얇게</strong>: 모델이 제안, 엔진이 디스패치; 결정적 부분이 자연스레 강제</td></tr><tr><td><strong>웹 페치</strong></td><td>매우 낮음</td><td>실제 I/O</td></tr><tr><td><strong>교차검증</strong></td><td>낮음</td><td>포맷 고정 N-소스 합의</td></tr><tr><td><strong>인용 강제</strong></td><td>매우 낮음</td><td>결정적</td></tr><tr><td><strong>종합</strong></td><td><strong>높음</strong> — 흡수 가능</td><td><strong>얇게</strong>: 엔진은 출처만 수집; 종합은 모델이 초안, 게이트가 검증</td></tr></tbody></table>
+<p><strong>결정적 강제</strong>: verification 게이트, 인용 강제, N 소스 합의. 모델이 흡수할 수 없다.</p>
+<hr class="section-divider">
+
+<h2 id="sec-7">런타임 중립성 (결정 8)</h2>
+<ul><li>리서치 엔진 (<code>lib/research_engine.py</code>): 순수 함수 → 자동 중립</li><li>팬아웃: <code>tools/parallel_dispatch.py</code> 추상화 → 자동 중립</li><li>캐시: <code>lcs://research/cache</code> (LCS 위) → 자동 중립</li><li>헤드리스 도구: 표준 Python 라이브러리 (어디서나 설치 가능)</li></ul>
+<p><strong>런타임 의존 없음</strong>. 결정 8 자동 만족.</p>
+<hr class="section-divider">
+
+<h2 id="sec-8">인터페이스 (의사)</h2>
+<pre><code class="language-python"># lib/research_engine.py
+def verify_claim(claim: str,
+                rubric: ResearchRubric = DEFAULT,
+                max_phase: int = 4) -&gt; ResearchReport:
+    &quot;&quot;&quot;Returns cited report with phase-escalation + verification.&quot;&quot;&quot;
+
+class ResearchRubric:
+    dimensions: list[RubricDimension]
+    n_sources_for_agreement: int = 3
+    require_citations: bool = True</code></pre>
+<p><code>max_phase</code>는 단계 상한 (기본 4 = Phase 0–3 모두). 사용자가 비용 절감을 위해 낮출 수 있다 (예: <code>max_phase=2</code> = Phase 0–1만).</p>
+<hr class="section-divider">
+
+<h2 id="sec-9">LCS 통합</h2>
+<ul><li><strong>캐시</strong>: <code>lcs://research/cache</code> (v2 추가 리소스). 동일/유사</li></ul>
+<p>쿼리 결과가 있으면 Phase 0에서 즉시 반환.</p>
+<ul><li><strong>결과의 영속화</strong>: 리서치 결과는 <code>lcs://research/cache/&lt;query-hash&gt;</code></li></ul>
+<p>에 저장. 다른 에이전트가 재사용.</p>
+<hr class="section-divider">
+
+<h2 id="sec-10">Related</h2>
+<ul><li><code>02-live-context-server.html</code> — <code>lcs://research/cache</code> (v2)</li><li><code>07-runtime-portability.html</code> — 헤드리스 도구의 런타임 의존 분석</li><li><code>08-external-references.html</code> — insane-search 에스컬레이션 차용 근거, hermes 자가 평가 기각</li><li><code>10-decision-record.html</code> — 결정 5 (인용 강제), 결정 6 (verification 게이트), 결정 7 (4단계)</li><li><code>11-migration-phases.html</code> — Phase 5</li></ul>
+
+<hr class="section-divider">
+
+<footer>Generated 2026-07-22 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+</body>
+</html>

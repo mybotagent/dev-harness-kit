@@ -1,0 +1,150 @@
+title: "10 — 결정 기록 (8개 잠금)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [decisions, locked-in, l7, runtime-portability]
+sections:
+  - title: 정의
+    body: |
+      이 시스템의 모든 잠긴 결정을 한 곳에서 추적한다. **8개 결정**이
+      잠금 상태이며, 각 결정은 **근거 + 범위 + 영향**을 명시한다.
+      `12-open-questions.html`의 공개 질문은 이 결정들을 *잠금 해제*
+      하기 위한 질문들이다.
+
+  - title: 결정 1 — 자동 코드 생성 = 기각
+    body: |
+      **근거**: L7 (alpha 흡수 위험). 하네스 코드는 추론 표면 + 코드 =
+      차세대 모델의 흡수 대상.
+
+      **범위**: 모든 신규 하네스 (LCS, 인터뷰, 평가, 플랜 가치,
+      리서치, 하네스 감사). 인간이 코드를 작성; 기계는 비판만.
+
+      **기각된 제안**: AEGIS Evolver (자동 하네스 코드 편집).
+
+      **관련 파일**: `08-external-references.html`의 AEGIS 비판.
+
+  - title: 결정 2 — 자가 평가 = 기각
+    body: |
+      **근거**: 외부 검증 부재. 모델이 자기 산출물을 자기 LLM으로 평가하면
+      편향이 누적.
+
+      **범위**: 모든 하네스. Evaluation 하네스의 다중 판사만 점수 발행.
+
+      **기각된 제안**: hermes-agent의 자가 평가 루프.
+
+      **관련 파일**: `04-quality-judge.html` (자가 평가 금지).
+
+  - title: 결정 3 — 벤더 종속 배포 = 기각
+    body: |
+      **근거**: 표준 프로토콜 위배. MCP 프로토콜이 모든 런타임의 공통
+      어휘이므로, MCP 위에서 동작하면 자동으로 다중 런타임 지원.
+
+      **범위**: 모든 배포 메커니즘. LCS는 MCP 서버 (Claude plugin 아님).
+
+      **기각된 제안**: insane-search의 Claude `/plugin` 배포.
+
+      **관련 파일**: `01-protocol-layer.html`, `02-live-context-server.html`.
+
+  - title: 결정 4 — Opus-class 메타 에이전트 = 기각
+    body: |
+      **근거**: 예산 초과 (Opus 4.6 ~$15/Mtok) + L7 (메타 루프도 모델
+      표면).
+
+      **범위**: 모든 하네스의 메타 오케스트레이션. 다중 판사는 Sonnet
+      이상이면 충분; Opus 사용 안 함.
+
+      **기각된 제안**: AEGIS의 Opus 메타 에이전트 (Planner + Evolver).
+
+      **관련 파일**: `08-external-references.html`, `04-quality-judge.html`
+      (다중 판사 fan-out은 Sonnet).
+
+  - title: 결정 5 — 인용 강제 = 잠금
+    body: |
+      **근거**: 리서치 정확성. 인용 없는 주장은 환각의 가능성. verification
+      게이트가 결정적 강제.
+
+      **범위**: 리서치 하네스. 모든 주장에 URL + 시각 + 출처 종류 강제.
+      미인용 = 게시 거부.
+
+      **차용 근거**: AEGIS Critic의 "URL/근거 강제" 패턴. (AEGIS Critic
+      자체는 차용; 자동 코드는 기각.)
+
+      **관련 파일**: `06-external-verifier.html` (인용 강제 메커니즘).
+
+  - title: 결정 6 — verification 게이트 = 잠금
+    body: |
+      **근거**: AEGIS Critic 패턴 (차용) + "모델이 좋은 것 같다고 한다"는
+      통과 사유가 아니어야 함.
+
+      **범위**: Plan-value 평가의 `no-go` 게이트 + 리서치 verification
+      게이트 + 평가의 적대적 교차검증 + 인터뷰의 5-field 안전 계약
+      (`safety_valve=8`, `composite convergence`, `narrowed_delta`,
+      `dedup_metric: identical-ambiguity-cycle=2`, `user_interrupt`).
+
+      **기존 plan 구현과 정렬**: `skills/plan/SKILL.md` §2.3 + 5-field
+      안전 계약 (`safety_valve=8`, `ambiguity_score <= 3 AND
+      value_score >= 3.0`)이 이미 본 패턴을 구현. 인터뷰 하네스는
+      동일 계약 + 동일 JSON 형태 (`{value_score, ambiguity_score,
+      evidence_count, status: ok|held}`)를 차용.
+
+      **차용/기각**: AEGIS의 verification 게이트는 차용; 자동 코드는
+      기각.
+
+      **관련 파일**: `04-quality-judge.html`, `05-value-gate.html`,
+      `06-external-verifier.html`, `03-ambiguity-resolver.html`,
+      `skills/plan/SKILL.md` (차용 원형).
+
+  - title: 결정 7 — Phase 5 = 4단계 에스컬레이션
+    body: |
+      **근거**: insane-search의 에스컬레이션 + 비용 단계화. 단순 단일
+      단계가 아니라 LCS 캐시 → 경량 → 헤드리스 → 풀 헤드리스.
+
+      **범위**: 리서치 하네스의 페치 전략.
+
+      **차용 근거**: insane-search의 Phase 0→3 패턴 (배포는 기각,
+      로직만 차용).
+
+      **관련 파일**: `06-external-verifier.html` (4단계 메커니즘),
+      `08-external-references.html` (insane-search 비판).
+
+  - title: 결정 8 — 단일 런타임 종속 = 기각 (신규)
+    body: |
+      **근거**: 결정 3이 *배포 방식*을 잠근 반면, 결정 8은 *동작 자체*를
+      잠근다. Claude Code만 동작 / Codex만 동작 = 부분 구현으로 간주.
+
+      **범위**: 모든 신규 컴포넌트. `/dev-kit:build`, `/dev-kit:eval`,
+      `/dev-kit:review`, `/dev-kit:plan`, 신규 하네스 (lcs, interview,
+      valuate, evaluate, research, harness-audit) 모두 Claude Code +
+      Codex 양쪽에서 동작 필수.
+
+      **메커니즘**:
+      - `lib/runtime_adapters/` — 얇은 어댑터 1계층
+      - `RuntimeAdapter` 추상 인터페이스
+      - `tests/test_portability.py` — 런타임 주입 테스트
+      - CI 매트릭스 (Claude Code lane + Codex lane)
+      - `docs/RUNTIME-PORTABILITY.md`
+
+      **일회성 비용**: ~500 LOC (Phase 0).
+      **영구 보장**: 모든 후속 Phase에서 런타임 회귀 자동 차단.
+
+      **관련 파일**: `07-runtime-portability.html` (어댑터 계층),
+      `11-migration-phases.html` (Phase 0).
+
+  - title: 결정 잠금 vs 공개 질문
+    body: |
+      | 결정 | 잠금 / 기각 | 잠금 해제 질문 |
+      |------|------------|----------------|
+      | 1 자동 코드 생성 | **기각** | `12-open-questions.html` Q5: AEGIS Evolver 영감을 별도 이슈로 다룰 의향? |
+      | 2 자가 평가 | **기각** | (잠금 유지) |
+      | 3 벤더 종속 배포 | **기각** | (잠금 유지) |
+      | 4 Opus 메타 | **기각** | (잠금 유지; 예산 변동 시 재검토) |
+      | 5 인용 강제 | **잠금** | (잠금 유지) |
+      | 6 verification 게이트 | **잠금** | Q2: hard/soft 구분 (1차/2차 자료)? |
+      | 7 4단계 에스컬레이션 | **잠금** | Q1: Phase 5 단계 상한 (v1은 0–1만)? |
+      | 8 단일 런타임 종속 | **기각** | Q3–Q4: 런타임 자동 감지 정책? |
+
+  - title: Related
+    body: |
+      - 각 결정이 잠근 파일로 직접 이동: 01–08의 "Related" 참조
+      - `11-migration-phases.html`: 결정이 단계에 어떻게 매핑되는지
+      - `12-open-questions.html`: 결정 잠금 해제 시도

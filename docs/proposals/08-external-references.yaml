@@ -1,0 +1,153 @@
+title: "08 — 외부 참조 비판 (insane-search / hermes / AEGIS)"
+status: design-discussion
+issue: 280
+date: 2026-07-21
+tags: [insane-search, hermes, aegis, external-references, borrow, reject]
+sections:
+  - title: 왜 외부 참조를 비판적으로 평가하는가
+    body: |
+      3개의 외부 참조 (insane-search, hermes-agent, HarnessX/AEGIS)는
+      모두 우리 시스템의 비슷한 영역을 다룬다. 하지만 **L7 (alpha 흡수)
+      과 결정 8 (런타임 중립)** 의 잠금에 따라 각 참조에서 **차용 /
+      부분 수용 / 기각**을 명확히 구분한다.
+
+      이 평가는 본 시스템의 **전략적 결계선 (strategic boundary)** 이다.
+      무비판적 수용은 alpha 표류를 가져온다.
+
+  - title: insane-search (fivetaku)
+    body: |
+      ### 무엇을 하는가
+      Claude Code plugin. 일반 fetch가 막힐 때 Phase 0→3로 에스컬레이션
+      (특수 공개 엔드포인트 → 경량 프로브 → TLS impersonation → 실제
+      헤드리스). OGP/JSON-LD 스캔으로 부분 페이지에서도 메타 추출.
+      로그인·페이월 만나면 즉시 중단.
+
+      ### Claude 종속의 진짜 이유
+      1. `/plugin` 배포 채널 (Claude 마켓플레이스)
+      2. 도구 실패 훅에 의한 자동 트리거 (Claude Code 전용)
+      3. `curl_cffi`, `yt-dlp`, 헤드리스 브라우저의 auto-install 호스트
+         가정
+
+      ### 차용
+      - **4단계 에스컬레이션 로직** (Phase 0: 캐시, Phase 1: 경량
+        프로브, Phase 2: 헤드리스, Phase 3: 풀 헤드리스)
+      - **"인증/페이월 만나면 중단"** 경계 — 강한 규율
+      - **OGP/JSON-LD 스캔** — 메타 추출 패턴
+
+      ### 기각
+      - **Claude `/plugin` 배포** (insane-search의 결정 3 위반)
+      - **도구 실패 훅 트리거** (Claude Code 종속)
+      - **호스트 자동 설치** (portability 위험)
+
+      ### 우리 통합 방식
+      Phase 0–3 로직은 MCP 서버의 리소스로 노출 (`lcs://research/cache`
+      + 리서치 엔진). 호스트 의존 도구는 표준 Python 인터페이스
+      (`insane_search.fetch(url, mode=...)`)로. **런타임 무지**.
+
+  - title: hermes-agent (nousresearch)
+    body: |
+      ### 무엇을 한다고 주장하는가
+      "Closed learning loop" — 에이전트가 세션을 요약하고, 복잡한 작업
+      후 스킬을 자동 생성하며, 사용 중 스킬이 자가 개선.
+
+      ### 문서화된 것
+      - 세션 검색 (FTS5 + LLM 요약)
+      - 사용자 모델링 (Honcho 통합)
+      - 스킬 자가 개선 (메커니즘 **미명시**)
+      - 트라제토리 데이터 생성 (다음 모델 학습용)
+
+      ### 문서화되지 않은 것 (심각)
+      - **루브릭 없음**
+      - **자동 벤치마크 없음**
+      - **자기 비판 / 판사 / 평가자 없음**
+      - **자기 산출물의 합격/불합격 지표 없음**
+
+      ### 결론 (비판적)
+      "Closed learning loop"는 **닫힌 방향이 잘못됨** — 외부 검증 없이
+      에이전트가 자기 LLM으로 자기 산출물을 평가한다. 이건 우리
+      결정 2 (자가 평가 = 기각)가 *방지하도록* 설계된 패턴이다.
+
+      ### 차용
+      - **자기 개선 비전** (메모리 + 스킬) — Phase 7 (harness-audit)에서
+        부분 수용
+      - **사용자 모델링** (Honcho 통합 아이디어)
+
+      ### 기각
+      - **자가 평가 메커니즘** — 외부 검증 부재 (결정 2 위반)
+      - **트라제토리 학습** — 우리 규모 무관
+
+      ### 우리 통합 방식
+      hermes의 자기 개선 비전은 **인터뷰 + 리서치 + 평가**가 외부
+      검증 슬롯을 채운다. hermes 식 자가 평가는 **기각**.
+
+  - title: HarnessX / AEGIS (Xiaomi, AI Times 2026-07-21)
+    body: |
+      ### 무엇을 하는가
+      하네스(프롬프트 / 도구 / 메모리 / 제어 흐름) 자체를 evolvable
+      객체로 다룬다. 4단계 엔진:
+
+      1. **Digester** — 실행 로그를 요약해 실패 원인 추출
+      2. **Planner** — 구조적 개선 제안 (프롬프트만이 아니라)
+      3. **Evolver** — 실제 하네스 코드 편집 생성
+      4. **Critic + verification 게이트** — reward hacking과 회귀 차단
+
+      **결과**: 15개 모델/벤치마크 쌍 평균 +14.5%, 작은 오픈웨이트에서
+      최대 +44%.
+
+      ### 우리 규모에 대한 3가지 결정적 문제
+      1. **메타 에이전트로 Opus 4.6 필요** — 프로덕션 예산 초과
+      2. **하네스 코드 자동 생성** — L7 흡수 위험 (결정 1 위반)
+      3. **"개선"의 공개 루브릭 없음** — verification 게이트가 내부적,
+         표류 가능
+
+      ### 우리 등가물 (이미 구축 중)
+      | AEGIS 계층 | 우리 등가물 |
+      |------------|------------|
+      | Digester | `eval` + `inspect` (산출물 → 발견) |
+      | Planner | `plan` + `interview` (모호함 해소 + 구조 제안) |
+      | Evolver | **기각** — 인간이 코드, 기계가 비판 |
+      | Critic + verification 게이트 | Plan-value 평가 (`no-go`) + Evaluation (다중 판사) + 리서치 verification |
+
+      ### 차용
+      - **Critic + verification 게이트 패턴** (결정 6에 잠금)
+      - **Digester → Planner → Evolver → Critic** 파이프라인의 *구조*
+      - **"하네스를 evolvable 객체로 본다"는 시각**
+
+      ### 기각
+      - **자동 하네스 코드 생성 (Evolver)** — 결정 1 (L7 흡수)
+      - **Opus-class 메타 에이전트 의존** — 결정 4
+      - **내부 verification 게이트** — 결정 6 반대
+
+  - title: 차용 vs 기각 매트릭스 (요약)
+    body: |
+      | 참조 | 차용 | 기각 |
+      |------|------|------|
+      | **insane-search** | 4단계 에스컬레이션, 인증 경계, OGP/JSON-LD | Claude plugin 배포, 호스트 자동 설치 |
+      | **hermes-agent** | 자기 개선 비전, 사용자 모델링 | 자가 평가 메커니즘 |
+      | **HarnessX/AEGIS** | Critic + verification 게이트, 파이프라인 구조 | 자동 코드 생성, Opus 메타 |
+
+      이 모든 결정을 L7 (결정 1–2, 4) + 결정 8 (3) + 결정 6 (verification
+      게이트 잠금)이 일관되게 강제한다.
+
+  - title: 1절 종합 — 우리가 *안* 만드는 것
+    body: |
+      이 평가는 **무엇을 만들지 않을 것인지**가 무엇을 만들지 않을
+      것만큼 중요하다는 것을 강조한다.
+
+      **명시적으로 기각** (이 외부 참조의 어느 부분에도):
+      - Claude `/plugin` 배포 (insane-search)
+      - 자동 하네스 코드 생성 (AEGIS Evolver)
+      - Opus-class 메타 에이전트 (AEGIS Planner/Editor)
+      - 자가 평가 (hermes)
+      - 단일 런타임 종속 (결정 8)
+
+      **이 기각이 우리가 *씬하게* 만드는 핵심**.
+
+  - title: Related
+    body: |
+      - `06-external-verifier.html` — 리서치의 4단계 에스컬레이션 (insane-search 차용)
+      - `05-value-gate.html` — 플랜 가치 평가의 verification 게이트 (AEGIS Critic 차용)
+      - `04-quality-judge.html` — 다중 판사 (AEGIS Critic 패턴 차용)
+      - `03-ambiguity-resolver.html` — 자기 평가 기각의 이유 (hermes에 대한 응답)
+      - `10-decision-record.html` — 차용/기각을 결정하는 8개 잠금
+      - `11-migration-phases.html` — Phase 5가 insane-search 에스컬레이션 출시
