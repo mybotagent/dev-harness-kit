@@ -40,8 +40,9 @@ class TestHooksStatus(unittest.TestCase):
             "Codex hook definitions must contain only Codex schema fields",
         )
         self.assertIsInstance(codex_config["description"], str)
-        self.assertIn("${PLUGIN_ROOT}", codex_text)
-        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", codex_text)
+        self.assertIn("${PLUGIN_ROOT:-", codex_text)
+        self.assertIn("${CODEX_PLUGIN_ROOT:-", codex_text)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT:-", codex_text)
         self.assertIn("${CLAUDE_PLUGIN_ROOT}", claude_text)
         self.assertNotIn("${PLUGIN_ROOT}", claude_text)
         self.assertEqual(

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/acp-tier-assert.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/acp-tier-assert.sh\""
           }
         ]
       },
@@ -16,11 +16,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/tdd-guard.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/tdd-guard.sh\""
           },
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/worktree-guard.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/worktree-guard.sh\""
           }
         ]
       },
@@ -29,15 +29,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/bash-guard.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/bash-guard.sh\""
           },
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/git-guard.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/git-guard.sh\""
           },
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/review-yml-isolation.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/review-yml-isolation.sh\""
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/worktree-auto-cut.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/worktree-auto-cut.sh\""
           }
         ]
       }
@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/session-start-check.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/session-start-check.sh\""
           }
         ]
       },
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/log-on-session-start.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/log-on-session-start.sh\""
           }
         ]
       },
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/provider-divergence-check.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/provider-divergence-check.sh\""
           }
         ]
       }
@@ -84,11 +84,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/secret-scan.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/secret-scan.sh\""
           },
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/slop-detector.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/slop-detector.sh\""
           }
         ]
       },
@@ -97,7 +97,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/worktree-log-auto-install.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/worktree-log-auto-install.sh\""
           }
         ]
       }
@@ -107,7 +107,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${PLUGIN_ROOT}/hooks/stop-verify.sh"
+            "command": "bash \"${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$PWD}}}/hooks/stop-verify.sh\""
           }
         ]
       }
