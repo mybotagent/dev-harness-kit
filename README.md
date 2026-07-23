@@ -1,803 +1,211 @@
 # dev-harness-kit
 
-> AI-native unified harness plugin — Plan → Build → Review → Ship with typed
-> sub-agent delegation, an Eval-Repair loop, and Human-on-the-Loop supervision.
+> An AI-native delivery harness for Claude Code and Codex: plan, build, review,
+> verify, and ship with deterministic hooks and human approval at the end.
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
----
+## Start here
 
-## Enforcement hooks (the durable moat)
+The normal workflow is:
 
-This plugin's load-bearing surface is **deterministic enforcement**, not
-prompt prose. Per `CLAUDE.md` Iron Law L7 ("a skill's alpha lives in the
-parts the model can't self-impose"), the 8 hooks below short-circuit the
-model's tool calls — they cannot be absorbed by model improvements.
+```text
+install → bootstrap → plan → build → review → ship
+```
 
-| Hook | What it does | Stage |
-|---|---|---|
-| `tdd-guard` | Blocks `lib/` edits without a failing test | Build |
-| `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
-| `secret-scan` | Redacts credential patterns in tool inputs | All |
-| `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
-| `worktree-guard` | Hard-blocks Edit/Write in the main checkout | All |
-| `worktree-auto-cut` | Creates the per-task worktree + branch | All |
-| `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
-| `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
+| Need | Command |
+|---|---|
+| Install | `claude plugin marketplace add sh-ai-x/dev-harness-kit` then `claude plugin install dev-kit` |
+| New repository | `/dev-kit:bootstrap-full` |
+| Plan work | `/dev-kit:plan` |
+| Implement work | `/dev-kit:build` |
+| Review changes | `/dev-kit:review` |
+| Security review | `/dev-kit:security` |
+| Watch a PR | `/dev-kit:babysit-pr` |
+| Release | `/dev-kit:ship` |
 
-The skills (`/dev-kit:*`) are convenience wrappers around these hooks +
-the state machine (`phases/<name>/index.json` + `STATUS_TRANSITIONS`).
-The next-gen-model thesis (issue #295) says the analysis-heavy skills
-get absorbed; the **hooks and state machine don't**.
+For local plugin development, use `claude --plugin-dir /path/to/dev-harness-kit`.
 
----
+## Install and update
 
-## Table of contents
-
-- [What it is](#what-it-is)
-- [Install](#install)
-- [Keeping the plugin up to date](#keeping-the-plugin-up-to-date)
-- [First-time consumer setup](#first-time-consumer-setup)
-- [Command reference](#command-reference)
-- [Core concepts](#core-concepts)
-  - [Worktree rule](#worktree-rule)
-  - [Skills by audience](#skills-by-audience)
-- [Tooling](#tooling)
-  - [Loghooks](#loghooks-dev-kitlog)
-  - [Token efficiency analyzer](#token-efficiency-analyzer)
-  - [Cost gate](#cost-gate)
-- [Consumer CI install](#consumer-ci-install)
-- [Codex CLI compatibility](#codex-cli-compatibility)
-- [Agent-behavior eval](#agent-behavior-eval)
-- [Repository layout](#repository-layout)
-- [Design principles](#design-principles)
-- [Contributing](#contributing)
-
----
-
-## What it is
-
-`dev-harness-kit` ships as a single Claude Code / Codex plugin (`dev-kit`) that
-covers the full delivery loop. Highlights:
-
-- **Plan + Design in one command** — `/dev-kit:plan` auto-generates `PRD.md` +
-  `phases/<name>/{index.json, step<N>.md}` through a 5-gate loop
-  (`frame → validate → non-goals → decompose → emit`) driven by quantified
-  ambiguity and value scores rather than a fixed questionnaire.
-- **Per-step sub-agent Build** — `/dev-kit:build` delegates each step to a
-  sub-agent with an integrated TDD + auto-fix loop.
-- **Parallel Review / Security** — `/dev-kit:review` (correctness + security +
-  architecture) and `/dev-kit:security` (OWASP A01–A10) fan out to subagents and
-  run a verification pass that rejects false positives.
-- **Agent-behavior eval** — `/dev-kit:eval` replays recorded transcripts and
-  judges them against per-dimension rubrics plus a code-sanity checklist.
-- **Eval-Repair loop** — auto-check → specialized fixer → final Human Review.
-- **Human-on-the-Loop** — the harness auto-progresses; the user approves last.
-- **Worktree enforcement** — hooks block edits in the main checkout and nudge
-  every new task onto its own worktree + branch.
-- **Consumer install** — `/dev-kit:ci-setup` ships a self-aware CI workflow set
-  that works both inside this repo and in downstream consumer repos.
-- **Cost visibility** — a token-efficiency dashboard and a live cost gate,
-  fed by opt-in session loghooks.
-- **Session monitor** — `python3 tools/session_monitor.py` lists every Claude Code
-  and Codex session across this repo's worktrees with live / idle / stale
-  status; pick one with the inline arrow-key UI and the tool emits the
-  exact `cd <wt> && claude --resume <sid>` resume command for you to run
-  with `!`. A stdlib-only inline picker is also available over `ssh` /
-  from a plain shell.
-
----
-
-## Install
-
-Requires the Claude Code CLI. See [Node compatibility](#node-compatibility)
-before running any `claude plugin …` command.
+Use Node 22 for Claude plugin CLI commands when required by the installed CLI:
 
 ```bash
-# Marketplace install (recommended)
+nvm install 22
+nvm use 22
 claude plugin marketplace add sh-ai-x/dev-harness-kit
 claude plugin install dev-kit
-
-# …or from a local checkout
-git clone https://github.com/sh-ai-x/dev-harness-kit
-claude plugin marketplace add ./dev-harness-kit
-claude plugin install dev-kit
-
-# At the start of every session
-/reload-plugins
 ```
 
-The install pins the `version` field from `.claude-plugin/plugin.json`, and the
-loaded copy lives in a version-named cache directory
-(`~/.claude/plugins/cache/dev-kit/dev-kit/<version>/`). The marketplace source
-tracks the `main` branch (`marketplace.json` → `source.ref: main`), so a new
-version is available after each merge — see
-[Keeping the plugin up to date](#keeping-the-plugin-up-to-date).
-
-### Live-source dev (recommended for contributors)
-
-The marketplace install pins one published version. When you are developing this
-repo, point Claude Code at your local checkout instead so edits are live with no
-re-install:
-
-```bash
-claude --plugin-dir /path/to/dev-harness-kit
-```
-
-Save the keystrokes with a shell alias in `~/.zshrc` (or `~/.bashrc`):
-
-```bash
-alias claude-dev='claude --plugin-dir /path/to/dev-harness-kit'
-
-claude-dev   # in a project dir: loads your local edits, no rebuild
-claude       # falls back to the marketplace-pinned install
-```
-
-When both are available, the local `--plugin-dir` copy wins for that session.
-
-> **Don't symlink `~/.claude/skills/dev-kit` to the repo.** A marketplace install
-> and a skills-dir plugin sharing the same `name` collide, and the loader rejects
-> the second copy. Use the alias above for a no-flag live-source install.
-
-### Node compatibility
-
-The bundled Claude Code CLI crashes on **Node ≥ 25**
-(`TypeError: Cannot read properties of undefined (reading 'prototype')` at
-`cli.js:384`). Run every `claude plugin …` command on **Node 22**:
-
-```bash
-nvm install 22 && nvm use 22
-```
-
-The `--plugin-dir` flag is unaffected — it bypasses the failing CLI path
-entirely.
-
----
-
-## Keeping the plugin up to date
-
-A marketplace install loads a cached copy at
-`~/.claude/plugins/cache/dev-kit/dev-kit/<version>/`. After a PR merges to
-`main`, that cache is stale until refreshed.
-
-**Refresh when:**
-
-- A PR merged to `main` and you want the new behavior in your current session.
-- `/dev-kit:*` output no longer matches the latest source.
-- A consumer repo's `/dev-kit:ci-setup` reports a missing file (e.g.
-  `scripts/branch-policy.sh: No such file or directory`) — the cache is stale.
-
-### Claude Code
-
-The `dev-kit` marketplace entry points at `main`, so after each merge the
-marketplace catalog auto-bumps the pinned version. The cleanest path is:
-
-```bash
-# Preferred: pull the latest pinned version from the marketplace.
-# Works from any shell — and from inside a Claude Code session, where the
-# updater path bypasses the CLI bug (see "Node compatibility" above).
-claude plugin update dev-kit
-```
-
-If that fails (most commonly because you're inside a Claude Code session and
-the bundled CLI throws the Node `TypeError`), the maintenance script does the
-same job with raw `git pull` + `rsync`:
-
-```bash
-# Escape hatch: pull the marketplace clone + rsync into the versioned cache.
-bin/devkit-refresh.sh
-bin/devkit-refresh.sh --dry-run    # show what would change first
-```
-
-> **Why `devkit-refresh.sh` exists:** `claude plugin install --force` and
-> `claude plugin update` both hit the same CLI path that throws the Node
-> `TypeError` above when invoked *from inside* a Claude Code session. The script
-> does the same job with plain `git pull` + `rsync`, which works everywhere. It
-> reads the cache version from `plugin.json` (falling back to the marketplace
-> clone's short SHA if the field is absent) and preserves executable bits on
-> shipped hook/template scripts.
-
-If even that is unavailable, you can refresh the cache by hand:
-
-```bash
-cd ~/.claude/plugins/marketplaces/dev-kit && git pull origin main --ff-only
-rsync -a --delete --exclude=.git \
-  ~/.claude/plugins/marketplaces/dev-kit/ \
-  ~/.claude/plugins/cache/dev-kit/dev-kit/<version>/
-```
-
-### Codex
+Refresh the Codex marketplace checkout and versioned cache with the maintained
+updater:
 
 ```bash
 bash skills/codex-cache-update/scripts/update.sh
-bash skills/codex-cache-update/scripts/update.sh --dry-run   # inspect only
+bash skills/codex-cache-update/scripts/update.sh --dry-run
 ```
 
-It upgrades the Codex marketplace checkout and synchronizes the matching
-versioned cache — even when the marketplace command reports it is already
-current — then prints the marketplace path, manifest version, cache path, and a
-final `cache synchronized` line. Override paths for a non-default install:
+The updater prints the marketplace path, manifest version, cache path, and
+`cache synchronized`. Restart Codex after a refresh. Override paths with
+`CODEX_MARKETPLACE_DIR` and `CODEX_CACHE_ROOT` when needed.
+
+## New-project setup
+
+Run the one-shot setup in a new consumer repository:
 
 ```bash
-CODEX_MARKETPLACE_DIR="$HOME/.codex/.tmp/marketplaces/dev-kit" \
-CODEX_CACHE_ROOT="$HOME/.codex/plugins/cache/dev-kit/dev-kit" \
-bash skills/codex-cache-update/scripts/update.sh
-```
-
-After any refresh, restart the client or run `/reload-plugins` where supported.
-
----
-
-## First-time consumer setup
-
-Most users are consumers. End-to-end "I have a new repo" flow:
-
-```bash
-# 1. Create + clone
-gh repo create myorg/myrepo --private --clone && cd myrepo
-
-# 2. Install the plugin
-claude plugin marketplace add sh-ai-x/dev-harness-kit
-claude plugin install dev-kit
-# (live source: claude --plugin-dir /path/to/dev-harness-kit)
-
-# 3. One-shot setup: CLAUDE.md + AGENTS.md + active-hooks.json + CI templates
 /dev-kit:bootstrap-full
-#    = /dev-kit:bootstrap then /dev-kit:ci-setup --force.
-#    Run them separately if you only want one half.
-
-# 4. First commit + push
-git add -A && git commit -m "chore: bootstrap dev-kit"
-git push -u origin main
 ```
 
-**Use `--force` on first install.** On a fresh repo the result is identical to a
-default install (all files copy either way), but `--force` is robust against a
-partial previous attempt and a stale plugin cache. Re-run with `--force` later to
-pull upstream template changes — see
-[Consumer CI install](#consumer-ci-install) for refresh vs first-install
-semantics.
-
-Typical next step: `/dev-kit:plan` to generate the PRD and phases.
-
----
-
-## Command reference
-
-Invoke with `/dev-kit:<skill>`. This list groups the user-facing entry points by
-workflow stage; only skills with `user-invocable: true` in their `SKILL.md`
-appear in slash autocomplete. Inspect that frontmatter (or use autocomplete) for
-the authoritative, current surface — see [Skills by audience](#skills-by-audience).
-
-**Setup**
-
-| Command | Purpose |
-|---|---|
-| `/dev-kit:bootstrap` | First entry — generate `CLAUDE.md` |
-| `/dev-kit:bootstrap-full` | One-shot bootstrap + ci-setup (new-project default) |
-| `/dev-kit:ci-setup` | Install CI templates (workflows + hooks + scripts + worktree files) |
-| `/dev-kit:ci-doctor` | Read-only PASS/FAIL audit of CI readiness |
-| `/dev-kit:log setup\|on\|off\|status` | Toggle session loghooks per project |
-| `/dev-kit:config` | Skill / MCP / hook / methodology picker |
-
-**Plan → Build**
-
-| Command | Purpose |
-|---|---|
-| `/dev-kit:plan` | PRD + phases (Plan + Design unified) |
-| `/dev-kit:build` | Run per-step sub-agents |
-| `/dev-kit:adapt` | Mid-build plan/spec amendment |
-| `/dev-kit:feat-remove` | Remove a feature (call-graph sweep + deletion report) |
-
-**Review → Ship**
-
-| Command | Purpose |
-|---|---|
-| `/dev-kit:review` | 3-dim review (correctness + security + architecture) |
-| `/dev-kit:security` | OWASP A01–A10 audit |
-| `/dev-kit:audit` | Batch slop + secret audit |
-| `/dev-kit:inspect` | 8-dim code-health audit (read-only) |
-| `/dev-kit:refactor` | 3-phase refactor: inspect → cleanup → review |
-| `/dev-kit:prune` | 4-phase deletion sweep: sweep → dependents → report → verify (`--target <feat>` for one feature) |
-| `/dev-kit:babysit-pr` | PR babysitter loop (poll CI, fix, re-iterate) |
-| `/dev-kit:ship` | Release tag |
-| `/dev-kit:bump [major\|minor\|patch]` | Explicit version bump + push |
-
-**Eval / cost / reporting**
-
-| Command | Purpose |
-|---|---|
-| `/dev-kit:eval` | Agent-behavior eval (review/security/plan + code-sanity) |
-| `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair Human Review |
-| `/dev-kit:report` | HTML viewer for eval + inspect reports |
-| `/dev-kit:token-analyzer` | Token-efficiency dashboard from session logs |
-| `/dev-kit:cost-gate` | Live cost gate (spend + threshold + commit footer) |
-| `/dev-kit:status` | HOTL visualization: loop progress + cycles + hand-off chain |
-| `/dev-kit:llm-refresh` | Refresh `docs/llm-info/<provider>.json` from each vendor's pricing page |
-| `/dev-kit:codex-cache-update` | Codex marketplace + versioned cache sync (CLI escape hatch) |
-
-**Docs / shortcuts**
-
-| Command | Purpose |
-|---|---|
-| `/dev-kit:proposal` | Render `docs/proposals/<name>.yaml` → self-contained HTML |
-| `/dev-kit:docs-maintenance` | Audit stale docs, refresh README, drop volatile facts |
-| `/dev-kit:tdd-fast` | Skip Bootstrap + Plan → straight to Build (hotfix) |
-| `/dev-kit:shortcut-quick-fix` | Verify + debug on demand |
-
----
-
-## Core concepts
-
-### Worktree rule
-
-The canonical rule is `rules/git-workflow.md`. Claude Code discovers it through
-the `.claude/rules` compatibility symlink; Codex reads the same file through
-`AGENTS.md`. The requirement is hard:
-
-> **Every task = new worktree + client handoff + new branch.** Claude Code opens
-> a new session in the worktree; Codex spawns a subagent there. No edits on the
-> previous task's branch or in the main checkout.
-
-Enforced by four hooks:
-
-- `worktree-guard.sh` — hard-blocks any Edit/Write in the main checkout.
-- `worktree-auto-cut.sh` — on a new-task prompt in the main checkout, derives a
-  slug, cuts the worktree, and hands the task off; falls back to a manual-cut
-  nudge on any failure.
-- `session-start-check.sh` — gentle reminder at session start.
-
-The canonical worktree path is the client-neutral `.worktrees/<slug>/` at the
-repo root, so Claude Code and Codex open the same checkout for a branch. Legacy
-`.claude/worktrees/` and `.codex/worktrees/` checkouts stay discoverable for log
-analysis, but new automatic cuts use `.worktrees/`. These worktree-rule files
-also ship to consumer repos via `templates/ci/`.
-
-### Skills by audience
-
-Each `SKILL.md` carries a `user-invocable` frontmatter flag:
-
-- **`user-invocable: true`** (or unset) — surfaces in `/dev-kit:` autocomplete.
-  *You* type it.
-- **`user-invocable: false`** — hidden. *Claude* auto-invokes it as a sub-step
-  when its parent skill runs.
-
-If a skill name doesn't autocomplete, it's an internal sub-skill — type the
-user-facing parent instead (e.g. `/dev-kit:refactor`, not
-`/dev-kit:build-refactor`). Mental model: user-facing skills are the verbs (the
-*what*); internal skills are the machinery (the *how*). This README does not
-duplicate a changing skill inventory — inspect the `skills/` frontmatter or use
-autocomplete for the live surface.
-
----
-
-## Tooling
-
-### Loghooks (`/dev-kit:log`)
-
-Wraps the standalone [`loghooks`](https://github.com/sh-ai-x/loghooks) repo
-(Claude Code `Stop` + `SessionEnd`, plus Codex equivalents) as a one-command
-on/off toggle per project.
+Run the stages separately when needed:
 
 ```bash
-/dev-kit:log setup   # copy tools/save_log.py + scaffold logs/{claude-code,codex}/
-/dev-kit:log on      # merge hooks into .claude/settings.json + .codex/hooks.json
-/dev-kit:log status  # managed=N captured=N
-/dev-kit:log off     # strip sentinel-tagged entries; scaffold left in place
+/dev-kit:bootstrap
+/dev-kit:ci-setup
+/dev-kit:ci-doctor
 ```
 
-Every installed entry carries `_loghooks_managed=true`; `off` strips only those,
-so pre-existing user hooks survive. Captured transcripts land in
-`logs/<tool>/<branch>/<sid>.jsonl` (grouped by `gitBranch`) and are gitignored.
-See [`logs/README.md`](logs/README.md) and `skills/log/SKILL.md`.
+`/dev-kit:ci-setup` is idempotent and supports `--force` for template refreshes.
 
-### Token efficiency analyzer
-
-A stdlib-only Python CLI (`tools/token_efficiency_analyzer.py`) that consumes the
-`logs/{claude-code,codex}/**/*.jsonl` transcripts captured by loghooks and emits
-one self-contained HTML dashboard — no dependencies, no JavaScript, no network.
-The user-facing entry point is the `/dev-kit:token-analyzer` skill; the CLI is
-also directly invokable for CI use:
+## Daily workflow
 
 ```bash
-python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
-open token-dashboard-my-project-30d.html
+/dev-kit:plan
+/dev-kit:build
+/dev-kit:review
+/dev-kit:security       # when the change needs a full security pass
+/dev-kit:babysit-pr     # after opening a PR
+/dev-kit:ship           # after approval and green gates
 ```
 
-### Preview
+The user remains responsible for final review and merge.
 
-![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+## Choose by intent
 
-*The screenshot above is regenerated from the latest dashboard HTML by
-`tools/render_dashboard.py` (Playwright + Chrome, 1440 × 2x) — Cost Gate
-banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost
-distribution, model + cache TTL mix, session table with letter-grade scores +
-warning chips, and a reclaim-axis savings breakdown. Refresh after any
-`tools/token_efficiency_analyzer.py` change.*
+### Setup and configuration
 
-The dashboard answers three questions per repo over the last N days:
+`/dev-kit:bootstrap`, `/dev-kit:bootstrap-full`, `/dev-kit:ci-setup`,
+`/dev-kit:ci-doctor`, `/dev-kit:config`, `/dev-kit:log setup|on|off|status`,
+and `/dev-kit:codex-cache-update` cover setup, CI, configuration, logging, and
+cache refreshes.
 
-1. **Where is the spend going?** Per-repo, per-tool (flags `Read`-heavy), and
-   per-session cost share.
-2. **How efficient is each session?** A 0–100 score across four dimensions.
-3. **What should I fix?** Six anti-pattern warnings + a USD savings estimate.
+### Planning and implementation
 
-**Common flags**
+Use `/dev-kit:plan`, `/dev-kit:build`, `/dev-kit:build-debug`,
+`/dev-kit:build-tdd`, `/dev-kit:build-refactor`, `/dev-kit:build-verify`,
+or `/dev-kit:feat-remove` for planned work, debugging, TDD, cleanup,
+verification, and safe feature removal.
 
-| Flag | Default | Purpose |
-|---|---|---|
-| `--repo <name>` | (required) | Matches each session's `Path(cwd).name` (repo dir basename) |
-| `--days <n>` | `30` | Look-back window; older sessions are dropped |
-| `--logs-dir <path>` | `./logs` | Root for `claude-code/` and `codex/` subdirs |
-| `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
+### Review, cleanup, and release
 
-**Scoring dimensions** (weighted to 100)
+Use `/dev-kit:review`, `/dev-kit:security`, `/dev-kit:audit`, `/dev-kit:inspect`,
+`/dev-kit:refactor`, `/dev-kit:prune`, `/dev-kit:babysit-pr`, `/dev-kit:bump`,
+or `/dev-kit:ship` for review, audits, cleanup, PR monitoring, version bumps,
+and releases.
 
-| Dimension | Weight | Penalizes |
-|---|---:|---|
-| Cache Utilization | 0.35 | Prefix misalignment that re-primes the full prompt |
-| Output Density | 0.25 | Reading a lot and shipping little |
-| Read Redundancy | 0.20 | Re-reading the same file (missing cartography) |
-| Tool Economy | 0.20 | Many tool calls for thin output |
+### Evaluation and observability
 
-**Warning triggers**
+Use `/dev-kit:eval`, `/dev-kit:repair`, `/dev-kit:report`, `/dev-kit:status`,
+`/dev-kit:cost-gate`, `/dev-kit:token-analyzer`, `/dev-kit:llm-refresh`, or
+`/dev-kit:proposal` for evaluation, reporting, cost, token, model, and proposal
+workflows.
 
-| Code | Condition |
-|---|---|
-| `CACHE_HIT_LOW` | `cache_hit_ratio < 50%` |
-| `READ_HEAVY` | `Read` ≥ 40% of total tool cost |
-| `HEAVY_CONTEXT` | `total_input > 500K` tokens in one session |
-| `MODEL_OVERSPEC` | Opus + density score < 20 |
-| `WRITE_NOT_REUSED` | `cache_write > 50K` and `cache_read < 2 × cache_write` |
-| `REPEATED_USER_MSG` | Any user message text appears ≥ 2× |
-
-Per-model pricing is baked into the script (`opus` / `sonnet` / `haiku`, matched
-by model-id substring; unknown ids fall back to Sonnet). Override `PRICING` at
-the top of the file for contracted rates. Savings are a conservative reclaim
-model — cache-miss penalty + duplicate-read waste only, not the whole bill. The
-per-tool cost column is an imputed heuristic (`n_calls × 2K tokens × input
-price`), since Anthropic billing doesn't break out per-tool spend.
-
-**Why a tool, not a skill:** it transforms local files with no LLM in the loop —
-wrapping it as a skill would force a needless model round-trip. The loghooks that
-*produce* the input stay a skill; the analyzer that *consumes* it is a script.
-
-Verify against the synthetic fixtures:
+The authoritative command surface is the skill frontmatter and filesystem:
 
 ```bash
-python3 fixtures/make_fixture.py
-python3 tools/token_efficiency_analyzer.py --repo "fixture-repo" --days 30 \
-  --logs-dir fixtures/logs --out fixtures/out/dashboard.html
+rg -l '^user-invocable: true' skills/*/SKILL.md
 ```
 
-### Cost gate
+## Usage-driven discovery
 
-A **read-only** cost layer, distinct from the post-hoc token dashboard:
-cost-gate prints the running ledger on demand and emits the trailer block the PR
-aggregator needs; the analyzer replays historical sessions. State lives at
-`<cwd>/.dev-kit/.cost-gate/state.json`. **The gate is observed only — it never
-blocks a tool call.**
-
-| Layer | Trigger | Default threshold | Behavior |
-|---|---|---:|---|
-| Session warn | `/dev-kit:cost-gate` | `$5.00` | One-screen `ok`/`warn` status; never a deny |
-| PR flag | PR opened/synchronize/reopened | `$20.00` | Applies `cost-flag` label + upserts one comment |
-
-Override via `DEV_KIT_COST_WARN_USD` and `DEV_KIT_PR_COST_FLAG_USD`. Emit the
-commit trailer the PR aggregator (`.github/workflows/cost-flag.yml`) reads:
+Enable local capture before reading usage data:
 
 ```bash
-git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
+/dev-kit:log setup
+/dev-kit:log on
 ```
 
-`lib/cost_gate.py` and `tools/cost_gate_status.py` keep pricing tables, state
-files, and transcript scanners fully independent of the analyzer — a regression
-test asserts no cross-import.
-
-### Session monitor (`tools/session_monitor.py`)
-
-The CLI form is the same data layer exposed for plain-shell use: over `ssh`,
-in CI, in a quick `Terminal.app` window, or anywhere you want a single
-keystroke to land back inside a specific worktree's conversation.
+Then inspect the two telemetry signals with `tools/skill_usage.py`:
 
 ```bash
-# Interactive inline picker (real TTY required — arrow keys + Enter)
-python3 tools/session_monitor.py
-
-# Plain listing (works without a TTY; safe to run from any harness)
-python3 tools/session_monitor.py --list --days 30
-
-# Machine-readable JSON for scripting / non-Claude-Code callers
-python3 tools/session_monitor.py --json --days 30 | jq '.total_sessions, .live_sessions'
-
-# Debug the resume argv synthesis for the first session
-python3 tools/session_monitor.py --print-resume-command
-# -> cd /Users/sanghee/dev/dev-harness-kit && claude --resume <sid>
-
-# Install a `session-monitor` shell alias into your rc (idempotent)
-python3 tools/session_monitor.py --cli-setup
-# -> then: source ~/.zshrc   (now `session-monitor` works from any cwd)
-```
-
-Both the `--list` output and the interactive picker group sessions by
-worktree and print a `STATUS SRC ID MODEL BRANCH AGE` column-label line
-under each group header, so `branch` reads as its own labeled column.
-
-The interactive picker is built directly on `termios` + ANSI escapes
-(stdlib only, no `curses`, no third-party deps). On `Enter` it restores
-the original `termios` mode, `cd`s into the session's worktree, and
-`exec`s `claude --resume <sid>` (Claude Code) or `codex resume <sid>`
-(Codex) — `exec` replaces the Python process so the user lands directly
-in the resumed session. If the worktree is gone or merged, the picker
-falls back to the main checkout and prints a warning.
-
-Each session's `branch` is overridden with the worktree's current
-`git rev-parse --abbrev-ref HEAD` so the picker shows the branch the
-worktree is *actually* on, not the one captured at save-log time. Stale
-worktrees (merged/gone) and detached-HEAD worktrees keep the log-captured
-branch as a fallback.
-
-**Common flags**
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--days N` | `30` | Look-back window; older sessions are dropped |
-| `--repo <name>` | (none) | Substring filter on the repo basename |
-| `--logs-dir <path>` | `<main-repo>/logs` | Root for `claude-code/` and `codex/` subdirs |
-| `--list` | off | Plain stdout listing (previewable in any harness) |
-| `--json` | off | Machine-readable output for scripts / skill consumers |
-| `--print-resume-command` | off | Print the cwd + argv for the first session; exit |
-| `--cli-setup` | off | Install a `session-monitor` alias into `~/.zshrc`/`~/.bashrc` (idempotent); exit |
-| `--dry-run` | off | With `--cli-setup`, print the alias block without writing |
-
-**Status semantics**
-
-| Glyph | Status | Meaning |
-|:---:|---|---|
-| `●` | `live` | A running `claude`/`codex` process is cwd'd into the session's worktree, OR the last turn landed within the 180 s recency window |
-| `○` | `idle` | Captured and within `--days`, but not recently active |
-| `⌀` | `stale` | Worktree is merged into `main` or gone; resume falls back to the main checkout |
-
-**Why a tool alongside a skill:** the skill needs the harness (to render
-`AskUserQuestion`); the CLI needs a TTY (to render the picker). They share
-one data layer — `discover → aggregate → group → enrich → render` — and
-the skill's `--json` mode is literally the CLI's JSON output piped into
-the model. No LLM sits in the loop for either; both are pure consumers of
-the `/dev-kit:log` transcripts.
-
-### Skill usage (`tools/skill_usage.py`)
-
-Per-skill telemetry over the same `/dev-kit:log` transcripts: aggregates
-two distinct signals - `attributionSkill` turn-count (depth / work done
-by the skill) and explicit `Skill` tool-use blocks (distinct human
-kicks). High turns + low invocations reads as a babysitter loop; both
-low is prune-eligible; high turns + high invocations is a heavy hitter.
-Workspace attribution is captured per `cwd` so target-project usage is
-separable from self-dev.
-
-```bash
-# Top skills (default 30-day window) - markdown table to stdout
 python3 tools/skill_usage.py
-
-# Narrow to one workspace, fresh window
-python3 tools/skill_usage.py --cwd /path/to/project --days 7
-
-# Machine-readable, e.g. piped into a plan or eval script
-python3 tools/skill_usage.py --json | jq '.[0:5]'
-
-# Same data scoped to one worktree's session list
-python3 tools/session_monitor.py --skill-usage --skill-days 30
+python3 tools/skill_usage.py --top 0
+python3 tools/skill_usage.py --days 0 --top 0
+python3 tools/skill_usage.py --cwd /path/to/project
+python3 tools/skill_usage.py --json --per-cwd
 ```
 
-Stdlib only; `--days 0` disables the time window; `--cwd <prefix>` filters
-to a single workspace. The `--skill-usage` / `--skill-days` flags on
-`tools/session_monitor.py` reuse the same aggregator to print per-skill
-totals next to the per-worktree session listing.
+`turns` measures attributed work, while `invocations` measures distinct Skill
+tool calls. Use `--days 0` for all-time data, `--top 0` for all skills, and
+`--cwd` to scope the report. An empty report means capture is disabled or the
+selected logs do not match the configured window/glob; it is not a usage ranking.
 
----
-
-## Consumer CI install
-
-`/dev-kit:ci-setup` is what makes dev-kit work in *other* repos. It copies:
-
-- GitHub Actions workflows (ci, auto-fix-pr, review)
-- scripts (validate, test, branch-policy, ci-local)
-- a pre-push hook
-- worktree-rule files (hooks, lib, rule, tests)
-
-The shipped `review.yml` is **self-aware**: it detects whether the checkout is
-the dev-kit plugin itself (self-install) or a plain consumer repo (clones from
-public source), so one workflow file works in both contexts.
-
-**Switching the CI review provider:** provider selection is env-based — no
-committed default, so the same repo can be used by different operators with
-different providers without conflicts.
-
-- **Local** (when running `/dev-kit:review` outside GitHub Actions): set in
-  `.env:CI_REVIEW_PROVIDER`. Manage via `bin/set-provider.sh <provider>` —
-  it upserts the key, prints the diff, and reminds you to set the matching
-  GitHub repo variable + secret. `.env` is gitignored, so this is per-user.
-- **CI** (`.github/workflows/review.yml`): read from the GitHub repo
-  variable `vars.CI_REVIEW_PROVIDER`, with the `workflow_dispatch`
-  `review_provider` input as a per-run override. Set via
-  `gh variable set CI_REVIEW_PROVIDER --body <minimax|anthropic|deepseek>`.
-  When neither is set, the workflow fails loud with a remediation hint.
-
-Each provider also needs its matching repo secret (`MINIMAX_API_KEY`,
-`ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`) pushed via `gh secret set`. A
-PR that itself edits `.github/workflows/review.yml` is skipped by
-`claude-code-action`'s anti-tampering guard — expected, and it resolves once the
-PR merges.
-
-### `--force`: when and when not
-
-`ci-setup` is **idempotent by default** — the marker `.dev-kit/ci-config.json`
-records install time + content hashes, so a matching re-run is a no-op. `--force`
-overwrites the expected files regardless.
-
-**Use `--force`** for a first install, to pull a newly added or fixed template,
-or when you suspect a stale/partial install (marker present but a file missing or
-drifted). **Avoid `--force`** on a clean re-run with no upstream changes, or when
-you've hand-edited installed files (it overwrites local customizations — review
-the diff first).
+Related tools:
 
 ```bash
-bin/devkit-refresh.sh                         # 1. refresh cache → latest templates
-cd /path/to/consumer-repo
-/dev-kit:ci-setup --force                      # 2. install
-git diff .github/ scripts/ .githooks/ hooks/ .claude/ tests/   # 3. review the diff
-/dev-kit:ci-doctor                             # 4. verify readiness (repeat until PASS)
-git add -A && git commit -m "chore(ci): refresh dev-kit templates"   # 5. commit
+python3 tools/session_monitor.py --list --skill-usage
+python3 tools/token_efficiency_analyzer.py --help
 ```
 
----
+Captured transcripts are local and ignored by Git. See [logs/README.md](logs/README.md)
+for the capture format.
 
-## Codex CLI compatibility
+## Provider selection
 
-Codex CLI's plugin format ([openai/plugins](https://github.com/openai/plugins))
-is a `.codex-plugin/plugin.json` manifest with a `"skills"` field pointing at the
-skills directory and a `"hooks"` field pointing at the bundled
-`.codex-plugin/hooks/hooks.json`. That bundled copy mirrors the canonical
-`hooks/hooks.json` (Codex requires plugin hook files inside the plugin root); a
-regression test keeps the two event inventories synchronized. Codex commands use
-`${PLUGIN_ROOT}`; Claude Code uses `${CLAUDE_PLUGIN_ROOT}` and keeps loading
-`hooks/hooks.json` directly.
-
-After enabling the plugin, review and trust its hooks with `/hooks` in Codex —
-new or changed non-managed hooks are skipped until trusted. Check local status:
+Local selection belongs in `.env`; CI selection belongs in the GitHub repository
+variable. Keep them aligned:
 
 ```bash
-python3 bin/dev-kit-hooks-status.py          # human-readable
-python3 bin/dev-kit-hooks-status.py --json    # machine-readable
+bin/set-provider.sh deepseek
+gh variable set CI_REVIEW_PROVIDER --body deepseek
+gh secret set DEEPSEEK_API_KEY
 ```
 
-The report distinguishes Claude Code registration, Codex registration + trust,
-the `.dev-kit/.active-hooks.json` matrix, and Git's separate pre-commit and
-pre-push hooks. The pre-commit gate checks staged Python files with host-installed
-Ruff and never auto-fixes them; pre-push keeps the branch and version policy.
-Activate both hooks after installing Ruff:
+Provider names and matching secret names are defined by `bin/set-provider.sh`.
+
+## Worktree rule
+
+Every implementation task uses a new worktree and branch. The main checkout is
+for inspection and integration; `worktree-guard.sh` blocks edits there.
 
 ```bash
-brew install ruff                              # macOS
-apt install ruff                               # Debian/Ubuntu
-git config core.hooksPath .githooks
+git fetch origin main
+git worktree add -b fix/example .worktrees/example origin/main
 ```
 
-### Hook inventory
+Read `rules/git-workflow.md` for the complete handoff contract.
 
-| Hook | Event | Purpose | Mode |
-|---|---|---|---|
-| `tdd-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | TDD test-first enforcement | advisory / `--strict` |
-| `bash-guard.sh` | PreToolUse (Bash) | Block destructive commands | advisory / `--strict` |
-| `git-guard.sh` | PreToolUse (Bash) | Branch strategy enforcement | hard-block |
-| `worktree-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | Block edits in main checkout | hard-block |
-| `review-yml-isolation.sh` | PreToolUse (Bash) | Force `review.yml` changes into their own commit/PR | hard-block |
-| `worktree-auto-cut.sh` | UserPromptSubmit | Auto-cut a worktree for a new-task prompt in main | advisory (fails open) |
-| `session-start-check.sh` | SessionStart | Remind about the worktree rule | advisory |
-| `log-on-session-start.sh` | SessionStart | Auto-install loghooks each session (idempotent) | advisory |
-| `provider-divergence-check.sh` | SessionStart | Nudge when `.env:CI_REVIEW_PROVIDER` is off-list, diverges, or missing | advisory |
-| `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
-| `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop (phrase + structure + scoring, KO+EN) | advisory (opt-in strict) |
-| `worktree-log-auto-install.sh` | PostToolUse (Bash) | Install loghooks into a newly-added worktree | advisory |
-| `acp-tier-assert.sh` | PreToolUse (`*`) | Enforce ACP agent tier-assertion line on first tool call (M/T/L) | hard-block |
-| `stop-verify.sh` | Stop | Run regression tests on session end | hard-block |
+## Repository map
 
----
+| Path | Purpose |
+|---|---|
+| `skills/` | User-facing skill instructions |
+| `hooks/` | Canonical hook sources and shared libraries |
+| `.codex-plugin/` | Codex plugin and hook manifests |
+| `commands/` | Source slash-command definitions |
+| `lib/` | Orchestration, CI, and state helpers |
+| `tools/` | Usage, logging, monitoring, and analysis utilities |
+| `tests/` | Regression and contract tests |
+| `templates/ci/` | Consumer repository templates |
+| `docs/` | Operational and architecture documentation |
 
-## Agent-behavior eval
-
-`/dev-kit:eval` measures whether the **agent produces the right output for the
-right input** when running the dev-kit skills. The unit is a *case fixture + a
-recorded transcript → per-dimension rubric judgment*. Replay-only in v1: a case
-without a recorded transcript is `SKIPPED` (a setup gap, not a regression).
-
-**Three dimensions** (each axis 0–10):
-
-| Dim | Axes | Measures |
-|---|---|---|
-| `review` | verdict consistency · severity calibration · precision · recall · code-sanity | review verdict + findings quality |
-| `security` | OWASP classification · severity accuracy · precision | A01–A10 mapping + false-positive rate |
-| `plan` | spec clarity · step atomicity · AC executability · dependency ordering | atomic, runnable, buildable plans |
-
-Per-case axis mean → verdict: **OK** ≥ 8.0 · **DRIFT_WARNING** 5.0–7.9 · **ROT**
-< 5.0 · **SKIPPED** (no transcript). The `review` dim embeds a 20-checkbox
-code-sanity rubric (clean-code + over-engineering + value/meaning), frozen in
-`ADR-0022`.
-
-```bash
-# Full eval → .dev-kit/eval-report.md
-python lib/eval_runner.py --project-root . [--dry-run]
-python lib/eval_runner.py --project-root . --dim plan
-python lib/eval_runner.py --project-root . --case review-04-factory-one-impl
-```
-
-`--dry-run` skips LLM calls (mocks each case at 7.0/DRIFT_WARNING) — useful in CI
-without an API key. Adding a case requires no code change: drop a case JSON in
-`eval/cases/<dim>/` and a transcript in `eval/transcripts/<dim>/`, then re-run.
-See `docs/adr/ADR-0022-eval-agent-behavior.md` for the full rationale.
-
----
-
-## Repository layout
-
-Concept-level tree; run `ls` (or `tree -L 2`) for the current file inventory.
-The plugin manifest (`/dev-kit:plan`, `/dev-kit:ci-setup`) and the worktree
-rule (`rules/git-workflow.md`) are the canonical sources of truth — don't
-grok the layout from this comment.
-
-```
-dev-harness-kit/
-├── .claude-plugin/   # marketplace.json + plugin.json (Claude Code manifest)
-├── .codex-plugin/    # plugin.json + bundled hooks (Codex manifest)
-├── skills/           # one SKILL.md per user-facing / internal skill
-├── commands/         # slash-command wrappers (adapt, shortcut-tdd-fast, shortcut-quick-fix)
-├── hooks/            # hook scripts + lib/ + hooks.json + references/slop/
-├── lib/              # Python engine (state, execute, ci_setup, eval, cost_gate, …)
-├── bin/              # devkit-refresh.sh + set-provider.sh + dev-kit-* status scripts
-├── tools/            # save_log.py + analyzer + cost-gate + session/skill telemetry
-├── templates/ci/     # CI templates shipped to consumer repos
-├── fixtures/         # synthetic session-log fixtures for the analyzer
-├── tests/            # pytest suite
-├── eval/             # cases/ + transcripts/ + prompts/ + golden/
-├── docs/             # STAGES, NAMING, ACP-DISPATCH, adr/, …
-├── rules/            # shared canonical rules (git-workflow, session-hygiene, …)
-└── CLAUDE.md         # SSOT (auto-generated by /dev-kit:bootstrap)
-```
-
----
-
-## Design principles
-
-- **NO-DUP** — Iron Laws live in one place (`CLAUDE.md §1`), enforced by hook +
-  skill.
-- **NO-BOTTLENECK** — 0-arg UX, lazy `CLAUDE.md`, parallel sub-agents.
-- **NO-MEANINGLESS-LOOP** — explicit loop semantics + auto-STOP + user interrupt.
-- **Human-on-the-Loop** — auto-progress with the user as supervisor and a 1×
-  interrupt.
-- **Methodology extension** — TDD / SDD / DDD / BDD / FDD selectable.
-- **A2A typed** — sub-agent ↔ main communication via a JSON-Schema SSOT.
-- **Plugin-only** — the plugin manifest is the single source of truth.
-- **Worktree-per-task** — enforced by hooks, documented in `rules/git-workflow.md`.
-- **Consumer-install** — one self-aware workflow set works in this repo and in
-  consumer repos.
-
-See `docs/adr/` for the full ADR series.
-
----
+Use `rg --files`, manifests, and the relevant `SKILL.md` as the source of truth;
+this table is intentionally not an exhaustive inventory.
 
 ## Contributing
 
-Pass the pre-impl gate (`docs/PRE-IMPL-CHECK.md`) and the 8-dimension cost check
-(`docs/COST-ANALYSIS.md`), then:
+Read the repository rules before editing:
 
 ```bash
-python3 -m pytest tests/ -q
-claude plugin validate .claude-plugin/plugin.json
+sed -n '1,220p' rules/git-workflow.md
+sed -n '1,220p' rules/session-hygiene.md
+sed -n '1,220p' rules/skill-authoring.md
+sed -n '1,220p' rules/test-files.md
 ```
 
-Reference docs: [`docs/STAGES.md`](docs/STAGES.md),
-[`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
+Run focused tests for the area you change, then the relevant broader suite.
+Every completion claim must include the command, exit code, and test count.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
