@@ -153,6 +153,9 @@ The install is considered successful even if `gh secret set` fails — secrets a
 | `hooks/hooks.json` | Wires the 4 hook files into the right event matchers |
 | `.claude/rules/git-workflow.md` | Branch / worktree / PR conventions (Iron Law rule text) |
 | `tests/test_worktree_guard.py` | Regression tests for the 4 rule hooks + hooks.json wiring |
+| `tools/skill_usage.py` | `/dev-kit:skill-usage` CLI entrypoint (turns + invocations telemetry) |
+| `tools/skill_usage_normalize.py` | Helper module imported by `skill_usage.py` |
+| `tools/skill_usage_render.py` | Helper module imported by `skill_usage.py` |
 
 ## Iron Law (repeated, for emphasis)
 
