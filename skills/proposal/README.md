@@ -260,7 +260,7 @@ rendered, versioned, and surfaced for review.
 2. Run `/dev-kit:proposal <slug>` to render the HTML.
 3. Open `docs/proposals/<slug>.html` in a browser and review.
 4. Commit both `.yaml` and `.html` — the HTML is the shareable artifact
-   and the offline review copy.
+   (viewable offline from `file://`).
 5. Update the `status:` field as the proposal progresses through review.
    Re-run `/dev-kit:proposal <slug>` to refresh the HTML after each edit.
 
