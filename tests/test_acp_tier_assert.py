@@ -155,11 +155,15 @@ class BehaviorTests(unittest.TestCase):
             "transcript": transcript,
         }
 
-    def test_missing_assertion_denies(self) -> None:
-        result = _run_hook(self._payload(), cwd=self.repo_root)
+    def test_missing_assertion_denies_when_transcript_is_present(self) -> None:
+        result = _run_hook(self._payload(transcript="session transcript"), cwd=self.repo_root)
         self.assertEqual(result.returncode, 2)
         self.assertIn("ACP TIER-ASSERT", result.stderr)
         self.assertIn("missing tier-assertion", result.stderr)
+
+    def test_codex_payload_without_transcript_allows(self) -> None:
+        result = _run_hook(self._payload(), cwd=self.repo_root)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
 
     def test_malformed_assertion_denies(self) -> None:
         result = _run_hook(
