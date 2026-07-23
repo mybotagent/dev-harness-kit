@@ -50,6 +50,7 @@ from skill_usage_normalize import (  # noqa: E402  (sys.path set in main)
     _unwrap_blocks,
 )
 from skill_usage_render import (  # noqa: E402
+    _discover_catalog_skills,
     _run_propose_delete,
     format_json,
     format_table,
@@ -67,7 +68,7 @@ __all__ = [
     "NormalizedUsage", "_normalize_usage_record", "_parse_iso",
     # render + propose-delete
     "format_table", "format_json", "filter_by_cwd_prefix",
-    "_run_propose_delete",
+    "_run_propose_delete", "_discover_catalog_skills",
     # aggregator
     "aggregate_skill_usage",
 ]
@@ -306,14 +307,19 @@ def main(argv: list[str] | None = None) -> int:
     skills = aggregate_skill_usage(logs_glob, window,
                                    cwd_prefix=args.cwd,
                                    include_per_cwd=args.per_cwd)
+
+    if args.propose_delete:
+        # Skip the "no skills found" bail below: propose-delete seeds
+        # from the on-disk catalog too, so an empty telemetry dict
+        # (fresh checkout, no logs yet) is still a valid input -- every
+        # catalog skill is a candidate in that case.
+        return _run_propose_delete(skills, window, dry_run=args.dry_run,
+                                   here=Path(__file__).resolve().parent)
+
     if not skills:
         print(f"[skill-usage] no skills found under {logs_glob}",
               file=sys.stderr)
         return 0
-
-    if args.propose_delete:
-        return _run_propose_delete(skills, window, dry_run=args.dry_run,
-                                   here=Path(__file__).resolve().parent)
 
     if args.json:
         print(format_json(skills))
