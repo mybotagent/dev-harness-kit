@@ -1,0 +1,138 @@
+# Skills documentation index
+
+This is the detailed, human-readable documentation layer for every skill
+shipped by the `dev-kit` plugin — one page per skill under `docs/skills/`,
+expanding on the terse `skills/<name>/SKILL.md` source each is generated
+from. For the machine-facing summary table (the one `SKILL.md` frontmatter
+drives directly), see [`skills/README.md`](../../skills/README.md); for a
+one-line pointer from the project root, see the main
+[`README.md`](../../README.md#skills-by-audience).
+
+Every skill declares two frontmatter fields that matter for navigation:
+
+- **`user-invocable`** — `true` means you type `/dev-kit:<name>`; `false`
+  means it's an internal sub-skill the model invokes automatically as part
+  of a parent skill's flow, and it never appears in slash autocomplete.
+- **`alpha`** — `state` (drives the harness state machine), `enforcement`
+  (a deterministic guard the user can't talk their way past), or `analysis`
+  (pure reasoning over a corpus). See `CLAUDE.md` §1 (L6/L7) and
+  `rules/skill-authoring.md` for the full rationale.
+
+**33 skills total: 29 human-invocable, 4 model-invoked sub-skills.**
+
+---
+
+## Human-invocable skills (type `/dev-kit:<name>`)
+
+### Setup / bootstrap
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`bootstrap`](bootstrap.md) | `state` | First entry — generates minimal `CLAUDE.md` + `AGENTS.md` + `active-hooks.json` on a fresh repo. |
+| [`bootstrap-full`](bootstrap-full.md) | `state` | One-shot `bootstrap` + `ci-setup` — the new-project default. |
+| [`ci-setup`](ci-setup.md) | `enforcement` | Installs dev-kit's reusable CI workflow templates into a target project. |
+| [`config`](config.md) | `state` | Skill / MCP / hook / methodology picker. |
+
+### Plan → Build
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`plan`](plan.md) | `state` | Idea → `PRD.md` + `phases/<name>/` through a 5-gate loop. |
+| [`build`](build.md) | `state` | Per-step sub-agent delegation with an integrated TDD + auto-fix loop. |
+| [`feat-remove`](feat-remove.md) | `state` | Safely remove a feature: call-graph sweep, dependent flagging, deletion report. |
+
+### Review → Ship
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`review`](review.md) | `analysis` | Parallel correctness + security + architecture review with a false-positive filter. |
+| [`security`](security.md) | `enforcement` | Full OWASP Top 10 2025 (A01–A10) fan-out with a verifier pass. |
+| [`audit`](audit.md) | `state` | 0-arg cross-cutting bulk slop + secret audit (read-only). |
+| [`inspect`](inspect.md) | `analysis` | 8-dimension read-only code-health audit. |
+| [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |
+| [`prune`](prune.md) | `analysis` | 4-phase deletion sweep: sweep → dependents → report → verify. |
+| [`babysit-pr`](babysit-pr.md) | `state` | PR babysitter loop: poll CI, fix, commit, re-iterate to a green Approve. |
+| [`ship`](ship.md) | `state` | Release tag emit; gate check only. |
+| [`bump`](bump.md) | `state` | Explicit `plugin.json` version bump + push. |
+
+### Eval / cost / reporting
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`eval`](eval.md) | `analysis` | Agent-behavior eval across review/security/plan dimensions + a 20-checkbox code-sanity rubric. |
+| [`repair`](repair.md) | `state` | 8-step Eval-Repair loop ending in a single Human Review approval. |
+| [`report`](report.md) | `analysis` | HTML viewer combining the latest eval + inspect reports. |
+| [`token-analyzer`](token-analyzer.md) | `analysis` | Token-efficiency dashboard rendered from session log transcripts. |
+| [`cost-gate`](cost-gate.md) | `enforcement` | Live, read-only cost ledger + PR cost-flag trailer. |
+| [`status`](status.md) | `state` | HOTL visualization: loop progress + cycles + hand-off chain + eval score. |
+| [`ci-doctor`](ci-doctor.md) | `enforcement` | Read-only PASS/FAIL audit of CI readiness. |
+| [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits stale docs and refreshes the README without recording volatile facts. |
+| [`prune-propose`](prune-propose.md) | `state` | Usage-telemetry dump + per-skill delete proposal, user-approved. |
+
+### Shortcuts / maintenance
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`log`](log.md) | `state` | Toggle session loghooks (`setup`/`on`/`off`/`status`) per project. |
+| [`codex-cache-update`](codex-cache-update.md) | `analysis` | Refresh the Codex marketplace checkout + versioned plugin cache. |
+| [`llm-refresh`](llm-refresh.md) | `analysis` | Refresh `docs/llm-info/<provider>.json` from each vendor's pricing page. |
+
+### Design
+
+| Skill | Alpha | Summary |
+|---|---|---|
+| [`proposal`](proposal.md) | `state` | Renders `docs/proposals/<main>/<sub>.yaml` to a self-contained review HTML. |
+
+---
+
+## Model-invoked sub-skills (internal — not in slash autocomplete)
+
+These are `user-invocable: false`. The model invokes them automatically as a
+step inside their parent skill's flow; you never type them directly.
+
+| Skill | Alpha | Parent | Summary |
+|---|---|---|---|
+| [`build-tdd`](build-tdd.md) | `enforcement` | `/dev-kit:build` | Red-Green-Refactor cycle; `tdd-guard` hook enforces no production code without a failing test. |
+| [`build-debug`](build-debug.md) | `enforcement` | `/dev-kit:build` | 4-phase systematic debugging; no fix before Phase 1 (reproduce) completes. |
+| [`build-verify`](build-verify.md) | `enforcement` | `/dev-kit:build` | Verification-before-completion; no "done" without a quoted exit code + test count. |
+| [`build-refactor`](build-refactor.md) | `enforcement` | `/dev-kit:refactor`, `/dev-kit:prune` | 4-pass cleanup (dead → dup → naming → coverage); no cleanup without a regression test. |
+
+---
+
+## Alphabetical (all 33)
+
+| # | Skill | Category | Alpha | Invocable |
+|---|---|---|---|---|
+| 1 | [`audit`](audit.md) | `audit` | `state` | human |
+| 2 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | human |
+| 3 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
+| 4 | [`bootstrap-full`](bootstrap-full.md) | `bootstrap` | `state` | human |
+| 5 | [`build`](build.md) | `build` | `state` | human |
+| 6 | [`build-debug`](build-debug.md) | `build` | `enforcement` | model |
+| 7 | [`build-refactor`](build-refactor.md) | `build` | `enforcement` | model |
+| 8 | [`build-tdd`](build-tdd.md) | `build` | `enforcement` | model |
+| 9 | [`build-verify`](build-verify.md) | `build` | `enforcement` | model |
+| 10 | [`bump`](bump.md) | `ship` | `state` | human |
+| 11 | [`ci-doctor`](ci-doctor.md) | `audit` | `enforcement` | human |
+| 12 | [`ci-setup`](ci-setup.md) | `bootstrap` | `enforcement` | human |
+| 13 | [`codex-cache-update`](codex-cache-update.md) | `shortcuts` | `analysis` | human |
+| 14 | [`config`](config.md) | `config` | `state` | human |
+| 15 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
+| 16 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
+| 17 | [`eval`](eval.md) | `eval` | `analysis` | human |
+| 18 | [`feat-remove`](feat-remove.md) | `build` | `state` | human |
+| 19 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
+| 20 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
+| 21 | [`log`](log.md) | `shortcuts` | `state` | human |
+| 22 | [`plan`](plan.md) | `plan` | `state` | human |
+| 23 | [`proposal`](proposal.md) | `design` | `state` | human |
+| 24 | [`prune`](prune.md) | `build` | `analysis` | human |
+| 25 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
+| 26 | [`refactor`](refactor.md) | `build` | `analysis` | human |
+| 27 | [`repair`](repair.md) | `repair` | `state` | human |
+| 28 | [`report`](report.md) | `audit` | `analysis` | human |
+| 29 | [`review`](review.md) | `review` | `analysis` | human |
+| 30 | [`security`](security.md) | `security` | `enforcement` | human |
+| 31 | [`ship`](ship.md) | `ship` | `state` | human |
+| 32 | [`status`](status.md) | `status` | `state` | human |
+| 33 | [`token-analyzer`](token-analyzer.md) | `audit` | `analysis` | human |
