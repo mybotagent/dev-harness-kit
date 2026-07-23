@@ -53,6 +53,7 @@ except ImportError:
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES_ROOT = _PLUGIN_ROOT / "templates" / "ci"
 _HOOKS_ROOT = _PLUGIN_ROOT / "hooks"  # single source of truth for hook files
+_TOOLS_ROOT = _PLUGIN_ROOT / "tools"  # single source of truth for bundled CLI tools
 
 # Files installed into the target repo, relative to `target_dir`.
 # Order is preserved in reports (workflows first, then scripts, then
@@ -122,6 +123,16 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # marked-block merge so consumer-owned lines outside the block are
     # preserved across --force refreshes.
     ".gitignore",
+    # /dev-kit:skill-usage's CLI + its two helper modules. Commands shell
+    # out to these by a bare relative path (`python3 tools/skill_usage.py`)
+    # because ${CLAUDE_PLUGIN_ROOT} does not expand inside command markdown
+    # bodies (anthropics/claude-code#9354). Without these in EXPECTED_PATHS,
+    # any consumer that only ran ci-setup/bootstrap-full (never cloned
+    # dev-harness-kit itself) got "No such file or directory" on
+    # /dev-kit:skill-usage.
+    "tools/skill_usage.py",
+    "tools/skill_usage_normalize.py",
+    "tools/skill_usage_render.py",
 )
 
 # Files that need the executable bit after install.
@@ -139,6 +150,7 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/lib/hook-preamble.sh",
     "hooks/lib/session-envelope.sh",
     "hooks/lib/worktree-detect.sh",
+    "tools/skill_usage.py",
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
@@ -348,6 +360,15 @@ def _resolve_template_source(rel_path: str) -> Path:
         if not candidate.exists():
             raise FileNotFoundError(f"hook source missing: {candidate}")
         return candidate
+    # Bundled CLI tool scripts (e.g. skill_usage.py): read from the
+    # plugin-root tools/ tree, same single-source-of-truth rationale as
+    # hooks/ above -- these are developed and tested in-place, not
+    # duplicated under templates/ci/.
+    if rel_path.startswith("tools/"):
+        candidate = _TOOLS_ROOT / rel_path[len("tools/"):]
+        if not candidate.exists():
+            raise FileNotFoundError(f"tool source missing: {candidate}")
+        return candidate
     # Canonical shared rules live at plugin-root rules/. They are installed
     # under .claude/rules/ in consumer repos because Claude Code discovers
     # project rules from that compatibility location.
@@ -513,6 +534,11 @@ def _build_marker() -> dict:
         "tests": [
             "tests/test_worktree_guard.py",
             "tests/test_review_yml_isolation.py",
+        ],
+        "tools": [
+            "tools/skill_usage.py",
+            "tools/skill_usage_normalize.py",
+            "tools/skill_usage_render.py",
         ],
     }
 

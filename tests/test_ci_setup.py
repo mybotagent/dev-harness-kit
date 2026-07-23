@@ -897,11 +897,7 @@ class TestCiSetup(unittest.TestCase):
                 if p != "hooks/lib/payload-parse.sh"
             ]
             for rel in pre_273_paths:
-                src = (
-                    Path(__file__).parent.parent / "hooks" / rel[len("hooks/"):]
-                    if rel.startswith("hooks/")
-                    else Path(__file__).parent.parent / "templates" / "ci" / rel
-                )
+                src = self.ci_setup._resolve_template_source(rel)
                 self.assertTrue(src.is_file(), f"seed source missing: {rel}")
                 dst = target / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -928,6 +924,82 @@ class TestCiSetup(unittest.TestCase):
                 helper.exists(),
                 "non-force install must add the helper that was missing pre-#273",
             )
+
+    # === /dev-kit:skill-usage's tools/*.py must ship to consumers ===
+    #
+    # commands/skill-usage.md shells out to a bare relative path
+    # (`python3 tools/skill_usage.py`). ${CLAUDE_PLUGIN_ROOT} does not
+    # expand inside command markdown bodies (anthropics/claude-code#9354),
+    # so any consumer that only ran ci-setup/bootstrap-full (never cloned
+    # dev-harness-kit itself) got "No such file or directory". These 3
+    # files must ship the same way hooks/*.sh already do.
+
+    def test_skill_usage_files_in_expected_paths(self):
+        for rel in (
+            "tools/skill_usage.py",
+            "tools/skill_usage_normalize.py",
+            "tools/skill_usage_render.py",
+        ):
+            self.assertIn(rel, self.ci_setup.EXPECTED_PATHS, f"missing from EXPECTED_PATHS: {rel}")
+
+    def test_skill_usage_entrypoint_in_executable_paths(self):
+        """Only the entrypoint needs +x; the two helper modules are
+        imported, never invoked directly."""
+        self.assertIn("tools/skill_usage.py", self.ci_setup.EXECUTABLE_PATHS)
+        self.assertNotIn("tools/skill_usage_normalize.py", self.ci_setup.EXECUTABLE_PATHS)
+        self.assertNotIn("tools/skill_usage_render.py", self.ci_setup.EXECUTABLE_PATHS)
+
+    def test_ci_setup_installs_skill_usage_tool(self):
+        """install_ci_config(force=True) lands all 3 files, byte-identical
+        to the plugin-root source, with +x on the entrypoint, and the
+        marker lists them under a `tools` key."""
+        import stat
+        import tempfile
+        plugin_root = Path(__file__).parent.parent
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r = self.ci_setup.install_ci_config(target, force=True)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            for rel in (
+                "tools/skill_usage.py",
+                "tools/skill_usage_normalize.py",
+                "tools/skill_usage_render.py",
+            ):
+                installed = target / rel
+                self.assertTrue(installed.exists(), f"missing from install target: {rel}")
+                self.assertEqual(
+                    installed.read_bytes(), (plugin_root / rel).read_bytes(),
+                    f"{rel} content mismatch vs plugin-root source",
+                )
+            entrypoint = target / "tools" / "skill_usage.py"
+            self.assertTrue(
+                entrypoint.stat().st_mode & stat.S_IXUSR,
+                f"tools/skill_usage.py must be +x (mode={oct(entrypoint.stat().st_mode)})",
+            )
+            marker = json.loads((target / ".dev-kit" / "ci-config.json").read_text())
+            self.assertIn("tools", marker)
+            self.assertIn("tools/skill_usage.py", marker["tools"])
+
+    def test_skill_usage_tool_runs_after_install(self):
+        """End-to-end: the installed skill_usage.py must actually run (not
+        just exist) -- imports its 2 sibling modules via sys.path, same as
+        a real consumer's `python3 tools/skill_usage.py --help` would."""
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            r = self.ci_setup.install_ci_config(target, force=True)
+            self.assertEqual(r.errors, [], f"errors: {r.errors}")
+            proc = subprocess.run(
+                [sys.executable, str(target / "tools" / "skill_usage.py"), "--help"],
+                capture_output=True, text=True, cwd=str(target), timeout=15,
+            )
+            self.assertEqual(
+                proc.returncode, 0,
+                f"installed skill_usage.py --help failed: stderr={proc.stderr}",
+            )
+            self.assertIn("usage", proc.stdout.lower())
 
     # === Issue #277: hooks/lib/session-envelope.sh must ship to consumers ===
 
@@ -986,11 +1058,7 @@ class TestCiSetup(unittest.TestCase):
                 if p != "hooks/lib/session-envelope.sh"
             ]
             for rel in pre_277_paths:
-                src = (
-                    Path(__file__).parent.parent / "hooks" / rel[len("hooks/"):]
-                    if rel.startswith("hooks/")
-                    else Path(__file__).parent.parent / "templates" / "ci" / rel
-                )
+                src = self.ci_setup._resolve_template_source(rel)
                 self.assertTrue(src.is_file(), f"seed source missing: {rel}")
                 dst = target / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
