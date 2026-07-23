@@ -322,6 +322,7 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 
 | Command | Purpose |
 |---|---|
+| `/dev-kit:proposal` | Render `docs/proposals/<name>.yaml` → self-contained HTML |
 | `/dev-kit:docs-maintenance` | Audit stale docs, refresh README, drop volatile facts |
 | `/dev-kit:tdd-fast` | Skip Bootstrap + Plan → straight to Build (hotfix) |
 | `/dev-kit:shortcut-quick-fix` | Verify + debug on demand |
@@ -754,7 +755,7 @@ dev-harness-kit/
 ├── .claude-plugin/   # marketplace.json + plugin.json (Claude Code manifest)
 ├── .codex-plugin/    # plugin.json + bundled hooks (Codex manifest)
 ├── skills/           # one SKILL.md per user-facing / internal skill
-├── commands/         # slash-command wrappers (adapt, tdd-fast, shortcut-quick-fix)
+├── commands/         # slash-command wrappers (adapt, shortcut-tdd-fast, shortcut-quick-fix)
 ├── hooks/            # hook scripts + lib/ + hooks.json + references/slop/
 ├── lib/              # Python engine (state, execute, ci_setup, eval, cost_gate, …)
 ├── bin/              # devkit-refresh.sh + set-provider.sh + dev-kit-* status scripts
