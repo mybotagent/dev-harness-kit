@@ -32,8 +32,6 @@
 #   4. `git worktree add` succeeds
 #   5. `log-on.sh` runs to completion inside the new worktree
 #
-# Hook timeout: 30s (the cost is dominated by `git fetch`).
-
 # Source the shared preamble (set -uo pipefail, INPUT=$(cat),
 # worktree_detect, jq-missing warning).
 # shellcheck source=lib/hook-preamble.sh

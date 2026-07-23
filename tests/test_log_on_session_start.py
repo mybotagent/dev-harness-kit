@@ -414,12 +414,8 @@ class TestLogOnSessionStartWiring(unittest.TestCase):
             match,
             f"log-on-session-start.sh not wired into SessionStart. Got: {hooks}",
         )
-        # log-on runs jq + python discovery; budget must be >= 5s.
         for h in match:
-            self.assertGreaterEqual(
-                h.get("timeout", 0), 5,
-                f"timeout too low for log-on: {h}",
-            )
+            self.assertNotIn("timeout", h, f"hook timeout must be unset: {h}")
 
     def test_session_start_check_still_wired(self):
         """Regression: existing nudge hook must remain alongside the new one."""

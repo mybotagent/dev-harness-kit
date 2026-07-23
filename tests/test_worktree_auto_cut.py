@@ -385,12 +385,8 @@ class TestWorktreeAutoCutWiring(unittest.TestCase):
             match,
             f"worktree-auto-cut.sh not wired into UserPromptSubmit. Got: {hooks}",
         )
-        # git fetch needs >= 25s; the auto-cut budget must be at least that.
         for h in match:
-            self.assertGreaterEqual(
-                h.get("timeout", 0), 25,
-                f"timeout too low for git fetch + cut: {h}",
-            )
+            self.assertNotIn("timeout", h, f"hook timeout must be unset: {h}")
 
     def test_worktree_auto_cut_wired(self):
         """Regression: the auto-cut hook must remain in UserPromptSubmit."""

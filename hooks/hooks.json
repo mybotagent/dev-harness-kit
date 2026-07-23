@@ -8,8 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/acp-tier-assert.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/acp-tier-assert.sh"
           }
         ]
       },
@@ -18,13 +17,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/tdd-guard.sh",
-            "timeout": 5
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/tdd-guard.sh"
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-guard.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-guard.sh"
           }
         ]
       },
@@ -33,18 +30,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/bash-guard.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/bash-guard.sh"
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/git-guard.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/git-guard.sh"
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/review-yml-isolation.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/review-yml-isolation.sh"
           }
         ]
       }
@@ -54,8 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-auto-cut.sh",
-            "timeout": 30
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-auto-cut.sh"
           }
         ]
       }
@@ -65,8 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-check.sh"
           }
         ]
       },
@@ -74,8 +66,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-on-session-start.sh",
-            "timeout": 8
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-on-session-start.sh"
           }
         ]
       },
@@ -83,8 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/provider-divergence-check.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/provider-divergence-check.sh"
           }
         ]
       }
@@ -95,13 +85,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-scan.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/secret-scan.sh"
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/slop-detector.sh",
-            "timeout": 3
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/slop-detector.sh"
           }
         ]
       },
@@ -110,8 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-log-auto-install.sh",
-            "timeout": 15
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-log-auto-install.sh"
           }
         ]
       }
@@ -121,8 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/stop-verify.sh",
-            "timeout": 180
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/stop-verify.sh"
           }
         ]
       }
