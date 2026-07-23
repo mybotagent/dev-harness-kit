@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hook Doctor"
+  short_description: "Diagnose and repair failed plugin hooks"
+  default_prompt: "Use $hook-doctor to diagnose a failed Claude Code or Codex hook and report the safe repair step."
