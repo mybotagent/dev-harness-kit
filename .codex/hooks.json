@@ -5,7 +5,7 @@
         "_commands_dir_registered_by_install_commands": true,
         "hooks": [
           {
-            "command": "for f in python3 python py; do if \"$f\" -c \"\" </dev/null >/dev/null 2>&1; then exec \"$f\" \"$PWD/bin/install-commands.sh\"; fi; done",
+            "command": "bash \"$PWD/bin/install-commands.sh\"",
             "type": "command"
           }
         ]
