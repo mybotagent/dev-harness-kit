@@ -94,7 +94,7 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 
 ## Validation
 
-- `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 14 values.
+- `tests/test_naming.py` enforces: `name` == directory name; `category` ∈ 13 values.
 - `tests/test_smoke.py` enforces the repository's internal skill-layout invariant. Update its test fixture when adding a skill, but do not copy the resulting count into documentation.
 
 ## L6 skill gate — the alpha must be enforceable
@@ -104,7 +104,7 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 
 | `alpha:` | Meaning | Example skills |
 |---|---|---|
-| `state` | Drives the harness state machine — moves between stages, persists progress, gates transitions. | `plan`, `build`, `bootstrap`, `ship`, `onboard`, `shortcut-tdd-fast` |
+| `state` | Drives the harness state machine — moves between stages, persists progress, gates transitions. | `plan`, `build`, `bootstrap`, `ship`, `shortcut-tdd-fast` |
 | `enforcement` | Deterministic guard — runs hooks, scanners, validators, gates. The user can't talk their way past it. | `audit`, `repair`, `eval`, `security-when-guard` |
 | `analysis` | Pure reasoning over a corpus — review, inspect, prune, refactor. **Tolerated** only because distinct human intents drive distinct slash entrypoints. | `review`, `inspect`, `prune`, `refactor` |
 

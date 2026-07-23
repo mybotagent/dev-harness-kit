@@ -46,8 +46,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--list", action="store_true",
                    help="print a plain listing instead of the picker")
     p.add_argument("--json", action="store_true",
-                   help="emit machine-readable JSON (used by the "
-                        "/dev-kit:session-monitor skill's AskUserQuestion flow)")
+                   help="emit machine-readable JSON (for scripted callers / "
+                        "future harness integrations)")
     # Operator-mode family: --print-resume-command / --picker / --cli-setup
     # each route the program to a distinct handler. argparse rejects any
     # combination as a usage error (exit 2) before main() runs, so the

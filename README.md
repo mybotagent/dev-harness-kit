@@ -79,9 +79,9 @@ covers the full delivery loop. Highlights:
   that works both inside this repo and in downstream consumer repos.
 - **Cost visibility** — a token-efficiency dashboard and a live cost gate,
   fed by opt-in session loghooks.
-- **Session monitor** — `/dev-kit:session-monitor` lists every Claude Code
+- **Session monitor** — `python3 tools/session_monitor.py` lists every Claude Code
   and Codex session across this repo's worktrees with live / idle / stale
-  status; pick one with the harness arrow-key UI and the skill emits the
+  status; pick one with the inline arrow-key UI and the tool emits the
   exact `cd <wt> && claude --resume <sid>` resume command for you to run
   with `!`. A stdlib-only inline picker is also available over `ssh` /
   from a plain shell.
@@ -278,7 +278,6 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 | `/dev-kit:ci-setup` | Install CI templates (workflows + hooks + scripts + worktree files) |
 | `/dev-kit:ci-doctor` | Read-only PASS/FAIL audit of CI readiness |
 | `/dev-kit:log setup\|on\|off\|status` | Toggle session loghooks per project |
-| `/dev-kit:onboard` | New-team-member onboarding (CLAUDE.md + .dev-kit + eval baseline) |
 | `/dev-kit:config` | Skill / MCP / hook / methodology picker |
 
 **Plan → Build**
@@ -312,7 +311,6 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 | `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair Human Review |
 | `/dev-kit:report` | HTML viewer for eval + inspect reports |
 | `/dev-kit:token-analyzer` | Token-efficiency dashboard from session logs |
-| `/dev-kit:session-monitor` | List every CC + Codex session across worktrees; arrow-key pick + `cd <wt> && claude --resume <sid>` |
 | `/dev-kit:cost-gate` | Live cost gate (spend + threshold + commit footer) |
 | `/dev-kit:status` | HOTL visualization: loop progress + cycles + hand-off chain |
 | `/dev-kit:llm-refresh` | Refresh `docs/llm-info/<provider>.json` from each vendor's pricing page |
@@ -497,12 +495,9 @@ test asserts no cross-import.
 
 ### Session monitor (`tools/session_monitor.py`)
 
-The skill form (`/dev-kit:session-monitor`, see the Eval / cost / reporting
-table above) drives an `AskUserQuestion` picker inside Claude Code — useful
-when you're already in a session. The CLI form is the same data layer
-exposed for plain-shell use: over `ssh`, in CI, in a quick `Terminal.app`
-window, or anywhere you want a single keystroke to land back inside a
-specific worktree's conversation.
+The CLI form is the same data layer exposed for plain-shell use: over `ssh`,
+in CI, in a quick `Terminal.app` window, or anywhere you want a single
+keystroke to land back inside a specific worktree's conversation.
 
 ```bash
 # Interactive inline picker (real TTY required — arrow keys + Enter)

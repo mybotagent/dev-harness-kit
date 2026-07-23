@@ -107,4 +107,4 @@ passes after.
 - Hook for force-push to a branch you do not own (cross-cutting;
   separate security audit workstream).
 - Per-session reminder when .env has no CI_REVIEW_PROVIDER at all --
-  noisy on first clone; deferred to .dev-kit/onboard or setup hint.
+  noisy on first clone; deferred to a setup hint.

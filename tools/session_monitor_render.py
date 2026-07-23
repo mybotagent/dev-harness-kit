@@ -2,11 +2,10 @@
 
 Splits the ``print_json`` / ``build_eval_handshake`` pair out of
 ``tools/session_monitor.py``. The two functions are pure emitters: a
-``--json`` consumer (the /dev-kit:session-monitor skill's
-AskUserQuestion flow) and a contract advertisement for the
-``--session-log`` judge in lib/eval_runner.py. Pulling them out keeps
-``session_monitor.py`` focused on discovery + status + agent graph +
-CLI.
+``--json`` consumer (any scripted caller / future harness integration)
+and a contract advertisement for the ``--session-log`` judge in
+``lib/eval_runner.py``. Pulling them out keeps ``session_monitor.py``
+focused on discovery + status + agent graph + CLI.
 
 Public surface (re-exported by ``tools/session_monitor.py`` so callers
 keep using ``sm.print_json``, ``sm.EVAL_AXES``,

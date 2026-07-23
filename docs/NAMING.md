@@ -7,7 +7,7 @@
 - **Format**: `<category>-<verb-or-noun>.md` (kebab-case, English)
 - **Directory**: `skills/<skill-name>/SKILL.md` (one level — Claude Code plugin scan rule; category kept in frontmatter)
 - **Frontmatter `name:`** = directory last segment
-- **Frontmatter `category:`** ∈ {`bootstrap`, `plan`, `design`, `build`, `review`, `security`, `audit`, `shortcuts`, `ship`, `config`, `eval`, `onboard`, `repair`, `status`}
+- **Frontmatter `category:`** ∈ {`bootstrap`, `plan`, `design`, `build`, `review`, `security`, `audit`, `shortcuts`, `ship`, `config`, `eval`, `repair`, `status`}
 
 ### Naming pattern per category
 

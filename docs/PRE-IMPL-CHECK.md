@@ -31,7 +31,7 @@
 | 1 | **Time Cost** | Build **6.0 days** ($4,800). Maintenance 0.5 day/month = $4,800/year |
 | 2 | **Monetary Cost** | LLM-as-judge 13 assets × daily × 2K tokens = **~$3/year**. CI nightly $15/year. **Total ~$18/year** (negligible) |
 | 3 | **Legal Risk** | All 5 repos MIT/Apache2 compatible. GDPR non-PII. **LOW** |
-| 4 | **Maintenance Risk** | 1 maintainer + 4 ADRs + CHANGELOG + 1 onboard command. **MEDIUM** (mitigated) |
+| 4 | **Maintenance Risk** | 1 maintainer + 4 ADRs + CHANGELOG. **MEDIUM** (mitigated) |
 | 5 | **Opportunity Cost** | Not building = 5 plugins × 2.5 day/month × 12 × $100/h × 5 people = **$15K/year loss** = HIGH VALUE |
 | 6 | Compatibility Risk | Opt-in provider. No conflict with existing review workflow. **LOW** |
 | 7 | Security Risk | Hook bypass possible (opt-in `DEV_KIT_HOOK_OFF`). Secret scan automated. **LOW** |
