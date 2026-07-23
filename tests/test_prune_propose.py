@@ -8,6 +8,11 @@ Coverage:
   invocations subset to dump_usage.py with the right window.
 * ``--propose-delete --dry-run`` skips the ask loop and prints the
   candidate table.
+* ``_discover_catalog_skills`` / ``_run_propose_delete`` seed the
+  candidate set from the on-disk ``skills/*/SKILL.md`` catalog so a
+  skill that has never once been invoked (not just gone quiet) is
+  still a candidate; model-use (``user-invocable: false``) skills are
+  excluded from that seed.
 * The skill declares the L6 ``alpha: state`` frontmatter so the
   governance gate (``tests/test_skill_governance.py``) stays green.
 * ``SKILL.md`` lives at the flat ``skills/<name>/SKILL.md`` location
@@ -21,6 +26,7 @@ import datetime as _dt
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +77,26 @@ def _fixture_max_ts() -> _dt.datetime:
 # 17-20 days before _REF_NOW, so they are inside the window. With
 # window=10 they fall out.
 _REF_NOW = _fixture_max_ts() + _dt.timedelta(days=7)
+
+
+def _copy_skill_usage_toolkit(root: Path) -> Path:
+    """Copy the ``tools/skill_usage*.py`` trio + ``dump_usage.py`` into
+    ``<root>/tools`` and ``<root>/skills/prune-propose/scripts``.
+
+    No ``skills/`` catalog directory is created -- callers that want
+    catalog-seeded skills add them under ``<root>/skills`` themselves.
+    Returns the ``<root>/tools`` path (the CLI entrypoint's directory).
+    """
+    tools_dir = root / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("skill_usage.py", "skill_usage_render.py",
+                "skill_usage_normalize.py"):
+        shutil.copy2(TOOLS / name, tools_dir / name)
+
+    dump_dst = root / "skills" / "prune-propose" / "scripts"
+    dump_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SCRIPTS / "dump_usage.py", dump_dst / "dump_usage.py")
+    return tools_dir
 
 
 class TestDumpUsageHelpers(unittest.TestCase):
@@ -185,11 +211,11 @@ class TestProposeDeleteFlag(unittest.TestCase):
         other three skills all have records inside the window so they
         are excluded from the proposal list.
 
-        Note: ``dev-kit:prune`` is also the skill whose own skill name
-        happens to overlap with our new skill's directory. The flag
-        filters by telemetry signal only; collision with our new
-        skill is handled by the on-disk skill not appearing in the
-        telemetry until it has actually been invoked."""
+        This exercises ``aggregate_skill_usage`` directly (the raw
+        telemetry dict), not the full ``--propose-delete`` pipeline --
+        catalog seeding (see ``TestCatalogSeeding`` below) only happens
+        inside ``_run_propose_delete``, so it does not affect this
+        assertion."""
         agg = skill_usage.aggregate_skill_usage(
             str(FIXTURE), window_days=30, now=_REF_NOW)
         candidates = sorted(
@@ -201,18 +227,104 @@ class TestProposeDeleteFlag(unittest.TestCase):
 
     def test_propose_delete_dry_run_via_cli(self):
         """End-to-end: ``--propose-delete --dry-run`` exits 0 and the
-        dump script prints its no-candidates table."""
-        r = subprocess.run(
-            [sys.executable, str(TOOLS / "skill_usage.py"),
-             "--logs-glob", str(FIXTURE),
-             "--days", "30",
-             "--propose-delete", "--dry-run"],
-            capture_output=True, text=True, timeout=60,
-            cwd=str(PROJECT_ROOT),
-        )
+        dump script prints its no-candidates table.
+
+        Runs against an isolated copy of the toolkit with no ``skills/``
+        directory (see ``_copy_skill_usage_toolkit``) so the result is
+        independent of the real repo's catalog size -- this specifically
+        covers the case where ``_discover_catalog_skills`` finds nothing
+        to seed and the fixture's own skills are all inside the window."""
+        with tempfile.TemporaryDirectory() as root:
+            tools_dir = _copy_skill_usage_toolkit(Path(root))
+            r = subprocess.run(
+                [sys.executable, str(tools_dir / "skill_usage.py"),
+                 "--logs-glob", str(FIXTURE),
+                 "--days", "30",
+                 "--propose-delete", "--dry-run"],
+                capture_output=True, text=True, timeout=60,
+                cwd=root,
+            )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("no candidates", r.stdout)
         self.assertIn("dry-run", r.stdout)
+
+
+class TestCatalogSeeding(unittest.TestCase):
+    """``_discover_catalog_skills`` / ``_run_propose_delete`` seeding.
+
+    Covers the gap where a skill that has *never* appeared in any log
+    (not just one that went quiet) was invisible to ``--propose-delete``
+    because the candidate set was built purely from observed telemetry.
+    """
+
+    def _write_skill(self, skills_dir: Path, name: str, *,
+                     user_invocable: bool | None = True) -> None:
+        skill_dir = skills_dir / name
+        skill_dir.mkdir(parents=True)
+        lines = ["---", f"name: {name}", "category: build",
+                "description: fixture skill", "alpha: analysis"]
+        if user_invocable is not None:
+            lines.append(f"user-invocable: {'true' if user_invocable else 'false'}")
+        lines += ["---", "", "fixture body"]
+        (skill_dir / "SKILL.md").write_text("\n".join(lines) + "\n")
+
+    def test_discover_catalog_skills_excludes_model_use(self):
+        """User-invocable skills are prefixed and returned; a skill
+        declaring ``user-invocable: false`` is excluded."""
+        with tempfile.TemporaryDirectory() as root:
+            root_p = Path(root)
+            (root_p / ".claude-plugin").mkdir()
+            (root_p / ".claude-plugin" / "plugin.json").write_text(
+                json.dumps({"name": "dev-kit"}))
+            skills_dir = root_p / "skills"
+            skills_dir.mkdir()
+            self._write_skill(skills_dir, "totally-idle", user_invocable=True)
+            self._write_skill(skills_dir, "build-tdd", user_invocable=False)
+            self._write_skill(skills_dir, "implicit-default")  # no key -> true
+
+            names = skill_usage._discover_catalog_skills(root_p)
+
+        self.assertIn("dev-kit:totally-idle", names)
+        self.assertIn("dev-kit:implicit-default", names)
+        self.assertNotIn("dev-kit:build-tdd", names)
+
+    def test_discover_catalog_skills_missing_dir_returns_empty(self):
+        """No ``skills/`` directory (e.g. a non-plugin checkout) is a
+        no-op, not a crash."""
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(skill_usage._discover_catalog_skills(Path(root)), [])
+
+    def test_run_propose_delete_seeds_never_invoked_skill(self):
+        """A catalog skill absent from telemetry entirely now shows up
+        as a 0/0 candidate; a model-use sibling does not."""
+        with tempfile.TemporaryDirectory() as root:
+            root_p = Path(root)
+            (root_p / ".claude-plugin").mkdir()
+            (root_p / ".claude-plugin" / "plugin.json").write_text(
+                json.dumps({"name": "dev-kit"}))
+            skills_dir = root_p / "skills"
+            skills_dir.mkdir()
+            self._write_skill(skills_dir, "totally-idle", user_invocable=True)
+            self._write_skill(skills_dir, "build-tdd", user_invocable=False)
+
+            dump_dst = skills_dir / "prune-propose" / "scripts"
+            dump_dst.mkdir(parents=True)
+            (dump_dst / "dump_usage.py").write_text(
+                (SCRIPTS / "dump_usage.py").read_text())
+
+            tools_dir = root_p / "tools"
+            tools_dir.mkdir()
+
+            buf = io.StringIO()
+            import contextlib
+            with contextlib.redirect_stdout(buf):
+                rc = skill_usage._run_propose_delete(
+                    {}, 30, dry_run=True, here=tools_dir)
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("dev-kit:totally-idle", out)
+        self.assertNotIn("dev-kit:build-tdd", out)
 
 
 class TestSkillFrontmatter(unittest.TestCase):

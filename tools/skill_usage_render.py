@@ -101,6 +101,59 @@ def filter_by_cwd_prefix(skills: dict[str, dict], cwd_prefix: str,
     return out
 
 
+def _discover_catalog_skills(repo_root: Path) -> list[str]:
+    """Return every user-invocable skill's ``<plugin>:<name>`` id from the
+    on-disk ``skills/*/SKILL.md`` catalog.
+
+    ``aggregate_skill_usage`` only ever sees a skill that appears in a log
+    line, so a skill that has *never once* been invoked has no row at all
+    and is invisible to the 0/0 filter in :func:`_run_propose_delete`. This
+    walks the catalog directly so those skills get a zero-default row too.
+
+    Model-use sub-skills (``user-invocable: false``, e.g. ``build-tdd``)
+    are excluded: they are dispatched implicitly by a sub-agent rather
+    than via an explicit ``Skill`` tool_use, so a 0/0 telemetry reading
+    for them reflects a dispatch gap, not disuse -- surfacing them here
+    would risk proposing deletion of load-bearing build machinery.
+    """
+    prefix = "dev-kit"
+    plugin_json = repo_root / ".claude-plugin" / "plugin.json"
+    if plugin_json.is_file():
+        try:
+            data = json.loads(plugin_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict) and data.get("name"):
+            prefix = data["name"]
+
+    skills_dir = repo_root / "skills"
+    if not skills_dir.is_dir():
+        return []
+
+    names: list[str] = []
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        try:
+            text = skill_md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not text.startswith("---"):
+            continue
+        end = text.find("\n---", 3)
+        front = text[3:end] if end != -1 else text[3:]
+
+        name = None
+        invocable = True
+        for line in front.splitlines():
+            line = line.strip()
+            if line.startswith("name:"):
+                name = line.split(":", 1)[1].strip().strip("\"'")
+            elif line.startswith("user-invocable:"):
+                invocable = line.split(":", 1)[1].strip().lower() != "false"
+        if name and invocable:
+            names.append(f"{prefix}:{name}")
+    return names
+
+
 def _run_propose_delete(skills: dict[str, dict],
                         window: int | None,
                         *,
@@ -109,11 +162,11 @@ def _run_propose_delete(skills: dict[str, dict],
     """Pipe the 0/0-in-window subset to ``dump_usage.py``.
 
     The subset is the deterministic gate: skills whose aggregated
-    ``turns`` AND ``invocations`` are both 0 within the window. Skills
-    that never appeared in any log are excluded here too -- the dump
-    tool runs against telemetry, not against the on-disk inventory, so
-    a skill that has never been invoked in any captured session will
-    not show up.
+    ``turns`` AND ``invocations`` are both 0 within the window. The
+    telemetry dict is first seeded with every user-invocable skill from
+    the on-disk catalog (see :func:`_discover_catalog_skills`) so a skill
+    that has *never* been invoked -- not just one that went quiet -- is
+    still a candidate.
 
     ``dry_run=True`` echoes ``--dry-run`` to dump_usage.py so the
     chat-rendered table is printed without the AskUserQuestion loop.
@@ -122,12 +175,19 @@ def _run_propose_delete(skills: dict[str, dict],
     ``here`` is the tools/ dir; injected so this module stays
     free of __file__-relative paths and is test-friendly.
     """
+    here = here or Path(__file__).resolve().parent
+    repo_root = here.parent
+
+    seeded = dict(skills)
+    for name in _discover_catalog_skills(repo_root):
+        seeded.setdefault(name, {"turns": 0, "invocations": 0,
+                                 "last_seen": None})
+
     candidates = sorted(
-        name for name, rec in skills.items()
+        name for name, rec in seeded.items()
         if rec.get("turns", 0) == 0 and rec.get("invocations", 0) == 0
     )
-    here = here or Path(__file__).resolve().parent
-    dump_script = here.parent / "skills" / "prune-propose" / "scripts" / "dump_usage.py"
+    dump_script = repo_root / "skills" / "prune-propose" / "scripts" / "dump_usage.py"
     if not dump_script.is_file():
         print(f"[skill-usage] dump script missing: {dump_script}",
               file=sys.stderr)
