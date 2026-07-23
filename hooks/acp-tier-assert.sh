@@ -62,15 +62,18 @@ HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
 TIER_STATE_DIR=""
 if [ -n "$HOOK_CWD" ]; then
   # The orch-worktree lives at <cwd>/.worktrees/orch-<slug>/; the round
-  # dir is a sibling of <cwd>'s parent. We resolve by walking one level
-  # up looking for .dev-kit/round-*/tier-state/ to avoid hard-coding.
+  # dir is an ancestor-owned .dev-kit/round-*/tier-state/ directory.
+  # Check only each ancestor's direct .dev-kit children. A recursive
+  # `find` here can walk a large repository or home directory and exceed
+  # the 3-second PreToolUse timeout before the assertion is evaluated.
   search_root="$(cd "$HOOK_CWD" 2>/dev/null && pwd)"
   while [ -n "$search_root" ]; do
-    candidate="$(find "$search_root" -maxdepth 5 -type d -path '*/.dev-kit/round-*/tier-state' 2>/dev/null | head -1)"
-    if [ -n "$candidate" ]; then
-      TIER_STATE_DIR="$candidate"
-      break
-    fi
+    for candidate in "$search_root"/.dev-kit/round-*/tier-state; do
+      if [ -d "$candidate" ]; then
+        TIER_STATE_DIR="$candidate"
+        break 2
+      fi
+    done
     parent="$(dirname "$search_root")"
     [ "$parent" = "$search_root" ] && break
     search_root="$parent"

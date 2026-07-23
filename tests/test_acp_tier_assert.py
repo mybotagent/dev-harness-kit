@@ -251,6 +251,12 @@ class BehaviorTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
 
+    def test_tier_state_lookup_avoids_recursive_find(self) -> None:
+        """The PreToolUse lookup must stay bounded by ancestor directories."""
+        source = HOOK.read_text(encoding="utf-8")
+        self.assertNotIn('find "$search_root"', source)
+        self.assertIn('"$search_root"/.dev-kit/round-*/tier-state', source)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

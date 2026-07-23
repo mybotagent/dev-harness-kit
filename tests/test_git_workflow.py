@@ -212,6 +212,14 @@ class TestGitGuardAllows(unittest.TestCase):
             r = _run_hook("git commit -m 'legit fix'", cwd=Path(tmp))
             self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
 
+    def test_allows_commit_with_global_C_to_feature_branch(self):
+        with _init_tmp_git_repo() as tmp:
+            subprocess.run(["git", "-C", tmp, "checkout", "-q", "-b", "fix/example"], check=True)
+            # The hook process itself runs outside the target worktree. It
+            # must use the explicit -C repository for the branch decision.
+            r = _run_hook(f"git -C {tmp} commit -m 'legit fix'")
+            self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
+
     def test_allows_push_to_feature_branch(self):
         r = _run_hook("git push -u origin fix/review-findings")
         self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
