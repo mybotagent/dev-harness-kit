@@ -24,6 +24,15 @@ read_stdin_json git-guard
 CMD="$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 [ -z "$CMD" ] && exit 0
 
+# PreToolUse runs in the client session's cwd, which may be the main checkout
+# even when the command targets a worktree with `git -C <path>`. Use that
+# explicit repository path for branch checks so valid worktree commits are
+# not mistaken for commits on the parent's main branch.
+GIT_CWD="${PWD}"
+if [[ "$CMD" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
+  GIT_CWD="${BASH_REMATCH[1]}"
+fi
+
 # Skip non-git commands entirely.
 case "$CMD" in
   *"git "*) ;;
@@ -32,7 +41,7 @@ esac
 
 # Helper: current branch (empty if detached HEAD or not a git repo).
 current_branch() {
-  git symbolic-ref --short HEAD 2>/dev/null || true
+  git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null || true
 }
 
 # M1: Strip GLOBAL git options so the verb-extraction patterns below match
