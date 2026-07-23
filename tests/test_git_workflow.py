@@ -113,6 +113,28 @@ class TestGitGuardBlocks(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("deleting main/master with -D", r.stderr)
 
+    def test_blocks_gh_pr_merge(self):
+        r = _run_hook("gh pr merge 42 --auto --squash")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("gh pr merge is forbidden", r.stderr)
+
+    def test_blocks_gh_pr_merge_bare(self):
+        r = _run_hook("gh pr merge 42")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("gh pr merge is forbidden", r.stderr)
+
+    def test_blocks_gh_pr_merge_after_chained_command(self):
+        r = _run_hook("cd /tmp && gh pr merge 1 --auto")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("gh pr merge is forbidden", r.stderr)
+
+    def test_blocks_gh_pr_merge_no_space_before_separator(self):
+        # `merge;echo` (no space before the `;`) must still be caught --
+        # the trailing boundary is not just `[[:space:]]`.
+        r = _run_hook("gh pr merge;echo done")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("gh pr merge is forbidden", r.stderr)
+
     def test_blocks_combined_main_checkout_then_commit(self):
         with _init_tmp_git_repo() as tmp:
             subprocess.run(["git", "-C", tmp, "checkout", "-q", "-b", "fix/example"], check=True)
@@ -231,6 +253,18 @@ class TestGitGuardAllows(unittest.TestCase):
 
     def test_allows_force_with_lease_on_own_branch(self):
         r = _run_hook("git push --force-with-lease origin fix/review-findings")
+        self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
+
+    def test_allows_gh_pr_view(self):
+        r = _run_hook("gh pr view 42")
+        self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
+
+    def test_allows_gh_pr_create(self):
+        r = _run_hook("gh pr create --base main --head fix/review-findings")
+        self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
+
+    def test_allows_gh_pr_checks(self):
+        r = _run_hook("gh pr checks")
         self.assertEqual(r.returncode, 0, f"got rc={r.returncode}, stderr={r.stderr}")
 
     def test_allows_read_only_git_commands(self):

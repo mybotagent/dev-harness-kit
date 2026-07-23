@@ -52,7 +52,7 @@ the branch, stop and tell the user to push + open one.
 | Flag                       | Effect |
 |----------------------------|--------|
 | *(no flag)*                | Default behavior: print `REVIEW_REQUIRED -> human-gate` and exit 0. The flag-absent path is the audit-safe default — operators never accidentally bypass review. |
-| `--operator-is-only-human` | Opt-out for single-operator repos. Refuses with exit 1 if `CODEOWNERS_PATH` OR `COLLABORATORS` list any handle other than `OPERATOR_HANDLE`. Requires `--rationale`. Posts the audit comment `/bot-approve by operator=<handle> at <ISO-8601>; rationale=<text>` and schedules `gh pr merge --auto --squash`. |
+| `--operator-is-only-human` | Opt-out for single-operator repos. Refuses with exit 1 if `CODEOWNERS_PATH` OR `COLLABORATORS` list any handle other than `OPERATOR_HANDLE`. Requires `--rationale`. Posts the audit comment `/ownership-confirmed by operator=<handle> at <ISO-8601>; rationale=<text>` and hands off — it never merges the PR. Auto-merge into `main` is disabled by policy; the human operator runs `gh pr merge` themselves. |
 | `--rationale "<text>"`     | Required when `--operator-is-only-human` is set; quoted verbatim into the audit comment. The flag pair is the *only* canonical way to bypass the human-review gate. |
 
 If `PR_NUMBER` is empty OR `PR_STATE != OPEN` → print a one-line message and
@@ -171,9 +171,10 @@ Iron Laws (apply to every claim of progress):
 
 Safety valves (forbidden):
   - git push --force to main/master.
-  - gh pr merge (user merges); the single-operator opt-out
-    (`--operator-is-only-human`) is the only sanctioned merge path the
-    babysitter can drive.
+  - gh pr merge — always forbidden. Merging into main is a human-only
+    action; the babysitter (including the single-operator opt-out,
+    `--operator-is-only-human`) only ever confirms ownership and posts
+    an audit comment, never merges.
   - secret auto-removal (abort + exit 1 on credential detection).
   - destructive git ops: reset --hard, clean -fd, branch -D.
   - pytest.skip / @unittest.skip / removing tests / commenting assertions.
@@ -224,8 +225,6 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                       bpc._post_pr_comment = lambda n, body: subprocess.run(
                           ["gh", "pr", "comment", str(n), "--body", body],
                           check=True)
-                      bpc._run_pr_merge    = lambda n, argv: subprocess.run(
-                          ["gh", *argv], check=True)
 
                       argv = sys.argv[1:]
                       operator = subprocess.run(
@@ -294,16 +293,16 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                       )
 
                     If the helper returned EXIT_OK (0) and printed
-                    the "Single-operator bypass approved" message,
-                    the auto-merge is already scheduled -- skip the
-                    rest of the algorithm and print the bypass
-                    message + exit 0.
+                    "Single-operator ownership confirmed", the audit
+                    comment is posted -- skip the rest of the
+                    algorithm, print the hand-off message ("merge
+                    this PR manually with `gh pr merge`"), and exit
+                    0. The PR is NEVER merged by this skill.
                     If the helper returned EXIT_MULTI_OWNER (1) and
                     printed "alternate owner(s) found", the bypass
                     was refused -- print the helper's stdout and
                     EXIT 0 to fall back to the human-gate path
                     (REVIEW_REQUIRED -> waiting for human review).
-                    The PR cannot be auto-merged; do not retry.
                     If the helper returned EXIT_OWNERSHIP_UNKNOWN
                     (4) and printed "could not read CODEOWNERS" or
                     "operator ... not listed in CODEOWNERS" or
@@ -311,19 +310,12 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                     confirmed success", the bypass was refused for a
                     *security-sensitive* reason (unknown ownership) --
                     print the helper's stdout and EXIT 0 to fall back
-                    to the human-gate path. The PR cannot be
-                    auto-merged; the operator should investigate
-                    the missing ownership signal before retrying.
+                    to the human-gate path. The operator should
+                    investigate the missing ownership signal before
+                    retrying.
                     If the helper returned EXIT_RATIONALE_REQUIRED
                     (2), print the helper's stderr and EXIT 2 so the
                     operator adds a non-empty --rationale and retries.
-                    If the helper returned EXIT_MERGE_FAILED (3) the
-                    bypass was approved, the audit comment was
-                    posted, but `gh pr merge --auto --squash` failed
-                    (protected branch, stale HEAD, etc.) -- print
-                    the helper's stderr and EXIT 1 so CI surfaces
-                    the partial state. The operator must re-trigger
-                    the bypass once the merge-state issue is fixed.
                     If no --operator-is-only-human was passed,
                     continue to step 1 (default human-gate path).
 
@@ -345,11 +337,6 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                           sys.exit(0)   # human-gate fallback
                       elif rc == bpc.EXIT_RATIONALE_REQUIRED:
                           sys.exit(2)
-                      elif rc == bpc.EXIT_MERGE_FAILED:
-                          sys.exit(1)   # audit comment posted but
-                                           # merge scheduling failed --
-                                           # distinct from a successful
-                                           # refusal; surface to CI
   1. SNAPSHOT   — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS (single gh call)
   2. TERMINATE  — if REVIEW_VERDICT == "APPROVED"
                     AND every check.conclusion ∈ {success, skipped, neutral}
@@ -404,11 +391,11 @@ stuck and avoids burning the full 1000-iter budget.)
 - **No `git push --force`** to `main`/`master`. Force-push to feature branches is
   allowed when the PR is your own (PR author == current user) AND the branch is
   not protected.
-- **No auto-merge** *unless* the single-operator bypass is engaged
-  (see `## Single-operator bypass` below). `gh pr merge` is forbidden
-  by default. The user merges unless they opted into
-  `--operator-is-only-human`, in which case the skill schedules
-  `gh pr merge --auto --squash` and waits for CI to finalize the merge.
+- **No auto-merge, ever.** `gh pr merge` is always forbidden — merging
+  into `main` is a human-only action. The single-operator bypass (see
+  `## Single-operator bypass` below) only confirms ownership and posts
+  an audit comment; it never runs `gh pr merge`. The human operator
+  merges manually.
 - **No secret auto-removal**. If `secret-scan` or any check flags a credential,
   the skill aborts with the file:line and exits 1.
 - **No destructive git operations**: no `reset --hard`, no `clean -fd`, no
@@ -441,14 +428,15 @@ reproducible in CI without network access:
       alternate owner(s) found: <names>" + "Falling back to the
       human-gate path" + exit 1.
    e. No alternates -> post the audit comment via
-      gh pr comment <PR_NUMBER> --body "/bot-approve by operator=<handle>
-      at <ISO-8601>; rationale=<text>", then run
-      gh pr merge <PR_NUMBER> --auto --squash, then exit 0.
+      gh pr comment <PR_NUMBER> --body "/ownership-confirmed by
+      operator=<handle> at <ISO-8601>; rationale=<text>", then exit
+      0. The PR is NEVER merged by this skill -- the operator runs
+      `gh pr merge` themselves.
 ```
 
-### Wiring the four side-effect shims
+### Wiring the side-effect shims
 
-`run_babysit_once` is pure; the skill installs four named shims before
+`run_babysit_once` is pure; the skill installs named shims before
 calling it:
 
 | Shim                  | Real-world implementation                                       |
@@ -456,9 +444,9 @@ calling it:
 | `_write_stdout(s)`    | `print(s, flush=True)`                                          |
 | `_write_stderr(s)`    | `print(s, file=sys.stderr, flush=True)`                         |
 | `_post_pr_comment(n, body)` | `subprocess.run(['gh', 'pr', 'comment', str(n), '--body', body], check=True)` |
-| `_run_pr_merge(n, argv)` | `subprocess.run(['gh', *argv], check=True)` where argv = `['pr', 'merge', str(n), '--auto', '--squash']` |
 
-The four shims let `tests/test_babysit_pr_cli.py` pin the orchestrator's
+There is no merge shim -- the orchestrator never calls `gh pr merge`.
+The shims let `tests/test_babysit_pr_cli.py` pin the orchestrator's
 I/O contract without mocking `subprocess` or `gh`. Failure to install
 the shims is a `RuntimeError`; the skill wires them at the top of the
 SLASH entry so a misconfigured run fails loudly rather than silently.
@@ -486,8 +474,6 @@ bpc._write_stdout   = lambda s: print(s, flush=True)
 bpc._write_stderr   = lambda s: print(s, file=sys.stderr, flush=True)
 bpc._post_pr_comment = lambda n, body: subprocess.run(   # noqa: E731
     ["gh", "pr", "comment", str(n), "--body", body], check=True)
-bpc._run_pr_merge   = lambda n, argv: subprocess.run(     # noqa: E731
-    ["gh", *argv], check=True)
 
 argv = sys.argv[1:]
 operator = subprocess.run(
@@ -534,7 +520,9 @@ rc = bpc.run_babysit_once(
     pr_number=pr_number,
 )
 # Map the helper's exit codes to the orchestrator's contract:
-#   EXIT_OK (0)                 -> 0  (bypass approved)
+#   EXIT_OK (0)                 -> 0  (ownership confirmed, audit
+#                                    comment posted; PR NOT merged --
+#                                    the operator merges manually)
 #   EXIT_MULTI_OWNER (1)        -> 0  (alternate owners found;
 #                                    human-gate per §Algorithm step 3D)
 #   EXIT_RATIONALE_REQUIRED (2)  -> 2  (operator must add --rationale)
@@ -543,14 +531,6 @@ rc = bpc.run_babysit_once(
 #                                    bypass refused itself, the
 #                                    helper printed the reason; the
 #                                    fallback path is the human-gate)
-#   EXIT_MERGE_FAILED (3)       -> 1  (audit comment posted but
-#                                    `gh pr merge --auto --squash`
-#                                    failed -- this is a real failure
-#                                    that needs operator attention,
-#                                    not a successful refusal. Distinct
-#                                    exit so CI surfaces the partial
-#                                    state instead of looking like a
-#                                    successful bypass refusal)
 if rc in (bpc.EXIT_OK, bpc.EXIT_MULTI_OWNER, bpc.EXIT_OWNERSHIP_UNKNOWN):
     sys.exit(0)
 sys.exit(rc)
@@ -570,9 +550,9 @@ slash-arguments-reach-the-helper contract lives.
   and skips `user@domain` email handles (not actionable review gates).
   **Fail-closed**: any IO error reading CODEOWNERS (missing file,
   permission denied, is-a-directory) refuses the bypass with
-  `EXIT_MULTI_OWNER`. An outage or permission glitch CANNOT be
+  `EXIT_OWNERSHIP_UNKNOWN`. An outage or permission glitch CANNOT be
   interpreted as "no alternate owners" -- the bypass requires
-  positive ownership confirmation before authorizing the auto-merge.
+  positive ownership confirmation before posting the audit comment.
 - `COLLABORATORS` endpoint is rate-limited; an empty collaborator
   list does NOT, on its own, grant the bypass. The bypass requires
   CODEOWNERS to be readable AND to list only the operator. The
@@ -587,10 +567,9 @@ slash-arguments-reach-the-helper contract lives.
 - CODEOWNERS read + collaborator resolution are covered by
   `### Fail-closed ownership policy` above. An outage or empty
   collaborator list CANNOT authorize the bypass.
-- `gh pr merge --auto --squash` waits for CI. If a check fails after
-  the bypass, GitHub cancels the auto-merge and the operator must
-  re-investigate -- the audit comment remains in the PR thread as a
-  record of the bypass.
+- The bypass never runs `gh pr merge`. It only posts the
+  `/ownership-confirmed` audit comment and hands off -- the operator
+  merges manually, on their own schedule.
 - Rationale is required. Empty rationale is refused at the parser
   level to keep the audit trail non-vacuous.
 
@@ -602,7 +581,7 @@ slash-arguments-reach-the-helper contract lives.
 ```
 
 For the iron-law audit trail the rationale text appears verbatim in the
-audit comment (`tests/test_babysit_pr_cli.py::TestFormatBotApproveComment`
+audit comment (`tests/test_babysit_pr_cli.py::TestFormatOwnershipConfirmedComment`
 pins the comment shape). Operators are encouraged to link the PR URL
 or issue number inside the rationale text for cross-reference.
 
@@ -735,7 +714,9 @@ A claim of "fixed" without the `local:` line violates MUST-L3 (evidence-before-d
 - `slop-detector=ON` — blocks vacuous commits ("fix ci", "wip") that contain no
   functional change.
 - `tdd-guard=OFF` — not applicable (PR babysitting, not authoring new tests).
-- `bash-guard=ON` — guards `git push --force` and `gh pr merge` patterns.
+- `bash-guard=ON` — guards `git push --force` patterns.
+- `git-guard=ON` — hard-blocks `gh pr merge` (any invocation); merging into
+  `main` is always a human action, run outside automation.
 
 ---
 

@@ -8,6 +8,8 @@
 #   3. `git push --force` (-f / --force). `--force-with-lease` allowed.
 #   4. `git checkout main` / `git switch main` (primes a direct commit)
 #   5. `git branch -D main|master` (deleting the protection itself)
+#   6. `gh pr merge` (any invocation) — merging into main is always a
+#      human action, run outside automation.
 #
 # Allows everything else. See .claude/rules/git-workflow.md for rationale.
 
@@ -33,11 +35,21 @@ if [[ "$CMD" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
   GIT_CWD="${BASH_REMATCH[1]}"
 fi
 
-# Skip non-git commands entirely.
+# Skip commands that are neither git nor gh entirely.
 case "$CMD" in
-  *"git "*) ;;
+  *"git "*|*"gh "*) ;;
   *) exit 0 ;;
 esac
+
+# 0. Block `gh pr merge` (any invocation, any flags) — merging into main
+# is always a human action. Checked before the git-only filter below so
+# a bare `gh pr merge ...` (no "git " substring) still gets caught. Both
+# anchors allow a command separator (;, &&, ||, |) with no space, so
+# `cd x && gh pr merge 1 --auto` and `gh pr merge;echo done` are both
+# denied, not just the space-separated forms.
+if printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+merge([;&|[:space:]]|$)'; then
+  deny "GIT GUARD" "gh pr merge is forbidden — merging into main must be done by a human (via the GitHub UI or gh pr merge run outside automation), not by an agent."
+fi
 
 # Helper: current branch (empty if detached HEAD or not a git repo).
 current_branch() {

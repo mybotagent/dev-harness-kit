@@ -28,15 +28,17 @@ Pins the contract for the `--operator-is-only-human` opt-out (issue #324):
     T14: multiple collaborators listed -> (True, [...])
     T15: CODEOWNERS + collaborators are unioned
 
-  format_bot_approve_comment(operator, rationale, now_iso)
-    T16: emits "/bot-approve by operator=<handle> at <iso>; rationale=<text>"
+  format_ownership_confirmed_comment(operator, rationale, now_iso)
+    T16: emits "/ownership-confirmed by operator=<handle> at <iso>; rationale=<text>"
     T17: rationale with semicolons is preserved verbatim
 
   run_babysit_once(...)
     T18: flag absent -> returns EXIT_OK (0) with human-gate hand-off
          message; never posts a comment; never calls gh pr merge.
     T19: flag present + single-owner -> returns EXIT_OK (0), posts the
-         /bot-approve comment, schedules `gh pr merge --auto --squash`.
+         /ownership-confirmed comment. Auto-merge is disabled by
+         policy -- gh pr merge is never called; a human merges
+         manually.
     T20: flag present + multi-owner -> returns EXIT_MULTI_OWNER (1)
          with the alternate-owner list + remediation pointer.
     T21: flag present but rationale missing -> EXIT_RATIONALE_REQUIRED
@@ -60,15 +62,15 @@ class _CliResult:
     """Captured CLI output for assertions.
 
     Mirrors the field set used by the babysit-pr skill's stdout/stderr
-    contract: the human-gate hand-off message, the audit-comment body,
-    and the merge command invocation.
+    contract: the human-gate hand-off message and the audit-comment
+    body. There is no merge-command field -- the orchestrator never
+    calls `gh pr merge`; merging into main is always a human action.
     """
 
     def __init__(self) -> None:
         self.stdout = io.StringIO()
         self.stderr = io.StringIO()
         self.commented: list[tuple[str, str]] = []  # (pr_number, body)
-        self.merged: list[tuple[str, list[str]]] = []  # (pr_number, argv)
 
 
 def _write_codeowners(tmp: Path, body: str) -> Path:
@@ -232,21 +234,21 @@ class TestHasAlternateOwners(unittest.TestCase):
         self.assertEqual(sorted(alts), ["alice", "bob"])
 
 
-class TestFormatBotApproveComment(unittest.TestCase):
+class TestFormatOwnershipConfirmedComment(unittest.TestCase):
     def test_default_shape(self) -> None:
-        body = bpc.format_bot_approve_comment(
+        body = bpc.format_ownership_confirmed_comment(
             operator="sh-ai-x",
             rationale="trivial typo in docs",
             now_iso="2026-07-21T12:00:00Z",
         )
         self.assertEqual(
             body,
-            "/bot-approve by operator=sh-ai-x at 2026-07-21T12:00:00Z; "
+            "/ownership-confirmed by operator=sh-ai-x at 2026-07-21T12:00:00Z; "
             "rationale=trivial typo in docs",
         )
 
     def test_rationale_with_semicolons(self) -> None:
-        body = bpc.format_bot_approve_comment(
+        body = bpc.format_ownership_confirmed_comment(
             operator="sh-ai-x",
             rationale="merge; do not; iterate",
             now_iso="2026-07-21T12:00:00Z",
@@ -267,8 +269,7 @@ class TestRunBabysitOnce(unittest.TestCase):
 
     def _patch_io(self, captured: _CliResult):
         """Return a context manager that redirects the side-effect shims
-        onto `captured`. Used inline so the four tests stay
-        independent.
+        onto `captured`. Used inline so the tests stay independent.
         """
         return (
             patch.object(bpc, "_write_stdout", side_effect=captured.stdout.write),
@@ -277,11 +278,6 @@ class TestRunBabysitOnce(unittest.TestCase):
                 bpc,
                 "_post_pr_comment",
                 side_effect=lambda n, b: captured.commented.append((str(n), b)),
-            ),
-            patch.object(
-                bpc,
-                "_run_pr_merge",
-                side_effect=lambda n, a: captured.merged.append((str(n), list(a))),
             ),
         )
 
@@ -294,8 +290,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         # No flag set -> the babysit must exit 0 with the existing
         # human-gate hand-off, no audit comment, no merge.
         captured = _CliResult()
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=[],
                 operator_handle="sh-ai-x",
@@ -307,16 +303,15 @@ class TestRunBabysitOnce(unittest.TestCase):
         self.assertEqual(rc, bpc.EXIT_OK)
         self.assertIn("human-gate", captured.stdout.getvalue())
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
-    def test_flag_with_single_owner_approves_and_merges(self) -> None:
+    def test_flag_with_single_owner_confirms_ownership_no_merge(self) -> None:
         captured = _CliResult()
         argv = [
             "--operator-is-only-human",
             "--rationale", "single-operator merge of trivial docs fix",
         ]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -331,13 +326,12 @@ class TestRunBabysitOnce(unittest.TestCase):
         self.assertEqual(len(captured.commented), 1)
         pr_no, body = captured.commented[0]
         self.assertEqual(pr_no, "42")
-        self.assertTrue(body.startswith("/bot-approve by operator=sh-ai-x"))
+        self.assertTrue(body.startswith("/ownership-confirmed by operator=sh-ai-x"))
         self.assertIn("rationale=single-operator merge of trivial docs fix", body)
-        # gh pr merge --auto --squash scheduled with a numeric PR id.
-        self.assertEqual(len(captured.merged), 1)
-        merge_pr, merge_argv = captured.merged[0]
-        self.assertEqual(merge_pr, "42")
-        self.assertEqual(merge_argv, ["pr", "merge", "42", "--auto", "--squash"])
+        # Auto-merge is disabled by policy -- there is no merge shim to
+        # assert against; the hand-off message tells the operator to
+        # merge manually.
+        self.assertIn("merge this PR manually", captured.stdout.getvalue())
 
     def test_collaborator_lookup_failure_refuses_with_distinct_exit(self) -> None:
         """Fail-closed on the collaborators endpoint.
@@ -352,8 +346,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         captured = _CliResult()
         argv = ["--operator-is-only-human", "--rationale",
                 "must refuse on collaborator outage"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -368,9 +362,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         out = captured.stdout.getvalue()
         self.assertIn("did not return a confirmed success", out)
         self.assertIn("human-gate", out)
-        # No comment, no merge -- unknown ownership never authorizes.
+        # No comment posted -- unknown ownership never authorizes.
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
     def test_invalid_utf8_codeowners_fails_closed(self) -> None:
         """Invalid-UTF-8 CODEOWNERS must refuse the bypass, not
@@ -387,8 +380,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         invalid.write_bytes(b"*  @sh-ai-x\n\xff\xfe invalid bytes")
         argv = ["--operator-is-only-human", "--rationale",
                 "must refuse on invalid UTF-8 CODEOWNERS"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -403,53 +396,13 @@ class TestRunBabysitOnce(unittest.TestCase):
         out = captured.stdout.getvalue()
         self.assertIn("could not read CODEOWNERS", out)
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
-
-    def test_merge_failure_returns_distinct_exit_code(self) -> None:
-        """When the audit comment posts but gh pr merge fails
-        (protected branch, stale HEAD, etc.), the helper returns
-        EXIT_MERGE_FAILED -- distinct from EXIT_MULTI_OWNER so the
-        wrapper can preserve a non-zero exit and the operator can
-        tell 'bypass refused' from 'bypass approved, scheduling
-        failed'.
-        """
-        captured = _CliResult()
-
-        # Override _run_pr_merge to raise CalledProcessError after
-        # the audit comment is posted.
-        class _MergeFails(RuntimeError):
-            pass
-
-        def _raise(*_a, **_kw):
-            raise _MergeFails("Command failed with exit 1: protected branch")
-
-        p_stdout = patch.object(bpc, "_write_stdout", lambda s: None)
-        p_stderr = patch.object(bpc, "_write_stderr", lambda s: None)
-        p_comment = patch.object(bpc, "_post_pr_comment", lambda n, body: captured.commented.append((n, body)))
-        p_merge = patch.object(bpc, "_run_pr_merge", _raise)
-        with p_stdout, p_stderr, p_comment, p_merge:
-            rc = bpc.run_babysit_once(
-                argv=["--operator-is-only-human", "--rationale",
-                      "merge will fail"],
-                operator_handle="sh-ai-x",
-                codeowners_path=self.codeowners,
-                collaborator_handles=["sh-ai-x"],
-                collaborator_lookup_ok=True,
-                pr_number=42,
-            )
-        self.assertEqual(rc, bpc.EXIT_MERGE_FAILED,
-                         "merge failure must use EXIT_MERGE_FAILED, "
-                         "not EXIT_MULTI_OWNER")
-        # Audit comment was posted before the merge raised.
-        self.assertEqual(len(captured.commented), 1)
-        self.assertEqual(captured.merged, [])
 
     def test_flag_with_multiple_owners_refuses(self) -> None:
         captured = _CliResult()
         multi = _write_codeowners(self.tmp, "*  @sh-ai-x @alice\n")
         argv = ["--operator-is-only-human", "--rationale", "should be refused"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -460,12 +413,11 @@ class TestRunBabysitOnce(unittest.TestCase):
             )
         self.assertEqual(rc, bpc.EXIT_MULTI_OWNER)
         # Print the alternate-owner list to stdout + a pointer to the
-        # human-gate path. NO comment posted, NO merge scheduled.
+        # human-gate path. NO comment posted.
         out = captured.stdout.getvalue()
         self.assertIn("alice", out)
         self.assertIn("human-gate", out)
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
     def test_operator_absent_from_codeowners_fails_closed(self) -> None:
         """Positive-ownership confirmation: even with no alternates
@@ -475,15 +427,15 @@ class TestRunBabysitOnce(unittest.TestCase):
 
         Regression for the security-sensitive fail-open: the
         collaborator-endpoint being down or returning an empty page
-        must not authorize the auto-merge on a multi-operator repo.
+        must not authorize the bypass on a multi-operator repo.
         """
         captured = _CliResult()
         empty = self.tmp / "EMPTY"
         empty.write_text("", encoding="utf-8")
         argv = ["--operator-is-only-human", "--rationale",
                 "operator not in CODEOWNERS - must refuse"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -500,7 +452,6 @@ class TestRunBabysitOnce(unittest.TestCase):
         self.assertIn("not listed in CODEOWNERS", out)
         self.assertIn("human-gate", out)
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
     def test_empty_codeowners_fails_closed(self) -> None:
         """Empty-but-readable CODEOWNERS (file exists, zero rules)
@@ -515,8 +466,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         empty.write_text("", encoding="utf-8")
         argv = ["--operator-is-only-human", "--rationale",
                 "empty CODEOWNERS - must refuse"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -529,11 +480,11 @@ class TestRunBabysitOnce(unittest.TestCase):
                          "empty CODEOWNERS + empty collaborators "
                          "must refuse the bypass")
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
     def test_missing_codeowners_fails_closed(self) -> None:
         """Fail-closed contract: an unreadable CODEOWNERS file must
-        refuse the bypass rather than authorize the auto-merge.
+        refuse the bypass rather than authorize the ownership
+        confirmation.
 
         Regression for the security-sensitive bypass that the LLM
         review surfaced. An outage, permission error, or truncated
@@ -543,8 +494,8 @@ class TestRunBabysitOnce(unittest.TestCase):
         captured = _CliResult()
         argv = ["--operator-is-only-human", "--rationale",
                 "must refuse on missing CODEOWNERS"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -558,18 +509,17 @@ class TestRunBabysitOnce(unittest.TestCase):
         out = captured.stdout.getvalue()
         self.assertIn("could not read CODEOWNERS", out)
         self.assertIn("human-gate", out)
-        # No comment, no merge scheduled -- the unknown-ownership state
-        # never authorizes the bypass side-effects.
+        # No comment posted -- the unknown-ownership state never
+        # authorizes the bypass side-effects.
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
     def test_flag_without_rationale_is_rejected(self) -> None:
         # The rationale is the audit trail; without it the bypass must
         # be refused so the operator is forced to write a justification.
         captured = _CliResult()
         argv = ["--operator-is-only-human"]
-        p_stdout, p_stderr, p_comment, p_merge = self._patch_io(captured)
-        with p_stdout, p_stderr, p_comment, p_merge:
+        p_stdout, p_stderr, p_comment = self._patch_io(captured)
+        with p_stdout, p_stderr, p_comment:
             rc = bpc.run_babysit_once(
                 argv=argv,
                 operator_handle="sh-ai-x",
@@ -580,7 +530,6 @@ class TestRunBabysitOnce(unittest.TestCase):
             )
         self.assertEqual(rc, bpc.EXIT_RATIONALE_REQUIRED)
         self.assertEqual(captured.commented, [])
-        self.assertEqual(captured.merged, [])
 
 
 if __name__ == "__main__":

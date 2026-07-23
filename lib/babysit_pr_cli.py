@@ -9,11 +9,12 @@ returns ``""``). When the operator runs with the flag, the helper:
   2. consults a caller-supplied list of `gh api
      /repos/{owner}/{repo}/collaborators?per_page=100` handles,
   3. refuses (exit 1) if any other owner exists,
-  4. otherwise posts the `/bot-approve` audit comment and schedules
-     `gh pr merge --auto --squash`.
+  4. otherwise posts the `/ownership-confirmed` audit comment and hands
+     off -- it never merges the PR itself. Merging into `main` is
+     always a human action (`gh pr merge`, run outside automation).
 
 All side effects are funnelled through tiny shims (`_write_stdout`,
-`_write_stderr`, `_post_pr_comment`, `_run_pr_merge`) so unit tests in
+`_write_stderr`, `_post_pr_comment`) so unit tests in
 `tests/test_babysit_pr_cli.py` can pin the I/O contract without mocking
 `subprocess`. The skill body replaces each shim with the real-world
 implementation; tests pin the pure arguments.
@@ -24,7 +25,8 @@ of `run_babysit_once` is reproducible in CI without network access.
 Exit codes:
 
   EXIT_OK                  0   -- hand-off OK (default human-gate or
-                                  single-owner bypass approved).
+                                  single-owner ownership confirmed --
+                                  ready for a human to merge manually).
   EXIT_MULTI_OWNER         1   -- alternate owners found; bypass
                                   refused (matches issue spec).
   EXIT_RATIONALE_REQUIRED  2   -- `--operator-is-only-human` set but
@@ -45,7 +47,6 @@ PathLike = str | Path
 EXIT_OK: int = 0
 EXIT_MULTI_OWNER: int = 1
 EXIT_RATIONALE_REQUIRED: int = 2
-EXIT_MERGE_FAILED: int = 3
 EXIT_OWNERSHIP_UNKNOWN: int = 4
 
 # Placeholder for `now_iso` when the caller does not pin one. The real
@@ -82,17 +83,6 @@ def _post_pr_comment(pr_number: int, body: str) -> None:
     """
     raise RuntimeError(
         "_post_pr_comment shim not installed; "
-        "lib/babysit_pr_cli.run_babysit_once must run inside the skill"
-    )
-
-
-def _run_pr_merge(pr_number: int, argv: Sequence[str]) -> None:
-    """Default merge emitter: a guard that refuses to silently swallow.
-    The skill wires this to `subprocess.run(['gh', *argv])` where argv
-    is `['pr', 'merge', '<n>', '--auto', '--squash']`.
-    """
-    raise RuntimeError(
-        "_run_pr_merge shim not installed; "
         "lib/babysit_pr_cli.run_babysit_once must run inside the skill"
     )
 
@@ -245,19 +235,22 @@ def has_alternate_owners(
     return (len(alternates) > 0, alternates)
 
 
-def format_bot_approve_comment(operator: str, rationale: str, now_iso: str) -> str:
+def format_ownership_confirmed_comment(operator: str, rationale: str, now_iso: str) -> str:
     """Build the audit comment body posted to the PR.
 
-    The shape is locked by `docs/hook-coverage-gaps.md` and pinned by
-    `tests/test_babysit_pr_cli.py::TestFormatBotApproveComment`:
+    Records that the single-operator ownership check passed. This is
+    an audit note, not a merge authorization: the PR is NOT auto-merged
+    -- a human must run `gh pr merge` themselves.
 
-        /bot-approve by operator=<handle> at <ISO-8601>; rationale=<text>
+    Pinned by `tests/test_babysit_pr_cli.py::TestFormatOwnershipConfirmedComment`:
+
+        /ownership-confirmed by operator=<handle> at <ISO-8601>; rationale=<text>
 
     Semicolons inside `rationale` are preserved verbatim; the comment
     reader splits only on the first two `;` / `=` separators.
     """
     op = operator.lstrip("@")
-    return f"/bot-approve by operator={op} at {now_iso}; rationale={rationale}"
+    return f"/ownership-confirmed by operator={op} at {now_iso}; rationale={rationale}"
 
 
 # ---------------------------------------------------------------------------
@@ -288,16 +281,14 @@ def run_babysit_once(
       4. Positive-ownership confirmation: the operator must appear
          in the parsed CODEOWNERS list. An empty / unrelated
          CODEOWNERS refuses the bypass.
-      5. Otherwise post the audit comment and schedule
-         `gh pr merge --auto --squash`; return `EXIT_OK`. A merge
-         scheduling failure (after the audit comment is posted)
-         returns `EXIT_MERGE_FAILED` so the wrapper surfaces a
-         distinct non-zero exit instead of reporting the partial
-         state as a successful refusal.
+      5. Otherwise post the `/ownership-confirmed` audit comment and
+         return `EXIT_OK`. The PR is never merged automatically --
+         auto-merge into `main` is disabled by policy; a human runs
+         `gh pr merge` themselves.
 
-    The function never touches `gh` itself; the four `_post_*` / `_run_*`
-    / `_write_*` shims are the only external surface. Tests replace the
-    shims; the skill wires them to subprocess + print.
+    The function never touches `gh` itself; the `_post_*` / `_write_*`
+    shims are the only external surface. Tests replace the shims; the
+    skill wires them to subprocess + print.
     """
     args = parse_babysit_args(argv)
 
@@ -317,7 +308,7 @@ def run_babysit_once(
         # parse_babysit_args is bypassed in tests / scripted callers.
         _write_stderr(
             "--rationale is required with --operator-is-only-human "
-            "(the bypass writes it into the /bot-approve audit comment)"
+            "(the bypass writes it into the /ownership-confirmed audit comment)"
         )
         return EXIT_RATIONALE_REQUIRED
 
@@ -399,35 +390,18 @@ def run_babysit_once(
         )
         return EXIT_OWNERSHIP_UNKNOWN
 
-    # Single-operator: post the audit comment + schedule auto-merge.
-    body = format_bot_approve_comment(
+    # Single-operator ownership confirmed. Auto-merge into main is
+    # disabled by policy -- post the audit comment recording the
+    # confirmation and hand off; a human merges the PR themselves.
+    body = format_ownership_confirmed_comment(
         operator=operator_handle,
         rationale=args.rationale.strip(),
         now_iso=now_iso,
     )
     _post_pr_comment(pr_number, body)
-    try:
-        _run_pr_merge(pr_number, ["pr", "merge", str(pr_number), "--auto", "--squash"])
-    except (SystemExit, Exception) as exc:
-        # `check=True` on the merge subprocess raises
-        # CalledProcessError on failure (protected branch, stale HEAD,
-        # merge-queue state, etc.). The audit comment is already
-        # posted at this point. Use EXIT_MERGE_FAILED (distinct from
-        # EXIT_MULTI_OWNER) so the wrapper preserves a non-zero exit
-        # and the operator can distinguish "bypass refused, no audit
-        # comment" from "bypass approved, audit comment posted, merge
-        # scheduling failed". The audit comment remains in the PR
-        # thread for the audit trail.
-        _write_stderr(
-            f"gh pr merge --auto --squash failed after the audit "
-            f"comment was posted ({exc!r}). The /bot-approve comment "
-            f"remains in the PR thread for the audit trail. The "
-            f"bypass side effect is INCOMPLETE -- re-investigate the "
-            f"merge failure manually and re-trigger the bypass."
-        )
-        return EXIT_MERGE_FAILED
     _write_stdout(
-        f"Single-operator bypass approved. "
-        f"Audit comment posted; gh pr merge --auto --squash scheduled for PR #{pr_number}."
+        f"Single-operator ownership confirmed for PR #{pr_number}. "
+        f"Audit comment posted. Auto-merge is disabled by policy -- "
+        f"merge this PR manually with `gh pr merge`."
     )
     return EXIT_OK
