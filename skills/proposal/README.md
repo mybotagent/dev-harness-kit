@@ -115,7 +115,7 @@ html = render(p, now="2026-07-23")              # pass fixed `now` for determini
 
 | Code | Meaning |
 |---|---|
-| 0 | render succeeded (or `--list` returned at least one proposal) |
+| 0 | render succeeded; `--list` returns 0 even when no proposals are found (prints `(no proposals found under docs/proposals/)`) |
 | 1 | invalid name, source not found, YAML parse failure, path-traversal blocked, `--all` with no proposals |
 
 ## Output (in chat)
