@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""test_session_monitor.py — unit tests for the /dev-kit:session-monitor tool.
+"""test_session_monitor.py — unit tests for the session_monitor CLI tool.
 
 Covers the pure logic (status derivation, process attribution, agent-graph
 builder, process/worktree mapping, resume-command builder, session
 collection, picker row construction). The interactive picker and the
-os.execvp resume hand-off require a real TTY and are verified manually
-per the skill doc.
+os.execvp resume hand-off require a real TTY and are verified manually.
 """
 from __future__ import annotations
 
