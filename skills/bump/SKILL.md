@@ -26,7 +26,7 @@ Bumps `.claude-plugin/plugin.json:version` (default `patch`, or `minor` / `major
 2. Default = `patch`. `minor` / `major` reset the trailing components to 0 (semver §11).
 3. Refuses to bump if `HEAD_MSG` already matches `^chore\(release\): bump dev-kit to v${CURRENT_VERSION}(\ \(#[0-9]+\))?(\[skip ci\])?$` — same idempotency shape as `version-bump.yml:98`. Prevents double-bump loops when the user re-runs after a successful workflow.
 4. Refuses to bump if `.claude-plugin/plugin.json` differs from `HEAD:.claude-plugin/plugin.json` (uncommitted edit guard). User must commit or stash first.
-5. No `--force` to `main`. No `gh pr merge` — the workflow's `peter-evans/enable-pull-request-automerge` action handles auto-merge.
+5. No `--force` to `main`. No `gh pr merge`, ever — merging into `main` is always a human action. This skill only opens the bump PR; a human merges it.
 
 ## Pre-flight
 
@@ -113,12 +113,7 @@ gh pr create \
   --title "chore(release): bump dev-kit to v${NEW_VERSION}" \
   --body "$BODY"
 
-# 6. Optional auto-merge (only with --auto-merge flag)
-if [ "${2:-}" = "--auto-merge" ]; then
-  gh pr merge --auto --squash "$BRANCH"
-fi
-
-# 7. Hand-off
+# 6. Hand-off
 mkdir -p .dev-kit/hand-off
 cat > ".dev-kit/hand-off/bump→ship.md" <<EOF
 # bump -> ship hand-off
@@ -145,7 +140,8 @@ echo "wrote .dev-kit/hand-off/bump→ship.md"
 | Hook | Mode | Why |
 |---|---|---|
 | `stop-verify` | ON | MUST-L3: every "done" must quote `gh pr view --json number` + `git log -1 --format=%H` |
-| `bash-guard` | ON | Mirrors `babysit-pr`; guards `git push --force` and `gh pr merge` patterns |
+| `bash-guard` | ON | Guards `git push --force` patterns |
+| `git-guard` | ON | Hard-blocks `gh pr merge` (any invocation); a human merges the bump PR |
 | `secret-scan` | ON | `.claude-plugin/plugin.json` is not a credential carrier but the hook is globally on |
 | `tdd-guard` | OFF | Bump is a release tool, not test authoring |
 | `slop-detector` | OFF | Single-line bump commit, no prose to scan |

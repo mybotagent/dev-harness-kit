@@ -66,8 +66,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
-    # The bump content is version-bump.yml-generated and is auto-merged by
-    # `peter-evans/enable-pull-request-automerge`. Running /dev-kit:review
+    # The bump content is version-bump.yml-generated and merged by a
+    # human (auto-merge is disabled by policy). Running /dev-kit:review
     # on it would only confirm "plugin.json version bumped by 0.0.1" — no
     # reviewable change. Replaces the previous `[skip ci]` literal that
     # globally suppressed ALL workflows on the bump commit (which broke
