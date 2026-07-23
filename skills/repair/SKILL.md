@@ -10,6 +10,7 @@ disallowed-tools: Edit Write
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:repair — Eval-Repair Loop (Human Review terminal)
 

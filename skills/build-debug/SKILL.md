@@ -10,6 +10,7 @@ disallowed-tools: Edit Write WebFetch
 model: opus
 user-invocable: false
 ---
+> [← Skills index](../../README.md)
 
 # build-debug — Systematic Debugging (4 Phase)
 

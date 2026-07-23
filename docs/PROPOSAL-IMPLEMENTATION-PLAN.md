@@ -51,7 +51,7 @@
 ### User-friendly 요구사항 (모든 Phase에 적용)
 
 1. **명확한 슬래시** — `/dev-kit:<verb>` 0-arg 기본 + 옵션은 플래그
-2. **시각적 리포트** — `.dev-kit/report.html`, `docs/proposals/*.html` 자동 렌더
+2. **시각적 리포트** — `.dev-kit/report.html`, `docs/proposals/<main>/<sub>.html` 자동 렌더
 3. **도움말 + 예시** — 모든 `--help` 출력에 사용 예시 포함
 4. **에러는 친절하게** — `error: gh not installed. Install: brew install gh` 형태
 5. **기본값 합리적** — `--max-phase=2`, `--n-judges=3`, `--safety-valve=8` 모두 기본값
@@ -89,7 +89,7 @@
 - `docs/<module>.md` 1-pager 형식 (각 신규 lib / bin 모듈)
 - 포함: 목적, 사용법 (3개 시나리오), API 요약, 결정적/비결정적 분류, 예제 출력
 - `docs/PROPOSAL-IMPLEMENTATION-PLAN.md` (본 문서) — 모든 신규 모듈의 상위 참조
-- `docs/proposals/*.html` — 디자인 의도 기록 (이미 구축됨)
+- `docs/proposals/<main>/<sub>.html` — 디자인 의도 기록 (이미 구축됨)
 
 ### Acceptance criteria 보강
 
@@ -510,10 +510,10 @@ Phase 0 (portability)
 
 ## §9 Related
 
-- [Design proposal](proposals/00-index.html) — 13-file topic structure
-- [`docs/proposals/03-ambiguity-resolver.html`](proposals/03-ambiguity-resolver.html) — Interview design with plan-alignment
-- [`docs/proposals/10-decision-record.html`](proposals/10-decision-record.html) — 8 locked decisions
-- [`docs/proposals/11-migration-phases.html`](proposals/11-migration-phases.html) — Phase 0–7 detail
+- [Design proposal index](proposals/harness-architecture/00-index.html) — 13-file topic structure
+- [`docs/proposals/harness-architecture/ambiguity-resolver.html`](proposals/harness-architecture/ambiguity-resolver.html) — Interview design with plan-alignment
+- [`docs/proposals/harness-architecture/decision-record.html`](proposals/harness-architecture/decision-record.html) — 8 locked decisions
+- [`docs/proposals/harness-architecture/migration-phases.html`](proposals/harness-architecture/migration-phases.html) — Phase 0–7 detail
 - `skills/plan/SKILL.md` — Plan loop precedent (5-field safety contract)
 - `lib/llm_judge.py` — LLM judge infrastructure
 - `lib/execute.py` — Step state machine

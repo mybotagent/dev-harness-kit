@@ -11,6 +11,7 @@ disallowed-tools: Write Edit WebFetch
 model: haiku
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:ship — Release Gate
 

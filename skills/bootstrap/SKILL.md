@@ -11,6 +11,7 @@ disallowed-tools: Agent WebFetch
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:bootstrap — Minimal First-Run Setup
 

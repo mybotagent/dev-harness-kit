@@ -9,6 +9,7 @@ allowed-tools: Read Write Edit
 model: haiku
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:config — Inter-Skill Selector
 

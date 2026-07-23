@@ -4,7 +4,7 @@ Covers:
 - List mode (`--list`)
 - Render-one mode
 - Path-traversal guard (reviewer finding from PR #319)
-- Slug validation
+- Slug validation (two-level `<main>/<sub>` shape)
 - Round-trip via subprocess (exercises the actual `__main__` block,
   not just the inner functions).
 """
@@ -26,7 +26,7 @@ class RenderProposalMainTests(unittest.TestCase):
     #   (2) `proposals_dir not in src_resolved.parents` — defense in depth
     # Either error message indicates successful rejection. Tests below
     # accept both messages.
-    REJECT_PATTERNS = ("path traversal", "invalid proposal name")
+    REJECT_PATTERNS = ("path traversal", "invalid proposal name", "invalid proposal topic")
 
     def _run(self, args: list[str], tmp_cwd: Path) -> subprocess.CompletedProcess:
         env = os.environ.copy()
@@ -65,27 +65,38 @@ class RenderProposalMainTests(unittest.TestCase):
         self._assert_rejected(["/etc/passwd"])
 
     def test_subdirectory_traversal_rejected(self):
-        self._assert_rejected(["subdir/name"])
+        # The two-level slug regex rejects `..` segments; `valid/..` has
+        # a `..` segment on the right and is rejected before any
+        # filesystem touch.
+        self._assert_rejected(["valid/.."])
+        # `valid/sub/extra` is rejected (too many levels; exactly one `/`
+        # is allowed).
+        self._assert_rejected(["valid/sub/extra"])
 
     def test_dotdot_in_name_rejected(self):
+        # `..` and `foo..bar` are rejected because the segment is not
+        # a valid kebab/snake slug.
         self._assert_rejected(["foo..bar"])
+        self._assert_rejected([".."])
 
     def test_special_chars_rejected(self):
-        # Note: empty string is handled by argparse (argparse rejects
-        # missing positional); test other invalid slugs that argparse
-        # accepts but the path-traversal guard must reject.
-        for bad in ["foo/bar", "foo\\bar", "foo;rm", "foo bar"]:
+        # `foo/bar` is now a VALID two-level slug (both segments are
+        # kebab). Move it to the kebab-valid test below. The remaining
+        # entries are still rejected by the slug regex.
+        for bad in ["foo\\bar", "foo;rm", "foo bar", "main/foo bar",
+                    "foo bar/sub"]:
             self._assert_rejected([bad])
 
-    def test_valid_kebab_name_accepted_at_validation_layer(self):
-        """A valid name that doesn't exist still fails at the source-not-found
-        check, not at the path-traversal check."""
+    def test_valid_two_level_slug_accepted_at_validation_layer(self):
+        """A valid `<main>/<sub>` that doesn't exist still fails at the
+        source-not-found check, not at the path-traversal check."""
         with tempfile.TemporaryDirectory() as td:
-            r = self._run(["valid-name-123"], Path(td))
+            r = self._run(["valid-name-123/sub-name"], Path(td))
             self.assertEqual(r.returncode, 1)
             self.assertIn("source not found", r.stderr)
             self.assertNotIn("path traversal", r.stderr)
             self.assertNotIn("invalid proposal name", r.stderr)
+            self.assertNotIn("invalid proposal topic", r.stderr)
 
 
 if __name__ == "__main__":

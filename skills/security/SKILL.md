@@ -11,6 +11,7 @@ allowed-tools: Read Grep Glob Bash Agent
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 OWASP Top 10 audit (10 dimensions, parallel fan-out). Delegates to `lib.analysis_core.run_analysis(dimensions=group("security"), mode="read-only", paths=...)`. Separate from `/dev-kit:review` (different dims, deeper security focus).
 

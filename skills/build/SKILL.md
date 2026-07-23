@@ -12,6 +12,7 @@ disallowed-tools: WebFetch
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 ## What it does
 

@@ -110,6 +110,13 @@ blockquote {
   color: var(--muted);
 }
 .section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.back-link {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.back-link a { color: var(--accent); }
+.back-link a:hover { text-decoration: underline; }
 .toc {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -134,12 +141,12 @@ a:hover { text-decoration: underline; }
 <h2 id="sec-0">Overview (이 디렉터리를 어떻게 읽을 것인가)</h2>
 <p>이 디렉터리는 issue <strong>#280</strong>을 종료하기 위한 설계 제안을 <strong>13개의 주제별 파일</strong>로 재구성한 것이다. 각 파일은 하나의 주제를 다루며 서로 상호 참조한다.</p>
 <p><strong>읽는 순서</strong> (3가지 경로):</p>
-<ul><li><strong>빠른 이해 (20분)</strong>: 01 — MCP (01-protocol-layer.html) → 02 — LCS (02-live-context-server.html) → 09 — 통합 (09-consolidated-architecture.html) → 10 — 결정 (10-decision-record.html) → 11 — 마이그레이션 (11-migration-phases.html)</li><li><strong>구현 준비 (60분)</strong>: 전부 + 12 — 공개 질문 (12-open-questions.html)</li><li><strong>특정 주제 진입</strong>: 아래 색인에서 파일 선택</li></ul>
-<p><strong>핵심 빌드 원칙</strong>: 차세대 모델이 흡수하지 못하는 부분에 alpha를 투입한다. 자세한 분류는 09 — 통합 아키텍처 (09-consolidated-architecture.html) (alpha 회계) 참조.</p>
+<ul><li><strong>빠른 이해 (20분)</strong>: <a href="protocol-layer.html">01 — MCP</a> → <a href="live-context-server.html">02 — LCS</a> → <a href="consolidated-architecture.html">09 — 통합</a> → <a href="decision-record.html">10 — 결정</a> → <a href="migration-phases.html">11 — 마이그레이션</a></li><li><strong>구현 준비 (60분)</strong>: 전부 + <a href="open-questions.html">12 — 공개 질문</a></li><li><strong>특정 주제 진입</strong>: 아래 색인에서 파일 선택</li></ul>
+<p><strong>핵심 빌드 원칙</strong>: 차세대 모델이 흡수하지 못하는 부분에 alpha를 투입한다. 자세한 분류는 <a href="consolidated-architecture.html">09 — 통합 아키텍처</a> (alpha 회계) 참조.</p>
 <hr class="section-divider">
 
 <h2 id="sec-1">색인 (12개 주제 파일)</h2>
-<table><thead><tr><th>#</th><th>파일</th><th>주제</th><th>핵심 질문</th></tr></thead><tbody><tr><td>01</td><td>01-protocol-layer.html (01-protocol-layer.html)</td><td>MCP 와이어 프로토콜</td><td>런타임이 외부 서버와 어떻게 대화하는가</td></tr><tr><td>02</td><td>02-live-context-server.html (02-live-context-server.html)</td><td>LCS — 상태 리더</td><td>에이전트가 git/gh에 셸아웃하는 것을 어떻게 멈추게 하는가</td></tr><tr><td>03</td><td>03-ambiguity-resolver.html (03-ambiguity-resolver.html)</td><td>인터뷰 하네스</td><td>구현 전 플랜 모호함을 어떻게 해소하는가</td></tr><tr><td>04</td><td>04-quality-judge.html (04-quality-judge.html)</td><td>평가 하네스</td><td>AI 산출물 품질을 어떻게 다차원 채점하는가</td></tr><tr><td>05</td><td>05-value-gate.html (05-value-gate.html)</td><td>플랜 가치 평가</td><td>인터뷰 완료 플랜의 구현 가치를 어떻게 판단하는가</td></tr><tr><td>06</td><td>06-external-verifier.html (06-external-verifier.html)</td><td>리서치 하네스 (Phase 0–3 에스컬레이션)</td><td>플랜을 외부 자료로 어떻게 검증하는가</td></tr><tr><td>07</td><td>07-runtime-portability.html (07-runtime-portability.html)</td><td>런타임 중립성 (결정 8)</td><td>Claude Code + Codex 양쪽에서 어떻게 동등 동작하는가</td></tr><tr><td>08</td><td>08-external-references.html (08-external-references.html)</td><td>외부 참조 비판</td><td>insane-search / hermes / AEGIS에서 무엇을 차용하고 기각하는가</td></tr><tr><td>09</td><td>09-consolidated-architecture.html (09-consolidated-architecture.html)</td><td>통합 아키텍처</td><td>6개 하네스 + 어댑터 계층이 어떻게 맞물려 도는가</td></tr><tr><td>10</td><td>10-decision-record.html (10-decision-record.html)</td><td>결정 기록 (8개 잠금)</td><td>왜 그 결정을 잠갔고, 무엇에 영향을 미치는가</td></tr><tr><td>11</td><td>11-migration-phases.html (11-migration-phases.html)</td><td>마이그레이션 단계 (Phase 0–7)</td><td>어떤 PR이 어떤 순서로 출시되는가</td></tr><tr><td>12</td><td>12-open-questions.html (12-open-questions.html)</td><td>공개 질문 (#280 스레드)</td><td>컨센서스가 필요한 결정은 무엇인가</td></tr></tbody></table>
+<table><thead><tr><th>#</th><th>파일</th><th>주제</th><th>핵심 질문</th></tr></thead><tbody><tr><td>01</td><td><a href="protocol-layer.html">01-protocol-layer.html</a></td><td>MCP 와이어 프로토콜</td><td>런타임이 외부 서버와 어떻게 대화하는가</td></tr><tr><td>02</td><td><a href="live-context-server.html">02-live-context-server.html</a></td><td>LCS — 상태 리더</td><td>에이전트가 git/gh에 셸아웃하는 것을 어떻게 멈추게 하는가</td></tr><tr><td>03</td><td><a href="ambiguity-resolver.html">03-ambiguity-resolver.html</a></td><td>인터뷰 하네스</td><td>구현 전 플랜 모호함을 어떻게 해소하는가</td></tr><tr><td>04</td><td><a href="quality-judge.html">04-quality-judge.html</a></td><td>평가 하네스</td><td>AI 산출물 품질을 어떻게 다차원 채점하는가</td></tr><tr><td>05</td><td><a href="value-gate.html">05-value-gate.html</a></td><td>플랜 가치 평가</td><td>인터뷰 완료 플랜의 구현 가치를 어떻게 판단하는가</td></tr><tr><td>06</td><td><a href="external-verifier.html">06-external-verifier.html</a></td><td>리서치 하네스 (Phase 0–3 에스컬레이션)</td><td>플랜을 외부 자료로 어떻게 검증하는가</td></tr><tr><td>07</td><td><a href="runtime-portability.html">07-runtime-portability.html</a></td><td>런타임 중립성 (결정 8)</td><td>Claude Code + Codex 양쪽에서 어떻게 동등 동작하는가</td></tr><tr><td>08</td><td><a href="external-references.html">08-external-references.html</a></td><td>외부 참조 비판</td><td>insane-search / hermes / AEGIS에서 무엇을 차용하고 기각하는가</td></tr><tr><td>09</td><td><a href="consolidated-architecture.html">09-consolidated-architecture.html</a></td><td>통합 아키텍처</td><td>6개 하네스 + 어댑터 계층이 어떻게 맞물려 도는가</td></tr><tr><td>10</td><td><a href="decision-record.html">10-decision-record.html</a></td><td>결정 기록 (8개 잠금)</td><td>왜 그 결정을 잠갔고, 무엇에 영향을 미치는가</td></tr><tr><td>11</td><td><a href="migration-phases.html">11-migration-phases.html</a></td><td>마이그레이션 단계 (Phase 0–7)</td><td>어떤 PR이 어떤 순서로 출시되는가</td></tr><tr><td>12</td><td><a href="open-questions.html">12-open-questions.html</a></td><td>공개 질문 (#280 스레드)</td><td>컨센서스가 필요한 결정은 무엇인가</td></tr></tbody></table>
 <hr class="section-divider">
 
 <h2 id="sec-2">빌드 원칙 (4 위험 계층, L7 정렬)</h2>
@@ -149,12 +156,12 @@ a:hover { text-decoration: underline; }
 
 <h2 id="sec-3">외부 참조 (3개, 비판적 통합)</h2>
 <table><thead><tr><th>참조</th><th>차용</th><th>기각</th></tr></thead><tbody><tr><td><code>fivetaku/insane-search</code></td><td>Phase 0–3 에스컬레이션 로직, "인증 만나면 중단" 경계</td><td>Claude <code>/plugin</code> 배포, 도구 실패 훅 트리거, host auto-install</td></tr><tr><td><code>nousresearch/hermes-agent</code></td><td>자기 개선 비전 (메모리 + 스킬)</td><td>자가 평가 메커니즘 (외부 검증 부재)</td></tr><tr><td><code>HarnessX / AEGIS</code> (AI Times 2026-07-21)</td><td>Critic + verification 게이트 패턴</td><td>자동 하네스 코드 생성, Opus 메타 에이전트 의존, 내부 verification</td></tr></tbody></table>
-<p>상세: 08 — 외부 참조 비판 (08-external-references.html).</p>
+<p>상세: <a href="external-references.html">08 — 외부 참조 비판</a>.</p>
 <hr class="section-divider">
 
 <h2 id="sec-4">8개 잠금 결정 (요약)</h2>
 <table><thead><tr><th>#</th><th>결정</th></tr></thead><tbody><tr><td>1</td><td>자동 코드 생성 = 기각 (L7)</td></tr><tr><td>2</td><td>자가 평가 = 기각 (외부 검증 부재)</td></tr><tr><td>3</td><td>벤더 종속 배포 = 기각 (표준 프로토콜 위배)</td></tr><tr><td>4</td><td>Opus-class 메타 에이전트 = 기각 (L7 + 예산)</td></tr><tr><td>5</td><td>인용 강제 = 잠금 (리서치 정확성)</td></tr><tr><td>6</td><td>verification 게이트 = 잠금 (외부 검증 강제)</td></tr><tr><td>7</td><td>Phase 5 = 4단계 에스컬레이션 (insane-search 차용)</td></tr><tr><td>8</td><td><strong>단일 런타임 종속 = 기각</strong> (Claude Code + Codex 동등 동작 필수)</td></tr></tbody></table>
-<p>각 결정의 근거와 영향 범위: 10 — 결정 기록 (10-decision-record.html).</p>
+<p>각 결정의 근거와 영향 범위: <a href="decision-record.html">10 — 결정 기록</a>.</p>
 <hr class="section-divider">
 
 <h2 id="sec-5">마이그레이션 단계 (요약)</h2>
@@ -166,11 +173,11 @@ a:hover { text-decoration: underline; }
 <p><strong>Phase 5 (리서치 강화)</strong> — <code>lib/research_engine.py</code> + Phase 0–3 에스컬레이션 + 인용 verification.</p>
 <p><strong>Phase 6 (인터뷰)</strong> — <code>lib/interview_engine.py</code> + plan 통합.</p>
 <p><strong>Phase 7 (하네스 감사)</strong> — <code>skills/harness-audit/SKILL.md</code>.</p>
-<p>각 단계별 파일 diff + 위험: 11 — 마이그레이션 단계 (11-migration-phases.html).</p>
+<p>각 단계별 파일 diff + 위험: <a href="migration-phases.html">11 — 마이그레이션 단계</a>.</p>
 <hr class="section-divider">
 
 <h2 id="sec-6">공개 질문 (#280 스레드)</h2>
-<p>9개 질문이 컨센서스를 기다린다. 전체 목록과 어느 파일에서 발생했는지: 12 — 공개 질문 (12-open-questions.html).</p>
+<p>9개 질문이 컨센서스를 기다린다. 전체 목록과 어느 파일에서 발생했는지: <a href="open-questions.html">12 — 공개 질문</a>.</p>
 <p>핵심 3개:</p>
 <ul><li><strong>결정 8 범위</strong>: Phase 0에서 claude_code만 출시, codex는</li></ul>
 <p>Phase 1과 동시 출시가 적절한가?</p>
@@ -198,6 +205,6 @@ a:hover { text-decoration: underline; }
 
 <hr class="section-divider">
 
-<footer>Generated 2026-07-22 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
 </body>
 </html>

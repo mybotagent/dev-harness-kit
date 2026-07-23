@@ -14,6 +14,7 @@ model: haiku
 user-invocable: true
 disable-model-invocation: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:cost-gate -- read-only cost measurement
 

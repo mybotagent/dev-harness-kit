@@ -13,6 +13,7 @@ model: opus
 disable-model-invocation: false
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 ## What it does
 

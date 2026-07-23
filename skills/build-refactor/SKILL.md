@@ -11,6 +11,7 @@ disallowed-tools: WebFetch Agent
 model: sonnet
 user-invocable: false
 ---
+> [← Skills index](../../README.md)
 
 # build-refactor — 4-Pass Cleanup
 

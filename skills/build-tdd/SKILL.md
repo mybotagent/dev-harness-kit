@@ -11,6 +11,7 @@ disallowed-tools: WebFetch Agent
 model: opus
 user-invocable: false
 ---
+> [← Skills index](../../README.md)
 
 # build-tdd — Red-Green-Refactor
 

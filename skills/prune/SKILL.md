@@ -13,6 +13,7 @@ disallowed-tools: Edit WebFetch
 model: opus
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 Whole-pipeline **deletion** sweep. `/dev-kit:inspect` baseline → 3-pass delete
 via `lib.analysis_core.run_analysis(..., mode="delete", ...)` → `/dev-kit:review`.

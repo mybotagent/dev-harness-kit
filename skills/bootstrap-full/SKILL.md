@@ -13,6 +13,7 @@ model: opus
 disable-model-invocation: false
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:bootstrap-full — One-Shot Setup (CLAUDE.md + CI)
 

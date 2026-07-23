@@ -7,7 +7,7 @@ when_to_use: |
   - User types /dev-kit:plan with an idea
   - User wants PRD regenerated
   - Resume from .dev-kit/decision-log.md (HOLD after pause)
-allowed-tools: Read Write Glob AskUserQuestion
+allowed-tools: Read Write Glob AskUserQuestion Skill
 disallowed-tools: Bash Edit NotebookEdit WebFetch
 model: opus
 disable-model-invocation: true
@@ -19,6 +19,7 @@ safety:
   dedup_metric: identical-ambiguity-cycle=2
   user_interrupt: true
 ---
+> [← Skills index](../../README.md)
 
 ## Worktree precondition (REQUIRED — fail-closed)
 
@@ -345,6 +346,87 @@ Then:
 - Append final cycle to `.dev-kit/loop-log.json` (MUST-16).
 - Write `.dev-kit/hand-off/plan→build.md` summarizing the plan for the build
   stage.
+- **Auto-render the design proposal** (see "Proposal auto-invoke" below) —
+  the final cleanup step of Gate 5/5 is to materialize the proposal HTML
+  the reviewer will see before `/dev-kit:build` is invoked.
+
+## Proposal auto-invoke (Gate 5/5 final step)
+
+Gate 5/5 ends with a single, deterministic handoff to the
+`/dev-kit:proposal` skill so the design record is auto-rendered at
+`docs/proposals/<main>/<sub>.html`. The chain becomes
+**plan → proposal → build**; the user no longer has to remember to run
+`/dev-kit:proposal` manually.
+
+### Slug derivation
+
+The proposal topic is `<main>/<sub>`:
+
+- `<main>` = the umbrella. For this project the umbrella is hardcoded
+  to `harness-architecture` (the design-domain name for issue #280's
+  12 sub-topics + 00-index). A future PR can externalize it to a
+  project-level config if a different umbrella is needed.
+- `<sub>` = the phase directory name (the `<name>` in `phases/<name>/`
+  emitted in Gate 4/5). One source of truth — same name as the
+  phase directory, same name as the proposal sub-topic, same name
+  as the worktree branch base's `<phase>` segment.
+
+If the phase name violates the proposal-slug regex
+(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`),
+the proposal skill will reject the render and Gate 5/5 surfaces the
+slug error in the hand-off — the user is asked to rename the phase,
+not the proposal.
+
+### YAML emission
+
+Write `docs/proposals/<main>/<sub>.yaml` with the canonical
+shape (see `skills/proposal/SKILL.md` "Authoring a proposal"). Each
+PRD § becomes one proposal `section` (title = PRD heading, body = PRD
+section text, reduced to the markdown-lite subset the proposal
+renderer understands). Frontmatter:
+
+- `title`: PRD §1 goal (1-line, from Gate 1 `goal`).
+- `status`: `design-discussion` (plan just finished, review not yet
+  started).
+- `issue`: the issue number from the plan context if known; omit
+  otherwise.
+- `date`: today's date in KST.
+- `tags`: `[<phase-name>]` plus any tag the user supplied in Gate 1.
+
+Do NOT edit or move existing proposal files; the auto-emit only
+writes `<main>/<sub>.yaml` for the current phase's sub-topic.
+If the sub-topic already exists with a different content, the
+proposal skill must refuse to overwrite (it has no overwrite flag)
+and Gate 5/5 surfaces the conflict for the user to resolve.
+
+### Render invocation
+
+Call the proposal skill with the topic slug:
+
+```text
+Skill("proposal", topic="<main>/<sub>")
+```
+
+The proposal skill reads `<main>/<sub>.yaml` and writes
+`<main>/<sub>.html` via
+`python3 -m lib.render_proposal_html <main>/<sub>`. The plan skill's
+`disallowed-tools: Bash` deliberately does not block this — `Skill`
+is its own tool and the proposal skill internally has Bash
+permission.
+
+### Hand-off chain
+
+On success, the chain emitted in
+`.dev-kit/hand-off/plan→build.md` becomes:
+
+1. `plan` (this skill) — `PRD.md` + `phases/<name>/`
+2. `proposal` (auto-invoked) — `docs/proposals/<main>/<sub>.html`
+3. `build` (user-invoked next) — implementation
+
+`§6 Hand-off` in PRD.md must list `/dev-kit:proposal <main>/<sub>` as
+the "review artifact" link in addition to `/dev-kit:build` as the
+next stage. This makes the proposal visible from the PRD itself, not
+only from the skill chain.
 
 ## Rules (no exceptions)
 
@@ -370,9 +452,15 @@ On PRD.md complete:
 - `state_codec.transition_stage(root, "build")`
 - `state_codec.append_hand_off(root, "plan", "build", "...")` auto
 - Write `.dev-kit/hand-off/plan→build.md`
+- **Auto-invoke `/dev-kit:proposal <main>/<sub>`** (see "Proposal
+  auto-invoke") to materialize the design record at
+  `docs/proposals/<main>/<sub>.html`.
 - Wait for `/dev-kit:build` invocation
 
 ## Next step
 
 `/dev-kit:build` — converts `phases/<name>/step<N>.md` into per-step
-implementation via harness-runner.
+implementation via harness-runner. The design record is at
+`docs/proposals/<main>/<sub>.html` (auto-rendered by Gate 5/5's
+proposal step), so reviewers can read the proposal before the build
+starts.

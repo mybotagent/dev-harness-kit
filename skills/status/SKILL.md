@@ -10,6 +10,7 @@ disallowed-tools: Bash Edit Write
 model: haiku
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # @dev-kit:status — HOTL visualization
 

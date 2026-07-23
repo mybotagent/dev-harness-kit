@@ -13,6 +13,7 @@ disallowed-tools: Agent WebFetch
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:ci-setup — Install CI Templates
 

@@ -12,6 +12,7 @@ disallowed-tools: Write Edit
 model: opus
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
 
