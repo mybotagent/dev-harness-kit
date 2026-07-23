@@ -140,6 +140,8 @@ tool calls. Use `--days 0` for all-time data, `--top 0` for all skills, and
 `--cwd` to scope the report. An empty report means capture is disabled or the
 selected logs do not match the configured window/glob; it is not a usage ranking.
 
+Use `/dev-kit:skill-usage` for the same report through the command interface.
+
 Related tools:
 
 ```bash

@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-COMMAND_FILES = ("adapt", "shortcut-tdd-fast", "shortcut-quick-fix")
+COMMAND_FILES = ("adapt", "shortcut-tdd-fast", "shortcut-quick-fix", "skill-usage")
 SRC_DIR = PROJECT_ROOT / "commands"
 INSTALL_SH = PROJECT_ROOT / "bin" / "install-commands.sh"
 
