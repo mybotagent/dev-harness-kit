@@ -13,6 +13,7 @@ disallowed-tools: Write Edit WebFetch Agent
 model: haiku
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:log — Toggle loghooks on/off
 

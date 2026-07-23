@@ -13,6 +13,7 @@ disallowed-tools: Write Edit
 model: haiku
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:token-analyzer -- token efficiency dashboard
 

@@ -11,6 +11,7 @@ disallowed-tools: Write Edit
 model: haiku
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 Cross-cutting audit. Read-only. Delegates to `lib.analysis_core.run_analysis(dimensions=group("audit"), mode="read-only", paths=...)` for the slop+secret sweep. Outdated-skill drift uses `lib.ci_setup.py:per_skill_drift` directly.
 

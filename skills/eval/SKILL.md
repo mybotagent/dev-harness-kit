@@ -19,6 +19,7 @@ safety:
   dedup_metric: identical-case-score=2
   user_interrupt: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:eval — Agent-Behavior Eval (3 dims, 20-checkbox code-sanity)
 

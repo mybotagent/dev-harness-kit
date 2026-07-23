@@ -13,6 +13,7 @@ disallowed-tools: Edit WebFetch
 model: sonnet
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 Whole-pipeline refactor. `/dev-kit:inspect` baseline → `/dev-kit:build-refactor`
 (4-pass: dead → dup → naming → coverage) → `/dev-kit:review`. Phases are

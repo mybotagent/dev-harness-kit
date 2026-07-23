@@ -11,6 +11,7 @@ allowed-tools: Read Grep Glob Bash Agent
 model: opus
 disable-model-invocation: false
 ---
+> [← Skills index](../../README.md)
 
 Multi-dim code review. Delegates to `lib.analysis_core.run_analysis(dimensions=group("review"), mode="read-only", paths=...)`. The engine owns the registry, evidence schema, FP filter, verifier, renderer. This skill owns the parallel Agent fan-out, the verifier call, and the inline + summary rendering.
 

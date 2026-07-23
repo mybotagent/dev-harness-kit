@@ -11,6 +11,7 @@ sibling /dev-kit:report renderer.
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -168,11 +169,32 @@ class RenderBodyTests(unittest.TestCase):
         out = rph.render_body("[x](https://a.com/x?y=z&q=v)")
         self.assertIn('href="https://a.com/x?y=z&amp;q=v"', out)
 
-    def test_link_relative_no_scheme_rejected(self):
-        """A bare relative path has no scheme and would resolve to
-        file://. Reject."""
-        out = rph.render_body("[x](../etc/passwd)")
-        self.assertNotIn("<a", out)
+    def test_link_relative_path_allowed(self):
+        """A bare relative path is the way cross-document links work
+        inside docs/proposals/&lt;main&gt;/ (e.g. `[label](protocol-layer.html)`,
+        `[label](../&lt;other-main&gt;/...)`, `[label](./sibling.html)`).
+        When the proposal HTML is opened from `file://`, those relative
+        paths resolve to OTHER FILES on the local filesystem, not to
+        `file://` URLs. They MUST render as `<a>` tags. The dangerous
+        schemes (javascript:, data:, vbscript:, file:) are still
+        rejected -- the allowlist is per-scheme, not per-href-shape.
+        """
+        # Bare sibling path
+        out = rph.render_body("[protocol](protocol-layer.html)")
+        self.assertIn('href="protocol-layer.html"', out)
+        self.assertIn(">protocol</a>", out)
+        # Parent-traversal
+        out = rph.render_body("[up](../sibling.html)")
+        self.assertIn('href="../sibling.html"', out)
+        self.assertIn(">up</a>", out)
+        # Current-dir prefix
+        out = rph.render_body("[here](./sibling.html)")
+        self.assertIn('href="./sibling.html"', out)
+        self.assertIn(">here</a>", out)
+        # Path-absolute
+        out = rph.render_body("[abs](/docs/proposals/foo.html)")
+        self.assertIn('href="/docs/proposals/foo.html"', out)
+        self.assertIn(">abs</a>", out)
 
     def test_unordered_list(self):
         out = rph.render_body("- one\n- two\n- three")
@@ -372,22 +394,15 @@ class RenderFromYamlTests(unittest.TestCase):
         self.assertIn("<h1>T</h1>", html)
 
     def test_example_file_renders(self):
-        path = SCRIPT_DIR.parent / "docs/proposals/harness-architecture.yaml"
+        path = SCRIPT_DIR.parent / "docs/proposals/harness-architecture/00-index.yaml"
         if not path.exists():
             self.skipTest("example file not present")
         html = rph.render_from_yaml(path.read_text(encoding="utf-8"))
-        self.assertIn("Harness Architecture Proposal", html)
-        self.assertIn("When MCP harness is most needed", html)
-        # Each section title must appear as a heading.
-        for title in [
-            "TL;DR",
-            "MCP vs document harness",
-            "Hackathon principles mapped to dev-harness-kit",
-            "Strategic direction",
-            "Recommendation",
-            "Open questions",
-        ]:
-            self.assertIn(title, html, f"missing section: {title}")
+        # Sanity: the 00-index page mentions its own title and at least one
+        # sibling cross-reference -- confirms flat-filename layout is wired
+        # up end-to-end and the bare `<sub>.html` refs are present.
+        self.assertIn("Issue #280", html)
+        self.assertIn('href="protocol-layer.html"', html)
 
     def test_render_is_deterministic_when_now_is_fixed(self):
         """Passing a fixed `now` makes render() deterministic so two
@@ -417,6 +432,238 @@ class RenderFromYamlTests(unittest.TestCase):
         out = rph.render(p)
         today_kst = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).strftime("%Y-%m-%d")
         self.assertIn(today_kst, out)
+
+
+# ----- Per-topic directory layout (issue: proposal subdir refactor) ---------
+
+
+class PerTopicLayoutTests(unittest.TestCase):
+    """Cover the docs/proposals/<main>/<sub>.{yaml,html} layout.
+
+    The renderer's CLI surfaces the two-level, flat-filename layout:
+    - `_list_proposals(root)` returns `<main>/<sub>` slugs (one `/`
+      separator) for every `<sub>.yaml` at the umbrella level, sorted
+      by main then sub.
+    - `_render_one(root, "<main>/<sub>")` reads `<main>/<sub>.yaml`
+      and writes `<main>/<sub>.html`.
+    - Path-traversal guard still holds for the new shape: anything not
+      a single `<main>/<sub>` slug is rejected before filesystem touch.
+    """
+
+    def _make(self, root: Path, main: str, sub: str, body: str = "title: T\nstatus: draft\nsections: []\n") -> Path:
+        main_dir = root / "docs" / "proposals" / main
+        main_dir.mkdir(parents=True, exist_ok=True)
+        (main_dir / f"{sub}.yaml").write_text(body, encoding="utf-8")
+        return main_dir
+
+    def test_list_proposals_returns_two_level_slugs_alphabetical(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for main, sub in [("z", "zebra"), ("a", "alpha"), ("a", "middle"),
+                              ("a", "00-index"), ("m", "topic")]:
+                self._make(root, main, sub)
+            # Stash a stray dir under a valid umbrella (the old
+            # one-level layout) -- must be skipped, not surfaced.
+            (root / "docs" / "proposals" / "a" / "scratch").mkdir(parents=True)
+            (root / "docs" / "proposals" / "a" / "scratch" / "notes.txt").write_text("x", encoding="utf-8")
+            # Stash a flat file under proposals/ (pre-refactor legacy) --
+            # must not surface as a topic.
+            (root / "docs" / "proposals" / "00-legacy.yaml").write_text("legacy", encoding="utf-8")
+            # Stash a stray umbrella dir with no sub-topics -- skipped.
+            (root / "docs" / "proposals" / "empty-umbrella").mkdir(parents=True)
+            topics = rph._list_proposals(root)
+            self.assertEqual(
+                topics,
+                [
+                    "a/00-index",
+                    "a/alpha",
+                    "a/middle",
+                    "m/topic",
+                    "z/zebra",
+                ],
+            )
+
+    def test_list_proposals_empty_when_dir_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self.assertEqual(rph._list_proposals(root), [])
+
+    def test_render_one_writes_flat_filename(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._make(root, "main", "alpha")
+            rc = rph._render_one(root, "main/alpha")
+            self.assertEqual(rc, 0)
+            out = root / "docs" / "proposals" / "main" / "alpha.html"
+            self.assertTrue(out.is_file(), f"missing {out}")
+            # The old `<sub>/index.html` shape MUST NOT exist.
+            self.assertFalse(
+                (root / "docs" / "proposals" / "main" / "alpha").exists(),
+                f"stray sub-topic dir created: {root / 'docs/proposals/main/alpha'}",
+            )
+            self.assertIn("<h1>T</h1>", out.read_text(encoding="utf-8"))
+
+    def test_render_one_source_not_found_reports_flat_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rc = rph._render_one(root, "main/missing")
+            self.assertEqual(rc, 1)
+            # Re-run via subprocess for a clean stderr assertion -- the
+            # function writes directly to sys.stderr at module level.
+            import subprocess
+            r = subprocess.run(
+                [sys.executable, "-m", "lib.render_proposal_html",
+                 "main/missing", "--project-root", str(root)],
+                cwd=str(Path(__file__).parent.parent),
+                env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).parent.parent)},
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("main/missing.yaml", r.stderr)
+            self.assertIn("main/missing", r.stderr)
+
+    def test_render_one_rejects_invalid_two_level_slug(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # The two-level regex allows exactly one `/` with valid
+            # kebab/snake on each side. Anything else is rejected.
+            for bad in [
+                "../escape",            # path traversal
+                "no-slash",             # no `/` separator
+                "main/",                # trailing slash
+                "/main/sub",            # leading slash
+                "main//sub",            # double slash
+                "main/./sub",           # dot segment
+                "main/../escape",       # traversal inside
+                "main/sub/extra",       # too many levels
+                "main/foo bar",         # space in sub
+                "main/foo;rm",          # shell metachar
+            ]:
+                rc = rph._render_one(root, bad)
+                self.assertEqual(rc, 1, f"bad topic {bad!r} should be rejected")
+            # No proposal artifacts should have been created.
+            proposals_dir = root / "docs" / "proposals"
+            assert not proposals_dir.exists() or \
+                list(proposals_dir.iterdir()) == [], \
+                f"no proposal artifacts should be created for invalid slugs, found: {list(proposals_dir.iterdir()) if proposals_dir.exists() else 'nothing'}"
+
+    def test_list_proposals_ignores_legacy_shapes(self):
+        """The pre-refactor layouts (flat `<name>.yaml`, one-level
+        `<name>/proposal.yaml`, and the intermediate two-level
+        `<main>/<sub>/index.{yaml,html}`) MUST NOT surface as topics.
+        This pins the flat-filename invariant against any future
+        regression that re-introduces the old shapes."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "docs" / "proposals").mkdir(parents=True)
+            # Flat file (pre-refactor #1)
+            (root / "docs" / "proposals" / "00-index.yaml").write_text("legacy", encoding="utf-8")
+            # One-level dir with the pre-refactor proposal.yaml name
+            (root / "docs" / "proposals" / "old-shape").mkdir(parents=True)
+            (root / "docs" / "proposals" / "old-shape" / "proposal.yaml").write_text("legacy", encoding="utf-8")
+            # Two-level-with-index intermediate shape
+            intermediate = root / "docs" / "proposals" / "intermediate" / "old-sub"
+            intermediate.mkdir(parents=True)
+            (intermediate / "index.yaml").write_text("legacy", encoding="utf-8")
+            # Valid flat-filename two-level topic
+            self._make(root, "real-main", "real-sub")
+            topics = rph._list_proposals(root)
+            self.assertEqual(topics, ["real-main/real-sub"])
+
+
+# ----- Back-to-index nav (auto-detected when sibling 00-index exists) -------
+
+
+class BackToIndexNavTests(unittest.TestCase):
+    """The renderer's CLI auto-attaches a `<nav class="back-link">` to
+    a sub-topic page when a sibling `00-index.yaml` exists in the same
+    umbrella dir. The 00-index page itself gets no back link (it IS
+    the index). The pure function `render()` is unchanged in
+    behaviour unless `back_to_href=` is passed."""
+
+    def _make(self, root: Path, main: str, sub: str, body: str = "title: T\nstatus: draft\nsections: []\n") -> None:
+        main_dir = root / "docs" / "proposals" / main
+        main_dir.mkdir(parents=True, exist_ok=True)
+        (main_dir / f"{sub}.yaml").write_text(body, encoding="utf-8")
+
+    def test_render_pure_function_no_nav_by_default(self):
+        """`render(p)` with no kwargs emits no back-link nav (the pure
+        function default; the CLI driver adds it via filesystem check)."""
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        html = rph.render(p)
+        self.assertNotIn('class="back-link"', html)
+
+    def test_render_pure_function_emits_nav_when_kwarg_set(self):
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        html = rph.render(p, back_to_href="00-index.html")
+        self.assertIn('class="back-link"', html)
+        self.assertIn('href="00-index.html"', html)
+        # Default label = "00-index" (basename without .html)
+        self.assertIn("← 00-index", html)
+
+    def test_render_pure_function_custom_label(self):
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        html = rph.render(
+            p, back_to_href="00-index.html", back_to_label="← Index"
+        )
+        self.assertIn("← Index", html)
+        self.assertNotIn("← 00-index", html)
+
+    def test_render_pure_function_href_escapes_quotes(self):
+        """A `"` in the href must not break the attribute parse."""
+        text = "title: T\nstatus: draft\nsections: []\n"
+        p = rph.parse_proposal_yaml(text)
+        html = rph.render(p, back_to_href='a"b.html')
+        self.assertIn('href="a&quot;b.html"', html)
+
+    def test_cli_subtopic_with_index_sibling_emits_back_link(self):
+        """The CLI's auto-detect wires the back link when the umbrella
+        contains both the current sub-topic AND a sibling `00-index.yaml`."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._make(root, "main", "00-index")
+            self._make(root, "main", "alpha")
+            rc = rph._render_one(root, "main/alpha")
+            self.assertEqual(rc, 0)
+            out = (root / "docs" / "proposals" / "main" / "alpha.html").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('class="back-link"', out)
+            self.assertIn('href="00-index.html"', out)
+            self.assertIn("← 00-index", out)
+
+    def test_cli_index_page_has_no_back_link(self):
+        """The 00-index page is the navigation root; it does NOT need
+        a back link to itself."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._make(root, "main", "00-index")
+            rc = rph._render_one(root, "main/00-index")
+            self.assertEqual(rc, 0)
+            out = (root / "docs" / "proposals" / "main" / "00-index.html").read_text(
+                encoding="utf-8"
+            )
+            # CSS class definitions for `.back-link` are present (in
+            # INLINE_CSS) but the actual <nav> element is not.
+            self.assertNotIn('<nav class="back-link">', out)
+            self.assertNotIn("← 00-index", out)
+
+    def test_cli_subtopic_without_index_sibling_has_no_back_link(self):
+        """When the umbrella has no `00-index.yaml` (e.g. a single
+        standalone proposal that doesn't need navigation), no back
+        link is attached. The sub-topic renders standalone."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._make(root, "main", "lone-sub")
+            rc = rph._render_one(root, "main/lone-sub")
+            self.assertEqual(rc, 0)
+            out = (root / "docs" / "proposals" / "main" / "lone-sub.html").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn('<nav class="back-link">', out)
 
 
 if __name__ == "__main__":

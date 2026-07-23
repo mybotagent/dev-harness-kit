@@ -10,6 +10,7 @@ disallowed-tools: Write Edit WebFetch
 model: haiku
 user-invocable: false
 ---
+> [← Skills index](../../README.md)
 
 # build-verify — Evidence-Before-Done
 

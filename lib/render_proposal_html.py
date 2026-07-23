@@ -1,9 +1,25 @@
 """render_proposal_html.py -- Pure function: YAML proposal -> self-contained HTML.
 
 The /dev-kit:proposal skill hands a YAML proposal file to this module
-and writes the returned HTML to `docs/proposals/<name>.html`. The skill
-body itself stays read-only; the write is the CLI driver's job
+and writes the returned HTML to `docs/proposals/<main>/<sub>.html`.
+The skill body itself stays read-only; the write is the CLI driver's job
 (`bin/dev-kit-proposal.py`).
+
+Layout: every proposal lives at `docs/proposals/<main>/<sub>.{yaml,html}`
+where:
+
+- `<main>` is the umbrella (e.g. `harness-architecture` -- one umbrella
+  groups N related sub-proposals; for issue #280 the umbrella holds 12
+  sub-topics + the 00-index navigation page).
+- `<sub>` is the sub-topic slug (e.g. `protocol-layer`,
+  `live-context-server`, `00-index`). The file is named after the
+  sub-topic -- not `index.{yaml,html}` -- so the leaf is recognisable
+  on a flat directory listing and from a static-site host.
+
+Cross-references from the 00-index page (`<main>/00-index.html`) to a
+sibling are bare `<sub>.html` (no `../` needed, because all files live
+in the same `<main>/` directory and resolve as siblings under `file://`
+and on any static-site host).
 
 Input shape (YAML)::
 
@@ -177,6 +193,13 @@ blockquote {
   color: var(--muted);
 }
 .section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.back-link {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.back-link a { color: var(--accent); }
+.back-link a:hover { text-decoration: underline; }
 .toc {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -260,12 +283,25 @@ def parse_proposal_yaml(text: str) -> Proposal:
 _INLINE_TOKEN_RE = re.compile(
     r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))"
 )
-# Allowlist for hyperlink href schemes. Anything else (javascript:, data:,
-# vbscript:, file:, raw text without a scheme) is rendered as escaped text
-# rather than an executable anchor. file:// is rejected because the
-# proposal HTML is meant to be safe-to-open from file://; allowing file:
-# inside would defeat that.
-_SAFE_URL_SCHEMES = re.compile(r"^(?:https?|mailto):", re.IGNORECASE)
+# Allowlist for hyperlink href schemes. Two classes are accepted:
+#   (a) Explicit safe schemes: `http://`, `https://`, `mailto:`.
+#   (b) Safe relative paths: no scheme (no `:`), starting with `./`,
+#       `../`, a relative segment, or `/`. These are how cross-document
+#       links inside `docs/proposals/<main>/` work between sibling
+#       files (`protocol-layer.html`, `../protocol-layer/index.html`,
+#       etc.) and they resolve under `file://` exactly the way a
+#       browser would resolve them for any other static HTML.
+# Anything else (javascript:, data:, vbscript:, file:) is rendered as
+# escaped text rather than an executable anchor. `file://` is
+# rejected because the proposal HTML is meant to be safe-to-open
+# from `file://`; allowing `file:` links inside would defeat that.
+_SAFE_URL_SCHEMES = re.compile(
+    r"^(?:https?|mailto):",
+    re.IGNORECASE,
+)
+_SAFE_RELATIVE_HREF = re.compile(
+    r"^(?:\.{0,2}/|[A-Za-z0-9_\-./?#=&%]+)$"
+)
 
 
 def _render_inline(text: str) -> str:
@@ -298,15 +334,18 @@ def _render_inline(text: str) -> str:
                 # We must NOT re-escape them or `&amp;` becomes `&amp;amp;`.
                 # Only `"` needs escaping to keep the attribute intact.
                 href_attr = href.replace('"', "&quot;")
-                if _SAFE_URL_SCHEMES.match(href.strip()):
+                href_stripped = href.strip()
+                if _SAFE_URL_SCHEMES.match(href_stripped) or _SAFE_RELATIVE_HREF.match(href_stripped):
                     pieces.append(f'<a href="{href_attr}">{label}</a>')
                 else:
-                    # Disallowed scheme (javascript:, data:, vbscript:, file:,
-                    # relative w/o protocol, raw text). Render as plain text
-                    # with parens so it reads naturally:
+                    # Disallowed scheme (javascript:, data:, vbscript:,
+                    # file:, raw text with a colon-prefixed scheme we
+                    # don't recognize). Render as plain text with parens
+                    # so it reads naturally:
                     # `[click](javascript:alert(1))` -> `click (javascript:alert(1))`.
-                    # Note: the regex consumes `[label](href` and the leftover
-                    # `)` after the match stays in the surrounding text.
+                    # Note: the regex consumes `[label](href` and the
+                    # leftover `)` after the match stays in the
+                    # surrounding text.
                     pieces.append(f"{label} ({href})")
             else:
                 pieces.append(token)
@@ -513,16 +552,30 @@ def _toc(p: Proposal) -> str:
     )
 
 
-def render(p: Proposal, now: Optional[str] = None) -> str:
+def render(
+    p: Proposal,
+    now: Optional[str] = None,
+    back_to_href: Optional[str] = None,
+    back_to_label: Optional[str] = None,
+) -> str:
     """Render a `Proposal` value object to a self-contained HTML document.
 
-    Pure function: no I/O, deterministic given the same input and `now`.
+    Pure function: no I/O, deterministic given the same input and the
+    optional kwargs. (The optional nav kwargs are kept optional so
+    `render(p)` and `render(p, now=...)` keep their existing call
+    sites and determinism contract.)
 
     Args:
         p: the proposal value object.
         now: ISO-format date string for the footer. If `None` (default),
             uses today's date in KST. Pass a fixed string for deterministic
             tests / batch regeneration.
+        back_to_href: optional href for a "← ..." nav bar at the top of
+            the page (e.g. `"00-index.html"`). When set, a small
+            `.back-link` nav element is emitted before the `<h1>`.
+            Default: no nav bar.
+        back_to_label: optional label for the back link. Default: the
+            href's filename (e.g. `00-index.html` -> `00-index`).
     """
     sections_html: List[str] = []
     for i, sec in enumerate(p.sections):
@@ -537,6 +590,24 @@ def render(p: Proposal, now: Optional[str] = None) -> str:
             f'<span class="tag tag-info">{html.escape(t)}</span>' for t in p.tags
         )
         tags_html = f'<div class="tags">{tag_chips}</div>'
+
+    back_link_html = ""
+    if back_to_href:
+        # Default label = the href's basename without extension
+        # (`00-index.html` -> `00-index`, `index.html` -> `index`).
+        href_only = back_to_href.split("?")[0].split("#")[0]
+        basename = href_only.rsplit("/", 1)[-1]
+        if basename.endswith(".html"):
+            basename = basename[: -len(".html")]
+        label = back_to_label if back_to_label is not None else basename
+        # href_attr escapes only the attribute-internal `"` so the
+        # `href` is preserved across HTML attribute parse.
+        href_attr = back_to_href.replace('"', "&quot;")
+        back_link_html = (
+            f'<nav class="back-link">'
+            f'<a href="{href_attr}">← {html.escape(label)}</a>'
+            f'</nav>\n'
+        )
 
     if now is None:
         now = datetime.now(KST).strftime("%Y-%m-%d")
@@ -555,6 +626,7 @@ def render(p: Proposal, now: Optional[str] = None) -> str:
         f"<title>{html.escape(p.title)}</title>\n"
         f"<style>{INLINE_CSS}</style>\n"
         "</head>\n<body>\n\n"
+        f"{back_link_html}"
         f"<h1>{html.escape(p.title)}</h1>\n"
         f'<p class="meta">{_meta_line(p)}</p>\n'
         f"{tags_html}\n"
@@ -578,100 +650,139 @@ def render_from_yaml(text: str) -> str:
 # docs/proposals/), the maintainer regenerates HTML from YAML by invoking
 # this lib as a module:
 #
-#   python3 -m lib.render_proposal_html <name>
+#   python3 -m lib.render_proposal_html <main>/<sub>   # render one
+#   python3 -m lib.render_proposal_html --list          # list <main>/<sub>
+#   python3 -m lib.render_proposal_html --all           # render every topic
+#
+# Each topic lives at docs/proposals/<main>/<sub>.{yaml,html} (flat file,
+# not a subdir). The leaf filename mirrors the sub-topic slug.
 #
 # The CLI lives in the lib (not a separate `bin/dev-kit-proposal.py`) so
 # the path-traversal guard, atomic-write, and error reporting are
 # colocated with the render logic.
-#
-# Usage:
-#   python3 -m lib.render_proposal_html 00-index         # render one
-#   python3 -m lib.render_proposal_html --list            # list proposals
-#   python3 -m lib.render_proposal_html --all             # render all
 
-# --- CLI entry point --------------------------------------------------------
-#
-# Per the proposal-skill design (see skills/proposal/SKILL.md and
-# docs/proposals/), the maintainer regenerates HTML from YAML by invoking
-# this lib as a module:
-#
-#   python3 -m lib.render_proposal_html <name>
-#
-# The CLI lives in the lib (not a separate `bin/dev-kit-proposal.py`) so
-# the path-traversal guard, atomic-write, and error reporting are
-# colocated with the render logic.
-#
-# Usage:
-#   python3 -m lib.render_proposal_html 00-index         # render one
-#   python3 -m lib.render_proposal_html --list            # list proposals
-#   python3 -m lib.render_proposal_html --all             # render all
-
-_NAME_OK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+# Topic slug: `<main>/<sub>`. Both halves are kebab/snake; one `/` separator
+# is allowed; no leading/trailing slash, no double slash, no `.` segments.
+_NAME_OK_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+)
 
 
 def _list_proposals(project_root: Path) -> list[str]:
+    """Return sorted `<main>/<sub>` topic slugs whose `<sub>.yaml` exists.
+
+    Walks every `<main>/` under `docs/proposals/` and, for each
+    `<sub>.yaml` directly at the umbrella level, returns the joined
+    `<main>/<sub>` slug. Reserved legacy canonical names (`proposal`,
+    `index`) are skipped -- those are the names the previous
+    refactors used and they would otherwise be mistaken for a
+    sub-topic slug. Sub-directories (the old "one-level-per-topic"
+    shape) and flat files (the pre-refactor shape) are skipped. The
+    order is `<main>` then `<sub>`, both alphabetical.
+    """
     pdir = project_root / "docs" / "proposals"
     if not pdir.exists():
         return []
-    return sorted(p.stem for p in pdir.glob("*.yaml") if p.is_file())
+    # Reserved file stems that previous refactors used as canonical
+    # names; they must not surface as a sub-topic slug.
+    reserved = {"proposal", "index"}
+    slugs: list[str] = []
+    for main_dir in sorted(pdir.iterdir()):
+        if not main_dir.is_dir():
+            continue
+        for entry in sorted(main_dir.iterdir()):
+            if not (entry.is_file() and entry.name.endswith(".yaml")):
+                continue
+            sub = entry.name[: -len(".yaml")]
+            if sub in reserved:
+                continue
+            slugs.append(f"{main_dir.name}/{sub}")
+    return slugs
 
 
-def _render_one(project_root: Path, name: str) -> int:
-    """Render one proposal. Returns process exit code."""
-    if not _NAME_OK_RE.fullmatch(name):
+def _render_one(project_root: Path, topic: str) -> int:
+    """Render one proposal topic. Returns process exit code."""
+    if not _NAME_OK_RE.fullmatch(topic):
         print(
-            f"error: invalid proposal name {name!r}: must match kebab/snake slug",
+            f"error: invalid proposal topic {topic!r}: "
+            f"must match `<main>/<sub>` (kebab/snake, no dots, no traversal)",
             file=sys.stderr,
         )
         return 1
 
     proposals_dir = (project_root / "docs" / "proposals").resolve()
-    src = proposals_dir / f"{name}.yaml"
-    out = proposals_dir / f"{name}.html"
+    main_dir = proposals_dir / topic.split("/", 1)[0]
+    sub = topic.split("/", 1)[1]
+    src = main_dir / f"{sub}.yaml"
+    out = main_dir / f"{sub}.html"
 
     src_resolved = src.resolve()
     out_resolved = out.resolve()
     if proposals_dir not in src_resolved.parents or proposals_dir not in out_resolved.parents:
-        print(f"error: path traversal blocked ({name!r})", file=sys.stderr)
+        print(f"error: path traversal blocked ({topic!r})", file=sys.stderr)
         return 1
 
     if not src.exists():
         print(f"error: source not found: {src}", file=sys.stderr)
-        print(f"hint: create {src} or run --list", file=sys.stderr)
+        print(
+            f"hint: create {src} (or run --list to see existing topics)",
+            file=sys.stderr,
+        )
         return 1
 
     text = src.read_text(encoding="utf-8")
     try:
-        html_doc = render_from_yaml(text)
+        p = parse_proposal_yaml(text)
     except (ValueError, KeyError) as e:
         print(f"error: failed to parse {src}: {e}", file=sys.stderr)
         return 1
 
+    # Auto-attach a "back to index" nav bar when a sibling
+    # `00-index.yaml` exists in the same umbrella dir AND the current
+    # page is not the index itself. The renderer is a pure function
+    # (no I/O) so the sibling check lives in the CLI driver, not
+    # `render()`.
+    back_to_href: Optional[str] = None
+    if sub != "00-index":
+        sibling_index = main_dir / "00-index.yaml"
+        if sibling_index.is_file():
+            back_to_href = "00-index.html"
+
+    html_doc = render(p, back_to_href=back_to_href)
+
     atomic_write_text(out, html_doc)
     size_kb = len(html_doc.encode("utf-8")) / 1024
-    print(f"wrote {out} ({size_kb:.1f} KB, source: {src.name})")
+    print(f"wrote {out} ({size_kb:.1f} KB, source: {src.relative_to(proposals_dir)})")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python3 -m lib.render_proposal_html",
-        description="Render a docs/proposals/<name>.yaml to <name>.html",
+        description=(
+            "Render docs/proposals/<main>/<sub>.yaml to "
+            "docs/proposals/<main>/<sub>.html"
+        ),
     )
     parser.add_argument(
-        "name",
+        "topic",
         nargs="?",
-        help="proposal name (file: docs/proposals/<name>.yaml)",
+        help=(
+            "topic slug `<main>/<sub>` (sources: "
+            "docs/proposals/<main>/<sub>.yaml)"
+        ),
     )
     parser.add_argument(
         "--project-root", default=".",
         help="project root (default: cwd)",
     )
     parser.add_argument(
-        "--list", action="store_true", help="list available proposals and exit",
+        "--list", action="store_true",
+        help="list available proposal topics and exit",
     )
     parser.add_argument(
-        "--all", action="store_true", help="render all proposals and exit",
+        "--all", action="store_true",
+        help="render every proposal topic and exit",
     )
     args = parser.parse_args(argv)
     root = Path(args.project_root).resolve()
@@ -694,9 +805,11 @@ def main(argv: list[str] | None = None) -> int:
             _render_one(root, n)
         return 0
 
-    if not args.name:
-        parser.error("proposal name required (or pass --list to see available)")
-    return _render_one(root, args.name)
+    if not args.topic:
+        parser.error(
+            "proposal topic required (or pass --list to see available)"
+        )
+    return _render_one(root, args.topic)
 
 
 if __name__ == "__main__":

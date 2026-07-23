@@ -12,6 +12,7 @@ disallowed-tools: Write Edit
 model: haiku
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:report -- HTML report viewer
 

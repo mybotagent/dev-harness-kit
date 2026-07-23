@@ -14,6 +14,7 @@ model: sonnet
 disable-model-invocation: false
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 # /dev-kit:llm-refresh — LLM pricing & model registry refresh
 

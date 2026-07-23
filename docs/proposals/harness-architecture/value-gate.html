@@ -110,6 +110,13 @@ blockquote {
   color: var(--muted);
 }
 .section-divider { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+.back-link {
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.back-link a { color: var(--accent); }
+.back-link a:hover { text-decoration: underline; }
 .toc {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -127,6 +134,7 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>05 — 플랜 가치 평가 하네스 (가치 게이트)</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">plan-value</span><span class="tag tag-info">gate</span><span class="tag tag-info">verification</span><span class="tag tag-info">l7</span></div>
@@ -197,6 +205,6 @@ def valuate(plan: Plan,
 
 <hr class="section-divider">
 
-<footer>Generated 2026-07-22 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
 </body>
 </html>

@@ -12,6 +12,7 @@ model: sonnet
 disable-model-invocation: false
 user-invocable: true
 ---
+> [← Skills index](../../README.md)
 
 Usage-driven prune proposal. Reads `tools/skill_usage.py` telemetry,
 filters skills with **0 invocations AND 0 turns in the last 30 days**,

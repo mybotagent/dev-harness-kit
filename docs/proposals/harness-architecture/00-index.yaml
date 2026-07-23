@@ -12,30 +12,30 @@ sections:
 
       **읽는 순서** (3가지 경로):
 
-      - **빠른 이해 (20분)**: [01 — MCP](01-protocol-layer.html) → [02 — LCS](02-live-context-server.html) → [09 — 통합](09-consolidated-architecture.html) → [10 — 결정](10-decision-record.html) → [11 — 마이그레이션](11-migration-phases.html)
-      - **구현 준비 (60분)**: 전부 + [12 — 공개 질문](12-open-questions.html)
+      - **빠른 이해 (20분)**: [01 — MCP](protocol-layer.html) → [02 — LCS](live-context-server.html) → [09 — 통합](consolidated-architecture.html) → [10 — 결정](decision-record.html) → [11 — 마이그레이션](migration-phases.html)
+      - **구현 준비 (60분)**: 전부 + [12 — 공개 질문](open-questions.html)
       - **특정 주제 진입**: 아래 색인에서 파일 선택
 
       **핵심 빌드 원칙**: 차세대 모델이 흡수하지 못하는 부분에 alpha를
-      투입한다. 자세한 분류는 [09 — 통합 아키텍처](09-consolidated-architecture.html)
+      투입한다. 자세한 분류는 [09 — 통합 아키텍처](consolidated-architecture.html)
       (alpha 회계) 참조.
 
   - title: 색인 (12개 주제 파일)
     body: |
       | # | 파일 | 주제 | 핵심 질문 |
       |---|------|------|-----------|
-      | 01 | [01-protocol-layer.html](01-protocol-layer.html) | MCP 와이어 프로토콜 | 런타임이 외부 서버와 어떻게 대화하는가 |
-      | 02 | [02-live-context-server.html](02-live-context-server.html) | LCS — 상태 리더 | 에이전트가 git/gh에 셸아웃하는 것을 어떻게 멈추게 하는가 |
-      | 03 | [03-ambiguity-resolver.html](03-ambiguity-resolver.html) | 인터뷰 하네스 | 구현 전 플랜 모호함을 어떻게 해소하는가 |
-      | 04 | [04-quality-judge.html](04-quality-judge.html) | 평가 하네스 | AI 산출물 품질을 어떻게 다차원 채점하는가 |
-      | 05 | [05-value-gate.html](05-value-gate.html) | 플랜 가치 평가 | 인터뷰 완료 플랜의 구현 가치를 어떻게 판단하는가 |
-      | 06 | [06-external-verifier.html](06-external-verifier.html) | 리서치 하네스 (Phase 0–3 에스컬레이션) | 플랜을 외부 자료로 어떻게 검증하는가 |
-      | 07 | [07-runtime-portability.html](07-runtime-portability.html) | 런타임 중립성 (결정 8) | Claude Code + Codex 양쪽에서 어떻게 동등 동작하는가 |
-      | 08 | [08-external-references.html](08-external-references.html) | 외부 참조 비판 | insane-search / hermes / AEGIS에서 무엇을 차용하고 기각하는가 |
-      | 09 | [09-consolidated-architecture.html](09-consolidated-architecture.html) | 통합 아키텍처 | 6개 하네스 + 어댑터 계층이 어떻게 맞물려 도는가 |
-      | 10 | [10-decision-record.html](10-decision-record.html) | 결정 기록 (8개 잠금) | 왜 그 결정을 잠갔고, 무엇에 영향을 미치는가 |
-      | 11 | [11-migration-phases.html](11-migration-phases.html) | 마이그레이션 단계 (Phase 0–7) | 어떤 PR이 어떤 순서로 출시되는가 |
-      | 12 | [12-open-questions.html](12-open-questions.html) | 공개 질문 (#280 스레드) | 컨센서스가 필요한 결정은 무엇인가 |
+      | 01 | [01-protocol-layer.html](protocol-layer.html) | MCP 와이어 프로토콜 | 런타임이 외부 서버와 어떻게 대화하는가 |
+      | 02 | [02-live-context-server.html](live-context-server.html) | LCS — 상태 리더 | 에이전트가 git/gh에 셸아웃하는 것을 어떻게 멈추게 하는가 |
+      | 03 | [03-ambiguity-resolver.html](ambiguity-resolver.html) | 인터뷰 하네스 | 구현 전 플랜 모호함을 어떻게 해소하는가 |
+      | 04 | [04-quality-judge.html](quality-judge.html) | 평가 하네스 | AI 산출물 품질을 어떻게 다차원 채점하는가 |
+      | 05 | [05-value-gate.html](value-gate.html) | 플랜 가치 평가 | 인터뷰 완료 플랜의 구현 가치를 어떻게 판단하는가 |
+      | 06 | [06-external-verifier.html](external-verifier.html) | 리서치 하네스 (Phase 0–3 에스컬레이션) | 플랜을 외부 자료로 어떻게 검증하는가 |
+      | 07 | [07-runtime-portability.html](runtime-portability.html) | 런타임 중립성 (결정 8) | Claude Code + Codex 양쪽에서 어떻게 동등 동작하는가 |
+      | 08 | [08-external-references.html](external-references.html) | 외부 참조 비판 | insane-search / hermes / AEGIS에서 무엇을 차용하고 기각하는가 |
+      | 09 | [09-consolidated-architecture.html](consolidated-architecture.html) | 통합 아키텍처 | 6개 하네스 + 어댑터 계층이 어떻게 맞물려 도는가 |
+      | 10 | [10-decision-record.html](decision-record.html) | 결정 기록 (8개 잠금) | 왜 그 결정을 잠갔고, 무엇에 영향을 미치는가 |
+      | 11 | [11-migration-phases.html](migration-phases.html) | 마이그레이션 단계 (Phase 0–7) | 어떤 PR이 어떤 순서로 출시되는가 |
+      | 12 | [12-open-questions.html](open-questions.html) | 공개 질문 (#280 스레드) | 컨센서스가 필요한 결정은 무엇인가 |
 
   - title: 빌드 원칙 (4 위험 계층, L7 정렬)
     body: |
@@ -58,7 +58,7 @@ sections:
       | `nousresearch/hermes-agent` | 자기 개선 비전 (메모리 + 스킬) | 자가 평가 메커니즘 (외부 검증 부재) |
       | `HarnessX / AEGIS` (AI Times 2026-07-21) | Critic + verification 게이트 패턴 | 자동 하네스 코드 생성, Opus 메타 에이전트 의존, 내부 verification |
 
-      상세: [08 — 외부 참조 비판](08-external-references.html).
+      상세: [08 — 외부 참조 비판](external-references.html).
 
   - title: 8개 잠금 결정 (요약)
     body: |
@@ -73,7 +73,7 @@ sections:
       | 7 | Phase 5 = 4단계 에스컬레이션 (insane-search 차용) |
       | 8 | **단일 런타임 종속 = 기각** (Claude Code + Codex 동등 동작 필수) |
 
-      각 결정의 근거와 영향 범위: [10 — 결정 기록](10-decision-record.html).
+      각 결정의 근거와 영향 범위: [10 — 결정 기록](decision-record.html).
 
   - title: 마이그레이션 단계 (요약)
     body: |
@@ -100,12 +100,12 @@ sections:
 
       **Phase 7 (하네스 감사)** — `skills/harness-audit/SKILL.md`.
 
-      각 단계별 파일 diff + 위험: [11 — 마이그레이션 단계](11-migration-phases.html).
+      각 단계별 파일 diff + 위험: [11 — 마이그레이션 단계](migration-phases.html).
 
   - title: 공개 질문 (#280 스레드)
     body: |
       9개 질문이 컨센서스를 기다린다. 전체 목록과 어느 파일에서
-      발생했는지: [12 — 공개 질문](12-open-questions.html).
+      발생했는지: [12 — 공개 질문](open-questions.html).
 
       핵심 3개:
       - **결정 8 범위**: Phase 0에서 claude_code만 출시, codex는
