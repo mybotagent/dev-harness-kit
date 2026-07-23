@@ -50,6 +50,7 @@ fi
 
 # Empty stdin → probe call, no-op.
 [ -z "$INPUT" ] && exit 0
+[ -z "$(printf '%s' "$INPUT" | jq -r '.transcript // .prompt // ""')" ] && exit 0
 
 TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)"
 SESSION_ID="$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)"
