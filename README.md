@@ -428,6 +428,12 @@ runtime dependencies, plugin root, and plugin version, then runs only the safe
 provider cache updater when repair is possible. A client restart is still
 required after cache repair because hooks are loaded at session start.
 
+For a longer, human-facing writeup of each skill (overview, when to use it,
+how it works, flags, output), see [`docs/skills/README.md`](docs/skills/README.md).
+It also separates human-invocable skills from model-invoked sub-skills, and
+is where `/dev-kit:token-analyzer` and every other skill's full detail lives
+rather than in this README.
+
 ---
 
 ## Tooling
@@ -452,106 +458,37 @@ See [`logs/README.md`](logs/README.md) and `skills/log/SKILL.md`.
 
 ### Token efficiency analyzer
 
-A stdlib-only Python CLI (`tools/token_efficiency_analyzer.py`) that consumes the
-`logs/{claude-code,codex}/**/*.jsonl` transcripts captured by loghooks and emits
-one self-contained HTML dashboard — no dependencies, no JavaScript, no network.
-The user-facing entry point is the `/dev-kit:token-analyzer` skill; the CLI is
-also directly invokable for CI use:
+A stdlib-only Python CLI (`tools/token_efficiency_analyzer.py`) turns the
+`logs/{claude-code,codex}/**/*.jsonl` transcripts captured by loghooks into
+one self-contained HTML dashboard — no dependencies, no JavaScript, no
+network. The user-facing entry point is the `/dev-kit:token-analyzer` skill;
+the CLI is also directly invokable for CI use:
 
 ```bash
 python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
 open token-dashboard-my-project-30d.html
 ```
 
+Full detail — flags, the 4-dimension scoring rubric, the 6 warning triggers,
+and the per-model pricing table — lives in
+[`docs/skills/token-analyzer.md`](docs/skills/token-analyzer.md).
+
 ### Preview
 
 ![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
 
 *The screenshot above is regenerated from the latest dashboard HTML by
-`tools/render_dashboard.py` (Playwright + Chrome, 1440 × 2x) — Cost Gate
-banner, 4-tile overview, per-repo / per-tool / per-branch / per-worktree cost
-distribution, model + cache TTL mix, session table with letter-grade scores +
-warning chips, and a reclaim-axis savings breakdown. Refresh after any
-`tools/token_efficiency_analyzer.py` change.*
-
-The dashboard answers three questions per repo over the last N days:
-
-1. **Where is the spend going?** Per-repo, per-tool (flags `Read`-heavy), and
-   per-session cost share.
-2. **How efficient is each session?** A 0–100 score across four dimensions.
-3. **What should I fix?** Six anti-pattern warnings + a USD savings estimate.
-
-**Common flags**
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--repo <name>` | (required) | Matches each session's `Path(cwd).name` (repo dir basename) |
-| `--days <n>` | `30` | Look-back window; older sessions are dropped |
-| `--logs-dir <path>` | `./logs` | Root for `claude-code/` and `codex/` subdirs |
-| `--out <path>` | `token-dashboard-<repo>-<days>d.html` | Output HTML path |
-
-**Scoring dimensions** (weighted to 100)
-
-| Dimension | Weight | Penalizes |
-|---|---:|---|
-| Cache Utilization | 0.35 | Prefix misalignment that re-primes the full prompt |
-| Output Density | 0.25 | Reading a lot and shipping little |
-| Read Redundancy | 0.20 | Re-reading the same file (missing cartography) |
-| Tool Economy | 0.20 | Many tool calls for thin output |
-
-**Warning triggers**
-
-| Code | Condition |
-|---|---|
-| `CACHE_HIT_LOW` | `cache_hit_ratio < 50%` |
-| `READ_HEAVY` | `Read` ≥ 40% of total tool cost |
-| `HEAVY_CONTEXT` | `total_input > 500K` tokens in one session |
-| `MODEL_OVERSPEC` | Opus + density score < 20 |
-| `WRITE_NOT_REUSED` | `cache_write > 50K` and `cache_read < 2 × cache_write` |
-| `REPEATED_USER_MSG` | Any user message text appears ≥ 2× |
-
-Per-model pricing is baked into the script (`opus` / `sonnet` / `haiku`, matched
-by model-id substring; unknown ids fall back to Sonnet). Override `PRICING` at
-the top of the file for contracted rates. Savings are a conservative reclaim
-model — cache-miss penalty + duplicate-read waste only, not the whole bill. The
-per-tool cost column is an imputed heuristic (`n_calls × 2K tokens × input
-price`), since Anthropic billing doesn't break out per-tool spend.
-
-**Why a tool, not a skill:** it transforms local files with no LLM in the loop —
-wrapping it as a skill would force a needless model round-trip. The loghooks that
-*produce* the input stay a skill; the analyzer that *consumes* it is a script.
-
-Verify against the synthetic fixtures:
-
-```bash
-python3 fixtures/make_fixture.py
-python3 tools/token_efficiency_analyzer.py --repo "fixture-repo" --days 30 \
-  --logs-dir fixtures/logs --out fixtures/out/dashboard.html
-```
+`tools/render_dashboard.py` (Playwright + Chrome, 1440 × 2x). Refresh after
+any `tools/token_efficiency_analyzer.py` change.*
 
 ### Cost gate
 
 A **read-only** cost layer, distinct from the post-hoc token dashboard:
-cost-gate prints the running ledger on demand and emits the trailer block the PR
-aggregator needs; the analyzer replays historical sessions. State lives at
-`<cwd>/.dev-kit/.cost-gate/state.json`. **The gate is observed only — it never
-blocks a tool call.**
-
-| Layer | Trigger | Default threshold | Behavior |
-|---|---|---:|---|
-| Session warn | `/dev-kit:cost-gate` | `$5.00` | One-screen `ok`/`warn` status; never a deny |
-| PR flag | PR opened/synchronize/reopened | `$20.00` | Applies `cost-flag` label + upserts one comment |
-
-Override via `DEV_KIT_COST_WARN_USD` and `DEV_KIT_PR_COST_FLAG_USD`. Emit the
-commit trailer the PR aggregator (`.github/workflows/cost-flag.yml`) reads:
-
-```bash
-git commit -m "feat: thing" -m "$(python3 tools/cost_gate_status.py --footer)"
-```
-
-`lib/cost_gate.py` and `tools/cost_gate_status.py` keep pricing tables, state
-files, and transcript scanners fully independent of the analyzer — a regression
-test asserts no cross-import.
+cost-gate prints the running ledger on demand and emits the trailer block the
+PR aggregator needs, while the analyzer replays historical sessions. **The
+gate is observed only — it never blocks a tool call.** Full detail — the
+warn/flag threshold table, override env vars, and the commit-trailer
+format — lives in [`docs/skills/cost-gate.md`](docs/skills/cost-gate.md).
 
 ### Session monitor (`tools/session_monitor.py`)
 
