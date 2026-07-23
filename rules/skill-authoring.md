@@ -88,7 +88,7 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 ## Forbidden patterns
 
 - ❌ `it.only` / `it.skip` / `console.log` debugging in skill body.
-- ❌ References to deleted files (`INTEGRATION.md`, `AX.md`, `commands/`).
+- ❌ References to deleted files (`INTEGRATION.md`, `AX.md`).
 - ❌ Hard-coded paths (use `skills/<name>/SKILL.md` style references).
 - ❌ Claims without evidence ("works", "passes", "fast") — quote test counts, durations.
 
