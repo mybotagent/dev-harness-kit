@@ -30,7 +30,7 @@ kept here so an uncalled skill is still discoverable.
 | Tier | Start here when | Skills |
 |---|---|---|
 | Tier 1 — delivery loop | You are starting, implementing, reviewing, or shipping normal work | `bootstrap`, `bootstrap-full`, `plan`, `build`, `review`, `security`, `babysit-pr`, `ship`, `ci-doctor`, `ci-setup`, `log`, `codex-cache-update`, `skill-usage` |
-| Tier 2 — focused engineering | You need a targeted diagnostic, refactor, removal, configuration, or cost pass | `build-debug`, `build-tdd`, `build-refactor`, `build-verify`, `feat-remove`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
+| Tier 2 — focused engineering | You need a targeted diagnostic, refactor, removal, configuration, or cost pass | `build-debug`, `build-tdd`, `build-refactor`, `build-verify`, `feat-remove`, `hook-doctor`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
 | Tier 3 — specialist and occasional | You are evaluating behavior, repairing an asset, publishing a report, or maintaining the harness | `eval`, `repair`, `report`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose` |
 
 The tier table intentionally includes every directory under `skills/`. Confirm
@@ -398,6 +398,15 @@ Each `SKILL.md` carries a `user-invocable` frontmatter flag:
 - **`user-invocable: false`** — hidden. *Claude* auto-invokes it as a sub-step
   when its parent skill runs.
 
+This is the boundary between two skill audiences:
+
+- **User Invokable Skill** (`user-invocable: true`) — an explicit workflow or
+  utility the user chooses from `/dev-kit:` autocomplete.
+- **Model-use skill** (`user-invocable: false`) — an internal specialist the
+  model selects when an event or parent workflow requires it. `hook-doctor` is
+  model-use: visible hook failure text should trigger diagnosis without asking
+  the user to know a second slash command.
+
 If a skill name doesn't autocomplete, it's an internal sub-skill — type the
 user-facing parent instead (e.g. `/dev-kit:refactor`, not
 `/dev-kit:build-refactor`). Mental model: user-facing skills are the verbs (the
@@ -412,6 +421,12 @@ body so the reader can hop back from any skill to the inventory. Use
 invocation. This README does not duplicate the live skill surface — the
 inventory changes too often for a hand-maintained list here to stay
 correct.
+
+When a hook reports `failed` or `exited with code`, invoke the hidden
+`hook-doctor` skill automatically. It checks the provider-specific manifest,
+runtime dependencies, plugin root, and plugin version, then runs only the safe
+provider cache updater when repair is possible. A client restart is still
+required after cache repair because hooks are loaded at session start.
 
 For a longer, human-facing writeup of each skill (overview, when to use it,
 how it works, flags, output), see [`docs/skills/README.md`](docs/skills/README.md).

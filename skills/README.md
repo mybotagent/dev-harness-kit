@@ -2,11 +2,11 @@
 
 This index lists every skill shipped by the `dev-kit` plugin. Click into any skill to read its full `SKILL.md`; every `SKILL.md` has a back-link at the top to return here.
 
-**33 skills** across 13 categories. The full path of each entry is `skills/<dir>/SKILL.md`.
+**34 skills** across 13 categories. The full path of each entry is `skills/<dir>/SKILL.md`.
 
 ## By category
 
-### `audit` (8)
+### `audit` (9)
 
 | Skill | α | Description |
 |---|---|---|
@@ -14,6 +14,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`ci-doctor`](ci-doctor/SKILL.md) | `enforcement` | Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?" |
 | [`cost-gate`](cost-gate/SKILL.md) | `enforcement` | 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost flag can aggregate. |
 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `analysis` | Audit repository documentation, remove superseded guidance, and refresh the README without recording volatile inventory facts. |
+| [`hook-doctor`](hook-doctor/SKILL.md) | `enforcement` | Diagnose failed Claude Code or Codex hooks, repair safe cache and registration drift, and report the exact restart step. |
 | [`inspect`](inspect/SKILL.md) | `analysis` | 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report. |
 | [`prune-propose`](prune-propose/SKILL.md) | `state` | 0-arg skill — usage telemetry dump + per-skill delete proposal. User approves each deletion explicitly. |
 | [`report`](report/SKILL.md) | `analysis` | 0-arg HTML renderer for the latest eval + inspect markdown reports. One self-contained .dev-kit/report.html. No options, no JS, no external assets. |
@@ -127,18 +128,18 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 17 | [`eval`](eval/SKILL.md) | `eval` | `analysis` |
 | 18 | [`feat-remove`](feat-remove/SKILL.md) | `build` | `state` |
 | 19 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` |
-| 20 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` |
-| 21 | [`log`](log/SKILL.md) | `shortcuts` | `state` |
-| 22 | [`plan`](plan/SKILL.md) | `plan` | `state` |
-| 23 | [`proposal`](proposal/SKILL.md) | `design` | `state` |
-| 24 | [`prune`](prune/SKILL.md) | `build` | `analysis` |
-| 25 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` |
-| 26 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` |
-| 27 | [`repair`](repair/SKILL.md) | `repair` | `state` |
-| 28 | [`report`](report/SKILL.md) | `audit` | `analysis` |
-| 29 | [`review`](review/SKILL.md) | `review` | `analysis` |
-| 30 | [`security`](security/SKILL.md) | `security` | `enforcement` |
-| 31 | [`ship`](ship/SKILL.md) | `ship` | `state` |
-| 32 | [`status`](status/SKILL.md) | `status` | `state` |
-| 33 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` |
-
+| 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` |
+| 21 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` |
+| 22 | [`log`](log/SKILL.md) | `shortcuts` | `state` |
+| 23 | [`plan`](plan/SKILL.md) | `plan` | `state` |
+| 24 | [`proposal`](proposal/SKILL.md) | `design` | `state` |
+| 25 | [`prune`](prune/SKILL.md) | `build` | `analysis` |
+| 26 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` |
+| 27 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` |
+| 28 | [`repair`](repair/SKILL.md) | `repair` | `state` |
+| 29 | [`report`](report/SKILL.md) | `audit` | `analysis` |
+| 30 | [`review`](review/SKILL.md) | `review` | `analysis` |
+| 31 | [`security`](security/SKILL.md) | `security` | `enforcement` |
+| 32 | [`ship`](ship/SKILL.md) | `ship` | `state` |
+| 33 | [`status`](status/SKILL.md) | `status` | `state` |
+| 34 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` |
