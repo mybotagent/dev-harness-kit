@@ -1,6 +1,9 @@
 """interview resource — ``lcs://interview/<step>``.
 
 Read-only v1 stub (Phase 1.9, issue #354). Surfaces the parsed
+frontmatter of ``.dev-kit/hand-off/<step>.md`` so callers can see the
+5-field safety contract (safety_valve, ambiguity_score, value_score,
+evidence_count, status) that Phase 6 interview_engine consumes.
 frontmatter of one ``.dev-kit/hand-off/<step>.md`` file as a
 normalized JSON snapshot. URI form:
 
