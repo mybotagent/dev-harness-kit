@@ -175,6 +175,91 @@ class TestLoadTokenLogs(unittest.TestCase):
 # _aggregate
 # ──────────────────────────────────────────────────────────────────
 
+class TestProductionLogFormat(unittest.TestCase):
+    """Pin that the resource reads production Claude/Codex transcripts,
+    not just the synthetic TokenLog shape."""
+
+    def test_reads_claude_assistant_message_with_message_usage(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cc_dir = root / "logs" / "claude-code"
+            cc_dir.mkdir(parents=True)
+            log_file = cc_dir / "sess-abc123.jsonl"
+            log_file.write_text(json.dumps({
+                "type": "assistant",
+                "sessionId": "sess-abc123",
+                "timestamp": "2026-07-24T12:00:00Z",
+                "message": {
+                    "role": "assistant",
+                    "content": "hi",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "cache_read_input_tokens": 10,
+                    },
+                },
+            }) + "\n")
+            since = datetime(2026, 7, 24, tzinfo=timezone.utc)
+            until = since + timedelta(days=1)
+            records = _load_token_logs(root / "logs", since, until)
+            self.assertEqual(len(records), 1)
+            r = records[0]
+            self.assertEqual(r["session_id"], "sess-abc123")
+            self.assertEqual(r["tokens"], 160)
+            self.assertEqual(r["runtime"], "claude-code")
+            self.assertEqual(r["worktree"], "sess-abc123")
+
+    def test_reads_codex_token_count_event(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cx_dir = root / "logs" / "codex"
+            cx_dir.mkdir(parents=True)
+            log_file = cx_dir / "sess-xyz789.jsonl"
+            log_file.write_text(json.dumps({
+                "type": "event_msg",
+                "session_id": "sess-xyz789",
+                "timestamp": "2026-07-24T13:00:00Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 200,
+                            "output_tokens": 80,
+                            "cached_input_tokens": 20,
+                        },
+                    },
+                },
+            }) + "\n")
+            since = datetime(2026, 7, 24, tzinfo=timezone.utc)
+            until = since + timedelta(days=1)
+            records = _load_token_logs(root / "logs", since, until)
+            self.assertEqual(len(records), 1)
+            r = records[0]
+            self.assertEqual(r["session_id"], "sess-xyz789")
+            # Codex TokenLog normalizer stores input_tokens = max(uncached, 0)
+            # so the total = uncached_input + output + cached = 180 + 80 + 20 = 280
+            self.assertEqual(r["tokens"], 280)
+            self.assertEqual(r["runtime"], "codex")
+
+    def test_skips_text_turns_without_usage(self):
+        """User messages and tool-call-only turns carry no usage data."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cc_dir = root / "logs" / "claude-code"
+            cc_dir.mkdir(parents=True)
+            log_file = cc_dir / "sess-noUsage.jsonl"
+            log_file.write_text(json.dumps({
+                "type": "user",
+                "sessionId": "sess-noUsage",
+                "timestamp": "2026-07-24T12:00:00Z",
+                "message": {"role": "user", "content": "hi"},
+            }) + "\n")
+            since = datetime(2026, 7, 24, tzinfo=timezone.utc)
+            until = since + timedelta(days=1)
+            records = _load_token_logs(root / "logs", since, until)
+            self.assertEqual(records, [])
+
+
 class TestAggregate(unittest.TestCase):
     def test_aggregates_by_session_worktree_skill(self):
         records = [
