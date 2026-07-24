@@ -4,6 +4,10 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+- **feat(lcs)**: Phase 1.4–1.7 LCS resource batch — `lcs://pr/<number>` (#428, closes #349), `lcs://branches/<name>` (#431, closes #350), `lcs://spend/<window>` (#430, closes #351), `lcs://sessions/<id>` (#429, closes #352). Each ships a resource module under `lib/lcs_resources/`, a dedicated `tests/test_lcs_<name>_resource.py` suite, and a CHANGELOG/Docs update. Review-driven fixes landed in the same PRs:
+  - `branches.py:_ahead_behind` previously returned `(behind, ahead)` from `git rev-list --left-right --count origin/<branch>...HEAD` — the `<left>\t<right>` form already separates behind from ahead, so callers read inverted signals. Swap restored to `(ahead, behind)` and the unit-test assertion flipped to match git semantics.
+  - `spend.py:_load_token_logs` only accepted a synthetic `{ts, session_id, worktree, skill, tokens}` shape; production `tools/save_log.py` writes native Claude `message.usage` and Codex `payload.info.total_token_usage` records, so real transcripts were filtered out and `lcs://spend/today` reported zero spend. Added a record normalizer backed by `runtime_adapters.tokens.normalize_token_log` and three new fixtures (Claude assistant message, Codex token_count event, text-only turn skip). All 25 spend tests pass.
+
 - **feat(hooks)**: Add a host-installed Ruff pre-commit gate for staged Python files and clean the Python lint baseline.
 
 ### Fixed — ci-doctor: don't report ready-to-merge when PR is in a CI-silently-skipped state (fix/ci-doctor-open-pr-state, closes #249)

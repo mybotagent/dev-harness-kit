@@ -178,41 +178,43 @@ user_interrupt
 
 **Goal**: First MCP server. Replaces 7 shell-outs with typed queries.
 
+**Status**: Phase 1.1–1.7 shipped (PRs #425, #426, #427, #428, #429, #430, #431 — main `923560b`..`abd515c`). Phases 1.8–1.12 remain (issue #349 umbrella closing those is tracked in the open Phase 1 backlog).
+
 **Files**:
 
-| File | Action | Approx LOC |
-|---|---|---|
-| `lib/lcs_server.py` | NEW (pure function: parse URI → payload) | ~250 |
-| `bin/dev-kit-lcs.py` | NEW (CLI driver, lifecycle) | ~120 |
-| `lib/lcs_resources/__init__.py` | NEW | ~10 |
-| `lib/lcs_resources/worktrees.py` | NEW | ~80 |
-| `lib/lcs_resources/pr.py` | NEW (wraps `gh pr view`) | ~80 |
-| `lib/lcs_resources/spend.py` | NEW (wraps `tools/token_efficiency_analyzer.py`) | ~80 |
-| `lib/lcs_resources/hooks_coverage.py` | NEW | ~60 |
-| `lib/lcs_resources/branches.py` | NEW | ~70 |
-| `lib/lcs_resources/sessions.py` | NEW (uses `runtime_adapters/sessions.py`) | ~80 |
-| `lib/lcs_resources/interview.py` | NEW (read-only v1; v2 uses tools channel) | ~60 |
-| `lib/lcs_resources/research_cache.py` | NEW (Phase 5 cache; stub in v1) | ~50 |
-| `skills/lcs/SKILL.md` | NEW (alpha: state) | ~80 |
-| `tests/test_lcs_server.py` | NEW | ~150 |
-| `tests/test_lcs_resources.py` | NEW | ~200 |
-| `tests/test_smoke.py` | MOD (SKILL_COUNT 35 → 36) | ~1 |
+| File | Action | Approx LOC | Status |
+|---|---|---|---|
+| `lib/lcs_server.py` | NEW (pure function: parse URI → payload) | ~250 | ✅ shipped (PR #425) |
+| `bin/dev-kit-lcs.py` | NEW (CLI driver, lifecycle) | ~120 | ✅ shipped (PR #426) |
+| `lib/lcs_resources/__init__.py` | NEW | ~10 | ✅ shipped (PR #425) |
+| `lib/lcs_resources/worktrees.py` | NEW | ~80 | ✅ shipped (PR #427) |
+| `lib/lcs_resources/pr.py` | NEW (wraps `gh pr view`) | ~80 | ✅ shipped (PR #428, closes #349) |
+| `lib/lcs_resources/spend.py` | NEW (wraps `tools/token_efficiency_analyzer.py`) | ~80 | ✅ shipped (PR #430, closes #351) — review fix: reads production Claude/Codex transcript shapes via `runtime_adapters.tokens.normalize_token_log` |
+| `lib/lcs_resources/hooks_coverage.py` | NEW | ~60 | ⏳ pending (Phase 1.8) |
+| `lib/lcs_resources/branches.py` | NEW | ~70 | ✅ shipped (PR #431, closes #350) — review fix: `_ahead_behind` return order corrected to `(ahead, behind)` |
+| `lib/lcs_resources/sessions.py` | NEW (uses `runtime_adapters/sessions.py`) | ~80 | ✅ shipped (PR #429, closes #352) |
+| `lib/lcs_resources/interview.py` | NEW (read-only v1; v2 uses tools channel) | ~60 | ⏳ pending (Phase 1.9) |
+| `lib/lcs_resources/research_cache.py` | NEW (Phase 5 cache; stub in v1) | ~50 | ⏳ pending (Phase 1.10) |
+| `skills/lcs/SKILL.md` | NEW (alpha: state) | ~80 | ⏳ pending (Phase 1.11) |
+| `tests/test_lcs_server.py` | NEW | ~150 | ✅ shipped (PR #425) |
+| `tests/test_lcs_*.py` (one per resource) | NEW | ~200+ | ✅ shipped — split per-resource rather than the originally planned single file |
+| `tests/test_smoke.py` | MOD (SKILL_COUNT 35 → 36) | ~1 | ⏳ pending (Phase 1.12) |
 
 **Acceptance criteria**:
-1. `pytest tests/test_lcs_server.py tests/test_lcs_resources.py -v` passes (≥20 tests)
-2. LCS starts in <500ms, reads served in <10ms p99 (latency test)
-3. URI schema stable: 8 resources, payload shapes versioned (additive OK, breaking → `/v<n>` URI)
-4. `gh pr view` data matches `lcs://pr/<n>` payload (integration test)
-5. Data source failure → `status: "partial"` (not crash)
+1. `pytest tests/test_lcs_server.py tests/test_lcs_*_resource.py -v` passes (≥20 tests) ✅
+2. LCS starts in <500ms, reads served in <10ms p99 (latency test) — covered by `tests/test_lcs_server.py`
+3. URI schema stable: 8 resources, payload shapes versioned (additive OK, breaking → `/v<n>` URI) ✅
+4. `gh pr view` data matches `lcs://pr/<n>` payload (integration test) ✅
+5. Data source failure → `status: "partial"` (not crash) ✅
 
 **Tests** (focused on resource correctness):
-- `test_worktrees_uri_routing` — `lcs://worktrees` → list
-- `test_pr_uri_with_gh_failure` — `lcs://pr/999999` → partial
-- `test_spend_uri_window_filtering` — `lcs://spend/today` filters correctly
+- `test_worktrees_uri_routing` — `lcs://worktrees` → list ✅
+- `test_pr_uri_with_gh_failure` — `lcs://pr/999999` → partial ✅
+- `test_spend_uri_window_filtering` — `lcs://spend/today` filters correctly ✅
 - `test_snapshot_consistency` — concurrent reads return same list
 - `test_uri_schema_versioning` — additive fields OK, breaking changes rejected
 
-**Estimated PR**: 1 PR, ~1,400 LOC, +1 SKILL_COUNT (35→36)
+**Estimated PR**: 1 PR, ~1,400 LOC, +1 SKILL_COUNT (35→36) — superseded by 7-PR phased merge (Phases 1.1–1.7).
 
 ---
 
