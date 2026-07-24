@@ -1,6 +1,10 @@
 """hooks_coverage resource — ``lcs://hooks/coverage``.
 
-Exposes the project's hook landscape as a normalized JSON snapshot:
+Exposes the project's hook landscape as a normalized JSON snapshot.
+
+The resource merges events from ``.claude/hooks.json`` and
+``.codex/hooks.json`` and surfaces ``hooks/*.sh`` filenames as matchers.
+Deterministic sort order lets callers diff the result across pulls:
 
   lcs://hooks/coverage
       → {"status": "ok|partial",
