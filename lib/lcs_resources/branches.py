@@ -37,8 +37,10 @@ def _origin_head(repo: Path, branch: str) -> str | None:
 
 
 def _ahead_behind(repo: Path, branch: str) -> tuple[int, int]:
-    # ``git rev-list --left-right --count origin/<branch>...HEAD`` prints
-    # "<ahead>\t<behind>". Missing upstream → (0, 0).
+    # ``git rev-list --left-right --count A...B`` prints "<left>\t<right>"
+    # where <left> = commits in A but not B, <right> = commits in B but
+    # not A. With A=origin/<branch>, B=HEAD: <left>=behind, <right>=ahead.
+    # Return as (ahead, behind). Missing upstream → (0, 0).
     proc = _run_git(
         ["rev-list", "--left-right", "--count", f"origin/{branch}...HEAD"],
         repo,
@@ -49,9 +51,10 @@ def _ahead_behind(repo: Path, branch: str) -> tuple[int, int]:
     if len(parts) != 2:
         return (0, 0)
     try:
-        return int(parts[0]), int(parts[1])
+        behind, ahead = int(parts[0]), int(parts[1])
     except ValueError:
         return (0, 0)
+    return ahead, behind
 
 
 def _slot_version(repo_root: Path) -> str | None:

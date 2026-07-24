@@ -105,8 +105,11 @@ class TestAheadBehind(unittest.TestCase):
                 return_value=_make_completed(0, "3\t1\n"),
             ):
                 ahead, behind = _ahead_behind(root, "main")
-            self.assertEqual(ahead, 3)
-            self.assertEqual(behind, 1)
+            # git rev-list --left-right --count A...B output is
+            # <left>\t<right> = <behind>\t<ahead> when A=origin/<branch>,
+            # B=HEAD. So "3\t1" means 3 behind, 1 ahead.
+            self.assertEqual(ahead, 1)
+            self.assertEqual(behind, 3)
 
     def test_returns_zero_zero_on_missing_upstream(self):
         with tempfile.TemporaryDirectory() as td:
