@@ -21,6 +21,11 @@ become a query hash key, or a per-source bucket). In v1 every sub is
 unknown; raising ``LCSPartialError`` lets the LCS server surface
 ``status="partial"`` to the caller without crashing the read path.
 
+Note: the partial envelope intentionally omits any pre-declared stub
+keys (``query_hash``/``sources``/``citations``/``retrieved_at``) since
+no v1 sub-resource is addressable. Phase 5 will fill ``data`` with the
+resolved query payload when the sub-segment becomes meaningful.
+
 Why a nested resource name ("research/cache") and not a flat "research":
 - The longest-match resolver in ``lcs_server._resolve_resource`` joins
   segments with "/", so ``research/cache`` lets future siblings
