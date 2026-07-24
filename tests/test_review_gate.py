@@ -257,6 +257,77 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("AI agent was skipped", cp.stdout + cp.stderr)
 
+    # === Issue #397: PARSE_FAILED sentinel hard-fail ===
+
+    def test_review_PARSE_FAILED_hard_fails(self):
+        """R=PARSE_FAILED (review agent ran, parser returned parse-failure sentinel).
+
+        The parser emits `PARSE_FAILED` when the agent's output file existed
+        but contained no recognizable Verdict line. That is NOT the same as
+        "no verdict at all" — the agent ran but its output shape doesn't
+        match what the parser expects (e.g. a wrapper changed the JSON
+        envelope, the agent posted an inline comment but never a
+        `**Verdict:**` summary, the output was truncated).
+
+        Per issue #397, this MUST hard-fail with a parse-error annotation,
+        NOT fall into the unparseable-verdict tolerance (which would exit 0
+        and mask the broken parser as a passing review).
+        """
+        cp = _run_gate(r="PARSE_FAILED", s="Approve", event="pull_request")
+        self.assertEqual(
+            cp.returncode, 1,
+            f"PARSE_FAILED MUST hard-fail (was unparseable-verdict tolerance).\n"
+            f"stdout={cp.stdout}\nstderr={cp.stderr}",
+        )
+        combined = cp.stdout + cp.stderr
+        self.assertIn("::error::review+security gate: verdict parser failed", combined)
+        self.assertIn("review.verdict=PARSE_FAILED", combined)
+        self.assertIn("security.verdict=Approve", combined)
+        # Must NOT be a tolerance pass
+        self.assertNotIn("::warning::Unparseable verdict", combined)
+
+    def test_security_PARSE_FAILED_hard_fails(self):
+        cp = _run_gate(r="Approve", s="PARSE_FAILED", event="pull_request")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        combined = cp.stdout + cp.stderr
+        self.assertIn("::error::review+security gate: verdict parser failed", combined)
+        self.assertIn("review.verdict=Approve", combined)
+        self.assertIn("security.verdict=PARSE_FAILED", combined)
+
+    def test_both_PARSE_FAILED_hard_fails(self):
+        cp = _run_gate(r="PARSE_FAILED", s="PARSE_FAILED", event="pull_request")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        combined = cp.stdout + cp.stderr
+        self.assertIn("::error::review+security gate: verdict parser failed", combined)
+        # Must mention both axes (not just one)
+        self.assertIn("review.verdict=PARSE_FAILED", combined)
+        self.assertIn("security.verdict=PARSE_FAILED", combined)
+
+    def test_PARSE_FAILED_in_workflow_dispatch_also_hard_fails(self):
+        """Even on manual dispatch, PARSE_FAILED is a parser bug, not a tolerance case.
+
+        The tolerance on workflow_dispatch was meant for human-judgement
+        overrides; a parse failure is a code defect that must surface
+        regardless of event mode.
+        """
+        cp = _run_gate(r="PARSE_FAILED", s="Approve", event="workflow_dispatch")
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+        self.assertIn("::error::review+security gate: verdict parser failed", cp.stdout + cp.stderr)
+
+    def test_other_unparseable_still_tolerates(self):
+        """Other unparseable values (e.g. 'Requested') still hit the existing tolerance.
+
+        The fix for #397 is narrow: only the PARSE_FAILED sentinel (which
+        means 'parser couldn't extract a verdict from the agent's output
+        file') becomes a hard fail. Other unparseable values like a
+        truncated 'Requested' are still tolerated as non-blocking per
+        the pre-existing behavior, because they may originate from agent
+        output that the human reviewer can interpret.
+        """
+        cp = _run_gate(r="Requested", s="Approve", event="pull_request")
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertIn("Unparseable verdict", cp.stdout)
+
     def test_extracted_bash_is_nonempty(self):
         """Sanity: the extractor actually returns bash, not a header."""
         bash = _extract_gate_bash()

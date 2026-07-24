@@ -738,6 +738,45 @@ jobs:
           [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT, result=$R_RESULT); defaulting to Approve"; R="Approve"; }
           [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT, result=$S_RESULT); defaulting to Approve"; S="Approve"; }
 
+          # Issue #397: PARSE_FAILED is a parse-error sentinel, NOT an
+          # "unparseable verdict" in the tolerance sense. The extract
+          # step emits the literal string `PARSE_FAILED` when the agent's
+          # output file existed and the agent ran, but the parser could
+          # not extract a recognizable `**Verdict:** <value>` line from
+          # the JSON envelope (e.g. the agent posted an inline comment
+          # but no summary, or the wrapper changed the message shape).
+          # The previous tolerance treated `PARSE_FAILED` as just another
+          # unparseable string and exited 0 — masking a broken parser as
+          # a passing review. Hard-fail here so the user MUST fix the
+          # parser instead of silently letting the gate pass on an
+          # inconclusive review. Distinct from `agent_ran=false` (skip)
+          # and `R_RESULT=failure` (install broken) — those fire earlier;
+          # this fires when the agent DID run but the parser couldn't
+          # read its output.
+          if [ "$R" = "PARSE_FAILED" ] || [ "$S" = "PARSE_FAILED" ]; then
+            {
+              echo "::error::review+security gate: verdict parser failed"
+              echo "  review.verdict=$R  security.verdict=$S"
+              echo "  The agent's output file couldn't be parsed into a"
+              echo "  recognizable Verdict. This is NOT a successful pass"
+              echo "  -- the security review is inconclusive."
+              echo
+              echo "  Common causes:"
+              echo "    - Agent posted an inline comment but no summary with"
+              echo "      '**Verdict:** Approve|Changes Requested|Blocked'"
+              echo "    - Agent's output envelope changed (the parser reads"
+              echo "      a different JSON field than the wrapper now emits)"
+              echo "    - Agent output was truncated or empty"
+              echo
+              echo "  Fix:"
+              echo "    - Update extract-verdict.py to handle the new output"
+              echo "      shape, OR"
+              echo "    - Update the agent's prompt to always emit a"
+              echo "      '**Verdict:** <value>' summary line"
+            } >&2
+            exit 1
+          fi
+
           # worst-of wins
           rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
           r=$(rank "$R"); s=$(rank "$S")
