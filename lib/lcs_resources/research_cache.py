@@ -60,9 +60,16 @@ class ResearchCacheResource(Resource):
         self._project_root = project_root
 
     def fetch(self, parsed: ParsedURI) -> dict:
-        # A sub-segment (parsed.path_segments[2:]) means the caller
-        # asked for a sub-resource we don't expose yet. Surface as
-        # partial so the server returns the standard error envelope.
+        # Sub-segment handling — v1 reports the first extra segment only.
+        #
+        # ``parsed.path_segments`` for the resource ``research/cache`` is
+        # structured as: ``["research", "cache", <sub>, ...]``. For a v1
+        # stub we surface a single ``LCSPartialError`` carrying the first
+        # sub-segment label; any deeper path (e.g. ``cache/foo/bar``)
+        # intentionally collapses to ``foo`` because every sub-resource
+        # is unknown until Phase 5 wires up real handlers. The full
+        # multi-segment reporting is deferred so the error envelope
+        # shape stays stable across the Phase 1.x to Phase 5 transition.
         sub = parsed.path_segments[2] if len(parsed.path_segments) > 2 else ""
         if sub:
             raise LCSPartialError(
