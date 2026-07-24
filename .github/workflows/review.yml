@@ -466,6 +466,20 @@ jobs:
           [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT); defaulting to Approve"; R="Approve"; }
           [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT); defaulting to Approve"; S="Approve"; }
 
+          # Issue #397: PARSE_FAILED is a parse-error sentinel, NOT an
+          # unparseable verdict. Hard-fail so a broken parser can't mask
+          # itself as a passing review. (Mirrors templates/ci/.github/
+          # workflows/review.yml.)
+          if [ "$R" = "PARSE_FAILED" ] || [ "$S" = "PARSE_FAILED" ]; then
+            {
+              echo "::error::review+security gate: verdict parser failed"
+              echo "  review.verdict=$R  security.verdict=$S"
+              echo "  The agent's output file couldn't be parsed into a"
+              echo "  recognizable Verdict -- this is NOT a successful pass."
+            } >&2
+            exit 1
+          fi
+
           # worst-of wins
           rank() { case "$1" in Blocked) echo 2 ;; "Changes"*) echo 1 ;; Approve) echo 0 ;; *) echo 99 ;; esac; }
           r=$(rank "$R"); s=$(rank "$S")
