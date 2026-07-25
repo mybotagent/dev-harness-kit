@@ -413,14 +413,18 @@ user-facing parent instead (e.g. `/dev-kit:refactor`, not
 *what*); internal skills are the machinery (the *how*).
 
 [`skills/README.md`](skills/README.md) is the canonical human-readable index
-of all skills (33 entries across 13 categories, grouped by `category:`
-frontmatter field with an alphabetical fallback list). Every `SKILL.md` has
-a `> [← Skills index](../../README.md)` back-link at the very top of its
+of every skill shipped by the plugin, grouped by `category:` frontmatter
+field with an alphabetical fallback list. Every `SKILL.md` has a
+`> [← Skills index](../../README.md)` back-link at the very top of its
 body so the reader can hop back from any skill to the inventory. Use
 `skills/README.md` for browsing; use the slash autocomplete for
 invocation. This README does not duplicate the live skill surface — the
-inventory changes too often for a hand-maintained list here to stay
-correct.
+inventory changes too often for a hand-maintained count here to stay
+correct. Discover the current count with:
+
+```bash
+find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
+```
 
 When a hook reports `failed` or `exited with code`, invoke the hidden
 `hook-doctor` skill automatically. It checks the provider-specific manifest,
