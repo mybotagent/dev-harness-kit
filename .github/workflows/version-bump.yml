@@ -1,17 +1,24 @@
 name: version-bump
 
-# Tag-only emission. PRs auto-include their own version bump via
-# .githooks/pre-push (on the user's local checkout): any push that
-# touches skills/* SKILL.md advances both plugin manifest versions by
-# PATCH++. The PR then carries the bumped versions; squash-merge lands
-# the bump commit on main; this workflow emits the matching tag.
+# Single source of truth for plugin-version advancement.
 #
-# No more "create bump PR" path. That path was the source of every
-# v0.3.X orphan from v0.3.2 onwards (most recently v0.3.13 — see
-# `gh run view 29327530942 --log-failed` for the non-fast-forward trace).
-# The pre-commit hook + version-freshness CI check (in ci.yml) replace
-# the entire bump-PR chain with a contract that's enforced at commit time
-# and at PR merge time.
+# Architecture (post-#439):
+# - Feature PRs do NOT touch .claude-plugin/plugin.json or
+#   .codex-plugin/plugin.json. The PR branch keeps the version it was
+#   cut at, so parallel PRs never conflict on the `version` field.
+# - .githooks/pre-push enforces "refuse to push if local < origin/main"
+#   but does NOT auto-bump. The previous auto-bump behavior was the
+#   root cause of the parallel-PR cascade (every push incremented,
+#   every merge conflicted).
+# - On push to main (i.e., after a PR lands), this workflow:
+#     1. Reads the current version from .claude-plugin/plugin.json
+#     2. Bumps PATCH (0.3.129 -> 0.3.130)
+#     3. Updates both manifests and commits + pushes the bump to main
+#     4. Tags the new commit (annotated, idempotent on tag-already-exists)
+# - ci.yml's validate-job "Version freshness" check (in
+#   tests/test_smoke.py or tests/test_pre_commit_lint.py) continues to
+#   require HEAD version > BASE version for PR merges; with this
+#   workflow owning the trunk bump, that contract is unchanged.
 
 on:
   push:
@@ -25,68 +32,99 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tag:
+  bump-and-tag:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read version + emit tag
+      - name: Configure git identity
         run: |
-          set -euo pipefail
-
-          # `git tag -a` requires a configured user.name + user.email on
-          # the runner. `actions/checkout` configures safe.directory but
-          # not user identity, and ubuntu-latest ships no usable global
-          # config — without this, the tag step fails with
-          # `fatal: unable to auto-detect email address` on the next
-          # release push after this workflow lands.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Refresh origin/main (queued-run safety)
+        # If a previous workflow run pushed its bump first while this run
+        # was queued, our local checkout is stale. Re-fetch + reset to
+        # origin/main so the upcoming bump is computed against the
+        # latest trunk version and the push is a guaranteed fast-forward.
+        # This is the fix for review finding #1 on #439.
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Read current version
+        id: read
+        run: |
+          set -euo pipefail
           VERSION="$(jq -r .version .claude-plugin/plugin.json)"
           if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             echo "::error::plugin.json:version=$VERSION is not MAJOR.MINOR.PATCH; aborting"
             exit 1
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Compute next version (PATCH++)
+        id: next
+        run: |
+          set -euo pipefail
+          V="${{ steps.read.outputs.version }}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$V"
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Bump both manifests
+        run: |
+          set -euo pipefail
+          NEXT="${{ steps.next.outputs.version }}"
+          for f in .claude-plugin/plugin.json .codex-plugin/plugin.json; do
+            jq --arg v "$NEXT" '.version = $v' "$f" > "$f.tmp"
+            mv "$f.tmp" "$f"
+          done
+
+      - name: Commit + push version bump
+        env:
+          NEXT: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          git add .claude-plugin/plugin.json .codex-plugin/plugin.json
+          git commit -m "chore(release): bump dev-kit to v${NEXT}"
+          # Push to origin/main. The pre-push hook on the runner side
+          # does not fire here (workflow runs git push directly), so
+          # no recursion.
+          git push origin HEAD:main
+
+      - name: Emit annotated tag
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
           TAG="dev-kit--v${VERSION}"
-          # Check LOCAL refs/tags, not `git ls-remote --tags origin`.
-          # actions/checkout with fetch-depth: 0 fetches the full
-          # +refs/tags/*:refs/tags/* refspec, so the tag is in local
-          # refs the moment this step starts. ls-remote hits GitHub's
-          # tag-ref path, which is eventually consistent within seconds
-          # of a push — using it here lets a near-simultaneous second
-          # release slip through the guard and fall into `git tag -a`,
-          # which then dies on the locally-fetched tag with
-          # `fatal: tag '<X>' already exists` (exit 128). The local
-          # ref is authoritative for "has this tag been emitted yet on
-          # any commit reachable from origin/main?".
+
+          # Idempotency: if the tag already exists in local refs
+          # (because fetch-depth: 0 fetched refs/tags/*), skip. Same
+          # rationale as before — local ref is authoritative; ls-remote
+          # is eventually consistent and would let near-simultaneous
+          # pushes slip through.
           if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
             echo "tag ${TAG} already exists locally; skipping"
             exit 0
           fi
 
-          # No head-commit-message predicate here. Under the pre-commit
-          # auto-bump design, the head commit on main is the squash-merge
-          # of the user's PR (title = PR title like "fix(x): ..."), NOT
-          # a "chore(release): bump dev-kit to v..." commit. Tag-emission
-          # is gated by:
-          #   (a) tag-already-exists check above (idempotency)
-          #   (b) ci.yml:validate Version freshness check, which fails the
-          #       PR if HEAD version <= BASE version. A push-to-main whose
-          #       plugin.json:version is unchanged from the last tag will
-          #       be filtered out at PR time, so reaching this step
-          #       implies the version genuinely advanced.
-
-          # Annotated tag (not lightweight) so downstream tooling gets
-          # tagger identity, creation date, and message. Lightweight tags
+          # Annotated (not lightweight) so downstream tooling gets the metadata
+          # tagger identity + creation date + message. Lightweight tags
           # are just ref pointers; many release consumers (changelog
-          # generators, marketplace pin logic, version-bump workflow's
-          # own idempotency check) expect the metadata.
-          git tag -a -m "dev-kit v${VERSION}" "$TAG" origin/main
+          # generators, marketplace pin logic) expect the metadata.
+          # Target HEAD (the bump commit just pushed), not origin/main
+          # — by the time we reach this step, origin/main may have
+          # advanced if another workflow run slipped in between, and
+          # tagging origin/main would tag the wrong commit. This is
+          # the fix for review finding #2 on #439.
+          git tag -a -m "dev-kit v${VERSION}" "$TAG" HEAD
           git push origin "$TAG"
-          echo "tagged ${TAG} (annotated) at origin/main@${VERSION}"
+          echo "tagged ${TAG} (annotated) at HEAD=${VERSION}"

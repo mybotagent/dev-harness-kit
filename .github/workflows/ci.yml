@@ -139,7 +139,7 @@ jobs:
           print(f'all {len(skills)} skills flat + name==dir OK')
           "
 
-      - name: Version freshness (PR head > PR base, strict; skip if no version-relevant files changed)
+      - name: Version freshness (PR head >= PR base; reject only stale; skip if no version-relevant files changed)
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -147,12 +147,10 @@ jobs:
           set -euo pipefail
 
           # Skip exemption: a PR that does NOT touch .claude-plugin/plugin.json
-          # or any skills/* SKILL.md has nothing to bump — the version is
+          # or any skills/* SKILL.md has nothing to verify — the version is
           # invariant under such changes. Without this exemption, every
           # non-version-relevant refactor (e.g. CI / hook / test changes)
-          # would falsely trip the strict check. Pre-push will still bump
-          # if it sees a plugin/skill change in the diff at push time; the
-          # exemption only fires for diffs that don't touch either path.
+          # would falsely trip the check.
           PR_FILES="$(git diff "$BASE_SHA"...HEAD --name-only)"
           NEEDS_BUMP_TOUCHED=false
           if echo "$PR_FILES" | grep -qE '^\.claude-plugin/plugin\.json$|^skills/.*SKILL\.md$'; then
@@ -167,26 +165,24 @@ jobs:
           BASE_VERSION="$(git show "$BASE_SHA:.claude-plugin/plugin.json" | jq -r .version)"
           HEAD_VERSION="$(jq -r .version .claude-plugin/plugin.json)"
 
-          # STRICT inequality: HEAD must be > BASE (not >=). The auto-bump
-          # source of truth is .githooks/pre-push, which advances PATCH
-          # to (BASE + 1) right before pushing. After a successful pre-push,
-          # HEAD == BASE+1, so this check passes. If HEAD == BASE, the
-          # user pushed with --no-verify (bypassing pre-push) and the
-          # version wasn't advanced; we refuse to merge.
+          # Post-#439 contract: the trunk workflow owns the version advance,
+          # not the feature branch. Feature branches therefore keep the
+          # version they were cut at (HEAD == BASE) and the freshness check
+          # only rejects stale branches (HEAD < BASE), which can happen
+          # when another PR merged first and advanced main past this
+          # branch's tip. The user must rebase onto origin/main.
           #
-          # If HEAD < BASE: another PR merged first and advanced main past
-          # this branch's tip. The user must rebase; pre-push will then
-          # auto-bump to (BASE + 1) on the next push.
-          HIGHER="$(printf '%s\n%s\n' "$BASE_VERSION" "$HEAD_VERSION" | sort -V | tail -1)"
-          if [ "$HIGHER" = "$BASE_VERSION" ]; then
-            echo "::error::PR head version $HEAD_VERSION is NOT strictly greater than base version $BASE_VERSION"
-            echo "::error::Either: (a) you pushed with --no-verify and bypassed the pre-push auto-bump,"
-            echo "::error::or (b) another PR merged first and advanced main past this branch."
-            echo "::error::Fix (a): rebase onto origin/main; pre-push will auto-bump the next PATCH on push."
-            echo "::error::Fix (b): rebase onto origin/main, then push; pre-push will advance past the new base."
+          # Historically this check enforced strict-greater-than under
+          # the pre-push auto-bump design (pre-push bumped HEAD to
+          # BASE+1). That contract is gone; this is the replacement.
+          LOWER="$(printf '%s\n%s\n' "$BASE_VERSION" "$HEAD_VERSION" | sort -V | head -1)"
+          if [ "$LOWER" = "$HEAD_VERSION" ]; then
+            echo "::error::PR head version $HEAD_VERSION is OLDER than base version $BASE_VERSION (stale)"
+            echo "::error::Another PR merged first and advanced origin/main past this branch."
+            echo "::error::Fix: rebase onto origin/main and re-push (no version bump required)."
             exit 1
           fi
-          echo "version-freshness OK (head=$HEAD_VERSION > base=$BASE_VERSION)"
+          echo "version-freshness OK (head=$HEAD_VERSION >= base=$BASE_VERSION)"
 
       - name: Bash hook syntax
         run: |
