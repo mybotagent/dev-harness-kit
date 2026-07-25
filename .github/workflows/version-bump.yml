@@ -116,7 +116,7 @@ jobs:
             exit 0
           fi
 
-          # Annotated (not lightweight) so downstream tooling gets
+          # Annotated (not lightweight) so downstream tooling gets the metadata
           # tagger identity + creation date + message. Lightweight tags
           # are just ref pointers; many release consumers (changelog
           # generators, marketplace pin logic) expect the metadata.
