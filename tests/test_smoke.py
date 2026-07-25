@@ -20,6 +20,10 @@ from pathlib import Path
 import yaml
 
 PROJECT_ROOT = Path(__file__).parent.parent
+# SKILL_COUNT tracks skills/ directory entries via rglob("SKILL.md").
+# Bump alongside any new skills/*/SKILL.md (Phase 1.11 added skills/lcs/SKILL.md).
+# On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
+# should equal this constant at HEAD (excluding worktrees of in-flight PRs).
 SKILL_COUNT = 35
 HOOK_SCRIPTS = {
     "tdd-guard.sh",

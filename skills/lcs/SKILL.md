@@ -84,3 +84,15 @@ DEV_KIT_LCS_DEMO=1 python3 bin/dev-kit-lcs.py --get lcs://demo/example
   inspecting `lcs://pr/<n>` and `lcs://hooks/coverage`.
 - For build follow-ups: hand off to `/dev-kit:build` once the relevant
   resource (worktrees / spend / sessions) shows the gap to close.
+=======
+category: ship
+description: Placeholder stub for the 35th skill. Full body lands via #356; this file exists only so SKILL_COUNT=35 in tests/test_smoke.py matches the on-disk skill count.
+alpha: state
+when_to_use: |
+  - Placeholder. Do not invoke yet. Replaced by #356.
+allowed-tools: Read
+disallowed-tools: Write Edit Agent
+model: sonnet
+disable-model-invocation: true
+user-invocable: false
+---
