@@ -56,15 +56,24 @@ Loaded on top of project rules for every session. Used for:
 
 ## Team hooks (opt-in templates, NOT in the plugin)
 
-The plugin ships **5 personal hooks** (auto-on at user install). The 3 team hooks are **NOT** registered in the plugin's `hooks/hooks.json` — they live in `docs/team-hooks/` as **copy-paste templates** that each project copies into its own `.claude/hooks/` and wires up in `.claude/settings.json`.
+The plugin ships a personal hook set wired into `hooks/hooks.json` and the
+Codex mirror at `.codex-plugin/hooks/hooks.json`. The exact count drifts
+as the plugin evolves (worktree-rule, ACP-tier-assert, and
+provider-divergence hooks were added on top of the original core), so it
+is NOT recorded here. Inspect the live inventory with:
+
+```bash
+grep -E '"command"' hooks/hooks.json | wc -l   # canonical hook count
+ls -1 docs/team-hooks/*.sh                     # team-hook templates
+```
+
+The 3 team hooks below are **NOT** registered in the plugin's
+`hooks/hooks.json` — they live in `docs/team-hooks/` as **copy-paste
+templates** that each project copies into its own `.claude/hooks/` and
+wires up in `.claude/settings.json`.
 
 | Hook | Stage | Mode | Where |
 |---|---|---|---|
-| `tdd-guard` | PreToolUse (Edit/Write) | advisory | plugin (auto-on) |
-| `bash-guard` | PreToolUse (Bash) | advisory | plugin (auto-on) |
-| `secret-scan` | PostToolUse (Edit/Write) | advisory | plugin (auto-on) |
-| `slop-detector` | PostToolUse (Edit/Write) | advisory | plugin (auto-on) |
-| `stop-verify` | Stop | advisory | plugin (auto-on) |
 | `prettier-format` | PostToolUse (Edit/Write) | advisory | `docs/team-hooks/` (copy) |
 | `block-dangerous-commands` | PreToolUse (Bash) | **hard-block** | `docs/team-hooks/` (copy) |
 | `eslint-fix` | PostToolUse (Edit/Write) | advisory | `docs/team-hooks/` (copy) |
