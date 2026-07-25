@@ -20,10 +20,11 @@ Why a CLI driver (not just an import):
   the parent process may terminate us at any time, and we must not
   leave the registry in a half-initialized state.
 
-Env var hooks:
-- ``DEV_KIT_LCS_DEMO=1`` registers a built-in ``demo`` resource (used
-  by the regression suite to exercise end-to-end CLI flows without a
-  custom registry; also useful for ad-hoc local debugging).
+Resource registration:
+- The five production handlers (worktrees, branches, pr, sessions, spend)
+  are registered in the default CLI registry.
+- ``DEV_KIT_LCS_DEMO=1`` adds a built-in ``demo`` resource for transport
+  regression tests and ad-hoc local debugging.
 
 Exit codes:
   0  success (resource fetched / listed / described)
@@ -46,6 +47,11 @@ _HERE = Path(__file__).resolve()
 _REPO_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "lib"))
 
+from lcs_resources.branches import BranchesResource  # noqa: E402
+from lcs_resources.pr import PRResource  # noqa: E402
+from lcs_resources.sessions import SessionsResource  # noqa: E402
+from lcs_resources.spend import SpendResource  # noqa: E402
+from lcs_resources.worktrees import WorktreesResource  # noqa: E402
 from lcs_server import (  # noqa: E402
     LCSError,
     LCSServer,
@@ -78,17 +84,15 @@ class _DemoResource:
 
 
 def build_default_registry() -> ResourceRegistry:
-    """Build the resource registry the CLI starts with.
-
-    v1 ships empty by default. Setting ``DEV_KIT_LCS_DEMO=1`` adds the
-    built-in ``demo`` resource — useful for end-to-end CLI tests
-    (``tests/test_dev_kit_lcs_cli.py``) and for ad-hoc debugging.
-
-    Future revisions will auto-import Phase 1.3+ resource modules
-    here; until they ship, ``--list-resources`` reports whatever is
-    registered via this hook, which is the correct contract.
-    """
+    """Build the default registry for the repository containing the CLI."""
+    repo_root = Path.cwd()
+    logs_root = repo_root / "logs"
     registry = ResourceRegistry()
+    registry.register(WorktreesResource(repo_root))
+    registry.register(BranchesResource(repo_root))
+    registry.register(PRResource(repo_root))
+    registry.register(SessionsResource(logs_root))
+    registry.register(SpendResource(logs_root))
     if os.environ.get("DEV_KIT_LCS_DEMO") == "1":
         registry.register(_DemoResource())
     return registry
