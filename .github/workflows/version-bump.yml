@@ -38,6 +38,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,6 +46,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Refresh origin/main (queued-run safety)
+        # If a previous workflow run pushed its bump first while this run
+        # was queued, our local checkout is stale. Re-fetch + reset to
+        # origin/main so the upcoming bump is computed against the
+        # latest trunk version and the push is a guaranteed fast-forward.
+        # This is the fix for review finding #1 on #439.
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Read current version
         id: read
@@ -108,6 +120,11 @@ jobs:
           # tagger identity + creation date + message. Lightweight tags
           # are just ref pointers; many release consumers (changelog
           # generators, marketplace pin logic) expect the metadata.
-          git tag -a -m "dev-kit v${VERSION}" "$TAG" origin/main
+          # Target HEAD (the bump commit just pushed), not origin/main
+          # — by the time we reach this step, origin/main may have
+          # advanced if another workflow run slipped in between, and
+          # tagging origin/main would tag the wrong commit. This is
+          # the fix for review finding #2 on #439.
+          git tag -a -m "dev-kit v${VERSION}" "$TAG" HEAD
           git push origin "$TAG"
-          echo "tagged ${TAG} (annotated) at origin/main@${VERSION}"
+          echo "tagged ${TAG} (annotated) at HEAD=${VERSION}"

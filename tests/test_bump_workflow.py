@@ -213,6 +213,34 @@ class TestBumpWorkflow(unittest.TestCase):
                          "MINOR bumps require explicit maintainer action; "
                          "this workflow must not auto-bump MINOR")
 
+    def test_11_workflow_refreshes_origin_main_before_bump(self):
+        """Queued-run safety (review finding #1 on #439): the workflow
+        must re-fetch origin/main before computing the next version, so
+        a run that was queued behind another run's bump doesn't push
+        a non-fast-forward or compute against a stale version."""
+        text = _yaml_text()
+        self.assertRegex(text, r"git fetch origin main",
+                         "workflow must `git fetch origin main` before "
+                         "computing the next version (queued-run safety)")
+        self.assertRegex(text, r"git reset --hard origin/main",
+                         "workflow must reset to origin/main so the push "
+                         "is a guaranteed fast-forward (queued-run safety)")
+
+    def test_12_workflow_tags_head_not_origin_main(self):
+        """Tag target correctness (review finding #2 on #439): the
+        annotated tag must target HEAD (the bump commit just pushed),
+        NOT origin/main — which may have advanced between our push and
+        the tag step if another run slipped in. Tagging origin/main in
+        that window would publish a tag pointing at the wrong commit."""
+        doc = _yaml_doc()
+        tag_step = _find_step(doc, "tag") or _find_step(doc, "emit")
+        self.assertIsNotNone(tag_step)
+        run = tag_step.get("run", "")
+        self.assertIn('"$TAG" HEAD', run,
+                      "tag must target HEAD (the bump commit), not origin/main")
+        self.assertNotIn("$TAG\" origin/main", run,
+                         "tag must NOT target origin/main (review finding #2)")
+
 
 class TestBumpWorkflowOmissions(unittest.TestCase):
     """Pin the refactor's REMOVALS. The old bump-PR creation path
