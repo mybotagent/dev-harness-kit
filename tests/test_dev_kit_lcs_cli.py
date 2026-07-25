@@ -4,10 +4,9 @@
 Pins the CLI surface: --list-resources, --describe, --get, --serve
 (JSON-RPC over stdio). The CLI is invoked as a subprocess so exit
 codes, stdout/stderr framing, and signal handling are exercised
-end-to-end. Resource registration is driven by an env-var hook
-(``DEV_KIT_LCS_DEMO=1``) that the CLI reads at startup — a clean
-production feature, not a test-only hack: it lets a consumer
-register extra resources without forking the CLI script.
+end-to-end. The CLI registers the five production resources at startup. The
+``DEV_KIT_LCS_DEMO=1`` env-var hook adds a deterministic ``demo`` resource
+for wire-format tests without replacing the production registry.
 
 The LCS server contract itself is covered by ``tests/test_lcs_server.py``.
 These tests focus on the CLI wrapper: argument parsing, exit codes,
@@ -50,10 +49,11 @@ def _run_cli(*args: str, stdin: str | None = None, with_demo: bool = False,
 # ──────────────────────────────────────────────────────────────────
 
 class TestListResources(unittest.TestCase):
-    def test_empty_registry_prints_friendly_message(self):
+    def test_default_registry_lists_production_resources(self):
         cp = _run_cli("--list-resources")
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
-        self.assertIn("no resources registered", cp.stdout)
+        for resource in ("worktrees", "branches", "pr", "sessions", "spend"):
+            self.assertIn(resource, cp.stdout)
 
     def test_list_resources_with_demo_resource(self):
         cp = _run_cli("--list-resources", with_demo=True)

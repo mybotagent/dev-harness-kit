@@ -18,7 +18,13 @@ Every skill declares two frontmatter fields that matter for navigation:
   (pure reasoning over a corpus). See `CLAUDE.md` §1 (L6/L7) and
   `rules/skill-authoring.md` for the full rationale.
 
-**33 skills total: 29 human-invocable, 4 model-invoked sub-skills.**
+The current count is volatile (skills are added and removed as the plugin
+evolves). Discover it with:
+
+```bash
+find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
+grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked sub-skills
+```
 
 ---
 
@@ -96,10 +102,11 @@ step inside their parent skill's flow; you never type them directly.
 | [`build-debug`](build-debug.md) | `enforcement` | `/dev-kit:build` | 4-phase systematic debugging; no fix before Phase 1 (reproduce) completes. |
 | [`build-verify`](build-verify.md) | `enforcement` | `/dev-kit:build` | Verification-before-completion; no "done" without a quoted exit code + test count. |
 | [`build-refactor`](build-refactor.md) | `enforcement` | `/dev-kit:refactor`, `/dev-kit:prune` | 4-pass cleanup (dead → dup → naming → coverage); no cleanup without a regression test. |
+| [`hook-doctor`](hook-doctor.md) | `enforcement` | auto (visible hook failure) | Diagnose failed Claude Code / Codex hooks and repair safe cache + registration drift. |
 
 ---
 
-## Alphabetical (all 33)
+## Alphabetical (all skills)
 
 | # | Skill | Category | Alpha | Invocable |
 |---|---|---|---|---|
@@ -121,18 +128,19 @@ step inside their parent skill's flow; you never type them directly.
 | 16 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
 | 17 | [`eval`](eval.md) | `eval` | `analysis` | human |
 | 18 | [`feat-remove`](feat-remove.md) | `build` | `state` | human |
-| 19 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
-| 20 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
-| 21 | [`log`](log.md) | `shortcuts` | `state` | human |
-| 22 | [`plan`](plan.md) | `plan` | `state` | human |
-| 23 | [`proposal`](proposal.md) | `design` | `state` | human |
-| 24 | [`prune`](prune.md) | `build` | `analysis` | human |
-| 25 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
-| 26 | [`refactor`](refactor.md) | `build` | `analysis` | human |
-| 27 | [`repair`](repair.md) | `repair` | `state` | human |
-| 28 | [`report`](report.md) | `audit` | `analysis` | human |
-| 29 | [`review`](review.md) | `review` | `analysis` | human |
-| 30 | [`security`](security.md) | `security` | `enforcement` | human |
-| 31 | [`ship`](ship.md) | `ship` | `state` | human |
-| 32 | [`status`](status.md) | `status` | `state` | human |
-| 33 | [`token-analyzer`](token-analyzer.md) | `audit` | `analysis` | human |
+| 19 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
+| 20 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
+| 21 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
+| 22 | [`log`](log.md) | `shortcuts` | `state` | human |
+| 23 | [`plan`](plan.md) | `plan` | `state` | human |
+| 24 | [`proposal`](proposal.md) | `design` | `state` | human |
+| 25 | [`prune`](prune.md) | `build` | `analysis` | human |
+| 26 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
+| 27 | [`refactor`](refactor.md) | `build` | `analysis` | human |
+| 28 | [`repair`](repair.md) | `repair` | `state` | human |
+| 29 | [`report`](report.md) | `audit` | `analysis` | human |
+| 30 | [`review`](review.md) | `review` | `analysis` | human |
+| 31 | [`security`](security.md) | `security` | `enforcement` | human |
+| 32 | [`ship`](ship.md) | `ship` | `state` | human |
+| 33 | [`status`](status.md) | `status` | `state` | human |
+| 34 | [`token-analyzer`](token-analyzer.md) | `audit` | `analysis` | human |

@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 """test_bump_workflow.py — regression for `.github/workflows/version-bump.yml`.
 
-After the pre-commit auto-bump + freshness-check refactor, this workflow is
-tag-only emission. It does NOT create bump PRs, does NOT race-recover
-orphans, does NOT carry a commit message. The full chain is:
+After the trunk-owns-the-version refactor (post-#439), this workflow:
+  1. Reads the current version from .claude-plugin/plugin.json
+  2. Bumps PATCH (0.3.129 -> 0.3.130)
+  3. Updates both plugin manifests
+  4. Commits + pushes the bump to main
+  5. Emits the annotated tag (idempotent on tag-already-exists)
 
-  user edits skill
-    -> .githooks/pre-push auto-bumps both plugin manifest versions (PATCH++)
-    -> user pushes branch, opens PR
-    -> ci.yml:version-freshness check (PR head > PR base) gates the merge
-    -> squash-merge lands the bump commit on main
-    -> version-bump.yml:tag job detects the bump via head-commit message
-       and emits dev-kit--vX.Y.Z
+The full chain is:
+  user edits skill on feature branch
+    -> PR opens; branch's plugin.json:version equals origin/main's
+       (no auto-bump on feature branches; parallel PRs never conflict)
+    -> ci.yml:version-freshness check (HEAD > BASE) gates the merge
+    -> squash-merge lands the PR on main
+    -> version-bump.yml fires on push-to-main, bumps PATCH, commits,
+       pushes, then emits dev-kit--vX.Y.Z
 
 This test pins the structural contract the workflow must satisfy so the
 refactor cannot drift silently:
 
   T1: workflow file exists and parses as YAML.
   T2: workflow ONLY triggers on push to main (no pull_request trigger).
-  T3: permissions include `contents: write` (for tag push); pull-requests
-      is no longer required (no PR creation).
+  T3: permissions include `contents: write` (for tag push + commit push).
   T4: concurrency group is configured with `cancel-in-progress: false`
-      (tag emission must serialize; never drop in-flight tag pushes).
-  T5: tag pattern `dev-kit--vX.Y.Z` is emitted by the tag job.
+      (bump+tag must serialize; never drop in-flight pushes).
+  T5: tag pattern `dev-kit--vX.Y.Z` is emitted by the workflow.
   T6: tag emission is skipped if the tag already exists on origin.
-  T7: tag emission is skipped if the head commit is NOT a bump commit
-      matching the current plugin.json:version (defends against spurious
-      tag pushes from unrelated force-pushes).
+  T7: workflow bumps BOTH plugin manifests (.claude-plugin and .codex-plugin).
+  T8: workflow commits the bump with a chore(release): ... message.
+  T9: pre-push hook does NOT auto-bump; it only enforces version freshness.
 """
 from __future__ import annotations
 
@@ -50,7 +53,10 @@ def _yaml_doc() -> dict:
 
 
 def _resolve_steps(doc: dict) -> list[dict]:
-    return doc["jobs"]["tag"]["steps"]
+    # Job name may be 'tag' (legacy) or 'bump-and-tag' (post-refactor).
+    jobs = doc["jobs"]
+    job_name = next(iter(jobs.keys()))
+    return jobs[job_name]["steps"]
 
 
 def _find_step(doc: dict, name_substr: str) -> dict | None:
@@ -61,14 +67,6 @@ def _find_step(doc: dict, name_substr: str) -> dict | None:
 
 
 class TestBumpWorkflow(unittest.TestCase):
-
-    def test_pre_push_bumps_both_plugin_manifests(self):
-        """Claude and Codex manifests must advance together on PR pushes."""
-        text = PRE_PUSH_PATH.read_text(encoding="utf-8")
-        self.assertIn('CLAUDE_PLUGIN=".claude-plugin/plugin.json"', text)
-        self.assertIn('CODEX_PLUGIN=".codex-plugin/plugin.json"', text)
-        self.assertIn('git add "$CLAUDE_PLUGIN" "$CODEX_PLUGIN"', text)
-        self.assertIn('jq --arg v "$NEW_VERSION"', text)
 
     def test_plugin_manifest_versions_are_in_sync(self):
         """The two published plugin surfaces must expose one release version."""
@@ -98,15 +96,14 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertTrue(("on" in doc) or (True in doc),
                         "workflow must declare triggers under `on:`")
         self.assertIn("jobs", doc)
-        self.assertIn("tag", doc["jobs"],
-                      "workflow must declare a `tag` job (the only job)")
+        # Exactly one job expected post-refactor: bump-and-tag (or legacy 'tag').
+        self.assertEqual(len(doc["jobs"]), 1,
+                         "workflow must declare exactly one job")
 
     def test_03_push_only_trigger_no_pull_request(self):
-        """The refactored workflow is push-to-main only. No pull_request
-        trigger -- PRs already carry their own version bump via
-        .githooks/pre-push, so the workflow does not need to react to
-        PR-closed events. Pin this to prevent re-introduction of the old
-        bump-PR creation path."""
+        """The workflow is push-to-main only. No pull_request trigger —
+        the trunk owns the version bump after a PR merges. Pin this to
+        prevent re-introduction of the old bump-PR creation path."""
         doc = _yaml_doc()
         on_dict = self._on(doc)
         self.assertIn("push", on_dict)
@@ -115,18 +112,17 @@ class TestBumpWorkflow(unittest.TestCase):
                          "push trigger must pin to branches: [main]")
         self.assertNotIn("pull_request", on_dict,
                          "version-bump.yml must NOT trigger on pull_request; "
-                         "the pre-commit hook carries the bump onto the PR "
-                         "and this workflow only emits the tag post-merge")
+                         "the trunk owns the version bump post-merge")
 
     def test_04_permissions_declares_contents_write(self):
         doc = _yaml_doc()
         perms = doc.get("permissions", {})
         self.assertEqual(perms.get("contents"), "write",
-                         "workflow needs contents: write to push the tag")
-        # pull-requests: write is no longer required (no PR creation).
+                         "workflow needs contents: write to push the bump commit "
+                         "and the tag")
         self.assertNotIn("pull-requests", perms,
                          "pull-requests: write is unnecessary -- the workflow "
-                         "no longer creates or merges PRs")
+                         "does not create or merge PRs")
 
     def test_05_concurrency_group_set(self):
         doc = _yaml_doc()
@@ -134,8 +130,7 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertIn("group", conc, "concurrency.group required")
         self.assertTrue(conc.get("cancel-in-progress") is False,
                         "cancel-in-progress MUST be false -- true drops newer "
-                        "tag pushes that come in while a current tag emit is "
-                        "running, which would skip tag emission")
+                        "bumps that come in while a current bump is running")
 
     def test_06_tag_pattern_present(self):
         text = _yaml_text()
@@ -147,65 +142,104 @@ class TestBumpWorkflow(unittest.TestCase):
         origin. Idempotent re-runs (e.g. workflow re-fire on a force-push
         that didn't change the head version) must not fail."""
         doc = _yaml_doc()
-        tag_step = None
-        for step in _resolve_steps(doc):
-            name = step.get("name", "").lower()
-            if "tag" in name or "read version" in name:
-                tag_step = step
-                break
-        self.assertIsNotNone(tag_step, "expected a 'Tag' / 'Read version' step")
+        tag_step = _find_step(doc, "tag") or _find_step(doc, "emit")
+        self.assertIsNotNone(tag_step, "expected a 'Tag' / 'Emit' step")
         run = tag_step.get("run", "")
         self.assertIn("already exists", run,
                       "tag step must skip (with exit 0) when the tag is "
                       "already on origin; otherwise re-runs will fail with "
                       "'tag already exists' from git push")
 
-    def test_07b_tag_step_configures_git_identity(self):
-        """`git tag -a` requires a configured user.name + user.email on
-        the runner. Without it, the next release push fails with
-        `fatal: unable to auto-detect email address`. Pin the identity
-        setup so a future refactor can't silently drop it."""
+    def test_07b_workflow_configures_git_identity(self):
+        """`git tag -a` and the bump commit both require a configured
+        user.name + user.email on the runner. Without it, the next
+        release push fails with `fatal: unable to auto-detect email
+        address`. Pin the identity setup so a future refactor can't
+        silently drop it — either as a dedicated step or inline in the
+        step that runs git commit / git tag."""
         doc = _yaml_doc()
-        tag_step = None
-        for step in _resolve_steps(doc):
-            name = step.get("name", "").lower()
-            if "tag" in name or "read version" in name:
-                tag_step = step
-                break
+        all_runs = "\n".join(step.get("run", "") for step in _resolve_steps(doc))
+        self.assertIn("git config user.name", all_runs,
+                      "workflow must configure git user.name somewhere "
+                      "(dedicated step or inline in commit/tag step)")
+        self.assertIn("git config user.email", all_runs,
+                      "workflow must configure git user.email somewhere "
+                      "(dedicated step or inline in commit/tag step)")
+
+    def test_08_workflow_bumps_both_manifests(self):
+        """The bump step must update BOTH .claude-plugin/plugin.json and
+        .codex-plugin/plugin.json. The two surfaces publish the same
+        version; only one plugin on the bump would desync releases."""
+        doc = _yaml_doc()
+        bump_step = _find_step(doc, "bump") or _find_step(doc, "manifest")
+        self.assertIsNotNone(bump_step, "expected a 'Bump manifests' step")
+        run = bump_step.get("run", "")
+        self.assertIn(".claude-plugin/plugin.json", run,
+                      "bump step must touch .claude-plugin/plugin.json")
+        self.assertIn(".codex-plugin/plugin.json", run,
+                      "bump step must touch .codex-plugin/plugin.json")
+
+    def test_09_workflow_commits_the_bump(self):
+        """The workflow must `git commit` the bump with a chore(release)
+        message, then push the bump back to main. This is the trunk
+        version advance that subsequent PRs will compare against."""
+        doc = _yaml_doc()
+        commit_step = _find_step(doc, "commit") or _find_step(doc, "push version")
+        self.assertIsNotNone(commit_step, "expected a 'Commit + push version bump' step")
+        run = commit_step.get("run", "")
+        self.assertIn("git commit", run,
+                      "commit step must call git commit (the bump itself)")
+        self.assertIn("chore(release)", run,
+                      "commit message must use chore(release): prefix so "
+                      "changelog generators pick it up")
+        self.assertIn("git push origin HEAD:main", run,
+                      "commit step must push the bump back to main")
+
+    def test_10_bump_step_uses_patch_plus_plus(self):
+        """The version advance is strictly PATCH++. Bumping MAJOR or MINOR
+        on a routine merge would surprise downstream consumers."""
+        doc = _yaml_doc()
+        next_step = _find_step(doc, "next") or _find_step(doc, "compute")
+        self.assertIsNotNone(next_step, "expected a 'Compute next version' step")
+        run = next_step.get("run", "")
+        self.assertIn("PATCH", run,
+                      "next-version step must reference the PATCH component")
+        self.assertIn("PATCH + 1", run,
+                      "next-version step must increment PATCH by 1")
+        self.assertNotIn("MAJOR + 1", run,
+                         "MAJOR bumps require explicit maintainer action; "
+                         "this workflow must not auto-bump MAJOR")
+        self.assertNotIn("MINOR + 1", run,
+                         "MINOR bumps require explicit maintainer action; "
+                         "this workflow must not auto-bump MINOR")
+
+    def test_11_workflow_refreshes_origin_main_before_bump(self):
+        """Queued-run safety (review finding #1 on #439): the workflow
+        must re-fetch origin/main before computing the next version, so
+        a run that was queued behind another run's bump doesn't push
+        a non-fast-forward or compute against a stale version."""
+        text = _yaml_text()
+        self.assertRegex(text, r"git fetch origin main",
+                         "workflow must `git fetch origin main` before "
+                         "computing the next version (queued-run safety)")
+        self.assertRegex(text, r"git reset --hard origin/main",
+                         "workflow must reset to origin/main so the push "
+                         "is a guaranteed fast-forward (queued-run safety)")
+
+    def test_12_workflow_tags_head_not_origin_main(self):
+        """Tag target correctness (review finding #2 on #439): the
+        annotated tag must target HEAD (the bump commit just pushed),
+        NOT origin/main — which may have advanced between our push and
+        the tag step if another run slipped in. Tagging origin/main in
+        that window would publish a tag pointing at the wrong commit."""
+        doc = _yaml_doc()
+        tag_step = _find_step(doc, "tag") or _find_step(doc, "emit")
         self.assertIsNotNone(tag_step)
         run = tag_step.get("run", "")
-        self.assertIn("git config user.name", run,
-                      "tag step must configure git user.name (annotated "
-                      "tags require a tagger identity)")
-        self.assertIn("git config user.email", run,
-                      "tag step must configure git user.email (annotated "
-                      "tags require a tagger identity)")
-
-    def test_08_no_head_commit_msg_predicate(self):
-        """The tag-emission step must NOT predicate on the head commit's
-        message. Under the pre-commit auto-bump design, the head commit
-        on main is the squash-merge of the user's PR (title = PR title
-        like "fix(x): ..."), NOT a "chore(release): bump dev-kit to
-        v..." commit. Tag-emission is gated by (a) tag-already-exists
-        and (b) ci.yml:validate Version freshness. A head-msg predicate
-        here would silently drop every release.
-
-        This is the inverse of the previous T8 — pin the absence of the
-        predicate so it cannot regress.
-        """
-        doc = _yaml_doc()
-        tag_step = None
-        for step in _resolve_steps(doc):
-            name = step.get("name", "").lower()
-            if "tag" in name or "read version" in name:
-                tag_step = step
-                break
-        self.assertIsNotNone(tag_step)
-        run = tag_step.get("run", "")
-        self.assertNotIn(r"chore\(release\):\ bump", run,
-                         "tag step must NOT predicate on the head-commit "
-                         "message; under squash-merge, the head title is "
-                         "the PR title, not a bump-commit")
+        self.assertIn('"$TAG" HEAD', run,
+                      "tag must target HEAD (the bump commit), not origin/main")
+        self.assertNotIn("$TAG\" origin/main", run,
+                         "tag must NOT target origin/main (review finding #2)")
 
 
 class TestBumpWorkflowOmissions(unittest.TestCase):
@@ -218,9 +252,9 @@ class TestBumpWorkflowOmissions(unittest.TestCase):
         text = _yaml_text()
         self.assertNotIn("chore/bump-v", text,
                          "workflow must NOT cut chore/bump-v* branches; "
-                         "PRs carry their own bump via pre-commit auto-bump")
+                         "the trunk owns the version bump post-merge")
         self.assertNotIn("gh pr create", text,
-                         "workflow must NOT create PRs; only emit tags")
+                         "workflow must NOT create PRs; only commit + tag")
 
     def test_no_peter_evans_automerge(self):
         text = _yaml_text()
@@ -232,23 +266,49 @@ class TestBumpWorkflowOmissions(unittest.TestCase):
         text = _yaml_text()
         self.assertNotIn("cherry-pick", text,
                          "workflow must NOT do cherry-pick recovery; the "
-                         "pre-commit hook + freshness check close the race")
+                         "freshness check on PR + trunk-bump on merge close "
+                         "the race")
 
-    def test_no_commit_in_workflow(self):
-        """The bump-commit message no longer exists in this workflow (no
-        commit is made here). Pin the absence of `git commit -m` as a
-        future-proofing guard against re-introducing the bump-PR path."""
-        text = _yaml_text()
-        self.assertNotIn("git commit -m", text,
-                         "workflow must NOT make any commits; commits are "
-                         "the user's responsibility (via pre-commit hook)")
+
+class TestPrePushRefactor(unittest.TestCase):
+    """The pre-push hook no longer auto-bumps; it only enforces version
+    freshness (refuse push if local < origin/main). Pin the new contract
+    so the old auto-bump cannot regress.
+    """
+
+    def test_pre_push_does_not_auto_bump(self):
+        """The hook must NOT modify plugin.json. The trunk workflow owns
+        the version advance; pre-push only checks freshness."""
+        text = PRE_PUSH_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('jq --arg v "$NEW_VERSION"', text,
+                         "pre-push must NOT auto-bump (the jq --arg v "
+                         "$NEW_VERSION rewrite is the old auto-bump path)")
+        self.assertNotIn('git add "$CLAUDE_PLUGIN" "$CODEX_PLUGIN"', text,
+                         "pre-push must NOT stage a version bump commit")
+        self.assertNotIn("chore(release): bump", text,
+                         "pre-push must NOT create a chore(release) commit")
+
+    def test_pre_push_enforces_freshness(self):
+        """The hook MUST refuse a push when local version is older than
+        origin/main's. This is the only behavior it retains."""
+        text = PRE_PUSH_PATH.read_text(encoding="utf-8")
+        self.assertIn("OLDER than origin/main", text,
+                      "pre-push must refuse when local < origin/main")
+        self.assertIn("Rebase onto origin/main", text,
+                      "pre-push error message must tell the user to rebase")
+
+    def test_pre_push_blocks_direct_main_push(self):
+        """Direct push to main remains forbidden (PR-only workflow)."""
+        text = PRE_PUSH_PATH.read_text(encoding="utf-8")
+        self.assertIn("BLOCKED: direct push", text,
+                      "pre-push must block direct push to main/master")
 
 
 class TestVersionFreshnessCheck(unittest.TestCase):
     """The cross-PR freshness check lives in .github/workflows/ci.yml.
-    It must (a) read PR base's plugin.json:version, (b) read PR head's
-    plugin.json:version, (c) fail if HEAD < BASE (stale), (d) be skipped
-    for bump-PRs (those are the user's own bump -- always equal or higher).
+    Post-#439 contract: the trunk workflow owns the version advance.
+    Feature branches keep the version they were cut at (HEAD == BASE is
+    fine). The check rejects only stale branches (HEAD < BASE).
     """
 
     @staticmethod
@@ -289,26 +349,39 @@ class TestVersionFreshnessCheck(unittest.TestCase):
                       "freshness step must use version-aware sort to compare "
                       "versions (not lexicographic -- 0.3.10 < 0.3.9 lex)")
 
-    def test_freshness_step_enforces_strict_greater_than(self):
-        """The check must reject HEAD <= BASE. The pre-push hook is the
-        source of truth (auto-bumps to BASE+1); a HEAD == BASE here
-        means the user pushed with --no-verify and bypassed it."""
+    def test_freshness_step_rejects_only_stale(self):
+        """Post-#439 contract: feature branches keep the version they
+        were cut at. The freshness check must REJECT only stale
+        branches (HEAD < BASE), not equal versions. This is the
+        inverse of the previous strict-greater-than contract — pin
+        the new semantics so a future refactor can't silently revert."""
         doc = self._doc()
         step = [s for s in doc["jobs"]["validate"]["steps"]
                 if "freshness" in s.get("name", "").lower()][0]
         run = step.get("run", "")
-        self.assertIn("strict", step.get("name", "").lower(),
-                      "freshness step name must declare STRICT semantics")
-        # STRICT check: HIGHER == BASE_VERSION catches both HEAD < BASE
-        # and HEAD == BASE; only HEAD > BASE passes (HIGHER == HEAD != BASE).
-        self.assertIn("HIGHER=", run,
-                      "freshness step must compute a HIGHER variable")
+        # Must NOT enforce strict-greater anymore.
+        self.assertNotIn("strict", step.get("name", "").lower(),
+                         "freshness step must NOT declare STRICT semantics "
+                         "post-#439; the trunk owns the bump")
+        self.assertNotIn("HIGHER=", run,
+                         "freshness step must NOT compute HIGHER (the old "
+                         "strict-greater contract)")
+        # Must use LOWER (rejects HEAD < BASE = stale).
+        self.assertIn("LOWER=", run,
+                      "freshness step must compute a LOWER variable to "
+                      "detect stale branches (HEAD < BASE)")
         self.assertIn("sort -V", run,
                       "freshness step must use version-aware sort")
-        self.assertIn("tail -1", run,
-                      "freshness step must take the tail of sort -V output")
-        self.assertIn('"$BASE_VERSION"', run,
-                      "freshness step must reference BASE_VERSION in the rejection check")
+        self.assertIn("head -1", run,
+                      "freshness step must take the head of sort -V output "
+                      "(the lower of the two versions)")
+        self.assertIn('"$HEAD_VERSION"', run,
+                      "freshness step must reference HEAD_VERSION in the "
+                      "rejection check (rejects when LOWER == HEAD_VERSION)")
+        # Success message reflects the relaxed contract.
+        self.assertIn(">= base=", run,
+                      "freshness success message must say '>= base=' "
+                      "to reflect the non-strict semantics")
 
 
 if __name__ == "__main__":
