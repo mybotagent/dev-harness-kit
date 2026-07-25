@@ -306,9 +306,9 @@ class TestPrePushRefactor(unittest.TestCase):
 
 class TestVersionFreshnessCheck(unittest.TestCase):
     """The cross-PR freshness check lives in .github/workflows/ci.yml.
-    It must (a) read PR base's plugin.json:version, (b) read PR head's
-    plugin.json:version, (c) fail if HEAD < BASE (stale), (d) be skipped
-    for bump-PRs (those are the user's own bump -- always equal or higher).
+    Post-#439 contract: the trunk workflow owns the version advance.
+    Feature branches keep the version they were cut at (HEAD == BASE is
+    fine). The check rejects only stale branches (HEAD < BASE).
     """
 
     @staticmethod
@@ -349,24 +349,39 @@ class TestVersionFreshnessCheck(unittest.TestCase):
                       "freshness step must use version-aware sort to compare "
                       "versions (not lexicographic -- 0.3.10 < 0.3.9 lex)")
 
-    def test_freshness_step_enforces_strict_greater_than(self):
-        """The check must reject HEAD <= BASE. The pre-push hook is the
-        source of truth (auto-bumps to BASE+1); a HEAD == BASE here
-        means the user pushed with --no-verify and bypassed it."""
+    def test_freshness_step_rejects_only_stale(self):
+        """Post-#439 contract: feature branches keep the version they
+        were cut at. The freshness check must REJECT only stale
+        branches (HEAD < BASE), not equal versions. This is the
+        inverse of the previous strict-greater-than contract — pin
+        the new semantics so a future refactor can't silently revert."""
         doc = self._doc()
         step = [s for s in doc["jobs"]["validate"]["steps"]
                 if "freshness" in s.get("name", "").lower()][0]
         run = step.get("run", "")
-        self.assertIn("strict", step.get("name", "").lower(),
-                      "freshness step name must declare STRICT semantics")
-        self.assertIn("HIGHER=", run,
-                      "freshness step must compute a HIGHER variable")
+        # Must NOT enforce strict-greater anymore.
+        self.assertNotIn("strict", step.get("name", "").lower(),
+                         "freshness step must NOT declare STRICT semantics "
+                         "post-#439; the trunk owns the bump")
+        self.assertNotIn("HIGHER=", run,
+                         "freshness step must NOT compute HIGHER (the old "
+                         "strict-greater contract)")
+        # Must use LOWER (rejects HEAD < BASE = stale).
+        self.assertIn("LOWER=", run,
+                      "freshness step must compute a LOWER variable to "
+                      "detect stale branches (HEAD < BASE)")
         self.assertIn("sort -V", run,
                       "freshness step must use version-aware sort")
-        self.assertIn("tail -1", run,
-                      "freshness step must take the tail of sort -V output")
-        self.assertIn('"$BASE_VERSION"', run,
-                      "freshness step must reference BASE_VERSION in the rejection check")
+        self.assertIn("head -1", run,
+                      "freshness step must take the head of sort -V output "
+                      "(the lower of the two versions)")
+        self.assertIn('"$HEAD_VERSION"', run,
+                      "freshness step must reference HEAD_VERSION in the "
+                      "rejection check (rejects when LOWER == HEAD_VERSION)")
+        # Success message reflects the relaxed contract.
+        self.assertIn(">= base=", run,
+                      "freshness success message must say '>= base=' "
+                      "to reflect the non-strict semantics")
 
 
 if __name__ == "__main__":
