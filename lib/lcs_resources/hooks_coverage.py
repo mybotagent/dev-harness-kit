@@ -61,7 +61,10 @@ from lcs_server import LCSPartialError, ParsedURI, Resource
 NAME = "hooks/coverage"
 
 # Manifest paths, relative to repo_root, that we attempt to merge.
-_CLAUDE_MANIFEST = Path(".claude") / "hooks.json"
+# Claude Code stores its hooks block in `.claude/settings.json` (the
+# shipped plugin manifest lives at `hooks/hooks.json`, not at a
+# project-level path). Codex uses `.codex/hooks.json`.
+_CLAUDE_MANIFEST = Path(".claude") / "settings.json"
 _CODEX_MANIFEST = Path(".codex") / "hooks.json"
 
 # Handler directory, relative to repo_root.
@@ -93,7 +96,12 @@ def _read_events(path: Path, rel: str) -> tuple[set[str] | None, str | None]:
         return None, f"malformed {rel}: top-level not an object"
     hooks = payload.get("hooks")
     if not isinstance(hooks, dict):
-        return set()
+        # Schema-invalid shape: missing key, null value, list value, or
+        # any non-object. The contract requires a 2-tuple so the caller's
+        # `found, err = _read_events(...)` unpack doesn't blow up with
+        # `ValueError: not enough values to unpack`. Surface as malformed
+        # so the partial envelope carries a single, uniform error shape.
+        return None, f"malformed {rel}: hooks is not an object"
     return {k for k in hooks if isinstance(k, str)}, None
 
 

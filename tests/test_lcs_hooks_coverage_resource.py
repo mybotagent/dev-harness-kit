@@ -2,7 +2,9 @@
 """test_lcs_hooks_coverage_resource.py — Phase 1.8 (issue #353) hooks coverage resource.
 
 Pins the ``lcs://hooks/coverage`` contract:
-- Reads BOTH ``.claude/hooks.json`` and ``.codex/hooks.json``.
+- Reads BOTH ``.claude/settings.json`` (Claude Code stores its
+  hooks block in ``settings.json``; the plugin manifest lives at
+  ``hooks/hooks.json``) and ``.codex/hooks.json``.
 - Walks ``hooks/*.sh`` for the matchers list.
 - Returns ``data.events`` = sorted union of event names from both manifests.
 - Returns ``data.matchers`` = sorted list of ``*.sh`` filenames in ``hooks/``.
@@ -36,8 +38,8 @@ from lcs_server import (  # noqa: E402
 
 
 def _write_claude(repo_root: Path, hooks: dict) -> Path:
-    """Write ``.claude/hooks.json`` and return the path."""
-    path = repo_root / ".claude" / "hooks.json"
+    """Write ``.claude/settings.json`` (the Claude hooks manifest) and return the path."""
+    path = repo_root / ".claude" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
     return path
@@ -138,7 +140,7 @@ class TestHooksCoverageResourceFetch(unittest.TestCase):
                 cm.exception.data["events"],
                 ["SessionStart", "Stop"],
             )
-            self.assertIn("no .claude/hooks.json", cm.exception.missing)
+            self.assertIn("no .claude/settings.json", cm.exception.missing)
 
     def test_no_hooks_files(self):
         # Neither manifest exists AND hooks/ is empty (or missing) → ok
@@ -166,7 +168,7 @@ class TestHooksCoverageResourceFetch(unittest.TestCase):
                 ["pre-commit.sh", "pre-push.sh", "worktree-guard.sh"],
             )
 
-    def test_missing_claude_hooks_json_partial(self):
+    def test_missing_claude_settings_json_partial(self):
         # .codex present, .claude absent → status:partial via LCSPartialError;
         # .codex events are preserved under data; .claude is in missing list.
         with tempfile.TemporaryDirectory() as td:
@@ -179,12 +181,12 @@ class TestHooksCoverageResourceFetch(unittest.TestCase):
             with self.assertRaises(LCSPartialError) as cm:
                 resource.fetch(parsed)
             self.assertEqual(cm.exception.data["events"], ["Stop"])
-            self.assertIn("no .claude/hooks.json", cm.exception.missing)
+            self.assertIn("no .claude/settings.json", cm.exception.missing)
 
-    def test_malformed_claude_hooks_json_partial(self):
+    def test_malformed_claude_settings_json_partial(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            claude_path = root / ".claude" / "hooks.json"
+            claude_path = root / ".claude" / "settings.json"
             claude_path.parent.mkdir(parents=True, exist_ok=True)
             claude_path.write_text("{this is not json", encoding="utf-8")
             resource = HooksCoverageResource(root)
@@ -193,8 +195,8 @@ class TestHooksCoverageResourceFetch(unittest.TestCase):
                 resource.fetch(parsed)
             missing_entries = cm.exception.missing
             self.assertTrue(
-                any(e.startswith("malformed .claude/hooks.json") for e in missing_entries),
-                msg=f"expected a malformed .claude/hooks.json entry in {missing_entries!r}",
+                any(e.startswith("malformed .claude/settings.json") for e in missing_entries),
+                msg=f"expected a malformed .claude/settings.json entry in {missing_entries!r}",
             )
 
     def test_malformed_codex_hooks_json_partial(self):
@@ -211,6 +213,57 @@ class TestHooksCoverageResourceFetch(unittest.TestCase):
             self.assertTrue(
                 any(e.startswith("malformed .codex/hooks.json") for e in missing_entries),
                 msg=f"expected a malformed .codex/hooks.json entry in {missing_entries!r}",
+            )
+
+    def test_claude_hooks_absent_returns_partial(self):
+        """`.claude/settings.json` with no `hooks` key at all is malformed.
+        The caller's `found, err = _read_events(...)` unpack must not
+        raise `ValueError: not enough values to unpack`."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            claude_path = root / ".claude" / "settings.json"
+            claude_path.parent.mkdir(parents=True, exist_ok=True)
+            claude_path.write_text("{}\n", encoding="utf-8")
+            _write_codex(root, {"Stop": [{"hooks": [{"command": "echo z"}]}]})
+            resource = HooksCoverageResource(root)
+            parsed = parse_uri("lcs://hooks/coverage")
+            with self.assertRaises(LCSPartialError) as cm:
+                resource.fetch(parsed)
+            self.assertTrue(
+                any(e.startswith("malformed .claude/settings.json") for e in cm.exception.missing),
+                msg=f"expected a malformed .claude/settings.json entry in {cm.exception.missing!r}",
+            )
+
+    def test_claude_hooks_null_returns_partial(self):
+        """`.claude/settings.json` with `{"hooks": null}` is malformed."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            claude_path = root / ".claude" / "settings.json"
+            claude_path.parent.mkdir(parents=True, exist_ok=True)
+            claude_path.write_text('{"hooks": null}\n', encoding="utf-8")
+            resource = HooksCoverageResource(root)
+            parsed = parse_uri("lcs://hooks/coverage")
+            with self.assertRaises(LCSPartialError) as cm:
+                resource.fetch(parsed)
+            self.assertTrue(
+                any(e.startswith("malformed .claude/settings.json") for e in cm.exception.missing),
+                msg=f"expected a malformed .claude/settings.json entry in {cm.exception.missing!r}",
+            )
+
+    def test_claude_hooks_list_returns_partial(self):
+        """`.claude/settings.json` with `{"hooks": []}` is malformed."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            claude_path = root / ".claude" / "settings.json"
+            claude_path.parent.mkdir(parents=True, exist_ok=True)
+            claude_path.write_text('{"hooks": []}\n', encoding="utf-8")
+            resource = HooksCoverageResource(root)
+            parsed = parse_uri("lcs://hooks/coverage")
+            with self.assertRaises(LCSPartialError) as cm:
+                resource.fetch(parsed)
+            self.assertTrue(
+                any(e.startswith("malformed .claude/settings.json") for e in cm.exception.missing),
+                msg=f"expected a malformed .claude/settings.json entry in {cm.exception.missing!r}",
             )
 
 
