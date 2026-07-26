@@ -22,11 +22,11 @@ import yaml
 PROJECT_ROOT = Path(__file__).parent.parent
 # SKILL_COUNT tracks skills/ directory entries via rglob("SKILL.md").
 # Bump alongside any new skills/*/SKILL.md (Phase 1.11 added skills/lcs/SKILL.md,
-# Phase 3.6 added skills/evaluate/SKILL.md, Phase 5 added skills/research/SKILL.md,
-# Phase 6 added skills/interview/SKILL.md).
+# Phase 3.6 added skills/evaluate/SKILL.md, Phase 4 added skills/valuate/SKILL.md,
+# Phase 5 added skills/research/SKILL.md, Phase 6 added skills/interview/SKILL.md).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 37
+SKILL_COUNT = 38
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
