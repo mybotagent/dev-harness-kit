@@ -46,6 +46,8 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "ac_executability",
         "dependency_ordering",
     ),
+    # Phase 3 (issue #363, merged via PR #445): harness + os axes for
+    # /dev-kit:evaluate --harness-quality and --os-quality.
     "harness": (
         "determinism",
         "isolation",
@@ -60,7 +62,35 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "escalation_path",
         "audit_trail",
     ),
+    # Phase 4 (issue #371): plan_value 0-5 axis scores. The judge prompt
+    # (eval/prompts/judge-plan-value.md) returns six scores; the
+    # 4-way verdict (proceed/revise/hold/kill) is computed by
+    # lib/valuation_engine.py:decide() from these six, so the verdict
+    # is NOT an axis here.
+    "plan_value": (
+        "problem_fit",
+        "roi_estimate",
+        "existing_solution_edge",
+        "team_capability",
+        "risk_vs_reward",
+        "measurability",
+    ),
 }
+
+# Per-dim score range. Most dims are 0-10 (higher = better, with the
+# polarity override for lower_is_better dims handled in
+# ``AXIS_POLARITY``). The plan_value dim is 0-5 because the valuation
+# engine's SCORE_MIN/SCORE_MAX are pinned to that range; a judge
+# emitting 6-10 for plan_value would crash the engine on validate().
+# Default: 0-10 for unknown dims.
+DIM_SCORE_RANGE: Dict[str, Tuple[float, float]] = {
+    "plan_value": (0.0, 5.0),
+}
+
+
+def score_range_for_dim(dim: str) -> Tuple[float, float]:
+    return DIM_SCORE_RANGE.get(dim, (0.0, 10.0))
+
 
 # Regex fragment used by parse_scores_json to recognize axis tokens. Built
 # lazily from the union of JUDGE_AXES + DIM_AXES so any new dim auto-extends.
@@ -147,6 +177,7 @@ def call_judge(
     model: str,
     prompt: str,
     axes: Tuple[str, ...] = JUDGE_AXES,
+    dim: Optional[str] = None,
     base_url: str = "https://api.minimax.io/anthropic",
     max_tokens: int = 512,
     timeout: int = 30,
@@ -160,12 +191,18 @@ def call_judge(
     this alignment the judge receives contradictory axis lists between
     system and user and returns unreliable / axis-zero scores.
 
+    `dim` is the parent dim name (e.g. "review", "plan_value"). When
+    provided, the system prompt states the per-dim score range from
+    ``DIM_SCORE_RANGE`` (e.g. "each 0-5" for plan_value). Defaults to
+    0-10 when the dim is unknown.
+
     provider is informational only — both 'minimax' and 'anthropic' use
     the Anthropic-compatible POST /v1/messages endpoint.
     """
     if not api_key:
         raise ValueError(f"api_key missing for provider={provider}")
     axes_csv = ", ".join(axes)
+    score_min, score_max = score_range_for_dim(dim) if dim else (0.0, 10.0)
     payload = {
         "model": model,
         "max_tokens": max_tokens,
@@ -173,7 +210,7 @@ def call_judge(
         "system": (
             f"You are a code review judge. Respond ONLY with a JSON object "
             f"containing these {len(axes)} axis scores ({axes_csv}), "
-            f"each 0-10. No other text."
+            f"each {score_min:g}-{score_max:g}. No other text."
         ),
     }
     return _call_anthropic_compatible(

@@ -204,13 +204,13 @@ class TestRunEval(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_dry_run_no_api_key_returns_mocks(self):
-        for dim in llm_judge.DIM_AXES:
+        for dim in eval_runner.SUPPORTED_DIMS:
             _seed_case(self.root, dim, f"{dim}-01", "x", {"verdict": "OK"})
             _seed_transcript(
                 self.root, dim, f"{dim}-01", {"verdict": "Approve", "findings": []}
             )
         report = eval_runner.run_eval(self.root, dry_run=True)
-        n_dims = len(llm_judge.DIM_AXES)
+        n_dims = len(eval_runner.SUPPORTED_DIMS)
         self.assertEqual(report["summary"]["OK"], 0)
         self.assertEqual(report["summary"]["DRIFT_WARNING"], n_dims)
         self.assertEqual(report["summary"]["ROT"], 0)

@@ -22,6 +22,40 @@ Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one `claude -p` su
 
 Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. No version comparison — presence of the marker is the only precondition; dev-kit does not gate consumer builds on a plugin-version floor.
 
+## Pre-flight valuation gate (Phase 4, issue #373)
+
+Before launching any per-step sub-agent, build reads the latest verdict
+for the current plan from `lcs://valuations/<plan-id>` via
+`bin/dev-kit-lcs.py --get`. The verdict comes from
+`/dev-kit:valuate` (`lib/valuation_engine.py:decide()`).
+
+| Verdict | Reaction |
+|---|---|
+| `proceed` | Build proceeds normally |
+| `revise` | Build refused; print `blocking_findings`; exit 2 |
+| `hold` | Build refused; "re-evaluate later" message; exit 2 |
+| `kill` | Build refused; archive as no-go; exit 2 |
+
+The gate is fail-closed: a missing or unreadable
+`lcs://valuations/<plan-id>` is treated as "no verdict" and the build is
+refused with exit 2 unless `--skip-valuation` is passed. The flag is the
+permanent backward-compat escape hatch and is not deprecated — use it
+when the user explicitly waives the gate (e.g. legacy plans without a
+valuation record).
+
+```bash
+# Default (gate enforced):
+python3 bin/dev-kit-lcs.py --get lcs://valuations/<plan-id>
+
+# Bypass (legacy plans):
+/dev-kit:build --skip-valuation
+```
+
+The gate is deterministic on identical input — the engine is a pure
+function over the 6-axis rubric scores, so the build stage reads the
+verdict exactly as `/dev-kit:valuate` wrote it. This is the L6 contract:
+the model cannot talk its way past `kill` or `hold`.
+
 ## Behavior
 
 1. `lib/execute.py:main` parses args; branches on `--parallel N`:
