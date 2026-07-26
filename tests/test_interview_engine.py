@@ -292,3 +292,53 @@ class TestPipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---- review findings (Phase 6 PR #444) ----
+
+class TestReviewFixes:
+    """Coverage for the review findings on PR #444:
+    - hyphenated field labels (q_anti-goals)
+    - narrowed_delta alias (renamed to is_narrowing)
+    - user_interrupt accepts but does not use answers/qid
+    """
+
+    def test_extract_handles_hyphenated_qid(self):
+        """q_anti-goals (with hyphen) is recognized as the anti_goals field."""
+        from interview_engine import extract_5_field
+        convo = [
+            {"role": "assistant", "content": "q_anti-goals: what should we NOT do?"},
+            {"role": "user", "content": "no GUI, no on-prem install."},
+        ]
+        out = extract_5_field(convo)
+        assert out["anti_goals"] == "no GUI, no on-prem install."
+
+    def test_extract_handles_hyphenated_field_name(self):
+        """The human-facing 'anti-goals:' form is also recognized."""
+        from interview_engine import extract_5_field
+        convo = [
+            {"role": "assistant", "content": "anti-goals: name the exclusions"},
+            {"role": "user", "content": "no mobile, no mobile at all."},
+        ]
+        out = extract_5_field(convo)
+        assert out["anti_goals"] == "no mobile, no mobile at all."
+
+    def test_is_narrowing_returns_bool(self):
+        from interview_engine import is_narrowing, narrowed_delta
+        # Both names are present; the function is a boolean predicate.
+        assert is_narrowing(5.0, 3.0) is True
+        assert is_narrowing(5.0, 5.0) is False
+        assert is_narrowing(5.0, 7.0) is False
+        # narrowed_delta is the legacy alias.
+        assert narrowed_delta is is_narrowing
+
+    def test_user_interrupt_tokens(self):
+        from interview_engine import user_interrupt
+        # Token-only predicate; answers/qid are accepted but ignored.
+        assert user_interrupt({}, "q_goal", "stop") is True
+        assert user_interrupt({}, "q_goal", "STOP") is True   # case-insensitive
+        assert user_interrupt({}, "q_goal", "later") is True
+        assert user_interrupt({}, "q_goal", "abort") is True
+        assert user_interrupt({}, "q_goal", "real answer") is False
+        assert user_interrupt({}, "q_goal", "") is False
+        assert user_interrupt({}, "q_goal", "   ") is False  # whitespace stripped

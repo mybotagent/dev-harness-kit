@@ -151,10 +151,12 @@ def extract_5_field(conversation: List[Dict]) -> Dict:
     strings. Callers should pair this with ``validate_5_field`` to
     surface missing / ambiguous fields.
 
-    Question-id detection uses a token-prefix check (``q_<field>`` at
-    the start of the assistant content, or the field name surrounded
-    by non-word chars) so the substring ``"goal"`` does not falsely
-    match inside ``"anti-goals"``.
+    Question-id detection accepts both underscore (``q_anti_goals``)
+    and hyphen (``q_anti-goals``) forms: hyphens and underscores are
+    normalized to underscores before matching, so the rubric label
+    ``anti-goals`` and the programmatic id ``q_anti_goals`` are
+    interchangeable. The token-prefix check still bounds matches so
+    ``"goal"`` does not falsely match inside ``"anti-goals"``.
     """
     import re
     out: Dict[str, str] = {field: "" for field in FIVE_FIELDS}
@@ -165,15 +167,15 @@ def extract_5_field(conversation: List[Dict]) -> Dict:
         role = entry.get("role")
         content = (entry.get("content") or "").strip()
         if role == "assistant" and content:
+            # Normalize hyphens to underscores so the rubric's
+            # human-facing "anti-goals" form matches the
+            # programmatic q_anti_goals id.
+            normalized = re.sub(r"[-_]", "_", content)
             for qid, field in QUESTION_PLAN:
-                # Match q_<field> as a token (start-of-string, after
-                # whitespace, or after a colon). Match the field name
-                # only as a whole word (\b boundaries) so "goal"
-                # inside "anti-goals" does not trip q_goal.
-                if re.search(r"(?:^|\s|\W)" + re.escape(qid) + r"\b", content):
+                if re.search(r"(?:^|\s|\W)" + re.escape(qid) + r"\b", normalized):
                     pending_field = field
                     break
-                if re.search(r"\b" + re.escape(field) + r"\b", content):
+                if re.search(r"\b" + re.escape(field) + r"\b", normalized):
                     pending_field = field
                     break
         elif role == "user" and pending_field and content:
@@ -303,15 +305,25 @@ def should_terminate(
     return False
 
 
-def narrowed_delta(prev: float, cur: float) -> bool:
+def is_narrowing(prev: float, cur: float) -> bool:
     """Return True iff ``cur < prev`` (strict narrowing).
 
     Used to enforce the ``narrowed_delta`` contract: each loop
     iteration's ambiguity_score must strictly decrease. Equality does
     NOT narrow; the dedup_metric breaker fires on the second equal
     cycle.
+
+    The function is named ``is_narrowing`` (a boolean predicate). The
+    legacy name ``narrowed_delta`` is kept as an alias for callers
+    that imported the older, misleadingly-quantitative name.
     """
     return cur < prev
+
+
+# Backwards-compatible alias. Prefer the boolean-predicate name
+# ``is_narrowing`` for new code; ``narrowed_delta`` remains for any
+# external callers (and the skill frontmatter contract keyword).
+narrowed_delta = is_narrowing
 
 
 def dedup_metric(history: List[float]) -> bool:
@@ -332,8 +344,14 @@ def user_interrupt(answers: Dict[str, str], qid: str, value: str) -> bool:
 
     Recognized interrupt tokens (case-insensitive, exact match after
     strip): ``"stop"``, ``"cancel"``, ``"skip"``, ``"abort"``,
-    ``"later"``. An empty answer to a question that was already asked
-    once also counts as an interrupt.
+    ``"later"``.
+
+    ``answers`` and ``qid`` are accepted for forward-compat with a
+    planned "empty-answer-after-re-ask counts as interrupt" branch.
+    Today the predicate is token-only; the re-ask heuristic is left
+    to the conversational state machine (``apply_answer`` already drops
+    whitespace-only values) so a single source of truth governs
+    "did the user decline to answer".
     """
     INTERRUPT_TOKENS = {"stop", "cancel", "skip", "abort", "later"}
     s = (value or "").strip().lower()

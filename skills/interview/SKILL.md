@@ -118,8 +118,11 @@ deterministic and LLM paths compose without a custom translator.
 ## Rules (no exceptions)
 
 - 5-field loop declared (MUST-15): `safety_valve=8`, composite
-  convergence, `narrowed_delta`, `dedup_metric`, `user_interrupt`.
+  convergence, `is_narrowing` (boolean predicate; legacy alias
+  `narrowed_delta` still exported for backward compat), `dedup_metric`,
+  `user_interrupt`.
 - No artifacts other than `.dev-kit/hand-off/interview-<session>.md`,
+  `.dev-kit/hand-off/interview→plan.md`,
   `.dev-kit/decision-log.md`, `.dev-kit/loop-log.json`.
 - No code, no PRD, no `phases/<name>/` writes (the plan skill owns
   those).

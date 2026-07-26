@@ -191,3 +191,34 @@ class TestDimAxes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---- interview_ambiguity polarity (Phase 6 review finding) ----
+
+class TestAxisPolarity:
+    """The interview_ambiguity dim is 0=clear / 10=ambiguous (lower=better).
+    verdict_from_score treats higher=better. normalize_for_verdict must
+    invert so the aggregate path produces the correct verdict.
+    """
+
+    def test_interview_ambiguity_0_inverts_to_10(self):
+        from llm_judge import normalize_for_verdict
+        # A perfectly clear interview (all fields 0 ambiguity) should
+        # become 10 after inversion so verdict_from_score returns OK.
+        assert normalize_for_verdict("interview_ambiguity", 0.0) == 10.0
+
+    def test_interview_ambiguity_10_inverts_to_0(self):
+        from llm_judge import normalize_for_verdict
+        # Maximally ambiguous (score 10) inverts to 0 -> ROT.
+        assert normalize_for_verdict("interview_ambiguity", 10.0) == 0.0
+
+    def test_normal_dim_passthrough(self):
+        from llm_judge import normalize_for_verdict
+        # Other dims (e.g. review, plan) are higher=better; pass through.
+        for dim in ("review", "plan", "security"):
+            assert normalize_for_verdict(dim, 8.5) == 8.5
+            assert normalize_for_verdict(dim, 0.0) == 0.0
+
+    def test_polarity_dict_covers_interview(self):
+        from llm_judge import AXIS_POLARITY
+        assert AXIS_POLARITY.get("interview_ambiguity") == "lower_is_better"
