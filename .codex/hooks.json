@@ -1,5 +1,26 @@
 {
+  "_comment": "Codex runtime hooks (Phase 2.4, issue #361). Parallel to hooks/hooks.json (Claude). Event names use the neutral form; lib/runtime_adapters/hooks.py maps them to Codex-native names at runtime. Worktree-guard + git-guard are wired here so Codex's before_tool_use events hit the same enforcement layer as Claude Code's PreToolUse events.",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PWD/hooks/worktree-guard.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PWD/hooks/git-guard.sh\""
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "_commands_dir_registered_by_install_commands": true,

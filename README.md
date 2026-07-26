@@ -54,7 +54,8 @@ model's tool calls — they cannot be absorbed by model improvements.
 | `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
-| `worktree-guard` | Hard-blocks Edit/Write in the main checkout | All |
+| `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, enriches the message with the live worktree list via `lcs://worktrees` (shell-out fallback) | All |
+| `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot via `lcs://branches/<name>` (shell-out fallback) on `git push` to a feature branch | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
 | `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
 | `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |

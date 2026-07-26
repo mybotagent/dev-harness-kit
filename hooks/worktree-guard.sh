@@ -141,7 +141,89 @@ esac
 # version — only the MSG string content is updated to the
 # deterministic env-var checklist + Iron Laws recap.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-MSG="WORKTREE GUARD: editing in main checkout (branch='$BRANCH') is forbidden.
+
+# _worktree_list_rich — Phase 2.1 (issue #358).
+# Enumerate the project's worktrees for the deny message. Try LCS first
+# (lcs://worktrees/), fall back to `git worktree list --porcelain` when
+# LCS is unavailable (python missing, CLI not on disk, or read fails).
+# This block only runs on the deny path so the LCS startup cost is
+# outside the hot-path budget; the <50ms budget is measured against the
+# shell-out path, not against zero.
+_worktree_list_rich() {
+  local lcs_out timer_cmd=""
+  # Pick the first available timeout primitive. `timeout` ships
+  # with coreutils on Linux and the gnu-coreutils Homebrew formula
+  # on macOS (installed as `gtimeout`). Stock macOS has neither.
+  # `perl` is preinstalled on macOS and Linux; we use its `alarm`
+  # builtin to enforce a 0.5s hard cap. When none of the three is
+  # present, the LCS read runs without a timer — for small repos
+  # this is fine, for huge worktree sets the LCS read will block
+  # until completion (the shell-out fallback below is unaffected by
+  # the python call). The hook is a PreToolUse gate; a 10s hang on
+  # a 1000-worktree project is acceptable as long as the fallback
+  # is reliable.
+  if command -v timeout >/dev/null 2>&1; then
+    timer_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timer_cmd="gtimeout"
+  elif command -v perl >/dev/null 2>&1; then
+    # perl -e 'alarm shift; exec @ARGV' — alarm(0.2) then exec the
+    # remaining args. On expiry perl exits 142 (SIGALRM), the
+    # caller sees non-zero and the || lcs_out="" fallback fires.
+    # 200ms is the budget for "fast enrichment" on the deny path;
+    # the shell-out fallback is fast (~10ms) and is the safe default
+    # when LCS is slow. 500ms was the original cap but tripped the
+    # <200ms latency budget on projects with 100+ worktrees.
+    timer_cmd="perl -e 'alarm shift; exec @ARGV' 0.2"
+  fi
+  if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
+    # Hard timeout: 500ms. The LCS read is supposed to be a fast
+    # enrichment; on a project with 100+ worktrees the per-worktree
+    # `git status --porcelain` calls add up, so cap the budget and
+    # fall through to the shell-out path if LCS doesn't answer in
+    # time.
+    if [ -n "$timer_cmd" ]; then
+      # shellcheck disable=SC2086  # timer_cmd is multi-word on purpose
+      lcs_out="$($timer_cmd python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    else
+      lcs_out="$(python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    fi
+    if [ -n "$lcs_out" ] && printf '%s' "$lcs_out" | jq -e '.data.worktrees' >/dev/null 2>&1; then
+      # Capture the filtered output so we can decide whether the
+      # LCS path actually produced any rows. An empty LCS worktree
+      # collection (status=ok with [] payload) passes the jq -e
+      # check above but produces zero output here — fall through
+      # to the shell-out path so the user still sees at least the
+      # main checkout itself.
+      lcs_rows="$(printf '%s' "$lcs_out" | jq -r '
+        .data.worktrees[]? | "  " + (.path | sub("^" + (env.PWD | sub("/$"; "")) + "/?"; "")) + "\t" + .branch
+      ' 2>/dev/null)"
+      if [ -n "$lcs_rows" ]; then
+        printf '%s\n' "$lcs_rows"
+        return 0
+      fi
+    fi
+  fi
+  # Fallback: porcelain worktree list, branch stripped of refs/heads/.
+  # Handle both `^branch refs/heads/X` and `^detached` so a CI
+  # checkout in detached HEAD (the common case for `actions/checkout`
+  # on a PR ref) still surfaces a worktree entry instead of an empty
+  # list.
+  git worktree list --porcelain 2>/dev/null | awk '
+    /^worktree / { path = substr($0, 10); pending = 1; next }
+    /^branch /   { sub(/^refs\/heads\//, "", $2); print "  " path "\t" $2; pending = 0 }
+    /^detached/  { if (pending) { print "  " path "\t(detached)"; pending = 0 } }
+  '
+}
+WT_LIST="$(_worktree_list_rich)"
+if [ -n "$WT_LIST" ]; then
+  WT_BLOCK="Existing worktrees (cd into one, or open a Claude session there):
+$WT_LIST"
+else
+  WT_BLOCK="(no worktrees listed — run \`git worktree list\` to enumerate them)"
+fi
+
+MSG="editing in main checkout (branch='$BRANCH') is forbidden.
 
 REQUIRED environment setup before retrying:
   git config --global dev-kit.orch.client=claude   # or codex
@@ -167,4 +249,6 @@ Hard rules (Iron Laws §1):
   Other worktrees are private to their T; entry is allowed ONLY for hand-off docs
    in .dev-kit/round-*/**."
 
-  deny "WORKTREE GUARD" "$MSG"
+  deny "WORKTREE GUARD" "$MSG
+
+$WT_BLOCK"

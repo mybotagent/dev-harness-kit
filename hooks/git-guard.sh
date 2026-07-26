@@ -171,4 +171,59 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D'; then
   fi
 fi
 
+# 5. Phase 2.2 (issue #359) — slot freshness check on `git push` to a
+#    feature branch. The slot is the dev-kit plugin.json version the
+#    branch was built against; pushing with a stale slot collides with
+#    parallel-PR merge order (see worktree-guard's _compute_version_slot
+#    block for the slot formula). Read lcs://branches/<name> for the
+#    branch's `slot_version` field when LCS is available; fall back to
+#    reading origin/main's plugin.json version (the correct slot when
+#    no parallel PR is racing us). Both paths must produce the same
+#    value (parity test in tests/test_lcs_hook_integration.py).
+_verify_slot() {
+  local branch_name="" expected="" actual=""
+  branch_name="$(git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null)" || return 0
+  [ -n "$branch_name" ] || return 0
+  # LCS path: read lcs://branches/<name>, extract .data.slot_version.
+  # Both expected and branch_name are initialized above so a missing
+  # python3 / bin/ or a failed read leaves them as "" (the script
+  # runs under `set -u` and an unbound variable here would crash
+  # the hook — see PR #442 test failure).
+  if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
+    expected="$(python3 "bin/dev-kit-lcs.py" --get "lcs://branches/${branch_name}" 2>/dev/null \
+      | jq -r '.data.slot_version // empty' 2>/dev/null)" || expected=""
+  fi
+  # Fallback: parity with the LCS path is origin/main's plugin.json
+  # version (correct when no parallel PR is racing). For a true slot
+  # add PR_index; the parallel-PR variant lives in worktree-guard.sh.
+  if [ -z "${expected:-}" ]; then
+    expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
+      | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
+  fi
+  [ -n "${expected:-}" ] || return 0
+  # Check BOTH plugin.json manifests (Claude + Codex). They must
+  # both be pinned to the same expected slot — the version-bump
+  # workflow on main keeps them in lockstep, and a Codex-only
+  # plugin.json drift would let a Codex sub-agent push a stale slot
+  # even after the Claude manifest is re-pinned.
+  local actual_claude="" actual_codex=""
+  actual_claude="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_claude=""
+  actual_codex="$(python3 -c "import json;print(json.load(open('.codex-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_codex=""
+  if [ "$actual_claude" != "$expected" ] || [ -n "$actual_codex" ] && [ "$actual_codex" != "$expected" ]; then
+    deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main or lcs://branches/${branch_name}). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
+  fi
+}
+# Fire on ANY `git push` that the main-push block above did NOT
+# already deny. The earlier block matches the main/master ref
+# variants and the force-push flag; this block fires for everything
+# else — plain `git push` (tracking-branch push), `-u`, `--set-upstream`,
+# any origin+ref form, etc. Tag pushes (`git push origin tag v1`)
+# are intentionally NOT filtered out: they still consume a branch's
+# ref namespace and the slot check applies to the user's current
+# branch state, which is the meaningful invariant. The earlier
+# push-to-main block has already filtered out the main/master cases.
+if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
+  _verify_slot
+fi
+
 exit 0
