@@ -46,6 +46,8 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "ac_executability",
         "dependency_ordering",
     ),
+    # Phase 3 (issue #363, merged via PR #445): harness + os axes for
+    # /dev-kit:evaluate --harness-quality and --os-quality.
     "harness": (
         "determinism",
         "isolation",
@@ -59,6 +61,19 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "rollback_capability",
         "escalation_path",
         "audit_trail",
+    ),
+    # Phase 4 (issue #371): plan_value 0-5 axis scores. The judge prompt
+    # (eval/prompts/judge-plan-value.md) returns six scores; the
+    # 4-way verdict (proceed/revise/hold/kill) is computed by
+    # lib/valuation_engine.py:decide() from these six, so the verdict
+    # is NOT an axis here.
+    "plan_value": (
+        "problem_fit",
+        "roi_estimate",
+        "existing_solution_edge",
+        "team_capability",
+        "risk_vs_reward",
+        "measurability",
     ),
 }
 
