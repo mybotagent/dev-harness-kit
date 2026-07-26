@@ -75,6 +75,22 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "risk_vs_reward",
         "measurability",
     ),
+    # Phase 5 (issue #378): research_source + research_claim axes
+    # for /dev-kit:research.
+    "research_source": (
+        "authority_score",
+        "recency_score",
+        "primary_vs_secondary",
+        "url_validity",
+        "citation_completeness",
+    ),
+    "research_claim": (
+        "citation_required",
+        "n_source_agreement",
+        "primary_source_present",
+        "timestamp_present",
+        "rubric_match",
+    ),
 }
 
 # Per-dim score range. Most dims are 0-10 (higher = better, with the
