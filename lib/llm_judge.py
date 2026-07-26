@@ -75,8 +75,8 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "risk_vs_reward",
         "measurability",
     ),
-    # Phase 5 (issue #378): research_source + research_claim axes
-    # for /dev-kit:research.
+    # Phase 5 (issue #378, merged via PR #443): research_source +
+    # research_claim axes for /dev-kit:research.
     "research_source": (
         "authority_score",
         "recency_score",
@@ -90,6 +90,16 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "primary_source_present",
         "timestamp_present",
         "rubric_match",
+    ),
+    # Phase 6 (issue #383): per-field clarity for the 5-field interview
+    # safety contract. Each axis is the model's 0-10 clarity score for
+    # one of the 5 mandated interview fields.
+    "interview_ambiguity": (
+        "goal_clarity",
+        "constraints_clarity",
+        "success_criteria_clarity",
+        "anti_goals_clarity",
+        "acceptance_rubric_clarity",
     ),
 }
 
