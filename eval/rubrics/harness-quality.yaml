@@ -79,8 +79,3 @@ axes:
       - apply-mode writes happen before validation
       - failure path leaves half-applied changes
       - revert requires manual git reset
-
-verdict_thresholds:
-  ok: 8.0
-  drift_warning: 5.0
-  rot_below: 5.0

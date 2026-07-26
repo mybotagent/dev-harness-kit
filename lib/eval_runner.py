@@ -38,11 +38,13 @@ from atomic import atomic_write_json, now_iso  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_DIMS: tuple = ("review", "security", "plan")
+SUPPORTED_DIMS: tuple = ("review", "security", "plan", "harness", "os")
 PROMPT_BY_DIM: Dict[str, str] = {
     "review": "judge-review.md",
     "security": "judge-security.md",
     "plan": "judge-plan.md",
+    "harness": "judge-harness-quality.md",
+    "os": "judge-os-quality.md",
 }
 
 # Session-log judge axes (the 8-axis rubric in eval/prompts/judge-session.md).
@@ -291,7 +293,7 @@ def _judge_case(
         "INPUT": _read_input(project_root, case),
         "AGENT_OUTPUT": json.dumps(transcript.get("agent_output", {}), indent=2),
         "EXPECTED": json.dumps(case.get("expected", {}), indent=2),
-        "RUBRIC": _read_rubric(project_root),
+        "RUBRIC": _read_rubric(project_root, dim=dim),
     }
     prompt = llm_judge.format_prompt(project_root, prompt_name, substitutions)
     if not prompt:
@@ -350,9 +352,19 @@ def _read_input(project_root: Path, case: Dict) -> str:
     return ""
 
 
-def _read_rubric(project_root: Path) -> str:
-    """Return the shared code-sanity rubric prompt body (review dim only
-    needs the full rubric; others get a one-liner reminder)."""
+def _read_rubric(project_root: Path, dim: Optional[str] = None) -> str:
+    """Return the per-dim rubric body for the substitution slot.
+
+    Phase 3 (issue #445, M2): the legacy three dims (review, security,
+    plan) get the shared code-sanity rubric; the new dims (harness, os)
+    load their per-dim YAML rubric from eval/rubrics/<dim>.yaml. The
+    legacy code-sanity file is the SSOT for review's 20-checkbox rubric.
+    """
+    if dim in ("harness", "os"):
+        yaml_path = project_root / "eval" / "rubrics" / f"{dim}.yaml"
+        if not yaml_path.exists():
+            return f"({dim} rubric not found at {yaml_path})"
+        return yaml_path.read_text(encoding="utf-8")
     p = project_root / "eval" / "prompts" / "judge-code-sanity.md"
     if not p.exists():
         return "(code-sanity rubric not found)"
