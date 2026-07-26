@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Phase 3.6 added skills/evaluate/SKILL.md).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 36
+SKILL_COUNT = 37
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
