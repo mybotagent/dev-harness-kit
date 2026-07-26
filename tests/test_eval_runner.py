@@ -210,11 +210,12 @@ class TestRunEval(unittest.TestCase):
                 self.root, dim, f"{dim}-01", {"verdict": "Approve", "findings": []}
             )
         report = eval_runner.run_eval(self.root, dry_run=True)
+        n_dims = len(llm_judge.DIM_AXES)
         self.assertEqual(report["summary"]["OK"], 0)
-        self.assertEqual(report["summary"]["DRIFT_WARNING"], 3)
+        self.assertEqual(report["summary"]["DRIFT_WARNING"], n_dims)
         self.assertEqual(report["summary"]["ROT"], 0)
         self.assertEqual(report["summary"]["SKIPPED"], 0)
-        self.assertEqual(len(report["results"]), 3)
+        self.assertEqual(len(report["results"]), n_dims)
 
     def test_run_eval_writes_report(self):
         # Seed at least one case per dim so the per-dim table has content.
