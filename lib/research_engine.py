@@ -178,14 +178,62 @@ def _cache_write(query: str, sources: List[Source], result: str, project_root: P
 # Phase 1 - direct search (HTTP GET + OGP / JSON-LD extract)
 # ---------------------------------------------------------------------------
 
+def _validate_url_for_ssrf(url: str) -> bool:
+    """Phase 5 (issue #443): SSRF gate. Allow only http(s) destinations
+    that resolve to public IPs. Blocks loopback, private, link-local,
+    and metadata addresses. Returns False on any check failure so the
+    caller falls back to None / False (no exception leak).
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    # Resolve once. If the host has multiple A/AAAA records, every
+    # resolved IP must be public; a single private IP fails the gate.
+    try:
+        import socket
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, ValueError, OSError):
+        return False
+    import ipaddress
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except (ValueError, TypeError):
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
+
+
 def _http_get(url: str, timeout: int = _HTTP_TIMEOUT) -> Optional[str]:
-    """Fetch a URL via stdlib urllib. Returns text or None on failure."""
+    """Fetch a URL via stdlib urllib. Returns text or None on failure.
+
+    Refuses non-http(s) schemes and any host that resolves to a
+    private/loopback/link-local address (SSRF gate, see
+    _validate_url_for_ssrf). On 3xx redirects the new target is
+    re-validated by urllib when redirected, but we additionally check
+    the response URL so a transparent redirect to an internal service
+    is also blocked.
+    """
+    if not _validate_url_for_ssrf(url):
+        return None
     try:
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "dev-kit-research/1.0"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # Re-validate the final URL after any redirects so a
+            # redirect to an internal address cannot bypass the gate.
+            if not _validate_url_for_ssrf(resp.geturl()):
+                return None
             content_type = resp.headers.get("Content-Type", "")
             if "text" not in content_type and "json" not in content_type and "html" not in content_type:
                 return None
@@ -197,10 +245,16 @@ def _http_get(url: str, timeout: int = _HTTP_TIMEOUT) -> Optional[str]:
 
 
 def _http_head(url: str, timeout: int = _HTTP_TIMEOUT) -> bool:
-    """HEAD request - returns True if the URL resolves (2xx / 3xx)."""
+    """HEAD request - returns True if the URL resolves (2xx / 3xx).
+    SSRF gate applies; private/link-local destinations always return False.
+    """
+    if not _validate_url_for_ssrf(url):
+        return False
     try:
         req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "dev-kit-research/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if not _validate_url_for_ssrf(resp.geturl()):
+                return False
             return 200 <= resp.status < 400
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError):
         return False

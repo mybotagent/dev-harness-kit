@@ -259,3 +259,47 @@ class TestEnforceCitations(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---- SSRF gate (Phase 5 review finding, issue #443) ----
+
+class TestSsrfGate:
+    """The _validate_url_for_ssrf helper must reject schemes other than
+    http(s) and any host that resolves to a private/loopback/link-local
+    address (RFC1918, 127.0.0.0/8, 169.254.0.0/16, cloud metadata, etc).
+    """
+
+    def test_rejects_ftp_scheme(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("ftp://example.com/file") is False
+
+    def test_rejects_file_scheme(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("file:///etc/passwd") is False
+
+    def test_rejects_loopback(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("http://127.0.0.1/x") is False
+
+    def test_rejects_metadata_service(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("http://169.254.169.254/latest/meta-data/") is False
+
+    def test_rejects_rfc1918(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("http://10.0.0.1/secret") is False
+
+    def test_rejects_link_local(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("http://[fe80::1]/x") is False
+
+    def test_accepts_public_https(self):
+        from research_engine import _validate_url_for_ssrf
+        # example.com is a public host (RFC2606 reserved for docs but
+        # resolves to a public IP).
+        assert _validate_url_for_ssrf("https://example.com/page") is True
+
+    def test_rejects_malformed_url(self):
+        from research_engine import _validate_url_for_ssrf
+        assert _validate_url_for_ssrf("not a url") is False
+        assert _validate_url_for_ssrf("") is False
