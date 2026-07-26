@@ -205,9 +205,14 @@ _worktree_list_rich() {
     fi
   fi
   # Fallback: porcelain worktree list, branch stripped of refs/heads/.
+  # Handle both `^branch refs/heads/X` and `^detached` so a CI
+  # checkout in detached HEAD (the common case for `actions/checkout`
+  # on a PR ref) still surfaces a worktree entry instead of an empty
+  # list.
   git worktree list --porcelain 2>/dev/null | awk '
-    /^worktree / { path = substr($0, 10) }
-    /^branch /   { sub(/^refs\/heads\//, "", $2); print "  " path "\t" $2 }
+    /^worktree / { path = substr($0, 10); pending = 1; next }
+    /^branch /   { sub(/^refs\/heads\//, "", $2); print "  " path "\t" $2; pending = 0 }
+    /^detached/  { if (pending) { print "  " path "\t(detached)"; pending = 0 } }
   '
 }
 WT_LIST="$(_worktree_list_rich)"
