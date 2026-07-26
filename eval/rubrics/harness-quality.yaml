@@ -1,0 +1,81 @@
+# eval/rubrics/harness-quality.yaml — 5-axis rubric for harness-quality.
+#
+# Phase 3 eval extension (issue #364). Each axis is a 0-10 score produced
+# by `eval/prompts/judge-harness-quality.md`. The 5 axes must stay in
+# lockstep with `lib/llm_judge.py:DIM_AXES["harness"]` — adding an axis
+# here requires extending both.
+#
+# Used by `skills/evaluate/SKILL.md` (alpha: enforcement) when invoked
+# with `--harness-quality`.
+
+schema_version: 1
+rubric_name: harness-quality
+dim: harness
+axes:
+  determinism:
+    description: >
+      Same input -> same output across reruns. Score high when the
+      harness avoids randomness in observable behaviour (timestamps
+      aside) and produces reproducible artefacts given the same
+      fixtures / transcripts.
+    high_signal_examples:
+      - case IDs derived from a stable hash, not a counter
+      - judge prompts selected by explicit registry lookup, not glob
+      - cache keys include content hash so identical inputs hit cache
+    low_signal_examples:
+      - random sampling without seed
+      - unordered dict iteration surfacing in output
+      - time-dependent path joins
+  isolation:
+    description: >
+      Effects of one run do not bleed into another. Score high when
+      shared state (temp dirs, env vars, cache files, ports) is namespaced
+      per case or run and torn down on completion.
+    high_signal_examples:
+      - per-case tempdir under tempfile.TemporaryDirectory()
+      - per-session cache key includes content hash
+      - subprocess runs are sandboxed (worktree, container)
+    low_signal_examples:
+      - writes to a shared /tmp path
+      - global env mutation without restore
+      - leaked server ports across runs
+  observability:
+    description: >
+      Every important state transition emits a structured log or report
+      field. Score high when a run failure can be traced from log
+      artefacts alone (no interactive debugging needed).
+    high_signal_examples:
+      - per-step log line with run id, step name, duration
+      - final report summarises verdict + markers
+      - judge raw output retained (truncated) for audit
+    low_signal_examples:
+      - silent except: pass
+      - missing per-case log entry
+      - raw traceback only, no structured field
+  testability:
+    description: >
+      Behaviour can be exercised without network, without a real LLM,
+      and without flake-prone timing. Score high when key code paths are
+      covered by deterministic unit tests that mock the judge.
+    high_signal_examples:
+      - run_eval accepts a dry_run flag that bypasses LLM calls
+      - judge API is patchable via _http_post
+      - per-case fixture + transcript pair drives the unit test
+    low_signal_examples:
+      - tests require a real API key
+      - assertions depend on wall-clock timing
+      - shared mutable state across tests
+  rollback_safety:
+    description: >
+      A failed or mid-run invocation can be reverted to a known-good
+      state without manual cleanup. Score high when the harness
+      distinguishes dry-run / apply modes and emits explicit revert
+      artefacts on failure.
+    high_signal_examples:
+      - dry_run flag separate from real-mode flag
+      - suggested diffs are emitted, not applied
+      - failed transactions leave no partial writes
+    low_signal_examples:
+      - apply-mode writes happen before validation
+      - failure path leaves half-applied changes
+      - revert requires manual git reset

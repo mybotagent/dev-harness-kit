@@ -40,3 +40,7 @@ from .runner import (  # noqa: F401
     render_markdown,
     run_analysis,
 )
+from .cross_validate import (  # noqa: F401
+    ESCALATE_VARIANCE_THRESHOLD,
+    cross_validate_scores,
+)
