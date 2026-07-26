@@ -30,9 +30,8 @@ fetch timestamp + source type, or be flagged `[UNCITED]`. The skill wraps
 
 ## What it does
 
-Given a claim, the skill:
+Given a claim, the skill escalates through `escalate(query, max_phase=N)`:
 
-1. Escalates through `escalate(query, max_phase=N)`:
    - **Phase 0** — cache hit on `.dev-kit/research_cache.jsonl` (< 30 day old).
    - **Phase 1** — direct HTTP GET + OGP / JSON-LD extract on the first
      candidate URL.
@@ -47,9 +46,11 @@ Given a claim, the skill:
    - Sentences with a `[src:URL;ts:DATE;type:primary]` block pass through.
    - Other sentences are prefixed `[UNCITED]` so a reviewer can fix them.
 
-The `max_phase` flag defaults to 4 (engine caps at 3, the human handoff).
-Pass `--max-phase 0` to force a cache-only run; pass `--max-phase 1` to
-forbid Phase 2 multi-source fan-out.
+The `max_phase` flag defaults to **3** (the human-handoff cap,
+`MAX_PHASE_CAP`); pass higher values to no-op (engine caps at the
+human-handoff phase). Pass `--max-phase 0` to force a cache-only run;
+pass `--max-phase 1` to limit to Phase 1 only; pass `--max-phase 2` to
+allow Phase 2 multi-source fan-out.
 
 ## Usage
 

@@ -48,6 +48,15 @@ MAX_PHASE_CAP = 3
 # to tolerate transient slowness on the slow path.
 _HTTP_TIMEOUT = 10
 
+# Per the Phase 5 (issue #443) security review (A06 Insecure Design,
+# M3 — unbounded response / fan-out): cap the HTTP response body so a
+# hostile text endpoint cannot OOM the runner, and cap the candidate /
+# source list so a caller cannot monopolize the runner with thousands
+# of URLs.
+_MAX_RESPONSE_BYTES = 1 * 1024 * 1024   # 1 MiB
+_MAX_CANDIDATES = 32
+_MAX_SOURCES = 32
+
 # Confidence threshold for "agreement boost" - N sources with the same claim
 # yield a +N confidence adjustment capped at MAX_AGREEMENT_BOOST.
 AGREEMENT_THRESHOLD = 3
@@ -237,7 +246,12 @@ def _http_get(url: str, timeout: int = _HTTP_TIMEOUT) -> Optional[str]:
             content_type = resp.headers.get("Content-Type", "")
             if "text" not in content_type and "json" not in content_type and "html" not in content_type:
                 return None
-            raw = resp.read()
+            raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+            if len(raw) > _MAX_RESPONSE_BYTES:
+                # Response exceeds the cap. Treat as a fetch failure so
+                # the escalation continues to the next phase rather
+                # than OOM-ing the runner.
+                return None
             charset = resp.headers.get_content_charset() or "utf-8"
             return raw.decode(charset, errors="replace")
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError):
@@ -413,6 +427,10 @@ def escalate(
     candidate_urls: Optional[List[str]] = None,
     max_phase: int = MAX_PHASE_CAP,
 ) -> EscalationResult:
+    # Phase 5 (issue #443) review (A06, M3): cap the URL list so a
+    # caller cannot monopolize the runner with thousands of URLs.
+    if candidate_urls is not None and len(candidate_urls) > _MAX_CANDIDATES:
+        candidate_urls = candidate_urls[:_MAX_CANDIDATES]
     """Run Phase 0 -> max_phase, escalating on failure.
 
     Parameters
@@ -494,6 +512,10 @@ def escalate(
 # ---------------------------------------------------------------------------
 
 def verify(claim: str, sources: List[Dict]) -> VerificationResult:
+    # Phase 5 (issue #443) review (A06, M3): cap the source list so a
+    # caller cannot monopolize the runner with thousands of sources.
+    if sources and len(sources) > _MAX_SOURCES:
+        sources = sources[:_MAX_SOURCES]
     """Check that `claim` is backed by `sources` with full citation metadata.
 
     A claim is verified iff at least one source citation matches it AND that
@@ -620,5 +642,60 @@ def enforce_citations(text: str) -> str:
 
 
 if __name__ == "__main__":
-    print("research_engine loaded")
-    print(f"MAX_PHASE_CAP={MAX_PHASE_CAP} AGREEMENT_THRESHOLD={AGREEMENT_THRESHOLD}")
+    import argparse
+    import json as _json
+    parser = argparse.ArgumentParser(
+        description="Research engine — escalate / verify / enforce_citations CLI."
+    )
+    parser.add_argument("--query", help="escalate(<query>) against default URLs")
+    parser.add_argument(
+        "--candidate-url",
+        action="append",
+        default=[],
+        help="candidate URL(s) for Phase 1/2 fan-out (repeatable)",
+    )
+    parser.add_argument(
+        "--max-phase", type=int, default=3,
+        help="max escalation phase (default 3; cap MAX_PHASE_CAP=%d)" % MAX_PHASE_CAP,
+    )
+    parser.add_argument(
+        "--claim", help="verify(<claim>) against --source JSON list",
+    )
+    parser.add_argument(
+        "--source", action="append", default=[],
+        help="source JSON dict for --claim (repeatable; key=value pairs)",
+    )
+    parser.add_argument(
+        "--enforce-citations", metavar="PATH",
+        help="enforce_citations(<text file>) — writes annotated copy to stdout",
+    )
+    parser.add_argument(
+        "--project-root", default=".",
+        help="project root for cache + LCS lookups (default: cwd)",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.project_root).resolve()
+    if args.query is not None:
+        result = escalate(
+            args.query,
+            candidate_urls=args.candidate_url or None,
+            max_phase=args.max_phase,
+            project_root=root,
+        )
+        print(_json.dumps({
+            "phase": result.phase, "result": result.result,
+            "sources": [s.__dict__ for s in result.sources],
+        }, indent=2, default=str))
+    elif args.claim is not None:
+        sources = []
+        for s in args.source:
+            sources.append(dict(item.split("=", 1) for item in s.split(",") if "=" in item))
+        v = verify(args.claim, sources)
+        print(_json.dumps(v.__dict__, indent=2, default=str))
+    elif args.enforce_citations is not None:
+        text = Path(args.enforce_citations).read_text(encoding="utf-8")
+        print(enforce_citations(text))
+    else:
+        print("research_engine loaded")
+        print(f"MAX_PHASE_CAP={MAX_PHASE_CAP} AGREEMENT_THRESHOLD={AGREEMENT_THRESHOLD}")
