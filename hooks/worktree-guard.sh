@@ -167,10 +167,14 @@ _worktree_list_rich() {
   elif command -v gtimeout >/dev/null 2>&1; then
     timer_cmd="gtimeout"
   elif command -v perl >/dev/null 2>&1; then
-    # perl -e 'alarm shift; exec @ARGV' — alarm(0.5) then exec the
+    # perl -e 'alarm shift; exec @ARGV' — alarm(0.2) then exec the
     # remaining args. On expiry perl exits 142 (SIGALRM), the
     # caller sees non-zero and the || lcs_out="" fallback fires.
-    timer_cmd="perl -e 'alarm shift; exec @ARGV' 0.5"
+    # 200ms is the budget for "fast enrichment" on the deny path;
+    # the shell-out fallback is fast (~10ms) and is the safe default
+    # when LCS is slow. 500ms was the original cap but tripped the
+    # <200ms latency budget on projects with 100+ worktrees.
+    timer_cmd="perl -e 'alarm shift; exec @ARGV' 0.2"
   fi
   if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
     # Hard timeout: 500ms. The LCS read is supposed to be a fast
@@ -185,10 +189,19 @@ _worktree_list_rich() {
       lcs_out="$(python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
     fi
     if [ -n "$lcs_out" ] && printf '%s' "$lcs_out" | jq -e '.data.worktrees' >/dev/null 2>&1; then
-      printf '%s' "$lcs_out" | jq -r '
+      # Capture the filtered output so we can decide whether the
+      # LCS path actually produced any rows. An empty LCS worktree
+      # collection (status=ok with [] payload) passes the jq -e
+      # check above but produces zero output here — fall through
+      # to the shell-out path so the user still sees at least the
+      # main checkout itself.
+      lcs_rows="$(printf '%s' "$lcs_out" | jq -r '
         .data.worktrees[]? | "  " + (.path | sub("^" + (env.PWD | sub("/$"; "")) + "/?"; "")) + "\t" + .branch
-      ' 2>/dev/null
-      return 0
+      ' 2>/dev/null)"
+      if [ -n "$lcs_rows" ]; then
+        printf '%s\n' "$lcs_rows"
+        return 0
+      fi
     fi
   fi
   # Fallback: porcelain worktree list, branch stripped of refs/heads/.
