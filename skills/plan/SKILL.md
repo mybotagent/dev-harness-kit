@@ -49,14 +49,14 @@ sub-skill invocation; everything below runs inside this single skill invocation.
 ## Interview consume gate (REQUIRED unless `--skip-interview`)
 
 Before Gate 1, consume the Phase 6 5-field safety contract from LCS.
-The shell-out form (`python3 bin/dev-kit-lcs.py --get`) is mandatory
-because plan's `disallowed-tools: Bash` blocks arbitrary shell, but
-`Skill` itself (the lcs viewer) is not on the allowed-tools list — the
-direct CLI invocation is the plan-skill-compatible path.
+Use the `Skill` invocation form (the lcs viewer is on the
+`allowed-tools: ... Skill ...` allowlist) — the shell-out
+`python3 bin/dev-kit-lcs.py --get` form is NOT callable here because
+`disallowed-tools: Bash Edit ...` blocks arbitrary shell.
 
-```bash
+```
 # session id defaults to "default"; pass via --interview-session <id>
-python3 bin/dev-kit-lcs.py --get "lcs://interview/${INTERVIEW_SESSION:-default}"
+Skill("lcs", resource=f"lcs://interview/{INTERVIEW_SESSION or 'default'}")
 ```
 
 Decision table (exit code is the `bin/dev-kit-lcs.py` return):
@@ -463,7 +463,9 @@ only from the skill chain.
 - 5-field loop declared (MUST-15): `safety_valve=8`, composite convergence,
   `narrowed_delta`, `dedup_metric`, `user_interrupt`.
 - **Interview consume gate (Phase 6)**: plan MUST read `lcs://interview/<session>`
-  via `python3 bin/dev-kit-lcs.py --get` before Gate 1. `status: held` →
+  via `Skill("lcs", resource="lcs://interview/<session>")` before Gate 1
+  (NOT `python3 bin/dev-kit-lcs.py --get` — plan's `disallowed-tools: Bash`
+  blocks shell-out; Skill IS in `allowed-tools`). `status: held` →
   refuse to plan; `ok | best-effort | user-acknowledged` → proceed. The
   `--skip-interview` flag bypasses the gate for backward compat only
   and MUST be logged to `.dev-kit/decision-log.md`.
