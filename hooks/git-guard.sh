@@ -181,22 +181,26 @@ fi
 #    no parallel PR is racing us). Both paths must produce the same
 #    value (parity test in tests/test_lcs_hook_integration.py).
 _verify_slot() {
-  local branch_name expected actual
+  local branch_name="" expected="" actual=""
   branch_name="$(git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null)" || return 0
   [ -n "$branch_name" ] || return 0
   # LCS path: read lcs://branches/<name>, extract .data.slot_version.
+  # Both expected and branch_name are initialized above so a missing
+  # python3 / bin/ or a failed read leaves them as "" (the script
+  # runs under `set -u` and an unbound variable here would crash
+  # the hook — see PR #442 test failure).
   if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
     expected="$(python3 "bin/dev-kit-lcs.py" --get "lcs://branches/${branch_name}" 2>/dev/null \
-      | jq -r '.data.slot_version // empty' 2>/dev/null)"
+      | jq -r '.data.slot_version // empty' 2>/dev/null)" || expected=""
   fi
   # Fallback: parity with the LCS path is origin/main's plugin.json
   # version (correct when no parallel PR is racing). For a true slot
   # add PR_index; the parallel-PR variant lives in worktree-guard.sh.
-  if [ -z "$expected" ]; then
+  if [ -z "${expected:-}" ]; then
     expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
       | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   fi
-  [ -n "$expected" ] || return 0
+  [ -n "${expected:-}" ] || return 0
   actual="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || return 0
   if [ "$actual" != "$expected" ]; then
     deny "GIT GUARD" "plugin.json version $actual does not match expected slot $expected (origin/main or lcs://branches/${branch_name}). Rebase onto origin/main, re-pin .claude-plugin/plugin.json (and .codex-plugin/plugin.json) to $expected, then push again."
