@@ -338,7 +338,7 @@ def main() -> int:
     # Only enforced for phases that have a plan_id (default: enforce
     # for everything; --skip-valuation bypasses with an audit log line).
     if not args.skip_valuation:
-        rc = _enforce_valuation_gate(root, phase)
+        rc = _enforce_valuation_gate(root, args.phase)
         if rc != 0:
             return rc
     if args.parallel > 0:
