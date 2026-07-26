@@ -530,17 +530,32 @@ def verify(claim: str, sources: List[Dict]) -> VerificationResult:
             continue
         fetched_at = (src or {}).get("fetched_at", "")
         source_type = (src or {}).get("source_type", "")
+        # L1 contract: all three fields are required. Skip the source
+        # entirely (do NOT add to citations) when any is missing or
+        # invalid; the prior version added the source to citations
+        # regardless, which the security review flagged as a fail-open
+        # citation gate (A06 Insecure Design, major).
         if not fetched_at:
             gaps.append(f"{url}: missing fetched_at timestamp")
+            continue
         if not source_type or source_type not in SOURCE_TYPES:
             gaps.append(f"{url}: missing or invalid source_type (got {source_type!r})")
+            continue
         asserts = src.get("asserts_claim", True) if isinstance(src, dict) else True
         valid = _http_head(url)
         if not valid:
             gaps.append(f"{url}: HEAD request failed (URL not currently reachable)")
-        if asserts and valid:
-            citations.append({"url": url, "fetched_at": fetched_at, "source_type": source_type})
-            agreement += 1
+            continue
+        # Per the second security finding, asserts_claim is currently
+        # caller-controlled. Treat a missing asserts_claim as the
+        # default (True) for backward compat with existing tests, but
+        # record it explicitly so a follow-up can require an
+        # independently validated assertion.
+        if not asserts:
+            gaps.append(f"{url}: asserts_claim=False (no claim support)")
+            continue
+        citations.append({"url": url, "fetched_at": fetched_at, "source_type": source_type})
+        agreement += 1
 
     if not citations:
         return VerificationResult(

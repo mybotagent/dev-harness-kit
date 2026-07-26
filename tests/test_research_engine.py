@@ -198,16 +198,21 @@ class TestVerifyCitationGate(unittest.TestCase):
         self.assertFalse(out.verified)
         self.assertTrue(any("missing url" in g for g in out.gaps))
 
-    def test_verify_missing_timestamp_reported_as_gap(self):
+    def test_verify_missing_timestamp_excludes_source(self):
+        # Per the Phase 5 (issue #443) review: citation gate no longer
+        # fails open. A source with missing fetched_at is excluded from
+        # citations and verified=False.
         with patch.object(research_engine, "_http_head", return_value=True):
             out = research_engine.verify("claim", [_make_src(fetched_at="")])
-        self.assertTrue(out.verified)
+        self.assertFalse(out.verified)
+        self.assertEqual(out.citations, [])
         self.assertTrue(any("missing fetched_at" in g for g in out.gaps))
 
-    def test_verify_invalid_source_type_reported_as_gap(self):
+    def test_verify_invalid_source_type_excludes_source(self):
         with patch.object(research_engine, "_http_head", return_value=True):
             out = research_engine.verify("claim", [_make_src(source_type="bogus")])
-        self.assertTrue(out.verified)
+        self.assertFalse(out.verified)
+        self.assertEqual(out.citations, [])
         self.assertTrue(any("invalid source_type" in g for g in out.gaps))
 
     def test_verify_broken_url_reported_as_gap(self):
