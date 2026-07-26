@@ -220,6 +220,11 @@ user_interrupt
 
 ### Phase 2 — Hooks Read LCS
 
+**Status**: Phase 2.1–2.4 shipped (PR #442 — branch `test/phase-2-3-lcs-hook-integration`).
+The four sub-issues (#358, #359, #360, #361) landed together because the
+integration test asserts the wiring, so the test, the hook changes, and
+the Codex wiring must ship in one PR.
+
 **Goal**: Hooks switch from shell-out to LCS read, with shell-out fallback.
 
 **Files**:
@@ -237,13 +242,17 @@ user_interrupt
 3. Both hooks wire in both `.claude/settings.json` and `.codex/hooks.json`
 4. Latency: LCS read path <50ms shell-out overhead
 
-**Tests**:
-- `test_worktree_guard_with_lcs` — happy path
-- `test_worktree_guard_without_lcs` — fallback to git shell-out
-- `test_git_guard_slot_check_matches_compute` — parity test
-- `test_both_runtimes_wire_both_hooks` — `.claude` + `.codex`
+**Tests** (all in `tests/test_lcs_hook_integration.py`, 6/6 passing):
+- `test_worktree_guard_with_lcs` — happy path (LCS read, real project worktree list)
+- `test_worktree_guard_without_lcs` — fallback to git shell-out (throwaway repo with no bin/)
+- `test_worktree_guard_lcs_partial` — LCS degraded (`status=partial`) → falls back gracefully
+- `test_git_guard_slot_check_matches_compute` — parity: matching version allows, mismatched denies
+- `test_both_runtimes_wire_both_hooks` — `hooks/hooks.json` (Claude) + `.codex/hooks.json` (Codex) both wire both hooks
+- `test_hook_latency` — LCS path <200ms over shell-out (CI noise margin on the 50ms plan budget)
 
 **Estimated PR**: 1 PR, ~150 LOC net, +0 SKILL_COUNT
+
+**Actual**: PR #442, 514 LOC added across 4 files (2 hooks + .codex/hooks.json + new test file).
 
 ---
 

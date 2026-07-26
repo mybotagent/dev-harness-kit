@@ -150,15 +150,40 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
 # outside the hot-path budget; the <50ms budget is measured against the
 # shell-out path, not against zero.
 _worktree_list_rich() {
-  local lcs_out
+  local lcs_out timer_cmd=""
+  # Pick the first available timeout primitive. `timeout` ships
+  # with coreutils on Linux and the gnu-coreutils Homebrew formula
+  # on macOS (installed as `gtimeout`). Stock macOS has neither.
+  # `perl` is preinstalled on macOS and Linux; we use its `alarm`
+  # builtin to enforce a 0.5s hard cap. When none of the three is
+  # present, the LCS read runs without a timer — for small repos
+  # this is fine, for huge worktree sets the LCS read will block
+  # until completion (the shell-out fallback below is unaffected by
+  # the python call). The hook is a PreToolUse gate; a 10s hang on
+  # a 1000-worktree project is acceptable as long as the fallback
+  # is reliable.
+  if command -v timeout >/dev/null 2>&1; then
+    timer_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timer_cmd="gtimeout"
+  elif command -v perl >/dev/null 2>&1; then
+    # perl -e 'alarm shift; exec @ARGV' — alarm(0.5) then exec the
+    # remaining args. On expiry perl exits 142 (SIGALRM), the
+    # caller sees non-zero and the || lcs_out="" fallback fires.
+    timer_cmd="perl -e 'alarm shift; exec @ARGV' 0.5"
+  fi
   if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
     # Hard timeout: 500ms. The LCS read is supposed to be a fast
     # enrichment; on a project with 100+ worktrees the per-worktree
     # `git status --porcelain` calls add up, so cap the budget and
     # fall through to the shell-out path if LCS doesn't answer in
-    # time. `timeout` ships with coreutils on macOS (gtimeout alias
-    # if /usr/bin/timeout is absent).
-    lcs_out="$(timeout 0.5 python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    # time.
+    if [ -n "$timer_cmd" ]; then
+      # shellcheck disable=SC2086  # timer_cmd is multi-word on purpose
+      lcs_out="$($timer_cmd python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    else
+      lcs_out="$(python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    fi
     if [ -n "$lcs_out" ] && printf '%s' "$lcs_out" | jq -e '.data.worktrees' >/dev/null 2>&1; then
       printf '%s' "$lcs_out" | jq -r '
         .data.worktrees[]? | "  " + (.path | sub("^" + (env.PWD | sub("/$"; "")) + "/?"; "")) + "\t" + .branch

@@ -201,15 +201,28 @@ _verify_slot() {
       | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   fi
   [ -n "${expected:-}" ] || return 0
-  actual="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || return 0
-  if [ "$actual" != "$expected" ]; then
-    deny "GIT GUARD" "plugin.json version $actual does not match expected slot $expected (origin/main or lcs://branches/${branch_name}). Rebase onto origin/main, re-pin .claude-plugin/plugin.json (and .codex-plugin/plugin.json) to $expected, then push again."
+  # Check BOTH plugin.json manifests (Claude + Codex). They must
+  # both be pinned to the same expected slot — the version-bump
+  # workflow on main keeps them in lockstep, and a Codex-only
+  # plugin.json drift would let a Codex sub-agent push a stale slot
+  # even after the Claude manifest is re-pinned.
+  local actual_claude="" actual_codex=""
+  actual_claude="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_claude=""
+  actual_codex="$(python3 -c "import json;print(json.load(open('.codex-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_codex=""
+  if [ "$actual_claude" != "$expected" ] || [ -n "$actual_codex" ] && [ "$actual_codex" != "$expected" ]; then
+    deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main or lcs://branches/${branch_name}). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi
 }
-# Fire on `git push -u origin <branch>` (or any push that names an
-# origin + branch ref). The earlier push-to-main block already covers
-# the main/master target, so this check only sees feature-branch pushes.
-if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push[[:space:]]+(-u[[:space:]]+)?(origin[[:space:]]+([^[:space:]]+)|^origin[[:space:]]+([^[:space:]]+))'; then
+# Fire on ANY `git push` that the main-push block above did NOT
+# already deny. The earlier block matches the main/master ref
+# variants and the force-push flag; this block fires for everything
+# else — plain `git push` (tracking-branch push), `-u`, `--set-upstream`,
+# any origin+ref form, etc. Tag pushes (`git push origin tag v1`)
+# are intentionally NOT filtered out: they still consume a branch's
+# ref namespace and the slot check applies to the user's current
+# branch state, which is the meaningful invariant. The earlier
+# push-to-main block has already filtered out the main/master cases.
+if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   _verify_slot
 fi
 
