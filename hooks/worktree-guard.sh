@@ -141,7 +141,40 @@ esac
 # version — only the MSG string content is updated to the
 # deterministic env-var checklist + Iron Laws recap.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-MSG="WORKTREE GUARD: editing in main checkout (branch='$BRANCH') is forbidden.
+
+# _worktree_list_rich — Phase 2.1 (issue #358).
+# Enumerate the project's worktrees for the deny message. Try LCS first
+# (lcs://worktrees/), fall back to `git worktree list --porcelain` when
+# LCS is unavailable (python missing, CLI not on disk, or read fails).
+# This block only runs on the deny path so the LCS startup cost is
+# outside the hot-path budget; the <50ms budget is measured against the
+# shell-out path, not against zero.
+_worktree_list_rich() {
+  local lcs_out
+  if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
+    lcs_out="$(python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
+    if [ -n "$lcs_out" ] && printf '%s' "$lcs_out" | jq -e '.data.worktrees' >/dev/null 2>&1; then
+      printf '%s' "$lcs_out" | jq -r '
+        .data.worktrees[]? | "  " + (.path | sub("^" + (env.PWD | sub("/$"; "")) + "/?"; "")) + "\t" + .branch
+      ' 2>/dev/null
+      return 0
+    fi
+  fi
+  # Fallback: porcelain worktree list, branch stripped of refs/heads/.
+  git worktree list --porcelain 2>/dev/null | awk '
+    /^worktree / { path = substr($0, 10) }
+    /^branch /   { sub(/^refs\/heads\//, "", $2); print "  " path "\t" $2 }
+  '
+}
+WT_LIST="$(_worktree_list_rich)"
+if [ -n "$WT_LIST" ]; then
+  WT_BLOCK="Existing worktrees (cd into one, or open a Claude session there):
+$WT_LIST"
+else
+  WT_BLOCK="(no worktrees listed — run \`git worktree list\` to enumerate them)"
+fi
+
+MSG="editing in main checkout (branch='$BRANCH') is forbidden.
 
 REQUIRED environment setup before retrying:
   git config --global dev-kit.orch.client=claude   # or codex
@@ -167,4 +200,6 @@ Hard rules (Iron Laws §1):
   Other worktrees are private to their T; entry is allowed ONLY for hand-off docs
    in .dev-kit/round-*/**."
 
-  deny "WORKTREE GUARD" "$MSG"
+  deny "WORKTREE GUARD" "$MSG
+
+$WT_BLOCK"

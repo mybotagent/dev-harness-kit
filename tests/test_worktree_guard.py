@@ -226,6 +226,66 @@ class TestWorktreeGuardBlocks(unittest.TestCase):
         finally:
             main_tmp.cleanup()
 
+    def test_main_deny_msg_includes_worktree_list(self):
+        """Phase 2.1 (issue #358): the main-deny message must include
+        a list of existing worktrees, sourced either from
+        ``lcs://worktrees`` (when LCS is available) or from
+        ``git worktree list --porcelain`` (fallback when LCS is not
+        on disk or fails to start).
+
+        The test runs the hook in a throwaway git repo so the LCS
+        read path is unavailable (no ``bin/dev-kit-lcs.py`` in the
+        temp cwd) — that exercises the shell-out fallback. The LCS
+        path is verified by the same hook in CI smoke (the repo's
+        own ``bin/dev-kit-lcs.py`` is on disk and the LCS server is
+        not required for the read to succeed because the CLI can
+        shell to the same data). The shell-out fallback is the
+        safety net for environments without the CLI; both paths
+        must produce the worktree list block in the deny message.
+        """
+        if not shutil.which("jq"):
+            self.skipTest("jq not available")
+        main_tmp, _, _ = _init_main_with_worktree()
+        try:
+            r = _run_hook(
+                "worktree-guard.sh",
+                _edit_payload("/some/file.py"),
+                cwd=Path(main_tmp.name),
+            )
+            self.assertEqual(r.returncode, 2, f"expected deny, got rc={r.returncode}, stderr={r.stderr}")
+            combined = r.stdout + r.stderr
+            deny_lines = [ln for ln in combined.splitlines()
+                          if ln.strip().startswith("{")]
+            self.assertTrue(deny_lines, f"no JSON line in output: stdout={r.stdout!r} stderr={r.stderr!r}")
+            reason = ""
+            for line in deny_lines:
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rsn = doc.get("hookSpecificOutput", {}).get(
+                    "permissionDecisionReason", ""
+                )
+                if "WORKTREE GUARD" in rsn:
+                    reason = rsn
+                    break
+            self.assertTrue(reason, f"WORKTREE GUARD deny JSON not found in output: {combined!r}")
+            # The shell-out fallback writes one line per worktree as
+            # "  <path>\t<branch>" — assert at least the test
+            # worktree is enumerated (it was created with branch
+            # "fix/test"). This proves the deny message carries a
+            # usable worktree inventory even when LCS is down.
+            self.assertIn(
+                "Existing worktrees", reason,
+                f"missing 'Existing worktrees' block in deny reason: {reason!r}",
+            )
+            self.assertIn(
+                "fix/test", reason,
+                f"worktree list missing the test worktree branch: {reason!r}",
+            )
+        finally:
+            main_tmp.cleanup()
+
     def test_orch_branch_denies_code_path(self):
         """Regression for PR #270 (B): when file_path points inside a
         .worktrees/<name>/... tree AND that worktree's branch is
