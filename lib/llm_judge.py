@@ -46,6 +46,20 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "ac_executability",
         "dependency_ordering",
     ),
+    "harness": (
+        "determinism",
+        "isolation",
+        "observability",
+        "testability",
+        "rollback_safety",
+    ),
+    "os": (
+        "permission_separation",
+        "cost_visibility",
+        "rollback_capability",
+        "escalation_path",
+        "audit_trail",
+    ),
 }
 
 # Regex fragment used by parse_scores_json to recognize axis tokens. Built

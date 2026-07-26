@@ -60,6 +60,85 @@ SESSION_AXES: tuple = (
 )
 
 
+# ---------- RUBRIC_REGISTRY (Phase 3) ----------
+#
+# Class-level registry of named eval rubrics. Each entry pairs a YAML
+# rubric path with the judge prompt path used to score it. The default
+# registry is empty so existing call sites that rely on the legacy
+# case-fixture + DIM_AXES path are untouched (backward-compat).
+#
+# `version` is a monotonic counter bumped on every successful
+# `register()` so audit consumers can detect registry drift without
+# diffing the full entry set.
+#
+# Iron Law L1: the registry is the deterministic counterpart to the
+# LLM judge prompt — it lets `skills/evaluate` (`alpha: enforcement`)
+# gate on a registered rubric before invoking the LLM, so a caller
+# cannot ask the judge to score an unknown rubric.
+
+class RubricRegistry:
+    """Class-level registry of named eval rubrics.
+
+    `register()` adds a (rubric_yaml_path, judge_prompt_path) pair
+    under a kebab-case name and bumps `version`. `lookup()` returns
+    the pair by name (raises KeyError on miss). `get_rubric()` is the
+    convenience accessor returning just the YAML path.
+
+    The registry is intentionally empty at import time — opt-in. The
+    `evaluate` skill calls `register()` for each rubric it ships with
+    (harness-quality, os-quality) so the public API is stable.
+    """
+
+    _entries: dict = {}
+    version: int = 0
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        rubric_yaml_path: str,
+        judge_prompt_path: str,
+    ) -> None:
+        """Add or replace an entry under `name`. Bumps `version`."""
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"rubric name must be a non-empty string, got {name!r}")
+        cls._entries[name] = {
+            "rubric_yaml_path": rubric_yaml_path,
+            "judge_prompt_path": judge_prompt_path,
+        }
+        cls.version += 1
+
+    @classmethod
+    def lookup(cls, name: str) -> dict:
+        """Return the entry dict for `name`. Raises KeyError on miss."""
+        if name not in cls._entries:
+            raise KeyError(
+                f"unknown rubric: {name!r}. Registered: {sorted(cls._entries)}"
+            )
+        return cls._entries[name]
+
+    @classmethod
+    def get_rubric(cls, name: str) -> str:
+        """Convenience: return just the rubric YAML path for `name`."""
+        return cls.lookup(name)["rubric_yaml_path"]
+
+    @classmethod
+    def clear(cls) -> None:
+        """Reset registry. Test-only helper."""
+        cls._entries = {}
+        cls.version = 0
+
+    @classmethod
+    def names(cls) -> tuple:
+        """Return all registered rubric names (sorted)."""
+        return tuple(sorted(cls._entries))
+
+
+# Convenience module-level instance — call sites use
+# `RUBRIC_REGISTRY.register(...)` / `.lookup(...)` directly.
+RUBRIC_REGISTRY = RubricRegistry
+
+
 @dataclass
 class CaseResult:
     """One case outcome from run_eval.

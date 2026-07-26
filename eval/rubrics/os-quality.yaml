@@ -1,0 +1,86 @@
+# eval/rubrics/os-quality.yaml — 5-axis rubric for operating-system quality.
+#
+# Phase 3 eval extension (issue #365). Each axis is a 0-10 score produced
+# by `eval/prompts/judge-os-quality.md`. The 5 axes must stay in lockstep
+# with `lib/llm_judge.py:DIM_AXES["os"]` — adding an axis here requires
+# extending both.
+#
+# Used by `skills/evaluate/SKILL.md` (alpha: enforcement) when invoked
+# with `--os-quality`.
+
+schema_version: 1
+rubric_name: os-quality
+dim: os
+axes:
+  permission_separation:
+    description: >
+      Capability boundaries between caller, harness, and provider are
+      explicit. Score high when each tier holds only the permissions it
+      needs, and elevation is gated on an audit trail.
+    high_signal_examples:
+      - API key read from env, never logged or echoed
+      - write paths limited to project root via glob
+      - hooks cannot mutate protected paths without explicit consent
+    low_signal_examples:
+      - secrets hardcoded in source
+      - arbitrary shell exec on user-supplied paths
+      - mutation mode gated only by a string flag
+  cost_visibility:
+    description: >
+      Token / dollar cost is reported per run, not hidden in CI logs.
+      Score high when the eval emit a structured cost block (tokens_in /
+      tokens_out / estimated USD) that downstream FinOps tools can
+      consume.
+    high_signal_examples:
+      - per-case tokens_in / tokens_out surfaced in report
+      - run-level summary aggregates tokens across cases
+      - model + provider captured for cost attribution
+    low_signal_examples:
+      - tokens emitted to stderr only
+      - aggregated cost hidden in a debug log line
+      - no per-case breakdown
+  rollback_capability:
+    description: >
+      A failed invocation leaves the system in a state the operator can
+      roll back to without manual forensics. Score high when mutations
+      are staged, diffed, and reversible.
+    high_signal_examples:
+      - suggested diffs emitted before any apply
+      - atomic_write for all persisted artefacts
+      - clear revert instructions in the report
+    low_signal_examples:
+      - silent partial writes on failure
+      - no diff preview before apply
+      - destructive ops without a confirm gate
+  escalation_path:
+    description: >
+      When the harness detects disagreement (e.g. cross-judge variance),
+      it surfaces a deterministic escalation path rather than silently
+      picking one answer. Score high when the output includes a flagged
+      marker the operator can route.
+    high_signal_examples:
+      - cross-judge variance gate (>0.5) sets escalate=true
+      - explicit 'needs human review' marker in the report
+      - per-axis confidence surfaced alongside score
+    low_signal_examples:
+      - silent averaging across disagreeing judges
+      - variance hidden behind an internal flag
+      - escalation only via a debug print
+  audit_trail:
+    description: >
+      Every eval run leaves a forensic record: case id, dim, judge
+      scores, raw output (truncated), verdict, version. Score high when
+      the report is enough to reconstruct what happened in CI days later.
+    high_signal_examples:
+      - report includes case id, dim, prompt template version
+      - raw judge response retained (first 500 chars)
+      - report timestamped + path logged
+    low_signal_examples:
+      - report only contains aggregated verdict
+      - raw output discarded after scoring
+      - no run id to correlate with CI logs
+
+verdict_thresholds:
+  ok: 8.0
+  drift_warning: 5.0
+  rot_below: 5.0
