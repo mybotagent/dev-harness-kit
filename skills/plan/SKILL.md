@@ -54,7 +54,7 @@ Use the `Skill` invocation form (the lcs viewer is on the
 `python3 bin/dev-kit-lcs.py --get` form is NOT callable here because
 `disallowed-tools: Bash Edit ...` blocks arbitrary shell.
 
-```
+```python
 # session id defaults to "default"; pass via --interview-session <id>
 Skill("lcs", resource=f"lcs://interview/{INTERVIEW_SESSION or 'default'}")
 ```
