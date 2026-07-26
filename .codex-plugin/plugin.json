@@ -1,6 +1,10 @@
 {
   "name": "dev-kit",
+<<<<<<< HEAD
   "version": "0.3.138",
+=======
+  "version": "0.3.137",
+>>>>>>> 55eb2bb (chore(release): bump dev-kit to v0.3.137)
   "description": "AI-native dev harness: 13 categories, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop.",
   "author": {
     "name": "sanghee",
