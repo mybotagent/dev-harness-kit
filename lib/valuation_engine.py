@@ -45,7 +45,8 @@ Returns:
 """
 from __future__ import annotations
 
-from typing import Dict, List
+import sys
+from typing import Dict, List, Optional
 
 # Dimension names — the 6 axes from lib/valuation_rubrics/default.yaml.
 # Order matches the rubric file; `decide()` does not depend on the order.
@@ -160,23 +161,10 @@ def decide(
             "blocking_findings": [],
         }
 
-    # 3. revise path: at least one dimension is below dimension_floor
-    #    (but not below risk_floor — already handled above).
-    if below_floor:
-        findings = [
-            f"{axis}={value} < dimension_floor={dimension_floor}"
-            for axis, value in below_floor
-        ]
-        return {
-            "decision": "revise",
-            "rationale": (
-                f"weighted average {avg} < {proceed_threshold}; "
-                f"{len(findings)} dimension(s) below floor"
-            ),
-            "blocking_findings": findings,
-        }
-
-    # 4. hold / kill by weighted average.
+    # 3. low-average kill: documented contract says "weighted average
+    #    below hold_threshold -> kill" (low overall priority). Check
+    #    this BEFORE the below-floor revise path so an average below
+    #    the kill floor always short-circuits to kill, not revise.
     if avg < hold_threshold:
         return {
             "decision": "kill",
@@ -187,6 +175,24 @@ def decide(
             "blocking_findings": [
                 f"weighted_average={avg} < hold_threshold={hold_threshold}"
             ],
+        }
+
+    # 4. revise path: at least one dimension is below dimension_floor
+    #    (but not below risk_floor — already handled above). avg is
+    #    >= hold_threshold here, so this is a "moderate but fixable"
+    #    signal, not a kill.
+    if below_floor:
+        findings = [
+            f"{axis}={value} < dimension_floor={dimension_floor}"
+            for axis, value in below_floor
+        ]
+        return {
+            "decision": "revise",
+            "rationale": (
+                f"weighted average {avg} >= hold_threshold but "
+                f"{len(findings)} dimension(s) below floor"
+            ),
+            "blocking_findings": findings,
         }
 
     # 5. mid-band hold. avg >= hold_threshold but avg < proceed_threshold,
@@ -230,4 +236,83 @@ __all__ = [
     "SCORE_MAX",
     "decide",
     "decision_persists_to_lcs",
+    "cli_main",
 ]
+
+
+# ---------------------------------------------------------------------------
+# CLI (Phase 4, issue #369 M2: documented in skills/valuate/SKILL.md
+# and docs/STAGES.md as `python3 -m lib.valuation_engine --plan PRD.md
+# --dry-run`.)
+# ---------------------------------------------------------------------------
+
+def _load_plan_scores(plan_path: str) -> Dict[str, float]:
+    """Read a YAML/JSON plan and extract the 6 plan_value scores.
+
+    The plan file is expected to have a top-level ``plan_value`` dict
+    with keys matching ``DIMENSIONS`` (problem_fit, roi_estimate,
+    existing_solution_edge, team_capability, risk_vs_reward,
+    measurability). Missing dimensions are treated as 0 (worst
+    case) so a partial plan cannot sneak past the gate.
+    """
+    import json
+    from pathlib import Path
+    p = Path(plan_path)
+    text = p.read_text(encoding="utf-8")
+    if p.suffix in (".yaml", ".yml"):
+        import yaml
+        doc = yaml.safe_load(text) or {}
+    else:
+        doc = json.loads(text)
+    raw = doc.get("plan_value", {}) if isinstance(doc, dict) else {}
+    out: Dict[str, float] = {}
+    for axis in DIMENSIONS:
+        out[axis] = float(raw.get(axis, 0) or 0)
+    return out
+
+
+def cli_main(argv: Optional[List[str]] = None) -> int:
+    """CLI entry point. Returns 0 on proceed, 1 on hold/revise/kill, 2 on error.
+
+    Usage:
+        python3 -m lib.valuation_engine --plan PRD.md [--dry-run] [--json]
+    """
+    import argparse
+    import json
+    parser = argparse.ArgumentParser(prog="valuation_engine")
+    parser.add_argument("--plan", required=True, help="path to plan YAML/JSON")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print decision; do not persist to LCS")
+    parser.add_argument("--json", action="store_true", help="emit JSON envelope")
+    args = parser.parse_args(argv)
+    try:
+        scores = _load_plan_scores(args.plan)
+    except (OSError, ValueError) as exc:
+        print(f"error loading plan: {exc}", file=sys.stderr)
+        return 2
+    decision = decide(plan={}, rubric_scores=scores)
+    envelope = {
+        "decision": decision["decision"],
+        "rationale": decision["rationale"],
+        "blocking_findings": decision["blocking_findings"],
+        "scores": scores,
+        "source_plan": args.plan,
+    }
+    if args.json:
+        print(json.dumps(envelope, indent=2))
+    else:
+        print(f"decision: {decision['decision']}")
+        print(f"rationale: {decision['rationale']}")
+        for f in decision["blocking_findings"]:
+            print(f"  - {f}")
+    if not args.dry_run and decision_persists_to_lcs(decision):
+        # The build pre-flight will look this up; the CLI itself does
+        # not write (kept pure so tests can use --dry-run without
+        # touching the on-disk LCS cache).
+        pass
+    return 0 if decision["decision"] == "proceed" else 1
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(cli_main())

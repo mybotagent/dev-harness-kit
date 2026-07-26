@@ -260,3 +260,56 @@ class TestSkipValuationBackwardCompat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---- CLI (Phase 4 PR #446 review M2) ----
+
+class TestCli:
+    """`python3 -m lib.valuation_engine --plan PRD.md --dry-run --json`
+    must read the plan, run decide(), and print the canonical envelope."""
+
+    def _write_plan(self, tmp, scores):
+        import json, yaml
+        p = tmp / "plan.yaml"
+        p.write_text(yaml.safe_dump({"plan_value": scores}))
+        return str(p)
+
+    def test_cli_proceed_exits_zero(self, tmp_path):
+        from valuation_engine import cli_main
+        plan = self._write_plan(tmp_path, {
+            "problem_fit": 5.0, "roi_estimate": 5.0, "existing_solution_edge": 5.0,
+            "team_capability": 5.0, "risk_vs_reward": 5.0, "measurability": 5.0,
+        })
+        rc = cli_main(["--plan", plan, "--dry-run", "--json"])
+        assert rc == 0
+
+    def test_cli_kill_exits_one(self, tmp_path):
+        from valuation_engine import cli_main
+        # All axes at 0 -> avg 0 < hold_threshold -> kill.
+        plan = self._write_plan(tmp_path, {
+            "problem_fit": 0.0, "roi_estimate": 0.0, "existing_solution_edge": 0.0,
+            "team_capability": 0.0, "risk_vs_reward": 0.0, "measurability": 0.0,
+        })
+        rc = cli_main(["--plan", plan, "--dry-run"])
+        assert rc == 1
+
+    def test_cli_missing_plan_exits_two(self):
+        from valuation_engine import cli_main
+        rc = cli_main(["--plan", "/nonexistent/plan.yaml"])
+        assert rc == 2
+
+    def test_low_average_kills_before_revise(self, tmp_path):
+        """The reorder fix: 2.5-average (kill-by-avg) should NOT return
+        revise even though every dim is below floor."""
+        from valuation_engine import cli_main, decide
+        scores = {axis: 2.5 for axis in ("problem_fit", "roi_estimate",
+                    "existing_solution_edge", "team_capability",
+                    "risk_vs_reward", "measurability")}
+        out = decide(plan={}, rubric_scores=scores)
+        assert out["decision"] == "kill", f"expected kill for avg=2.5, got {out['decision']}"
+
+    def test_scale_param_picks_per_dim(self):
+        from llm_judge import score_range_for_dim
+        assert score_range_for_dim("plan_value") == (0.0, 5.0)
+        assert score_range_for_dim("review") == (0.0, 10.0)
+        assert score_range_for_dim("unknown") == (0.0, 10.0)

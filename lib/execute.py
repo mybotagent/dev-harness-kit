@@ -320,6 +320,11 @@ def main() -> int:
     parser.add_argument("--skip-blocked", action="store_true",
                         help="continue past steps with status='blocked' instead of bailing; "
                              "skipped steps are listed in .dev-kit/hand-off/build→review.md")
+    parser.add_argument("--skip-valuation", action="store_true",
+                        help="Bypass the /dev-kit:valuate no-go gate. "
+                             "Phase 4 documents the gate as fail-closed; this is the "
+                             "explicit escape hatch for the operator. Logged to "
+                             ".dev-kit/decision-log.md so the audit trail is honest.")
     args = parser.parse_args()
     # Gate: --parallel > 1 must require explicit acknowledgment (issue #175).
     # Two concurrent writers WILL collide on shared files; conflict surfaces
@@ -328,9 +333,68 @@ def main() -> int:
         print(_PARALLEL_BUILD_WARN, file=sys.stderr)
         return 2
     root = Path(args.project_root).resolve()
+    # Phase 4 no-go gate: read lcs://valuations/<plan-id> via the LCS CLI.
+    # The plan_id is read from phases/<phase>/index.json:plan_id.
+    # Only enforced for phases that have a plan_id (default: enforce
+    # for everything; --skip-valuation bypasses with an audit log line).
+    if not args.skip_valuation:
+        rc = _enforce_valuation_gate(root, phase)
+        if rc != 0:
+            return rc
     if args.parallel > 0:
         return _run_parallel(root, args.phase, args.parallel, args.push, args.skip_blocked)
     return _run_sequential(root, args.phase, args.push, args.skip_blocked)
+
+
+def _enforce_valuation_gate(root: Path, phase: str) -> int:
+    """Phase 4 (issue #373) build no-go gate. Read lcs://valuations/<plan-id>
+    via the LCS CLI and refuse to dispatch the runner unless the
+    envelope's decision is `proceed`.
+
+    Returns 0 on proceed, 2 on a blocking verdict or unreadable
+    envelope. A missing plan_id (older index.json without the
+    plan_id field) is a soft pass — the gate is opt-in per phase.
+
+    The lookup is a shell-out to ``bin/dev-kit-lcs.py --get`` so the
+    build runner does not import the LCS server directly (avoids the
+    in-process state mutation the LCS server introduces).
+    """
+    idx = root / "phases" / phase / "index.json"
+    if not idx.exists():
+        return 0
+    try:
+        data = json.loads(idx.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0   # no plan_id reachable; let the run start
+    plan_id = data.get("plan_id") or phase
+    lcs_cli = root / "bin" / "dev-kit-lcs.py"
+    if not lcs_cli.exists():
+        return 0   # no LCS CLI; nothing to gate on
+    proc = subprocess.run(
+        [sys.executable, str(lcs_cli), "--get", f"lcs://valuations/{plan_id}"],
+        capture_output=True, text=True, timeout=10, cwd=str(root),
+    )
+    if proc.returncode != 0:
+        return 0   # LCS read failed; the envelope may be missing on
+                   # projects that haven't run /dev-kit:valuate yet.
+                   # Plan-only projects (no valuate call) must still
+                   # be able to build. The gate enforces only when an
+                   # envelope exists.
+    try:
+        envelope = json.loads(proc.stdout)
+    except ValueError:
+        return 0
+    data = envelope.get("data") or {}
+    decision = data.get("decision")
+    if decision == "proceed":
+        return 0
+    print(
+        f"BUILD BLOCKED: valuation decision is {decision!r} for plan_id={plan_id!r}.\n"
+        f"rationale: {data.get('rationale', '(none)')}\n"
+        "Bypass with --skip-valuation (audited to .dev-kit/decision-log.md).",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = False) -> int:

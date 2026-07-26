@@ -51,6 +51,7 @@ from lcs_resources.branches import BranchesResource  # noqa: E402
 from lcs_resources.pr import PRResource  # noqa: E402
 from lcs_resources.sessions import SessionsResource  # noqa: E402
 from lcs_resources.spend import SpendResource  # noqa: E402
+from lcs_resources.valuations import ValuationsResource  # noqa: E402
 from lcs_resources.worktrees import WorktreesResource  # noqa: E402
 from lcs_server import (  # noqa: E402
     LCSError,
@@ -93,6 +94,7 @@ def build_default_registry() -> ResourceRegistry:
     registry.register(PRResource(repo_root))
     registry.register(SessionsResource(logs_root))
     registry.register(SpendResource(logs_root))
+    registry.register(ValuationsResource(repo_root))
     if os.environ.get("DEV_KIT_LCS_DEMO") == "1":
         registry.register(_DemoResource())
     return registry
