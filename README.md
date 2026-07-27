@@ -78,6 +78,7 @@ get absorbed; the **hooks and state machine don't**.
 - [Core concepts](#core-concepts)
   - [Worktree rule](#worktree-rule)
   - [Skills by audience](#skills-by-audience)
+  - [Live Context Server (LCS)](#live-context-server-lcs)
 - [Tooling](#tooling)
   - [Loghooks](#loghooks-dev-kitlog)
   - [Token efficiency analyzer](#token-efficiency-analyzer)
@@ -438,6 +439,83 @@ how it works, flags, output), see [`docs/skills/README.md`](docs/skills/README.m
 It also separates human-invocable skills from model-invoked sub-skills, and
 is where `/dev-kit:token-analyzer` and every other skill's full detail lives
 rather than in this README.
+
+### Live Context Server (LCS)
+
+The **LCS** is the harness's read-only state substrate. Every runtime fact
+the harness cares about — worktrees, branches, PRs, sessions, token spend,
+hook coverage, valuation verdicts, interview state, the research cache — is
+exposed through a single URI namespace:
+
+```text
+lcs://<resource>[/<param>]
+```
+
+The model (and the operator) asks the harness "what is the repo doing right
+now?" through one of two surfaces:
+
+| Surface | How | When to use |
+|---|---|---|
+| **Chat** — `/dev-kit:lcs` | Model-invoked skill that shells out to `bin/dev-kit-lcs.py` and renders the JSON payload inline. | "Show me every worktree", "what's the spend this hour", "is PR #447 MERGEABLE?". |
+| **CLI** — `bin/dev-kit-lcs.py` | Stdlib-only launcher; `--get <uri>`, `--list-resources`, `--describe <name>`, or `--serve` (JSON-RPC on stdio, MCP-compatible). | Hooks / scripts / CI; anything that doesn't want a chat round-trip. |
+
+Both reach the same resource registry. The skill is hidden from autocomplete
+(`user-invocable: false`, `alpha: state`) — the model auto-invokes it
+whenever a parent skill needs a state lookup. Source:
+[`skills/lcs/SKILL.md`](skills/lcs/SKILL.md).
+
+#### Production resources
+
+The default CLI registry wires the 5 core production handlers; the remaining
+URIs are reserved shapes that return exit code 2 if a caller asks for them
+before the corresponding handler ships. Live list + per-resource docstrings
+live in `lib/lcs_resources/`; the source is the source of truth.
+
+| URI | What it returns |
+|---|---|
+| `lcs://worktrees` | Every git worktree in the repo with branch + dirty status. |
+| `lcs://worktrees/<branch>` | One worktree's HEAD SHA, slot version, last commit. |
+| `lcs://branches/<name>` | Local + remote branches, ahead/behind counts, last-CI status. |
+| `lcs://branches/<name>/slot` | Slot metadata (`slot-id`, runtime, last release). |
+| `lcs://pr/<n>` | One PR's CI checks, review verdict, merge state, slot version. |
+| `lcs://sessions/<id>` | One recorded Claude / Codex session (turns, tools, tokens). |
+| `lcs://spend/<window>` | Token spend over a time window, bucketed by model + worktree. |
+| `lcs://hooks/coverage` | Which hook fires against which runtime (claude-code vs codex). |
+| `lcs://interview/<step>` | Current state of the plan-emission interview (step + answers). |
+| `lcs://research/cache` | Research cache contents (queries, hits, freshness). |
+| `lcs://valuations/<plan-id>` | A `valuate` verdict (decision + per-axis rationale). |
+
+`<window>` is `today` / `last-hour` / an ISO range; `<step>` is the
+interview step id; the rest are obvious from context. URIs are pure — no
+side effects, no writes, no network I/O beyond `gh api` / `git` reads.
+
+#### Hook integration
+
+The 8 enforcement hooks consult LCS state instead of shelling out to `git`
+where the lookup would be expensive or error-prone:
+
+- `worktree-guard.sh` enriches the deny message with the live `lcs://worktrees`
+  list (falls back to a `git worktree list` shell-out if LCS is unreachable).
+- `git-guard.sh` verifies the `plugin.json` slot via `lcs://branches/<name>`
+  on `git push` to a feature branch (shell-out fallback).
+- `log-on-session-start.sh` resolves the active worktree through LCS at
+  session start so the loghooked transcript carries the right branch label.
+- `provider-divergence-check.sh` reads `lcs://branches/<name>` to check
+  the runtime-provider slot before nudging.
+
+This is the **Phase 2 batch** (PR #442). The dispatch is `lcs_server.run_lcs()`
+behind a thin shell wrapper; if the LCS Python module fails to import, the
+hook falls back to the shell-out path with a stderr note — failure to
+consult LCS never blocks the hook's primary job.
+
+#### When to add a new resource
+
+A new `lcs://<x>` shape is the right move when more than one skill / hook
+needs the same live read. Drop a module in `lib/lcs_resources/<x>.py`
+implementing the `Resource` protocol (`name`, `fetch(parsed) -> dict`,
+`schema: dict | None`); the dispatcher auto-registers it. The
+`/dev-kit:lcs` skill needs no change — it shells out and prints whatever
+the registry returns.
 
 ---
 
