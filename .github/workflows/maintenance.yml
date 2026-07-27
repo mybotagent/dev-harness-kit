@@ -259,20 +259,24 @@ jobs:
               "${args[@]}" \
               --pr-body "$(cat /tmp/pr_body.txt)" \
               > /tmp/docs_check.json 2> /tmp/docs_check.err; then
-            echo "docs_ok=true"
-            echo "docs_ok=true" >> "$GITHUB_OUTPUT"
-            jq -r '.reason' /tmp/docs_check.json >> "$GITHUB_OUTPUT" \
-              || true
+            docs_ok=true
+            docs_reason="$(jq -r '.reason' /tmp/docs_check.json)"
           else
-            echo "docs_ok=false"
-            echo "docs_ok=false" >> "$GITHUB_OUTPUT"
-            # Capture the failure reason for the combined verdict step.
-            jq -r '.reason' /tmp/docs_check.json > /tmp/docs_reason.txt
-            echo "docs_reason<<EOF" >> "$GITHUB_OUTPUT"
-            cat /tmp/docs_reason.txt >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-            cat /tmp/docs_check.err >> "$GITHUB_OUTPUT" || true
+            docs_ok=false
+            docs_reason="$(jq -r '.reason' /tmp/docs_check.json 2>/dev/null \
+              || cat /tmp/docs_check.err)"
           fi
+          # Always use the heredoc form for $GITHUB_OUTPUT multi-line
+          # strings — the bare `key=value` form rejects values
+          # containing `:` and spaces (GitHub parses the next line as a
+          # separate key=value, failing with `Invalid format ...`).
+          {
+            echo "docs_ok=${docs_ok}"
+            echo "docs_reason<<EOF"
+            printf '%s\n' "${docs_reason}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "docs_ok=${docs_ok}  docs_reason=${docs_reason}"
 
       - name: Combined verdict gate
         run: |
