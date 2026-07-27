@@ -75,8 +75,8 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "risk_vs_reward",
         "measurability",
     ),
-    # Phase 5 (issue #378): research_source + research_claim axes
-    # for /dev-kit:research.
+    # Phase 5 (issue #378, merged via PR #443): research_source +
+    # research_claim axes for /dev-kit:research.
     "research_source": (
         "authority_score",
         "recency_score",
@@ -90,6 +90,16 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "primary_source_present",
         "timestamp_present",
         "rubric_match",
+    ),
+    # Phase 6 (issue #383): per-field clarity for the 5-field interview
+    # safety contract. Each axis is the model's 0-10 clarity score for
+    # one of the 5 mandated interview fields.
+    "interview_ambiguity": (
+        "goal_clarity",
+        "constraints_clarity",
+        "success_criteria_clarity",
+        "anti_goals_clarity",
+        "acceptance_rubric_clarity",
     ),
 }
 
@@ -318,12 +328,32 @@ def score_aggregate(axes: Dict[str, float]) -> float:
     return round(sum(axes.values()) / max(1, len(axes)), 2)
 
 
+# Per-dim polarity. Most dims are "higher_is_better" (a high score means
+# the agent did well on that axis). `interview_ambiguity` is the
+# exception: the judge prompt defines 0 = clear and 10 = ambiguous
+# (per the local semantic in lib/interview_engine.py where
+# MISSING_FIELD_SCORE=10 and CLEAR_FIELD_SCORE=2), so the aggregate
+# verdict path must invert before applying verdict_from_score.
+AXIS_POLARITY: Dict[str, str] = {
+    "interview_ambiguity": "lower_is_better",
+}
+
+
 def verdict_from_score(score: float) -> str:
     if score >= 8.0:
         return "OK"
     if score >= 5.0:
         return "DRIFT_WARNING"
     return "ROT"
+
+
+def normalize_for_verdict(dim: str, score: float) -> float:
+    """Invert the score for lower_is_better dims so verdict_from_score
+    can be applied uniformly (higher = better).
+    """
+    if AXIS_POLARITY.get(dim) == "lower_is_better":
+        return 10.0 - score
+    return score
 
 
 if __name__ == "__main__":
