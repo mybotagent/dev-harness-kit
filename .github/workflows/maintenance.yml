@@ -1,0 +1,320 @@
+name: PR Maintenance Gate
+
+# Auto-run /dev-kit:maintenance on every PR. Unlike review.yml (which
+# fans out to /dev-kit:review + /dev-kit:security for severity), this
+# gate judges the diff against the 20-checkbox code-sanity rubric
+# (CC-1..8 / OE-1..8 / VM-1..4) and verifies the docs-updated
+# sub-gate as its final step.
+#
+# Verdict derivation (worst-wins):
+#   - Blocked (any 🔴 critical finding in the maintenance judge)
+#     → **Verdict:** Blocked (gate exit 1)
+#   - Changes Requested (any 🟠 major, no 🔴) OR (Approve judge but
+#     docs-updated sub-gate fails)
+#     → **Verdict:** Changes Requested (gate exit 1)
+#   - Approve + docs updated
+#     → **Verdict:** Approve (gate exit 0)
+#
+# The docs-updated sub-gate is enforced by `lib/maintenance_gate.py`
+# (Python module, unit-tested in `tests/test_maintenance_gate.py`).
+# The workflow shells out to it via `python3 -m lib.maintenance_gate`
+# so the same logic is exercisable locally without GitHub Actions.
+#
+# Provider selection + bump-PR skip + secret names mirror review.yml;
+# see that workflow's header comment for the full rationale.
+#
+# Bypass for emergencies: there is no `--no-verify` equivalent for
+# this gate. To force-merge a PR that fails maintenance, the
+# operator must (a) fix the gate's finding in a follow-up commit,
+# or (b) have a maintainer with admin rights merge via the GitHub UI
+# bypassing branch protection. The gate never auto-approves.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      review_provider:
+        description: "Provider for this run (overrides vars.CI_REVIEW_PROVIDER)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - minimax
+          - anthropic
+          - deepseek
+      pr_number:
+        description: "PR number to maintenance-review"
+        required: false
+        type: string
+
+jobs:
+  maintenance_judge:
+    name: /dev-kit:maintenance (code-sanity + docs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip on bump-PRs: same rationale as review.yml. The bump content
+    # is version-bump.yml-generated and merged by a human; running the
+    # maintenance judge on it would only confirm "plugin.json version
+    # bumped by 0.0.1" with no reviewable surface change.
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    outputs:
+      verdict: ${{ steps.extract_verdict.outputs.verdict }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      MINIMAX_BASE_URL: https://api.minimax.io/anthropic
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install dev-kit plugin from local checkout
+        run: |
+          mkdir -p ~/.claude/plugins/marketplaces
+          ln -sfn "$GITHUB_WORKSPACE" ~/.claude/plugins/marketplaces/dev-kit
+          test -f ~/.claude/plugins/marketplaces/dev-kit/.claude-plugin/plugin.json
+          test -d ~/.claude/plugins/marketplaces/dev-kit/skills/review
+          echo "dev-kit plugin symlinked: $(readlink ~/.claude/plugins/marketplaces/dev-kit)"
+
+      - name: Resolve PR + provider
+        id: provider
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            provider="${{ github.event.inputs.review_provider }}"
+            [ -z "${{ github.event.inputs.pr_number }}" ] && { echo "::error::pr_number required"; exit 1; }
+            echo "pr_number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          else
+            provider="${{ vars.CI_REVIEW_PROVIDER }}"
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$provider" ]; then
+            echo "::error::No provider resolved. Set the GitHub repo variable:"
+            echo "  gh variable set CI_REVIEW_PROVIDER --body anthropic"
+            echo "or pass review_provider on a manual workflow_dispatch run."
+            exit 1
+          fi
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
+
+      - name: Run /dev-kit:maintenance via MiniMax
+        if: steps.provider.outputs.provider == 'minimax'
+        env:
+          ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MINIMAX_API_KEY }}
+          ANTHROPIC_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3[1m]'
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
+        uses: anthropics/claude-code-action@v1
+        with:
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          prompt: |
+            /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
+
+            Apply the 20-checkbox code-sanity rubric (CC-1..8 clean
+            code, OE-1..8 over-engineering, VM-1..4 value/meaning).
+            Emit a JSON object with these three composite axes:
+              code_sanity_score (0-10)
+              docs_coverage_score (0-10)
+              scope_discipline_score (0-10)
+            plus reason and items_flagged. Map verdict strictly to
+            score (do NOT inflate):
+              - code_sanity_score < 5         → **Verdict:** Blocked
+              - 5 ≤ code_sanity_score < 8     → **Verdict:** Changes Requested
+              - code_sanity_score ≥ 8         → **Verdict:** Approve
+            The summary MUST begin with a single line exactly of the
+            form `**Verdict:** <Word>`.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      - name: Run /dev-kit:maintenance via Claude Code opt-in
+        if: steps.provider.outputs.provider == 'anthropic'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          prompt: |
+            /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
+
+            Apply the 20-checkbox code-sanity rubric and emit the
+            three composite axes. The summary MUST begin with
+            `**Verdict:** <Word>` (Approve / Changes Requested / Blocked).
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      - name: Run /dev-kit:maintenance via DeepSeek
+        if: steps.provider.outputs.provider == 'deepseek'
+        env:
+          ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          ANTHROPIC_MODEL: 'deepseek-v4-pro'
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-flash'
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro'
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash'
+        uses: anthropics/claude-code-action@v1
+        with:
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          prompt: |
+            /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
+
+            Apply the 20-checkbox code-sanity rubric. The summary MUST
+            begin with `**Verdict:** <Word>`.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      - name: Extract maintenance verdict
+        id: extract_verdict
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          set -uo pipefail
+          # Same extraction pattern as review.yml: most recent claude[bot]
+          # comment with a **Verdict:** line. In track_progress mode the
+          # action updates ONE comment per job, so "most recent" = this
+          # job's comment.
+          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
+          echo "maintenance_verdict=${verdict:-<none>}"
+          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+
+  gate:
+    name: maintenance gate (verdict + docs-updated)
+    runs-on: ubuntu-latest
+    needs: [maintenance_judge]
+    if: |
+      always() &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Extract PR changed-files list
+        id: changed_files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          files="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json files --jq '.files[].path' 2>/dev/null || true)"
+          if [ -z "$files" ]; then
+            echo "::error::Could not read PR $PR_NUMBER changed-files list."
+            exit 1
+          fi
+          # Emit one line per path to $GITHUB_OUTPUT for downstream steps.
+          # `tr` collapses newlines to spaces so the output value is a
+          # newline-separated multiline string the next step can iterate.
+          printf '%s\n' "$files" > /tmp/changed_files.txt
+          echo "files_count=$(wc -l < /tmp/changed_files.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Read PR body
+        id: pr_body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json body --jq '.body // ""' > /tmp/pr_body.txt
+          echo "body_bytes=$(wc -c < /tmp/pr_body.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Docs-updated sub-gate
+        id: docs_check
+        run: |
+          set -uo pipefail
+          # Build --changed-files args from the file list.
+          args=()
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            args+=("--changed-files" "$f")
+          done < /tmp/changed_files.txt
+          # Run the same module the unit tests exercise — keeps the
+          # logic in one place.
+          if python3 -m lib.maintenance_gate \
+              --docs-check \
+              "${args[@]}" \
+              --pr-body "$(cat /tmp/pr_body.txt)" \
+              > /tmp/docs_check.json 2> /tmp/docs_check.err; then
+            echo "docs_ok=true"
+            echo "docs_ok=true" >> "$GITHUB_OUTPUT"
+            jq -r '.reason' /tmp/docs_check.json >> "$GITHUB_OUTPUT" \
+              || true
+          else
+            echo "docs_ok=false"
+            echo "docs_ok=false" >> "$GITHUB_OUTPUT"
+            # Capture the failure reason for the combined verdict step.
+            jq -r '.reason' /tmp/docs_check.json > /tmp/docs_reason.txt
+            echo "docs_reason<<EOF" >> "$GITHUB_OUTPUT"
+            cat /tmp/docs_reason.txt >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            cat /tmp/docs_check.err >> "$GITHUB_OUTPUT" || true
+          fi
+
+      - name: Combined verdict gate
+        run: |
+          set -uo pipefail
+          judge_verdict="${{ needs.maintenance_judge.outputs.verdict }}"
+          docs_ok="${{ steps.docs_check.outputs.docs_ok }}"
+          docs_reason="${{ steps.docs_check.outputs.docs_reason }}"
+
+          echo "judge_verdict=$judge_verdict  docs_ok=$docs_ok"
+          echo "docs_reason=$docs_reason"
+
+          # Tolerate missing judge verdict (mirrors review.yml): default
+          # to Approve + ::warning:: so transient agent failures don't
+          # block merge; the docs-updated sub-gate still owns the
+          # final gate.
+          if [ -z "$judge_verdict" ]; then
+            echo "::warning::maintenance judge verdict missing; defaulting to Approve"
+            judge_verdict="Approve"
+          fi
+
+          # Combine via the same module so unit tests and CI share logic.
+          result="$(python3 -m lib.maintenance_gate \
+            --judge-verdict "$judge_verdict" \
+            $([ "$docs_ok" = "true" ] && echo "--docs-ok") \
+            --docs-reason "$docs_reason")"
+          combined_verdict="$(printf '%s' "$result" | jq -r '.verdict')"
+          echo "combined_verdict=$combined_verdict"
+
+          # worst-of wins for the final gate
+          case "$combined_verdict" in
+            Approve) exit 0 ;;
+            "Changes Requested")
+              echo "::error::Changes Requested (judge=$judge_verdict docs_ok=$docs_ok)"
+              echo "::error::reason: $docs_reason"
+              exit 1
+              ;;
+            Blocked)
+              echo "::error::Blocked (judge=$judge_verdict docs_ok=$docs_ok)"
+              exit 1
+              ;;
+            *)
+              echo "::warning::Unparseable combined verdict '$combined_verdict'; defaulting to Approve"
+              exit 0
+              ;;
+          esac

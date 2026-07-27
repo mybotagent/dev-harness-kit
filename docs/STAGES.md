@@ -1,6 +1,6 @@
 # STAGES — dev-harness-kit per-stage harness spec
 
-> Reference: ADR-0011, ADR-0020. 6 stages × must/must-not/AC unified.
+> Reference: ADR-0011, ADR-0020. 7 stages (B / B.5 / 1 / 2 / 3 / 5a / 5b / 6 / 7) × must/must-not/AC unified.
 
 ## Stage B — Bootstrap (`/dev-kit:bootstrap`)
 
@@ -81,6 +81,43 @@
 - **AC**: git tag + CHANGELOG entry + pre-release smoke.
 - **Active Skills**: (none, manual gate only)
 - **Active Hooks**: `stop-verify`=ON.
+
+## Stage 7 — Maintenance Gate (`.github/workflows/maintenance.yml`)
+
+- **Goal**: PR-only enforcement of clean-code + over-engineering + value.
+  Companion to the pre-push intent check in `.githooks/pre-push`.
+  Runs on every PR (excluding bump-PRs).
+- **Must**: (a) `maintenance_judge` job invokes `/dev-kit:maintenance
+  --diff <PR>` via `claude-code-action`; the judge prompt at
+  `eval/prompts/judge-maintenance.md` applies the canonical
+  20-checkbox rubric (CC-1..8 + OE-1..8 + VM-1..4) and emits three
+  composite 0-10 axes (`code_sanity_score`, `docs_coverage_score`,
+  `scope_discipline_score`). (b) `gate` job extracts the verdict via
+  `lib/maintenance_gate.py:extract_verdict` (mirrors review.yml's
+  pattern). (c) `gate` runs the docs-updated sub-gate
+  (`lib/maintenance_gate.py:docs_updated_ok`) as its final step. (d)
+  Combined verdict derivation: `code_sanity_score < 5` → Blocked;
+  `5..7.99` → Changes Requested; `≥ 8` → Approve; an Approve with
+  docs-updated failure downgrades to Changes Requested. (e) Bump-PR
+  skip mirrors review.yml's filter (`startsWith(title, 'chore(release): bump dev-kit to v')`).
+- **Must-Not**: Auto-approve the PR. Bypass `--no-verify` equivalent
+  (none exists; the gate never auto-approves). Use the dedicated
+  maintenance workflow for non-PR surface.
+- **AC**: Workflow exists at `.github/workflows/maintenance.yml`.
+  `python3 -m lib.maintenance_gate --extract-verdict-from-stdin`
+  exits 0 and prints `Approve|Changes Requested|Blocked|""`.
+  `tests/test_maintenance_gate.py` is GREEN (≥ 19 tests covering
+  verdict extraction, docs-updated check, combine_verdict, CLI
+  subprocess). Eval golden cases
+  `eval/golden/maintenance-{01,02,03}*.json` exist and resolve to
+  their expected verdict bands. `lib/llm_judge.py:DIM_AXES["maintenance"]`
+  is registered with the 3 axes. `docs/maintenance-gate.md` documents
+  thresholds + bypass policy.
+- **Active Skills**: `maintenance` (agent-skill companion to the
+  workflow, opt-in invocation pattern)
+- **Active Hooks**: (no in-process hooks — pure CI gate)
+- **Hand-off out**: (terminal — the gate is the final pre-merge
+  signal alongside review/security)
 
 ## Cross-cutting — Audit (`/dev-kit:audit`)
 

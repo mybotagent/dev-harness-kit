@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# .githooks/pre-push — Block direct push to main + enforce version freshness.
+# .githooks/pre-push — Block direct push to main + enforce version freshness
+# + opt-in LLM-judge intent check.
 #
-# Two responsibilities, run in order:
+# Three responsibilities, run in order:
 #   1. Block direct push to `main` (PR-only workflow policy).
 #   2. Verify the LOCAL plugin version is >= origin/main's version. If
 #      local is behind, refuse with a clear rebase error. We do NOT
@@ -9,10 +10,18 @@
 #      which fires after a PR merges to main (single source of truth for
 #      the version field). Auto-bumping here was the root cause of the
 #      parallel-PR cascade (every push incremented, every merge conflicted).
+#   3. Opt-in: when DEV_KIT_PUSH_INTENT=1 is set, call
+#      `python3 -m lib.push_intent_judge ...` with the tip commit's
+#      message + `git diff --stat` summary. The judge returns
+#      `VERDICT=<OK|DRIFT_WARNING|ROT> REASON="..."` on stdout. Anything
+#      other than OK fails the push so a "rename + reformat only" or a
+#      scope-creep drive-by doesn't slip through silently.
 #
 # Why pre-push (not pre-commit): the freshness check is only meaningful
 # when the branch is going to origin. Pre-push fires once per push,
-# comparing against origin/main which is the correct reference.
+# comparing against origin/main which is the correct reference. The
+# intent check is the same: it judges the commit as it will be pushed,
+# not as it sits in the staging area.
 #
 # Activation:
 #   git config core.hooksPath .githooks       # local-only
@@ -20,6 +29,9 @@
 #
 # Bypass (for maintainers ONLY with explicit --no-verify, NEVER default):
 #   git push --no-verify
+#
+# Intent-check opt-in (default OFF — keep hook offline-deterministic):
+#   DEV_KIT_PUSH_INTENT=1 git push ...
 
 set -eo pipefail
 
@@ -88,6 +100,64 @@ while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
               echo "[pre-push] ::error:: Rebase onto origin/main (or fetch + rebase) and re-push." >&2
               echo "[pre-push] ::error:: Do NOT auto-bump locally — the trunk workflow owns the version." >&2
               exit 1
+            fi
+
+            # === Opt-in LLM-judge intent check (DEV_KIT_PUSH_INTENT=1) ===
+            # Skip on tag pushes (REMOTE_BRANCH=="") and on the
+            # initial empty-commit push (LOCAL_SHA parents to nothing).
+            if [ "${DEV_KIT_PUSH_INTENT:-}" = "1" ]; then
+              # Defensive: a zero-length LOCAL_SHA means there's no
+              # commit to judge (e.g. deleting a remote ref). Skip.
+              if [ "${#LOCAL_SHA}" -lt 7 ]; then
+                echo "[pre-push] push-intent: empty commit sha; skipping intent check"
+              else
+                # Capture commit message + diff stat + ~2 KB diff hunk
+                # sample for the judge. Use a tmpfile to avoid quoting
+                # issues when the commit message contains single quotes.
+                tmpdir="$(mktemp -d)"
+                trap 'rm -rf "$tmpdir"' EXIT
+                git log -1 --format=%B "$LOCAL_SHA" > "$tmpdir/commit_msg.txt"
+                git diff --stat "$LOCAL_SHA"~1 "$LOCAL_SHA" > "$tmpdir/diff_stat.txt" 2>/dev/null \
+                  || git diff --stat "$LOCAL_SHA" > "$tmpdir/diff_stat.txt"
+                # Trim diff sample to ~2 KB so the prompt stays bounded.
+                git diff "$LOCAL_SHA"~1 "$LOCAL_SHA" 2>/dev/null \
+                  | head -c 2048 > "$tmpdir/diff_sample.txt" \
+                  || git diff "$LOCAL_SHA" | head -c 2048 > "$tmpdir/diff_sample.txt"
+
+                echo "[pre-push] push-intent: judging commit $LOCAL_SHA via lib.push_intent_judge"
+                push_intent_out="$(
+                  DEV_KIT_PUSH_INTENT=1 python3 -m lib.push_intent_judge \
+                    --project-root "$PWD" \
+                    --commit-message "$(cat "$tmpdir/commit_msg.txt")" \
+                    --diff-stat "$(cat "$tmpdir/diff_stat.txt")" \
+                    --diff-sample "$(cat "$tmpdir/diff_sample.txt")" \
+                    2>/dev/null || true
+                )"
+
+                if [ -z "$push_intent_out" ]; then
+                  echo "[pre-push] ::error:: push-intent: lib.push_intent_judge produced no output" >&2
+                  echo "[pre-push] ::error:: run \`python3 -m lib.push_intent_judge --help\` to verify install" >&2
+                  exit 1
+                fi
+
+                case "$push_intent_out" in
+                  "VERDICT=OK "*)
+                    echo "[pre-push] push-intent: OK ($push_intent_out)"
+                    ;;
+                  "VERDICT=ROT "*|"VERDICT=DRIFT_WARNING "*)
+                    echo "[pre-push] ::error:: push-intent REJECTED: $push_intent_out" >&2
+                    echo "[pre-push] ::error:: Either rewrite the commit (clearer intent, scoped diff)" >&2
+                    echo "[pre-push] ::error:: or bypass with \`git push --no-verify\`." >&2
+                    exit 1
+                    ;;
+                  *)
+                    # Unknown output shape — fail loud so a broken
+                    # CLI can't silently approve a bad commit.
+                    echo "[pre-push] ::error:: push-intent: unexpected output: $push_intent_out" >&2
+                    exit 1
+                    ;;
+                esac
+              fi
             fi
             ;;
     esac

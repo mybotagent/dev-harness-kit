@@ -12,6 +12,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 |---|---|---|
 | [`audit`](audit/SKILL.md) | `state` | 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY. |
 | [`ci-doctor`](ci-doctor/SKILL.md) | `enforcement` | Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?" |
+| [`maintenance`](maintenance/SKILL.md) | `enforcement` | PR-only CI gate via `.github/workflows/maintenance.yml`. Judges the diff against the 20-checkbox code-sanity rubric (CC/OE/VM) and enforces the docs-updated sub-gate as the final pre-merge signal. |
 | [`cost-gate`](cost-gate/SKILL.md) | `enforcement` | 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost flag can aggregate. |
 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `analysis` | Audit repository documentation, remove superseded guidance, and refresh the README without recording volatile inventory facts. |
 | [`hook-doctor`](hook-doctor/SKILL.md) | `enforcement` | Diagnose failed Claude Code or Codex hooks, repair safe cache and registration drift, and report the exact restart step. |
