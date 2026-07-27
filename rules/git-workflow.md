@@ -60,27 +60,19 @@ git pull --ff-only origin main
 # 2. Cut a fresh worktree for the new task (auto-creates branch from origin/main)
 git worktree add -b fix/<slug> .worktrees/fix-<slug> origin/main
 
-# 2a. (Recommended) Verify the worktree is in sync with HEAD.
+# 2a. (When you see a `modified:` line on a file you did not touch)
 # `git worktree add` does NOT overwrite a pre-existing file at the target
 # path (issue #215). If the worktree dir carried stale content from a
 # prior aborted operation or a `git worktree remove` that left files
 # behind, the new worktree's working tree may disagree with HEAD for
 # those files (the diff looks like `modified:` against the same SHA).
-# This causes spurious `ImportError` against fresh test runs because
-# functions defined at HEAD do not exist in the on-disk file.
+# That was previously recovered with `hooks/worktree-verify-clean.sh`,
+# removed in #238 after the inspect audit found no live callers.
+# If you hit it, recover manually per file:
 #
-# Run after every cut (manual or auto-cut):
+#   git checkout HEAD -- <path>
 #
-#   bash hooks/worktree-verify-clean.sh .worktrees/fix-<slug>
-#
-# Output: `checked=<N> repaired=<N>`. Anything other than
-# `repaired=0` means a stale file was found and force-restored from
-# HEAD via `git checkout HEAD -- <path>`. The helper is safe to run
-# repeatedly (clean worktrees return `repaired=0`). The same helper
-# is sourced as a library at `hooks/lib/worktree-verify-clean.sh` and
-# can be wired into `hooks/hooks.json` as an opt-in PostToolUse:Bash
-# hook that fires automatically on every `git worktree add` Claude
-# Code observes.
+# then re-run your test to confirm the divergence is gone.
 
 # 3a. Claude Code: open a new Claude Code session IN THAT WORKTREE.
 #     (the session cwd is the worktree path, not the main checkout)
@@ -169,13 +161,12 @@ will still review the `review.yml` commit in isolation, and a broken
 
 - `tests/test_git_workflow.py` (branch-naming + `git-guard` regression)
 - `tests/test_worktree_guard.py` (`worktree-guard` + `session-start-check` regression)
-- `tests/test_worktree_verify_clean.py` (issue #215 — `git worktree add` stale-file repair regression)
 - `tests/test_review_yml_isolation.py` (`review-yml-isolation` regression — staged-set isolation, jq-missing fail-closed, hooks.json wiring)
 - `hooks/lib/worktree-detect.sh` (shared discriminator — single source of truth)
-- `hooks/lib/worktree-verify-clean.sh` (`worktree_verify_clean` helper — issue #215)
 - `hooks/git-guard.sh` (PreToolUse Bash block)
 - `hooks/worktree-guard.sh` (PreToolUse Edit/Write block, fails closed)
 - `hooks/review-yml-isolation.sh` (PreToolUse Bash block, fails closed — `review.yml` PR isolation)
 - `hooks/session-start-check.sh` (SessionStart nudge, fails open with warning)
-- `hooks/worktree-verify-clean.sh` (CLI wrapper + opt-in PostToolUse:Bash hook for issue #215)
 - `hooks/hooks.json` (wires all hooks into Claude Code)
+
+> *Removed in #238:* `hooks/worktree-verify-clean.sh`, `hooks/lib/worktree-verify-clean.sh`, and `tests/test_worktree_verify_clean.py` (issue #215) were deleted by the inspect audit; the related `## Step 2a` block above was rewritten to direct the rare recovery case to `git checkout HEAD -- <path>`.
