@@ -20,7 +20,6 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 import interview_engine as ie  # noqa: E402
 
-
 # ----- validate_5_field -----
 
 
