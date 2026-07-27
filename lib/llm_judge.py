@@ -75,6 +75,22 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "risk_vs_reward",
         "measurability",
     ),
+    # Phase 5 (issue #378): research_source + research_claim axes
+    # for /dev-kit:research.
+    "research_source": (
+        "authority_score",
+        "recency_score",
+        "primary_vs_secondary",
+        "url_validity",
+        "citation_completeness",
+    ),
+    "research_claim": (
+        "citation_required",
+        "n_source_agreement",
+        "primary_source_present",
+        "timestamp_present",
+        "rubric_match",
+    ),
 }
 
 # Per-dim score range. Most dims are 0-10 (higher = better, with the
@@ -150,12 +166,34 @@ def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[st
     Tries a strict JSON parse first; on failure falls back to regex
     extraction of the first `{...}` block that mentions any axis token.
     Returns {} if both fail.
+
+    Per the Phase 5 (issue #443) security review (M4): scores are
+    validated for finiteness and 0-10 range. A non-finite or out-of-range
+    score (NaN, Infinity, negative, >10) is dropped from the result so
+    downstream aggregates do not produce invalid verdicts.
     """
     target_axes = tuple(axes) if axes is not None else JUDGE_AXES
+
+    def _extract(d: dict) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for ax in target_axes:
+            if ax not in d:
+                continue
+            try:
+                v = float(d[ax])
+            except (TypeError, ValueError):
+                continue
+            import math
+            if not math.isfinite(v) or v < 0.0 or v > 10.0:
+                continue
+            out[ax] = v
+        return out
+
     try:
         data = json.loads(raw)
-        return {ax: float(data[ax]) for ax in target_axes if ax in data}
-    except (json.JSONDecodeError, KeyError, TypeError):
+        if isinstance(data, dict):
+            return _extract(data)
+    except (json.JSONDecodeError, TypeError):
         pass
     m = re.search(
         r"\{[^{}]*?" + _AXIS_TOKEN_RE + r"[^{}]*?\}",
@@ -164,8 +202,9 @@ def parse_scores_json(raw: str, axes: Optional[Iterable[str]] = None) -> Dict[st
     if m:
         try:
             data = json.loads(m.group(0))
-            return {ax: float(data[ax]) for ax in target_axes if ax in data}
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            if isinstance(data, dict):
+                return _extract(data)
+        except (json.JSONDecodeError, TypeError):
             pass
     return {}
 
