@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Phase 5 added skills/research/SKILL.md, Phase 6 added skills/interview/SKILL.md).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 39
+SKILL_COUNT = 40
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
