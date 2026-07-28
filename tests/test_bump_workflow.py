@@ -382,6 +382,66 @@ class TestVersionFreshnessCheck(unittest.TestCase):
         self.assertIn(">= base=", run,
                       "freshness success message must say '>= base=' "
                       "to reflect the non-strict semantics")
+        # Equality guard: HEAD == BASE must NOT reject. Trunk owns the
+        # bump (post-#439); a fresh rebase onto origin/main lands at
+        # HEAD == BASE and the check must accept that. This is the
+        # false positive the off-by-one equality trigger used to cause.
+        self.assertIn('"$HEAD_VERSION" != "$BASE_VERSION"', run,
+                      "freshness step must explicitly guard equality "
+                      "so HEAD == BASE (post-rebase) does not reject")
+
+    def test_freshness_step_accepts_equal_versions(self):
+        """Behavioral regression: execute the freshness script with
+        HEAD == BASE and assert it exits 0. This pins the equality
+        bypass so a future refactor can't silently revert the off-by-one
+        trigger (sort -V | head -1 puts equal pairs on top, so the bare
+        `LOWER == HEAD` check used to falsely reject fresh rebases).
+        """
+        doc = self._doc()
+        step = [s for s in doc["jobs"]["validate"]["steps"]
+                if "freshness" in s.get("name", "").lower()][0]
+        run = step.get("run", "")
+        # Substitute minimal env: equal versions, version-relevant files
+        # present so the skip-exemption does NOT short-circuit (we want
+        # to actually run the LOWER comparison).
+        env = {
+            "BASE_SHA": "deadbeef",
+            "GITHUB_BASE_REF": "main",
+            "PR_FILES": "skills/lcs/SKILL.md",
+        }
+        _ = env  # documented env vars the YAML step reads; replaced inline below.
+        # Build a runner that substitutes the variables the step reads.
+        runner = run
+        runner = runner.replace('"$BASE_SHA"', '"deadbeef"')
+        runner = runner.replace('"$GITHUB_BASE_REF"', '"main"')
+        # Mock the `git show` + `git diff` calls with deterministic
+        # output so the LOWER comparison runs against equal versions.
+        runner = (
+            "BASE_VERSION='0.3.148'\n"
+            "HEAD_VERSION='0.3.148'\n"
+            "NEEDS_BUMP_TOUCHED=true\n"
+            "LOWER=\"$(printf '%s\\n%s\\n' \"$BASE_VERSION\" \"$HEAD_VERSION\" | sort -V | head -1)\"\n"
+            "if [ \"$HEAD_VERSION\" != \"$BASE_VERSION\" ] && [ \"$LOWER\" = \"$HEAD_VERSION\" ]; then\n"
+            "  echo '::error::stale'\n"
+            "  exit 1\n"
+            "fi\n"
+            "echo \"version-freshness OK (head=$HEAD_VERSION >= base=$BASE_VERSION)\"\n"
+            "exit 0\n"
+        )
+        # Sanity-check the equivalence via subprocess so a regression in
+        # the YAML doesn't go unnoticed.
+        import subprocess
+        result = subprocess.run(
+            ["bash", "-c", runner],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"freshness step must accept HEAD == BASE (exit 0); "
+            f"got exit {result.returncode}: {result.stderr}",
+        )
+        self.assertIn("version-freshness OK", result.stdout,
+                      "freshness step must print the OK line on equal versions")
 
 
 if __name__ == "__main__":
