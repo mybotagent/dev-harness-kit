@@ -104,7 +104,7 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 
 | `alpha:` | Meaning | Example skills |
 |---|---|---|
-| `state` | Drives the harness state machine — moves between stages, persists progress, gates transitions. | `plan`, `build`, `bootstrap`, `ship`, `shortcut-tdd-fast` |
+| `state` | Drives the harness state machine — moves between stages, persists progress, gates transitions. | `plan`, `build`, `bootstrap`, `ship` |
 | `enforcement` | Deterministic guard — runs hooks, scanners, validators, gates. The user can't talk their way past it. | `audit`, `repair`, `eval`, `security-when-guard` |
 | `analysis` | Pure reasoning over a corpus — review, inspect, prune, refactor. **Tolerated** only because distinct human intents drive distinct slash entrypoints. | `review`, `inspect`, `prune`, `refactor` |
 

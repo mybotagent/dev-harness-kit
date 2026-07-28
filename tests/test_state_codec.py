@@ -59,11 +59,10 @@ class TestStateCodec(unittest.TestCase):
 
     def test_transition_stage_appends_chain(self):
         state_codec.transition_stage(self.root, "plan", step=2)
-        state_codec.transition_stage(self.root, "design", step=1, shortcut="tdd-fast")
+        state_codec.transition_stage(self.root, "design", step=1)
         reread = state_codec.read_state(self.root)
         self.assertEqual(reread["current_stage"], "design")
         self.assertEqual(reread["current_step"], 1)
-        self.assertEqual(reread["shortcut_used"], "tdd-fast")
         self.assertEqual(len(reread["hand_off_chain"]), 2)
         self.assertEqual(reread["hand_off_chain"][0]["from"], "bootstrap")
         self.assertEqual(reread["hand_off_chain"][0]["to"], "plan")

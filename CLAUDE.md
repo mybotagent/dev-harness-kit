@@ -58,7 +58,6 @@
 ## §5 Hand-off Pointer
 
 next_stage_trigger: /dev-kit:plan
-shortcut_trigger: /dev-kit:tdd-fast
 
 ## Shared rules (Claude Code + Codex)
 

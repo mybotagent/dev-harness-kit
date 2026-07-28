@@ -220,14 +220,13 @@ def _render_iron_laws(iron_laws: List[str]) -> str:
 
 
 def _render_active_stage(stage: str, step: str = "1/1", methodology: str = "tdd") -> str:
-    """§2 body — Active Stage block (current stage / step / methodology / shortcut)."""
+    """§2 body — Active Stage block (current stage / step / methodology)."""
     return (
         "## §2 Active Stage\n"
         "\n"
         f"- current_stage: {stage}\n"
         f"- current_step: {step}\n"
         f"- methodology: {methodology} (MUST-48 default)\n"
-        "- shortcut_used: none\n"
     )
 
 
@@ -247,10 +246,9 @@ def _render_hook_matrix(hook_matrix: Optional[str] = None) -> str:
 
 
 def _render_handoff(hand_off_chain: Optional[str] = None) -> str:
-    """§5 body — Hand-off Pointer (next_stage + shortcut triggers)."""
+    """§5 body — Hand-off Pointer (next_stage trigger)."""
     body = hand_off_chain if hand_off_chain is not None else (
-        "next_stage_trigger: /dev-kit:plan\n"
-        "shortcut_trigger: /dev-kit:tdd-fast"
+        "next_stage_trigger: /dev-kit:plan"
     )
     return f"## §5 Hand-off Pointer\n\n{body}\n"
 

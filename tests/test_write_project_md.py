@@ -185,7 +185,6 @@ class TestWriteProjectMd(unittest.TestCase):
         """Default step is 1/1, methodology tdd."""
         out = write_project_md._render_active_stage(stage="bootstrap")
         self.assertIn("current_step: 1/1", out)
-        self.assertIn("shortcut_used: none", out)
 
     def test_render_codebase_map_index_section(self):
         """_render_codebase_map_index(root) returns just §3 lazy-loading body."""
@@ -218,7 +217,6 @@ class TestWriteProjectMd(unittest.TestCase):
         out = write_project_md._render_handoff()
         self.assertIn("## §5 Hand-off Pointer", out)
         self.assertIn("/dev-kit:plan", out)
-        self.assertIn("/dev-kit:tdd-fast", out)
         # No §4 content
         self.assertNotIn("## §4", out)
 
