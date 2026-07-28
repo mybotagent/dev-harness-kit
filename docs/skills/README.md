@@ -108,39 +108,51 @@ step inside their parent skill's flow; you never type them directly.
 
 ## Alphabetical (all skills)
 
-| # | Skill | Category | Alpha | Invocable |
-|---|---|---|---|---|
-| 1 | [`audit`](audit.md) | `audit` | `state` | human |
-| 2 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | human |
-| 3 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
-| 4 | [`bootstrap-full`](bootstrap-full.md) | `bootstrap` | `state` | human |
-| 5 | [`build`](build.md) | `build` | `state` | human |
-| 6 | [`build-debug`](build-debug.md) | `build` | `enforcement` | model |
-| 7 | [`build-refactor`](build-refactor.md) | `build` | `enforcement` | model |
-| 8 | [`build-tdd`](build-tdd.md) | `build` | `enforcement` | model |
-| 9 | [`build-verify`](build-verify.md) | `build` | `enforcement` | model |
-| 10 | [`bump`](bump.md) | `ship` | `state` | human |
-| 11 | [`ci-doctor`](ci-doctor.md) | `audit` | `enforcement` | human |
-| 12 | [`ci-setup`](ci-setup.md) | `bootstrap` | `enforcement` | human |
-| 13 | [`codex-cache-update`](codex-cache-update.md) | `shortcuts` | `analysis` | human |
-| 14 | [`config`](config.md) | `config` | `state` | human |
-| 15 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
-| 16 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
-| 17 | [`eval`](eval.md) | `eval` | `analysis` | human |
-| 18 | [`feat-remove`](feat-remove.md) | `build` | `state` | human |
-| 19 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
-| 20 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
-| 21 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
-| 22 | [`log`](log.md) | `shortcuts` | `state` | human |
-| 23 | [`plan`](plan.md) | `plan` | `state` | human |
-| 24 | [`proposal`](proposal.md) | `design` | `state` | human |
-| 25 | [`prune`](prune.md) | `build` | `analysis` | human |
-| 26 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
-| 27 | [`refactor`](refactor.md) | `build` | `analysis` | human |
-| 28 | [`repair`](repair.md) | `repair` | `state` | human |
-| 29 | [`report`](report.md) | `audit` | `analysis` | human |
-| 30 | [`review`](review.md) | `review` | `analysis` | human |
-| 31 | [`security`](security.md) | `security` | `enforcement` | human |
-| 32 | [`ship`](ship.md) | `ship` | `state` | human |
-| 33 | [`status`](status.md) | `status` | `state` | human |
-| 34 | [`token-analyzer`](token-analyzer.md) | `audit` | `analysis` | human |
+| Skill | Category | Alpha | Invocable |
+|---|---|---|---|
+| [`audit`](audit.md) | `audit` | `state` | human |
+| [`babysit-pr`](babysit-pr.md) | `ship` | `state` | human |
+| [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
+| [`bootstrap-full`](bootstrap-full.md) | `bootstrap` | `state` | human |
+| [`build`](build.md) | `build` | `state` | human |
+| [`build-debug`](build-debug.md) | `build` | `enforcement` | model |
+| [`build-refactor`](build-refactor.md) | `build` | `enforcement` | model |
+| [`build-tdd`](build-tdd.md) | `build` | `enforcement` | model |
+| [`build-verify`](build-verify.md) | `build` | `enforcement` | model |
+| [`bump`](bump.md) | `ship` | `state` | human |
+| [`ci-doctor`](ci-doctor.md) | `audit` | `enforcement` | human |
+| [`ci-setup`](ci-setup.md) | `bootstrap` | `enforcement` | human |
+| [`codex-cache-update`](codex-cache-update.md) | `shortcuts` | `analysis` | human |
+| [`config`](config.md) | `config` | `state` | human |
+| [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
+| [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
+| [`eval`](eval.md) | `eval` | `analysis` | human |
+| [`evaluate`](evaluate.md) | `eval` | `enforcement` | human |
+| [`feat-remove`](feat-remove.md) | `build` | `state` | human |
+| [`harness-audit`](harness-audit.md) | `audit` | `analysis` | human |
+| [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
+| [`inspect`](inspect.md) | `audit` | `analysis` | human |
+| [`interview`](interview.md) | `design` | `enforcement` | human |
+| [`lcs`](lcs.md) | `design` | `state` | model |
+| [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
+| [`log`](log.md) | `shortcuts` | `state` | human |
+| [`plan`](plan.md) | `plan` | `state` | human |
+| [`proposal`](proposal.md) | `design` | `state` | human |
+| [`prune`](prune.md) | `build` | `analysis` | human |
+| [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
+| [`refactor`](refactor.md) | `build` | `analysis` | human |
+| [`repair`](repair.md) | `repair` | `state` | human |
+| [`report`](report.md) | `audit` | `analysis` | human |
+| [`research`](research.md) | `design` | `enforcement` | human |
+| [`review`](review.md) | `review` | `analysis` | human |
+| [`security`](security.md) | `security` | `enforcement` | human |
+| [`ship`](ship.md) | `ship` | `state` | human |
+| [`status`](status.md) | `status` | `state` | human |
+| [`token-analyzer`](token-analyzer.md) | `audit` | `analysis` | human |
+| [`valuate`](valuate.md) | `design` | `enforcement` | human |
+
+Skill detail pages (`docs/skills/<name>.md`) are generated for user-facing
+skills on a rolling basis; the per-skill row above links to the page when it
+ships, and the frontmatter (`name:`, `description:`, `alpha:`,
+`user-invocable:`) is the source of truth either way. Use the frontmatter
+search below to see what's currently live.

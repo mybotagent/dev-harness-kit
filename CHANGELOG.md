@@ -4,6 +4,18 @@ All notable changes to dev-harness-kit are documented here.
 
 ## [Unreleased]
 
+- **feat(audit)**: Phase 7 cross-harness audit (PR #447, issues #387–#390). `/dev-kit:harness-audit` runs `tools/harness_audit.py` over 6 dev-kit harnesses (`lcs` / `hooks` / `eval` / `plan_value` / `research` / `interview`) and reports per-harness `alpha` (from SKILL.md frontmatter), L7 alignment, resource completeness, and rubric completeness. Output: HTML to `.dev-kit/harness-audit-report.html` by default, `--json` for machine consumers, `--text` for legacy / CI logs, `--html-out PATH` to override. Read-only by construction — verified by `tests/test_harness_audit.py::test_audit_is_read_only` (no `.dev-kit/state.json` writes, no state mutation, no network I/O). Missing harnesses surface as findings, not crashes, so the audit works mid-merge. Exit 0 on clean / minor, 1 on missing harnesses or L7 violations. New files: `tools/harness_audit.py` (485 lines), `skills/harness-audit/SKILL.md` (134 lines, `alpha: analysis`, `user-invocable: true`), `tests/test_harness_audit.py` (7 cases covering all 6 harnesses, HTML/JSON output, read-only invariant, missing-harness detection, missing-rubric detection). SKILL_COUNT 39 → 40 (`tests/test_smoke.py`).
+
+- **feat(interview)**: Phase 6 5-field safety-contract interview (PR #444). `/dev-kit:interview <plan-file>` runs `lib.interview_engine` through a Ralph loop with `safety_valve=8`, `narrowed_delta=true`, `dedup_metric: identical-ambiguity-cycle=2`, and `user_interrupt: true`. Gates plan emission on `convergence: composite (ambiguity_score <= 3 AND all_5_fields_clear)`. New: `skills/interview/SKILL.md` (`alpha: enforcement`, `user-invocable: true`, `model: opus`, `disable-model-invocation: true`).
+
+- **feat(research)**: Phase 5 research gate (PR #443, issue #351 follow-up). `/dev-kit:research <claim>` runs a Phase 0→3 escalation (cache → direct → multi-source → human-in-the-loop) with `verify()` and `enforce_citations()` as the no-go gate. `safety_valve=4`, `dedup_metric: same-query-escalate=2`, `user_interrupt: true`. The plan and review stages consume the citation-enforcement output to back every claim with a source. New: `skills/research/SKILL.md` (`alpha: enforcement`, `user-invocable: true`, `model: sonnet`).
+
+- **feat(eval)**: Phase 4 valuation engine + no-go gate (PR #446). `/dev-kit:valuate <plan-file>` scores a plan on 6 axes via the LLM judge and returns `proceed` / `revise` / `hold` / `kill`. The build stage reads the verdict from `lcs://valuations/<plan-id>` to enforce the no-go gate. `safety_valve=1`, `convergence: decision != "hold"`, `dedup_metric: identical-decision-cycle=2`, `user_interrupt: true`. New: `skills/valuate/SKILL.md` (`alpha: enforcement`, `user-invocable: true`, `model: opus`, `disable-model-invocation: true`), `lib/valuation_engine.py`, `tests/test_valuation_*.py`.
+
+- **feat(eval)**: Phase 3 `RUBRIC_REGISTRY` + harness-quality / os-quality dimensions + cross-validate (PR #445). `/dev-kit:evaluate [--harness-quality] [--os-quality] [--case <id>] [--dry-run]` replays recorded transcripts and judges against registered rubrics. `--harness-quality` gates Phase 3 batches; `--os-quality` gates env / secret / CI cost changes. `alpha: enforcement`, `user-invocable: true`, `model: opus`. Nightly cron auto-call rotates per dimension. New: `skills/evaluate/SKILL.md`, `lib/rubric_registry.py`, `lib/llm_judge.py`, `eval/rubrics/{harness-quality,os-quality}.yaml`, plus the `tests/test_evaluate_*.py` + `tests/test_rubric_registry.py` suites.
+
+- **feat(hooks)**: Phase 2 LCS integration + Codex wiring (PR #442). LCS reads behind the hook surface (so hooks can consult `lcs://branches/<name>` and `lcs://worktrees` instead of shelling out to `git`), and the Codex side picks up the same hook event inventory as Claude Code (kept in sync by `tests/test_hooks_single_source.py`). Codex hook files live inside the plugin root at `.codex-plugin/hooks/hooks.json` per the Codex plugin format requirement.
+
 - **feat(lcs)**: Phase 1.4–1.7 LCS resource batch — `lcs://pr/<number>` (#428, closes #349), `lcs://branches/<name>` (#431, closes #350), `lcs://spend/<window>` (#430, closes #351), `lcs://sessions/<id>` (#429, closes #352). Each ships a resource module under `lib/lcs_resources/`, a dedicated `tests/test_lcs_<name>_resource.py` suite, and a CHANGELOG/Docs update. Review-driven fixes landed in the same PRs:
   - `branches.py:_ahead_behind` previously returned `(behind, ahead)` from `git rev-list --left-right --count origin/<branch>...HEAD` — the `<left>\t<right>` form already separates behind from ahead, so callers read inverted signals. Swap restored to `(ahead, behind)` and the unit-test assertion flipped to match git semantics.
   - `spend.py:_load_token_logs` only accepted a synthetic `{ts, session_id, worktree, skill, tokens}` shape; production `tools/save_log.py` writes native Claude `message.usage` and Codex `payload.info.total_token_usage` records, so real transcripts were filtered out and `lcs://spend/today` reported zero spend. Added a record normalizer backed by `runtime_adapters.tokens.normalize_token_log` and three new fixtures (Claude assistant message, Codex token_count event, text-only turn skip). All 25 spend tests pass.
@@ -54,7 +66,7 @@ The `/dev-kit:feat-add`, `/dev-kit:feat-fix`, and `/dev-kit:feat-revise` slashes
 - **test**: `tests/test_refactor.py` — `disambiguates_from_prune` updated to mention `prune --target` (instead of `/dev-kit:feat-remove`) so the cross-skill disambiguation table stays in sync with the rename.
 - **docs(readme)**: command-reference table drops `feat-add` / `feat-fix` / `feat-revise` rows and refreshes `prune` to "4-phase deletion sweep: sweep → dependents → report → verify (`--target <feat>` for one feature)".
 
-### Fixed — worktree add leaves stale files (fix/worktree-stale-file-recovery, issue #215)
+### Fixed — worktree add leaves stale files (fix/worktree-stale-file-recovery, issue #215) — *later removed in #238*
 
 When `git worktree add <path>` runs against a directory that already contains files (typical after a partial/cancelled prior attempt, or an external cleanup that left files behind), git creates the worktree's bookkeeping but does NOT overwrite the pre-existing files. The new worktree's working tree then disagrees with HEAD for those files — `git status` shows them as `modified:`, and tests fail with `ImportError` against symbols that exist in HEAD but not in the on-disk file. Triage on 2026-07-16 against `.worktrees/fix-save-log-branch-imports/tools/save_log.py` showed a 16,346-byte HEAD blob vs an 8,450-byte on-disk file (pre-existing, never refreshed) that masked three functions and the dual-write logic.
 
@@ -62,6 +74,14 @@ When `git worktree add <path>` runs against a directory that already contains fi
 - **feat(hooks)**: `hooks/worktree-verify-clean.sh` — CLI wrapper (run as `bash hooks/worktree-verify-clean.sh <worktree-path>` for a one-shot post-cut verify) and opt-in PostToolUse:Bash hook that fires on every `git worktree add` Claude Code observes. The hook is opt-in — wiring is left to `ci-setup` or per-project `hooks.json` so the protected surface stays small. CLI mode is safe to run repeatedly (idempotent: clean worktrees report `repaired=0`).
 - **docs(rules)**: `rules/git-workflow.md` step 2a documents the verify step and links to both the helper and the wrapper.
 - **test**: `tests/test_worktree_verify_clean.py` — 12 regression tests covering the helper (repairs a stale file, no-op on clean / non-git / nonexistent paths, idempotent) and the wrapper (CLI mode repair, silent on unrelated `git` commands, empty/probe payloads, `--help`). All 12 pass; the 73 pre-existing worktree + save_log tests remain green.
+
+> *Superseded:* PR #238 (`fix(inspect): address 22 of 31 audit findings`) deleted
+> `hooks/worktree-verify-clean.sh`, `hooks/lib/worktree-verify-clean.sh`, and
+> `tests/test_worktree_verify_clean.py` after the inspect audit found
+> "no callers beyond tests that pinned them alive". If a stale-file
+> divergence resurfaces, recover manually with `git checkout HEAD -- <path>`
+> on the affected files inside the worktree; do not reintroduce the helper
+> without a live consumer.
 
 ### Fixed — `dev-kit:ci-setup --force` regression cluster (fix/ci-setup-regressions, issue #202)
 

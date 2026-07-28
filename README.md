@@ -30,10 +30,14 @@ kept here so an uncalled skill is still discoverable.
 | Tier | Start here when | Skills |
 |---|---|---|
 | Tier 1 — delivery loop | You are starting, implementing, reviewing, or shipping normal work | `bootstrap`, `bootstrap-full`, `plan`, `build`, `review`, `security`, `babysit-pr`, `ship`, `ci-doctor`, `ci-setup`, `log`, `codex-cache-update`, `skill-usage` |
-| Tier 2 — focused engineering | You need a targeted diagnostic, refactor, removal, configuration, or cost pass | `build-debug`, `build-tdd`, `build-refactor`, `build-verify`, `feat-remove`, `hook-doctor`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
-| Tier 3 — specialist and occasional | You are evaluating behavior, repairing an asset, publishing a report, or maintaining the harness | `eval`, `repair`, `report`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose` |
+| Tier 2 — focused engineering | You need a targeted diagnostic, refactor, removal, configuration, or cost pass | `feat-remove`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
+| Tier 3 — specialist and occasional | You are evaluating behavior, repairing an asset, publishing a report, or maintaining the harness | `eval`, `evaluate`, `valuate`, `research`, `interview`, `repair`, `report`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose`, `harness-audit` |
 
-The tier table intentionally includes every directory under `skills/`. Confirm
+Tier 1 covers the common cases; Tier 2 and Tier 3 are the focused-specialist
+extension set. Model-invoked sub-skills (`build-tdd`, `build-debug`,
+`build-verify`, `build-refactor`, `hook-doctor`, `lcs`) are deliberately
+hidden from autocomplete and live one layer down — see
+[Skills by audience](#skills-by-audience) for the user-vs-model split. Confirm
 the live surface and frontmatter with:
 
 ```bash
