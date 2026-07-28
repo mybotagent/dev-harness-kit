@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>dev-harness-kit &mdash; Documentation Home</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1d1d1f;
+    --muted: #6e6e73;
+    --accent: #0a84ff;
+    --accent-dim: #e7f1ff;
+    --code-bg: #1c1c1e;
+    --code-fg: #f2f2f7;
+    --border: #d2d2d7;
+    --panel: #f5f5f7;
+    --panel-2: #ececef;
+    --ok: #30a46c;
+    --warn: #e5a000;
+    --err: #e54b4b;
+    --link: #0a84ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --fg: #f5f5f7;
+      --muted: #98989d;
+      --accent: #409eff;
+      --accent-dim: #0a2540;
+      --code-bg: #0e0e10;
+      --code-fg: #e8e8ed;
+      --border: #2c2c2e;
+      --panel: #1c1c1e;
+      --panel-2: #2c2c2e;
+      --ok: #4cc38a;
+      --warn: #f5c451;
+      --err: #ff6b6b;
+      --link: #6aa9ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.65;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 64px 28px 96px; }
+
+  /* Top nav */
+  .topnav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 48px;
+  }
+  .topnav a { color: var(--muted); margin-left: 16px; }
+  .topnav a:first-child { margin-left: 0; }
+  .topnav a:hover { color: var(--link); }
+
+  /* Hero */
+  .hero { margin-bottom: 56px; }
+  .hero .eyebrow {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+  .hero h1 {
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin: 0 0 16px;
+  }
+  .hero .lead {
+    font-size: 19px;
+    color: var(--muted);
+    max-width: 720px;
+    margin: 0;
+  }
+
+  /* Section */
+  section { margin: 64px 0; padding-top: 24px; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: 0; padding-top: 0; }
+  h2 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+  }
+  h2 .num {
+    color: var(--muted);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+  h2 .subtitle { color: var(--muted); font-weight: 400; font-size: 15px; display: block; margin-top: 4px; }
+
+  p { margin: 0 0 14px; }
+  p.lede { font-size: 17px; }
+
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  code, pre { font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace; }
+  code {
+    font-size: 13px;
+    padding: 1px 6px;
+    background: var(--panel);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 18px 22px;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 18px;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; font-size: 13px; }
+
+  /* TL;DR card */
+  .tldr {
+    background: linear-gradient(135deg, var(--accent-dim) 0%, var(--panel) 100%);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 32px 0 32px;
+  }
+  .tldr .label {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+  }
+  .tldr h2 {
+    font-size: 24px;
+    margin: 0 0 12px;
+    border: 0;
+    padding: 0;
+    letter-spacing: -0.01em;
+  }
+  .tldr p {
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0 0 14px;
+  }
+  .tldr .specs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .tldr .specs li {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .tldr .specs li strong {
+    display: block;
+    color: var(--accent);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 2px;
+  }
+  .tldr code { font-size: 12px; }
+
+  /* Pain narrative */
+  .pain {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--err);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 0 0 24px;
+  }
+  .pain .label {
+    font-weight: 600;
+    color: var(--err);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .pain p:last-child { margin-bottom: 0; }
+
+  /* Stat row */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 0 0 24px;
+  }
+  .stat {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .stat .k {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .stat .v {
+    font-size: 26px;
+    font-weight: 700;
+    font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+    line-height: 1.1;
+  }
+  .stat .d { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Before/after */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 24px;
+    font-size: 14px;
+  }
+  th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  td code, th code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+  /* Path picker */
+  .paths {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 0 0 24px;
+  }
+  .path {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 22px;
+  }
+  .path h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .path .who {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+  .path ol { padding-left: 18px; margin: 0; }
+  .path li { font-size: 14px; margin-bottom: 6px; }
+
+  /* Doc index */
+  .doclist { list-style: none; padding: 0; margin: 0; }
+  .doclist li {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .doclist li:last-child { border-bottom: 0; }
+  .doclist .title {
+    font-weight: 600;
+    font-size: 15px;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .doclist .title .kind {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--panel-2);
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin-right: 8px;
+    font-weight: 500;
+    vertical-align: middle;
+  }
+  .doclist .desc { color: var(--muted); font-size: 13px; margin: 0; line-height: 1.5; }
+
+  h3.cat-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  h3.cat-title:first-of-type { border-top: 0; padding-top: 0; }
+
+  .alert {
+    background: var(--accent-dim);
+    color: var(--fg);
+    padding: 14px 18px;
+    border-radius: 8px;
+    border-left: 4px solid var(--accent);
+    margin: 16px 0 24px;
+    font-size: 14px;
+  }
+
+  .footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 32px; }
+    .hero .lead { font-size: 17px; }
+    h2 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav style="max-width:1080px;margin:0 auto;padding:18px 28px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Documentation Home</span> &nbsp;/&nbsp; <span style="color:#6e6e73;">Home</span></span>
+  <span><a href="#why" style="margin-left:20px;color:#6e6e73;text-decoration:none;">Why</a><a href="#quickstart" style="margin-left:20px;color:#6e6e73;text-decoration:none;">Quickstart</a><a href="#value" style="margin-left:20px;color:#6e6e73;text-decoration:none;">Value</a><a href="#docs" style="margin-left:20px;color:#6e6e73;text-decoration:none;">All docs</a><a href="lcs-usage.ko.html" style="margin-left:20px;color:#6e6e73;text-decoration:none;">HTML 한국어</a><a href="lcs-usage.md" style="margin-left:14px;color:#6e6e73;text-decoration:none;">MD English</a><a href="lcs-usage.ko.md" style="margin-left:14px;color:#6e6e73;text-decoration:none;">MD 한국어</a></span>
+</nav>
+
+<header class="hero">
+  <div class="eyebrow">dev-harness-kit</div>
+  <h1>A read-only live state server for any repo that runs Claude Code or Codex.</h1>
+  <p class="lead">A unified harness plugin for shipping &mdash; Plan, Build, Review, Ship with typed sub-agent delegation, an Eval-Repair loop, and Human-on-the-Loop supervision. The Live Context Server (LCS) sits underneath everything else: one <code>lcs://</code> namespace that every hook, agent, and operator consults instead of re-implementing <code>git</code>/<code>gh</code> parsing on their own.</p>
+</header>
+
+<section id="lcs-tldr" class="tldr">
+  <div class="label">TL;DR &mdash; What is the Live Context Server (LCS)?</div>
+  <h2>LCS = one small Python program + one URI namespace.</h2>
+  <p><strong>The Live Context Server</strong> (LCS) is a read-only URI router that lives inside the dev-harness-kit plugin. You run <code>python3 bin/dev-kit-lcs.py --get 'lcs://&lt;resource&gt;'</code> and you get back a typed JSON envelope with the live state you asked for &mdash; current branch HEAD, worktree list, PR status, token spend, valuation verdict, session info. Every consumer in the harness (hooks, agents, the chat surface, MCP clients) talks to <em>the same</em> LCS instead of each one re-implementing the <code>git</code>/<code>gh</code> parsing on its own.</p>
+  <ul class="specs">
+    <li><strong>What it is &nbsp;</strong>A Python CLI + stdio JSON-RPC server</li>
+    <li><strong>Namespace &nbsp;</strong><code>lcs://&lt;resource&gt;</code></li>
+    <li><strong>Read-only &nbsp;</strong>never writes; errors are wrapped, not raised</li>
+    <li><strong>6 default resources &nbsp;</strong>branches, pr, sessions, spend, valuations, worktrees</li>
+    <li><strong>5-second cache &nbsp;</strong>concurrent reads on the same URI share one subprocess</li>
+    <li><strong>MCP-wire compatible &nbsp;</strong>any MCP client can attach via <code>--serve</code></li>
+  </ul>
+  <p style="margin-top:18px;margin-bottom:0;">Everything below this card explains <em>why LCS was needed</em>, <em>how to use it in 60 seconds</em>, <em>what you get out of it</em>, and <em>where every other doc lives</em>.</p>
+</section>
+
+<section id="why">
+  <h2><span class="num">1.</span>Why this system exists, and why it has to exist
+    <span class="subtitle">Start here if you have never seen dev-harness-kit before.</span>
+  </h2>
+
+  <div class="pain">
+    <div class="label">The pain (before LCS)</div>
+    <p>Eight different files in <code>hooks/</code> and <code>lib/</code> each needed the same piece of live state: &ldquo;what is the current branch slot version?&rdquo; or &ldquo;is PR #447 green?&rdquo; Each one shell-out to <code>git</code> or <code>gh</code>, parsed the JSON inline, wrapped errors in its own shape, and re-implemented caching &mdash; or skipped it entirely. When <code>gh</code> was missing, one hook crashed, another silently fell back, and a third lied about its answer. Hot loops re-spawned <code>gh</code> 60 times in a single babysit session.</p>
+  </div>
+
+  <p>The harness had drifted. Each consumer re-implemented the same parse logic, in subtly different shapes, tested in isolation or not at all. Drift was inevitable: a new field in <code>gh pr view</code> would break three hooks on a different day each.</p>
+
+  <p>LCS is the answer: one in-process URI router with a typed envelope (<code>{status, data, missing?, error?}</code>), a per-URI 5-second snapshot cache, read-only by enforcement, and MCP-wire-compatible. Hooks and agents ask <code>lcs://branches/main</code> and get back the same JSON shape every time &mdash; with errors wrapped, not raised.</p>
+
+  <p><strong>Why it has to exist</strong>: in a multi-runtime harness (Claude Code + Codex), every consumer that re-implements state-reading creates a cross-runtime failure surface. LCS collapses that surface to one Python module that every consumer shares.</p>
+</section>
+
+<section id="quickstart">
+  <h2><span class="num">2.</span>60-second quickstart
+    <span class="subtitle">If you only run three commands today, run these.</span>
+  </h2>
+
+  <p>You do not need to understand LCS to use dev-harness-kit. The first three commands below produce a runnable demo in under a minute.</p>
+
+  <h3 style="margin-top:24px;">Step 1 &mdash; see what resources the Live Context Server exposes</h3>
+<pre><code>$ python3 bin/dev-kit-lcs.py --list-resources
+  branches                          lcs_resources.branches.BranchesResource
+  pr                                lcs_resources.pr.PRResource
+  sessions                          lcs_resources.sessions.SessionsResource
+  spend                             lcs_resources.spend.SpendResource
+  valuations                        lcs_resources.valuations.ValuationsResource
+  worktrees                         lcs_resources.worktrees.WorktreesResource</code></pre>
+
+  <h3>Step 2 &mdash; ask for live state on a single URI</h3>
+<pre><code>$ python3 bin/dev-kit-lcs.py --get 'lcs://branches/main'
+{
+  "status": "ok",
+  "data": {
+    "name":         "main",
+    "local_head":   "6bd1073bbef4b50d477aaabedfbafc4511a8d459",
+    "origin_head":  "6bd1073bbef4b50d477aaabedfbafc4511a8d459",
+    "ahead":        0,
+    "behind":       0,
+    "last_ci_run":  { "conclusion": "success", "name": "CI", "status": "completed" },
+    "slot_version": "0.3.147"
+  }
+}</code></pre>
+
+  <h3>Step 3 &mdash; explore the full URI grammar &amp; integration map</h3>
+<pre><code>$ open docs/lcs-usage.html   # full HTML reference (English)
+$ open docs/lcs-usage.ko.html # 동일한 문서 (한국어)</code></pre>
+
+  <p>That is the entire LCS surface. Anything more specific is in the docs.</p>
+</section>
+
+<section id="value">
+  <h2><span class="num">3.</span>What value you actually get
+    <span class="subtitle">Concrete numbers, not promises.</span>
+  </h2>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="k">files consolidated</div>
+      <div class="v">8 → 1</div>
+      <div class="d">8 readers re-implemented. 1 router now serves them all.</div>
+    </div>
+    <div class="stat">
+      <div class="k">call sites on <code>lcs://</code></div>
+      <div class="v">60</div>
+      <div class="d">hooks, agents, and engines already read from the namespace.</div>
+    </div>
+    <div class="stat">
+      <div class="k">test LoC</div>
+      <div class="v">3,094</div>
+      <div class="d">across 10 test files &mdash; one canonical surface to maintain.</div>
+    </div>
+    <div class="stat">
+      <div class="k">return shapes</div>
+      <div class="v">1</div>
+      <div class="d"><code>{status, data, missing?, error?}</code> for every read.</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:24px;">Before vs. after</h3>
+  <table>
+    <thead>
+      <tr><th>What was duplicated</th><th>Before LCS</th><th>After LCS</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Files that shell out to <code>git</code> / <code>gh</code> and parse JSON inline</td>
+        <td><strong>8</strong> hooks/scripts, each with its own parser</td>
+        <td><strong>0</strong> &mdash; only <code>lib/lcs_resources/*.py</code> touches subprocesses</td>
+      </tr>
+      <tr>
+        <td>Subprocess spawns per babysit-PR session</td>
+        <td>~60 (3 per PR-state query &times; 20 queries)</td>
+        <td>~5 (5s snapshot cache coalesces)</td>
+      </tr>
+      <tr>
+        <td>Different return shapes for &ldquo;live state&rdquo;</td>
+        <td>8 (one per consumer)</td>
+        <td>1 envelope</td>
+      </tr>
+      <tr>
+        <td>MCP-compatible introspection endpoint</td>
+        <td>none</td>
+        <td><code>bin/dev-kit-lcs.py --serve</code> (JSON-RPC over stdio)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:24px;">Three concrete wins</h3>
+
+  <p><strong>1. Slot-bump drift detection.</strong> <code>hooks/git-guard.sh</code> checks whether your plugin.json bump matches <code>origin/main</code> before a push. Pre-LCS: shell out, parse porcelain, regex the version. Post-LCS: one line reading <code>lcs://branches/main.data.slot_version</code>. Same answer, one source of truth, no drift.</p>
+
+  <p><strong>2. Build no-go gate transparency.</strong> Phase 4 needs the <code>valuate</code> verdict to halt-or-proceed. Pre-LCS: the gate parses <code>.dev-kit/valuations/*.json</code> itself with no validation contract. Post-LCS: <code>lcs://valuations/&lt;plan-id&gt;</code> returns a typed envelope; missing becomes <code>status="partial"</code> &rarr; fail-closed. The fail-closed behavior is enforced by the handler, not by every consumer re-implementing it.</p>
+
+  <p><strong>3. Cost in babysit-PR hot loops.</strong> Pre-LCS: 60 subprocess spawns per session to ask &ldquo;is PR #447 green yet?&rdquo; Post-LCS: 5&ndash;6 reads on a 5-second snapshot cache. The cache coalesces concurrent reads; the bash-guard <code>slot_version</code> and the chat <code>lcs</code> skill can both ask the same URI in the same instant and pay for one subprocess, not two.</p>
+</section>
+
+<section id="docs">
+  <h2><span class="num">4.</span>Documentation map
+    <span class="subtitle">Pick what fits your role. Read top-to-bottom for newcomers.</span>
+  </h2>
+
+  <div class="alert">
+    <strong>New here?</strong> Read <a href="#path-newcomer">the newcomer path &darr;</a> first &mdash; it walks you through the four pages that matter before everything else makes sense. Everyone else: jump to the category that matches your role.
+  </div>
+
+  <div id="path-newcomer"></div>
+
+  <h3 class="cat-title">Newcomer path (read in order)</h3>
+  <ul class="doclist">
+    <li>
+      <span class="title"><span class="kind">YOU&nbsp;ARE&nbsp;HERE</span>00 &mdash; Documentation Home</span>
+      <p class="desc">This page. Why the system exists, what LCS does, three concrete value wins, and a categorized index of every other doc.</p>
+    </li>
+    <li>
+      <span class="title"><a href="../README.md">README &mdash; <code>dev-harness-kit</code></a></span>
+      <p class="desc">Repo-level overview: install, the Plan/Build/Review/Ship loop, command reference, and the full skill surface.</p>
+    </li>
+    <li>
+      <span class="title"><a href="lcs-usage.html">LCS &mdash; Live Context Server usage reference</a> / <a href="lcs-usage.ko.html">한국어</a></span>
+      <p class="desc">The LCS reference you just touched via <code>--list-resources</code> &mdash; URI grammar, every resource&rsquo;s contract, CLI surface, JSON-RPC wire format, integration map.</p>
+    </li>
+    <li>
+      <span class="title"><a href="STAGES.md">STAGES &mdash; per-stage harness spec</a></span>
+      <p class="desc">What happens in each stage of the loop (bootstrap &rarr; plan &rarr; build &rarr; review &rarr; ship), and which skill owns which step.</p>
+    </li>
+  </ul>
+
+  <h3 class="cat-title">LCS &amp; Live Context Server</h3>
+  <ul class="doclist">
+    <li>
+      <span class="title"><a href="lcs-usage.html">lcs-usage.html</a> (English) &middot; <a href="lcs-usage.ko.html">lcs-usage.ko.html</a> (한국어) — and the .md / .ko.md Markdown siblings for plain-text readers</span>
+      <p class="desc">Full URI grammar, every resource handler, CLI surface, exit codes, JSON-RPC wire format, integration map, README drift notes, and a verification log of every command quoted in the doc.</p>
+    </li>
+  </ul>
+
+  <h3 class="cat-title">Design proposals &mdash; the harness architecture (<a href="proposals/harness-architecture/00-index.html">/index</a>)</h3>
+  <p style="font-size:14px;color:var(--muted);">13 topic files (Korean-bodied) covering the multi-harness proposal behind the plugin. Most are 200&ndash;375 lines and read topically &mdash; pick one by question.</p>
+  <ul class="doclist">
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/00-index.html">00 &mdash; Multi-Harness System Issue Index</a></span>
+      <p class="desc">Read this first inside the proposal folder &mdash; it lists the four risk layers, the build principles (L7 alignment), and reading paths for 20-min / 60-min / topic-specific entry.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/protocol-layer.html">01 &mdash; MCP: Model Context Protocol (wire-protocol layer)</a></span>
+      <p class="desc">Why we use MCP instead of building one: the public standard we ride, primitives, lifecycle, and the runtime-neutrality implication.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/live-context-server.html">02 &mdash; LCS: Live Context Server (state reader)</a></span>
+      <p class="desc">The proposal behind the server core. URI grammar, longest-match resolution, snapshot cache, and how handlers turn a write-free read into MCP-wire shape.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/ambiguity-resolver.html">03 &mdash; Interview Harness (ambiguity resolver)</a></span>
+      <p class="desc">How a plan&rsquo;s open questions are closed before code is written.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/quality-judge.html">04 &mdash; Evaluation Harness (quality judging)</a></span>
+      <p class="desc">Multi-axis AI-output scoring with a 20-checkbox code-sanity rubric.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/value-gate.html">05 &mdash; Plan-value gate (valuate)</a></span>
+      <p class="desc">The verdict envelope behind <code>lcs://valuations/&lt;plan-id&gt;</code>: proceed / revise / hold / kill, blocking findings, scores.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/external-verifier.html">06 &mdash; Research Harness (Phase 0&ndash;3 escalation)</a></span>
+      <p class="desc">Cache &rarr; direct &rarr; multi-source &rarr; human fallback. The research gate that backs <code>lcs://research/cache</code>.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/runtime-portability.html">07 &mdash; Runtime neutrality (Decision 8)</a></span>
+      <p class="desc">How Claude Code + Codex get identical behavior from one plugin &mdash; the adapter layer.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/external-references.html">08 &mdash; External references (insane-search / hermes / AEGIS)</a></span>
+      <p class="desc">What we borrowed, what we deliberately rejected from the surrounding literature.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/consolidated-architecture.html">09 &mdash; Consolidated architecture (6 harnesses + adapters + gates)</a></span>
+      <p class="desc">The big picture &mdash; how the harnesses and the adapter layer mesh. Read this after 02 / 04 / 06.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/decision-record.html">10 &mdash; Decision record (the 8 locks)</a></span>
+      <p class="desc">The eight decisions that are locked and why; what each constraint blocks.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/migration-phases.html">11 &mdash; Migration phases (Phase 0&ndash;7)</a></span>
+      <p class="desc">Which PRs ship in which order; the build sequence behind the release tags.</p>
+    </li>
+    <li>
+      <span class="title"><a href="proposals/harness-architecture/open-questions.html">12 &mdash; Open questions (issue #280 thread)</a></span>
+      <p class="desc">Decisions still requiring consensus &mdash; the loaded questions the maintainers want feedback on.</p>
+    </li>
+  </ul>
+
+  <h3 class="cat-title">How-tos &amp; runbooks (Markdown)</h3>
+  <ul class="doclist">
+    <li>
+      <span class="title"><a href="ci-setup.md"><code>/dev-kit:ci-setup</code> &mdash; Install Dev-Kit&rsquo;s CI Templates</a></span>
+      <p class="desc">Stand up the dev-kit CI shape (branch-policy + validate + test + auto-fix) in any consumer repo.</p>
+    </li>
+    <li>
+      <span class="title"><a href="maintenance-gate.md">Maintenance Gate &mdash; over-engineering + clean-code + value gate</a></span>
+      <p class="desc">The 20-checkbox PR-only gate (.github/workflows/maintenance.yml). What each checkbox blocks; how to score.</p>
+    </li>
+    <li>
+      <span class="title"><a href="RUNTIME-PORTABILITY.md">Runtime Portability &mdash; Claude Code &harr; Codex adapter rules</a></span>
+      <p class="desc">The contract both runtimes must honor for plugin.json + hooks.json to mean the same thing on either side.</p>
+    </li>
+    <li>
+      <span class="title"><a href="STAGES.md">STAGES &mdash; dev-harness-kit per-stage harness spec</a></span>
+      <p class="desc">What each stage owns: bootstrap, plan, design, build, review, security, ship.</p>
+    </li>
+    <li>
+      <span class="title"><a href="COST-ANALYSIS.md">Cost &amp; Risk Analysis</a></span>
+      <p class="desc">Per-bucket token spend, hard ceilings, and the cost-gate trailer format that lint requires.</p>
+    </li>
+    <li>
+      <span class="title"><a href="team-adoption.md">Personal vs Team adoption</a></span>
+      <p class="desc">Why a single maintainer and a 20-person team adopt the harness differently.</p>
+    </li>
+    <li>
+      <span class="title"><a href="NAMING.md">NAMING &mdash; naming convention (ADR-0010 SSOT)</a></span>
+      <p class="desc">Why a hook is named <code>bash-guard.sh</code> not <code>bashHook.sh</code>; the source of truth for skill/hook labels.</p>
+    </li>
+    <li>
+      <span class="title"><a href="PRE-IMPL-CHECK.md">Pre-Implementation Gate</a></span>
+      <p class="desc">The 9-question checklist to answer before writing code.</p>
+    </li>
+    <li>
+      <span class="title"><a href="ACP-DISPATCH.md">ACP Dispatch &mdash; M-tier architecture</a></span>
+      <p class="desc">How Model-tier agents find and dispatch to Capability-tier skills.</p>
+    </li>
+    <li>
+      <span class="title"><a href="acp-harness.md">ACP &mdash; Agent Coordination Protocol</a></span>
+      <p class="desc">The wire-format ACP uses to talk between agents; how it differs from LCS.</p>
+    </li>
+    <li>
+      <span class="title"><a href="hook-coverage-gaps.md">Hook coverage gaps &mdash; P4 Bucket B audit</a></span>
+      <p class="desc">Which hook events are wired vs. which aren&rsquo;t, per runtime.</p>
+    </li>
+    <li>
+      <span class="title"><a href="PROPOSAL-IMPLEMENTATION-PLAN.md">Implementation Plan &mdash; Multi-Harness System (Issue #280)</a></span>
+      <p class="desc">The high-level plan behind the 13 proposal files. Useful if you only have time for one mega-doc.</p>
+    </li>
+    <li>
+      <span class="title"><a href="REPOSITORY-MAP.md">Repository map</a></span>
+      <p class="desc">Where each component lives in the tree. Use this when grep doesn&rsquo;t surface an answer.</p>
+    </li>
+  </ul>
+
+  <h3 class="cat-title">Architecture Decision Records</h3>
+  <ul class="doclist">
+    <li>
+      <span class="title"><a href="adr/ADR-0001-five-to-one-absorption.md">ADR-0001 &mdash; 5 &rarr; 1 absorption</a></span>
+      <p class="desc">Why the plugin absorbed five pre-existing harnesses into one.</p>
+    </li>
+    <li>
+      <span class="title"><a href="adr/ADR-0010-naming-convention.md">ADR-0010 &mdash; Naming Convention (SSOT)</a></span>
+      <p class="desc">Companion to <a href="NAMING.md">NAMING.md</a>; the recorded decision.</p>
+    </li>
+    <li>
+      <span class="title"><a href="adr/ADR-0020-methodology-extensibility.md">ADR-0020 &mdash; Methodology Extensibility (TDD/SDD/DDD/BDD/FDD)</a></span>
+      <p class="desc">Why a build can switch between methodologies.</p>
+    </li>
+    <li>
+      <span class="title"><a href="adr/ADR-0021-eval-repair-loop.md">ADR-0021 &mdash; Eval-Repair Loop with Human Review</a></span>
+      <p class="desc">The 8-step loop the <code>repair</code> skill executes.</p>
+    </li>
+    <li>
+      <span class="title"><a href="adr/ADR-0022-eval-agent-behavior.md">ADR-0022 &mdash; Refactor eval from asset freshness to agent behavior</a></span>
+      <p class="desc">Why the eval target moved from file content to runtime behavior.</p>
+    </li>
+  </ul>
+
+  <h3 class="cat-title">Skill reference</h3>
+  <ul class="doclist">
+    <li>
+      <span class="title"><a href="skills/README.md">Skills documentation index</a></span>
+      <p class="desc">Browse all 35 skills by category (audit / ship / bootstrap / build / docs / harness / integration / lifecycle / quality / research / runtime / skill-mgmt / state). Click into any skill&rsquo;s <code>SKILL.md</code> for the full spec.</p>
+    </li>
+  </ul>
+</section>
+
+<section id="paths">
+  <h2><span class="num">5.</span>Reading paths by role
+    <span class="subtitle">Pick the path that matches what you came here to do.</span>
+  </h2>
+
+  <div class="paths">
+    <div class="path">
+      <div class="who">Newcomer</div>
+      <h3>I just discovered dev-harness-kit</h3>
+      <ol>
+        <li><a href="../README.md">README</a> &mdash; quick start + tier table</li>
+        <li>This page (00-index) &mdash; the why + value</li>
+        <li><a href="lcs-usage.html">LCS reference</a></li>
+        <li><a href="STAGES.md">STAGES</a> &mdash; what each stage owns</li>
+        <li>Run <code>/dev-kit:bootstrap-full</code> in your repo</li>
+      </ol>
+    </div>
+    <div class="path">
+      <div class="who">Integrator</div>
+      <h3>I&rsquo;m wiring this into another repo</h3>
+      <ol>
+        <li><a href="RUNTIME-PORTABILITY.md">Runtime Portability</a></li>
+        <li><a href="ci-setup.md">CI Setup</a></li>
+        <li><a href="proposals/harness-architecture/live-context-server.html">LCS proposal</a></li>
+        <li><a href="hook-coverage-gaps.md">Hook coverage gaps</a></li>
+      </ol>
+    </div>
+    <div class="path">
+      <div class="who">Contributor</div>
+      <h3>I want to add a skill / change the harness</h3>
+      <ol>
+        <li><a href="proposals/harness-architecture/decision-record.html">Decision record</a></li>
+        <li><a href="adr/ADR-0001-five-to-one-absorption.md">ADR-0001</a> through ADR-0022</li>
+        <li><a href="proposals/harness-architecture/migration-phases.html">Migration phases</a></li>
+        <li><a href="proposals/harness-architecture/open-questions.html">Open questions</a></li>
+      </ol>
+    </div>
+    <div class="path">
+      <div class="who">Reviewer</div>
+      <h3>I&rsquo;m reading a PR and need to know what&rsquo;s locked</h3>
+      <ol>
+        <li><a href="proposals/harness-architecture/decision-record.html">Decision record</a></li>
+        <li><a href="proposals/harness-architecture/open-questions.html">Open questions</a></li>
+        <li><a href="maintenance-gate.md">Maintenance gate</a></li>
+        <li><a href="NAMING.md">Naming convention</a></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="glossary">
+  <h2><span class="num">6.</span>Glossary</h2>
+  <table>
+    <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+    <tbody>
+      <tr><td><strong>LCS</strong></td><td>Live Context Server &mdash; the read-only URI router under <code>lcs://</code> that every hook/agent/operator reads.</td></tr>
+      <tr><td><strong>Handler</strong></td><td>One Python class implementing the <code>Resource</code> protocol in <code>lib/lcs_resources/&lt;name&gt;.py</code>. Each exposes a single named URI.</td></tr>
+      <tr><td><strong>URI envelope</strong></td><td>The <code>{status, data, missing?, error?}</code> dict every LCS read returns.</td></tr>
+      <tr><td><strong>Snapshot cache</strong></td><td>Per-URI 5-second TTL. Concurrent reads on the same URI within the window coalesce to one subprocess.</td></tr>
+      <tr><td><strong>MCP</strong></td><td>Model Context Protocol &mdash; the public wire standard LCS speaks in <code>--serve</code> mode.</td></tr>
+      <tr><td><strong>Stage</strong></td><td>One of bootstrap / plan / design / build / review / security / ship &mdash; see <a href="STAGES.md">STAGES.md</a>.</td></tr>
+      <tr><td><strong>Skill</strong></td><td>A slash command + SKILL.md bundle under <code>skills/&lt;name&gt;</code>. <a href="skills/README.md">Browse all 35.</a></td></tr>
+      <tr><td><strong>Hook</strong></td><td>A bash script under <code>hooks/</code> fired by Claude Code or Codex at lifecycle events.</td></tr>
+      <tr><td><strong>ADR</strong></td><td>Architecture Decision Record &mdash; a locked decision under <code>docs/adr/</code>.</td></tr>
+      <tr><td><strong>Worktree</strong></td><td>A git worktree checked out for one task (one branch per worktree). The harness-enforced pattern.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="footer">
+  <p>Authored at <code>docs/00-index.html</code> in worktree <code>.worktrees/lcs-usage-html</code>, off <code>origin/main @ 6bd1073</code>. Korean version: <a href="00-index.ko.html">00-index.ko.html</a>. Back to <a href="../README.md">README</a>.</p>
+</div>
+
+</div>
+</body>
+</html>

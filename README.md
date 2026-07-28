@@ -45,6 +45,64 @@ find skills -mindepth 2 -maxdepth 2 -name SKILL.md -print | sort
 python3 tools/skill_usage.py --days 0 --top 0
 ```
 
+## Documentation
+
+**Start here if you are new to dev-harness-kit:**
+
+[`docs/00-index.html`](docs/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.  Korean version: [`docs/00-index.ko.html`](docs/00-index.ko.html).
+
+### What this plugin is, in two sentences
+
+dev-harness-kit ships the `Plan → Build → Review → Ship` loop for Claude Code and Codex in any repository. Underneath it sits the **Live Context Server (LCS)** — a read-only URI router at `lcs://<resource>` that lets every hook, agent, and operator ask the same question the same way, with a typed envelope (`{status, data, missing?, error?}`) instead of each one re-parsing `git` / `gh` / log files.
+
+### Why LCS exists (the one-paragraph version)
+
+Eight files in `hooks/` and `lib/` each needed the same live state — `slot_version`, PR status, session info, spend — and each shell-out to `git`/`gh`, parsed the JSON inline, and wrapped errors in its own shape. When `gh` was missing, one hook crashed, another silently fell back, a third lied. Hot loops re-spawned `gh` 60 times in a single babysit session. LCS is one Python module that every consumer now reads from; concurrent reads in a 5-second window collapse to one subprocess. The full numbers + before/after are in [`docs/00-index.html`](docs/00-index.html).
+
+### How to use it (the 60-second quickstart)
+
+```bash
+# 1. See what LCS exposes
+python3 bin/dev-kit-lcs.py --list-resources
+
+# 2. Ask for live state
+python3 bin/dev-kit-lcs.py --get 'lcs://branches/main'
+
+# 3. Read the full reference in your browser
+open docs/00-index.html
+```
+
+That is the whole LCS surface. Anything deeper is in the docs index.
+
+### Doc map (categorized)
+
+| Topic | Where to read | What you get |
+|---|---|---|
+| Why + value + quickstart | [`docs/00-index.html`](docs/00-index.html) / [`ko`](docs/00-index.ko.html) | Beginner landing — read first |
+| LCS reference (full) | [`docs/lcs-usage.html`](docs/lcs-usage.html) / [`ko`](docs/lcs-usage.ko.html) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
+| STAGES (what each loop step owns) | [`docs/STAGES.md`](docs/STAGES.md) | bootstrap → plan → build → review → security → ship |
+| CI install (run dev-kit CI elsewhere) | [`docs/ci-setup.md`](docs/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
+| Maintenance gate (PR-only quality) | [`docs/maintenance-gate.md`](docs/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
+| Runtime portability (Claude Code ↔ Codex) | [`docs/RUNTIME-PORTABILITY.md`](docs/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
+| Multi-harness design proposal | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/PROPOSAL-IMPLEMENTATION-PLAN.md) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | 13 topic files (Korean) covering the architecture |
+| Naming convention (SSOT) | [`docs/NAMING.md`](docs/NAMING.md) / [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
+| Pre-implementation gate | [`docs/PRE-IMPL-CHECK.md`](docs/PRE-IMPL-CHECK.md) | 9 questions before code |
+| Cost & risk | [`docs/COST-ANALYSIS.md`](docs/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
+| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | All 35 skills with category + α classification |
+| Decision records | [`docs/adr/`](docs/adr) | 5 locked ADRs (0001, 0010, 0020, 0021, 0022) |
+| Repo map | [`docs/REPOSITORY-MAP.md`](docs/REPOSITORY-MAP.md) | Where each component lives in the tree |
+
+If you have only five minutes, open [`docs/00-index.html`](docs/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
+
+The same docs are also available as Markdown:
+
+- [`docs/00-index.md`](docs/00-index.md) / [`docs/00-index.ko.md`](docs/00-index.ko.md) — landing (beginner intro + categorized index)
+- [`docs/lcs-usage.md`](docs/lcs-usage.md) / [`docs/lcs-usage.ko.md`](docs/lcs-usage.ko.md) — full LCS reference (URI grammar, resources, CLI surface, JSON-RPC, integration map, verification log)
+
+The HTML versions are preferred for browsing (sticky topnav, collapsible
+sections, dark/light theme auto-switch, copy-able code blocks); the MD
+versions are easier to grep and render natively on GitHub.
+
 ## Enforcement hooks (the durable moat)
 
 This plugin's load-bearing surface is **deterministic enforcement**, not

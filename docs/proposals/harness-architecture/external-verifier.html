@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>06 — 리서치 하네스 (외부 검증기 + Phase 0–3 에스컬레이션)</title>
 <style>
@@ -134,11 +135,20 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav style="max-width:1080px;margin:0 auto;padding:14px 24px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../../../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">Documentation Home</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Multi-Harness Proposal</span></span>
+  <span>
+    <a href="../../00-index.html#why" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Why</a>
+    <a href="../../00-index.html#quickstart" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Quickstart</a>
+    <a href="../../00-index.html#docs" style="margin-left:16px;color:#6e6e73;text-decoration:none;">All docs</a>
+  </span>
+</nav>
+
 <nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>06 — 리서치 하네스 (외부 검증기 + Phase 0–3 에스컬레이션)</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">research</span><span class="tag tag-info">verification</span><span class="tag tag-info">citation</span><span class="tag tag-info">escalation</span><span class="tag tag-info">l7</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">Phase 0–3 에스컬레이션 (insane-search 차용)</a></li><li><a href="#sec-2">insane-search와의 차이</a></li><li><a href="#sec-3">verification 게이트 (결정 6 잠금)</a></li><li><a href="#sec-4">인용 강제 (결정 5)</a></li><li><a href="#sec-5">N 소스 합의 패턴</a></li><li><a href="#sec-6">흡수 위험 (L7)</a></li><li><a href="#sec-7">런타임 중립성 (결정 8)</a></li><li><a href="#sec-8">인터페이스 (의사)</a></li><li><a href="#sec-9">LCS 통합</a></li><li><a href="#sec-10">Related</a></li></ol></div>
+<div class="toc"><strong>목차</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">Phase 0–3 에스컬레이션 (insane-search 차용)</a></li><li><a href="#sec-2">insane-search와의 차이</a></li><li><a href="#sec-3">verification 게이트 (결정 6 잠금)</a></li><li><a href="#sec-4">인용 강제 (결정 5)</a></li><li><a href="#sec-5">N 소스 합의 패턴</a></li><li><a href="#sec-6">흡수 위험 (L7)</a></li><li><a href="#sec-7">런타임 중립성 (결정 8)</a></li><li><a href="#sec-8">인터페이스 (의사)</a></li><li><a href="#sec-9">LCS 통합</a></li><li><a href="#sec-10">Related</a></li></ol></div>
 <h2 id="sec-0">정의</h2>
 <p><strong>리서치 하네스</strong>는 플랜을 <strong>외부 자료</strong>로 검증한다. 단순 검색이 아니라 <strong>루브릭 우선</strong>으로 동작한다:</p>
 <ol><li>"어떤 차원을 검증할 것인가" 정의 → 명시적 루브릭</li><li>N개 (≥3) 독립 웹 쿼리 팬아웃</li><li>인용 + 교차검증 (N 소스 합의)</li><li>종합은 <strong>모델이 제안</strong>, verification 게이트가 검증</li></ol>
@@ -233,5 +243,10 @@ class ResearchRubric:
 <hr class="section-divider">
 
 <footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<div style="max-width:1080px;margin:32px auto 0;padding:18px 28px;border-top:1px solid #d2d2d7;font-size:13px;color:#6e6e73;">
+  <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">&larr; Documentation Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="../../../README.md" style="color:#0a84ff;text-decoration:none;">README</a>
+</div>
 </body>
 </html>

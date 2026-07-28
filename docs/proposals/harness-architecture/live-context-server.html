@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>02 — LCS: Live Context Server (상태 리더)</title>
 <style>
@@ -134,11 +135,20 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav style="max-width:1080px;margin:0 auto;padding:14px 24px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../../../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">Documentation Home</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Multi-Harness Proposal</span></span>
+  <span>
+    <a href="../../00-index.html#why" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Why</a>
+    <a href="../../00-index.html#quickstart" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Quickstart</a>
+    <a href="../../00-index.html#docs" style="margin-left:16px;color:#6e6e73;text-decoration:none;">All docs</a>
+  </span>
+</nav>
+
 <nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>02 — LCS: Live Context Server (상태 리더)</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">lcs</span><span class="tag tag-info">mcp</span><span class="tag tag-info">state-reader</span><span class="tag tag-info">l7</span><span class="tag tag-info">runtime-portability</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">LCS vs MCP (결정적 구분)</a></li><li><a href="#sec-2">리소스 (v1, 8개)</a></li><li><a href="#sec-3">아키텍처</a></li><li><a href="#sec-4">라이프사이클</a></li><li><a href="#sec-5">셸아웃 → 타입 쿼리 (7개)</a></li><li><a href="#sec-6">스키마 안정성 계약</a></li><li><a href="#sec-7">흡수 위험 (L7)</a></li><li><a href="#sec-8">런타임 중립성 (결정 8)</a></li><li><a href="#sec-9">Related</a></li></ol></div>
+<div class="toc"><strong>목차</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">LCS vs MCP (결정적 구분)</a></li><li><a href="#sec-2">리소스 (v1, 8개)</a></li><li><a href="#sec-3">아키텍처</a></li><li><a href="#sec-4">라이프사이클</a></li><li><a href="#sec-5">셸아웃 → 타입 쿼리 (7개)</a></li><li><a href="#sec-6">스키마 안정성 계약</a></li><li><a href="#sec-7">흡수 위험 (L7)</a></li><li><a href="#sec-8">런타임 중립성 (결정 8)</a></li><li><a href="#sec-9">Related</a></li></ol></div>
 <h2 id="sec-0">정의</h2>
 <p><strong>LCS (Live Context Server)</strong>는 이 저장소가 직접 배포하는 <strong>특정 MCP 서버</strong>다. 라이브 상태를 타입이 지정된 URI-addressed <strong>리소스</strong>로 노출한다. v1에서 도구는 0개 — 읽기 전용이다.</p>
 <p>LCS는 MCP 위에서 동작한다 (MCP ≠ LCS — 자세한 구분은 §3 참조). LCS는 <strong>이 저장소의 첫 번째 MCP 서버</strong>이며, 두 번째 서버 이후의 adoption 가드를 재정의하는 트리거다 (<code>11-migration-phases.html</code> Phase 1 참조).</p>
@@ -215,5 +225,10 @@ a:hover { text-decoration: underline; }
 <hr class="section-divider">
 
 <footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<div style="max-width:1080px;margin:32px auto 0;padding:18px 28px;border-top:1px solid #d2d2d7;font-size:13px;color:#6e6e73;">
+  <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">&larr; Documentation Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="../../../README.md" style="color:#0a84ff;text-decoration:none;">README</a>
+</div>
 </body>
 </html>
