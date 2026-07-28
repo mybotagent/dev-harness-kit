@@ -76,21 +76,30 @@ That is the whole LCS surface. Anything deeper is in the docs index.
 
 ### Doc map (categorized)
 
-| Topic | Where to read | What you get |
-|---|---|---|
-| Why + value + quickstart | [`docs/00-index.html`](docs/00-index.html) / [`ko`](docs/00-index.ko.html) | Beginner landing — read first |
-| LCS reference (full) | [`docs/lcs-usage.html`](docs/lcs-usage.html) / [`ko`](docs/lcs-usage.ko.html) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
-| STAGES (what each loop step owns) | [`docs/STAGES.md`](docs/STAGES.md) | bootstrap → plan → build → review → security → ship |
-| CI install (run dev-kit CI elsewhere) | [`docs/ci-setup.md`](docs/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
-| Maintenance gate (PR-only quality) | [`docs/maintenance-gate.md`](docs/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
-| Runtime portability (Claude Code ↔ Codex) | [`docs/RUNTIME-PORTABILITY.md`](docs/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
-| Multi-harness design proposal | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/PROPOSAL-IMPLEMENTATION-PLAN.md) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | 13 topic files (Korean) covering the architecture |
-| Naming convention (SSOT) | [`docs/NAMING.md`](docs/NAMING.md) / [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
-| Pre-implementation gate | [`docs/PRE-IMPL-CHECK.md`](docs/PRE-IMPL-CHECK.md) | 9 questions before code |
-| Cost & risk | [`docs/COST-ANALYSIS.md`](docs/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
-| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | All 35 skills with category + α classification |
-| Decision records | [`docs/adr/`](docs/adr) | 5 locked ADRs (0001, 0010, 0020, 0021, 0022) |
-| Repo map | [`docs/REPOSITORY-MAP.md`](docs/REPOSITORY-MAP.md) | Where each component lives in the tree |
+Every doc ships in **both** `.md` and `.html` formats. The HTML column is
+preferred for browsing (sticky topnav, dark/light theme auto-switch,
+copy-able code blocks); the MD column renders natively on GitHub and is
+easier to grep.
+
+| Topic | HTML | MD | What you get |
+|---|---|---|---|
+| Why + value + quickstart | [`docs/00-index.html`](docs/00-index.html) / [`.ko`](docs/00-index.ko.html) | [`docs/00-index.md`](docs/00-index.md) / [`.ko`](docs/00-index.ko.md) | Beginner landing — read first |
+| LCS reference (full) | [`docs/lcs-usage.html`](docs/lcs-usage.html) / [`.ko`](docs/lcs-usage.ko.html) | [`docs/lcs-usage.md`](docs/lcs-usage.md) / [`.ko`](docs/lcs-usage.ko.md) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
+| STAGES (what each loop step owns) | [`docs/STAGES.html`](docs/STAGES.html) | [`docs/STAGES.md`](docs/STAGES.md) | bootstrap → plan → build → review → security → ship |
+| CI install (run dev-kit CI elsewhere) | [`docs/ci-setup.html`](docs/ci-setup.html) | [`docs/ci-setup.md`](docs/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
+| Maintenance gate (PR-only quality) | [`docs/maintenance-gate.html`](docs/maintenance-gate.html) | [`docs/maintenance-gate.md`](docs/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
+| Runtime portability (Claude Code ↔ Codex) | [`docs/RUNTIME-PORTABILITY.html`](docs/RUNTIME-PORTABILITY.html) | [`docs/RUNTIME-PORTABILITY.md`](docs/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
+| Multi-harness design proposal | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.html`](docs/PROPOSAL-IMPLEMENTATION-PLAN.html) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/PROPOSAL-IMPLEMENTATION-PLAN.md) + same proposal dir | 13 topic files (Korean) covering the architecture |
+| Naming convention (SSOT) | [`docs/NAMING.html`](docs/NAMING.html) | [`docs/NAMING.md`](docs/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
+| Pre-implementation gate | [`docs/PRE-IMPL-CHECK.html`](docs/PRE-IMPL-CHECK.html) | [`docs/PRE-IMPL-CHECK.md`](docs/PRE-IMPL-CHECK.md) | 9 questions before code |
+| Cost & risk | [`docs/COST-ANALYSIS.html`](docs/COST-ANALYSIS.html) | [`docs/COST-ANALYSIS.md`](docs/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
+| Team adoption | [`docs/team-adoption.html`](docs/team-adoption.html) | [`docs/team-adoption.md`](docs/team-adoption.md) | Why a single maintainer and a 20-person team adopt the harness differently |
+| Hook coverage gaps (P4 Bucket B audit) | [`docs/hook-coverage-gaps.html`](docs/hook-coverage-gaps.html) | [`docs/hook-coverage-gaps.md`](docs/hook-coverage-gaps.md) | Which hook events are wired vs. which aren't, per runtime |
+| ACP dispatch (M-tier architecture) | [`docs/ACP-DISPATCH.html`](docs/ACP-DISPATCH.html) | [`docs/ACP-DISPATCH.md`](docs/ACP-DISPATCH.md) | How Model-tier agents find and dispatch to Capability-tier skills |
+| ACP (Agent Coordination Protocol) | [`docs/acp-harness.html`](docs/acp-harness.html) | [`docs/acp-harness.md`](docs/acp-harness.md) | The wire-format ACP uses to talk between agents; how it differs from LCS |
+| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | same | All 35 skills with category + α classification |
+| Decision records | [`docs/adr/`](docs/adr) | same | 5 locked ADRs (0001, 0010, 0020, 0021, 0022) |
+| Repo map | [`docs/REPOSITORY-MAP.html`](docs/REPOSITORY-MAP.html) | [`docs/REPOSITORY-MAP.md`](docs/REPOSITORY-MAP.md) | Where each component lives in the tree |
 
 If you have only five minutes, open [`docs/00-index.html`](docs/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
 
