@@ -21,8 +21,8 @@ Why a CLI driver (not just an import):
   leave the registry in a half-initialized state.
 
 Resource registration:
-- The five production handlers (worktrees, branches, pr, sessions, spend)
-  are registered in the default CLI registry.
+- The six production handlers (worktrees, branches, pr, sessions, spend,
+  valuations) are registered in the default CLI registry.
 - ``DEV_KIT_LCS_DEMO=1`` adds a built-in ``demo`` resource for transport
   regression tests and ad-hoc local debugging.
 

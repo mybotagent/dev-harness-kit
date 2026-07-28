@@ -24,9 +24,9 @@ doing right now?" from a single tool surface.
 
 ## Resource URI contract
 
-The default `bin/dev-kit-lcs.py` registry exposes five production handlers:
-`worktrees`, `branches`, `pr`, `sessions`, and `spend`. These URI shapes are
-available through that CLI:
+The default `bin/dev-kit-lcs.py` registry exposes six production handlers:
+`worktrees`, `branches`, `pr`, `sessions`, `spend`, and `valuations`. These URI
+shapes are available through that CLI:
 
 | URI | Description |
 |---|---|
@@ -37,6 +37,7 @@ available through that CLI:
 | `lcs://pr/<n>` | A single PR's CI checks, review verdict, merge state, slot version. |
 | `lcs://sessions/<id>` | One recorded Claude / Codex session (turns, tools, tokens). |
 | `lcs://spend/<window>` | Token spend over a time window, bucketed by model + worktree. |
+| `lcs://valuations/<plan-id>` | A `valuate` verdict (decision + per-axis rationale). |
 | `lcs://hooks/coverage` | Which hook fires against which runtime (claude-code vs codex). |
 | `lcs://interview/<step>` | Current state of the skill / plugin interview (step + answers). |
 | `lcs://research/cache` | Research cache contents (queries, hits, freshness). |
@@ -50,7 +51,7 @@ route returns exit code 2; the CLI does not fabricate a payload for it.
 - The skill shells out to `bin/dev-kit-lcs.py` — the LCS CLI driver
   (Phase 1.2). It speaks JSON-RPC on stdio or one-shot `--get URI` for
   the chat surface; both reach the same resource registry.
-- The five production resources live in `lib/lcs_resources/<name>.py` and
+- The six production resources live in `lib/lcs_resources/<name>.py` and
   implement the `Resource` protocol (`name`, `fetch(parsed) -> dict`). The
   CLI builds them against the current repository and its `logs/` directory,
   parses the URI, walks the registry by `name`, and prints the JSON payload.
@@ -62,7 +63,7 @@ route returns exit code 2; the CLI does not fabricate a payload for it.
 ## Usage
 
 ```bash
-# Discover the five production handlers.
+# Discover the production handlers.
 python3 bin/dev-kit-lcs.py --list-resources
 
 # Inspect a registered resource's shape.
@@ -84,15 +85,3 @@ DEV_KIT_LCS_DEMO=1 python3 bin/dev-kit-lcs.py --get lcs://demo/example
   inspecting `lcs://pr/<n>` and `lcs://hooks/coverage`.
 - For build follow-ups: hand off to `/dev-kit:build` once the relevant
   resource (worktrees / spend / sessions) shows the gap to close.
-=======
-category: ship
-description: Placeholder stub for the 35th skill. Full body lands via #356; this file exists only so SKILL_COUNT=35 in tests/test_smoke.py matches the on-disk skill count.
-alpha: state
-when_to_use: |
-  - Placeholder. Do not invoke yet. Replaced by #356.
-allowed-tools: Read
-disallowed-tools: Write Edit Agent
-model: sonnet
-disable-model-invocation: true
-user-invocable: false
----

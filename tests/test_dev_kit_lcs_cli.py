@@ -4,7 +4,7 @@
 Pins the CLI surface: --list-resources, --describe, --get, --serve
 (JSON-RPC over stdio). The CLI is invoked as a subprocess so exit
 codes, stdout/stderr framing, and signal handling are exercised
-end-to-end. The CLI registers the five production resources at startup. The
+end-to-end. The CLI registers the six production resources at startup. The
 ``DEV_KIT_LCS_DEMO=1`` env-var hook adds a deterministic ``demo`` resource
 for wire-format tests without replacing the production registry.
 

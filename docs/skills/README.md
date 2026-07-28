@@ -53,7 +53,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 |---|---|---|
 | [`review`](review.md) | `analysis` | Parallel correctness + security + architecture review with a false-positive filter. |
 | [`security`](security.md) | `enforcement` | Full OWASP Top 10 2025 (A01–A10) fan-out with a verifier pass. |
-| [`maintenance`](maintenance-gate.md) | `enforcement` | PR-only CI gate via `.github/workflows/maintenance.yml`. Judges the diff against the 20-checkbox code-sanity rubric (CC/OE/VM) and enforces the docs-updated sub-gate as the final pre-merge signal. |
 | [`audit`](audit.md) | `state` | 0-arg cross-cutting bulk slop + secret audit (read-only). |
 | [`inspect`](inspect.md) | `analysis` | 8-dimension read-only code-health audit. |
 | [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |

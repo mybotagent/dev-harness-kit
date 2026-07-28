@@ -176,7 +176,12 @@ jobs:
           # the pre-push auto-bump design (pre-push bumped HEAD to
           # BASE+1). That contract is gone; this is the replacement.
           LOWER="$(printf '%s\n%s\n' "$BASE_VERSION" "$HEAD_VERSION" | sort -V | head -1)"
-          if [ "$LOWER" = "$HEAD_VERSION" ]; then
+          # Skip on HEAD == BASE: the trunk workflow owns the version
+          # advance (post-#439); feature branches are valid at the
+          # version they were cut at. Without the equality guard, a
+          # fresh rebase onto origin/main would falsely trip the check
+          # because `sort -V | head -1` puts any equal pair on top.
+          if [ "$HEAD_VERSION" != "$BASE_VERSION" ] && [ "$LOWER" = "$HEAD_VERSION" ]; then
             echo "::error::PR head version $HEAD_VERSION is OLDER than base version $BASE_VERSION (stale)"
             echo "::error::Another PR merged first and advanced origin/main past this branch."
             echo "::error::Fix: rebase onto origin/main and re-push (no version bump required)."
