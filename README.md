@@ -94,6 +94,15 @@ That is the whole LCS surface. Anything deeper is in the docs index.
 
 If you have only five minutes, open [`docs/00-index.html`](docs/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
 
+The same docs are also available as Markdown:
+
+- [`docs/00-index.md`](docs/00-index.md) / [`docs/00-index.ko.md`](docs/00-index.ko.md) — landing (beginner intro + categorized index)
+- [`docs/lcs-usage.md`](docs/lcs-usage.md) / [`docs/lcs-usage.ko.md`](docs/lcs-usage.ko.md) — full LCS reference (URI grammar, resources, CLI surface, JSON-RPC, integration map, verification log)
+
+The HTML versions are preferred for browsing (sticky topnav, collapsible
+sections, dark/light theme auto-switch, copy-able code blocks); the MD
+versions are easier to grep and render natively on GitHub.
+
 ## Enforcement hooks (the durable moat)
 
 This plugin's load-bearing surface is **deterministic enforcement**, not
