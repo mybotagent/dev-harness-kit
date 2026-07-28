@@ -107,7 +107,7 @@ versions are easier to grep and render natively on GitHub.
 
 This plugin's load-bearing surface is **deterministic enforcement**, not
 prompt prose. Per `CLAUDE.md` Iron Law L7 ("a skill's alpha lives in the
-parts the model can't self-impose"), the 8 hooks below short-circuit the
+parts the model can't self-impose"), the hooks below short-circuit the
 model's tool calls — they cannot be absorbed by model improvements.
 
 | Hook | What it does | Stage |
@@ -209,7 +209,7 @@ claude plugin install dev-kit
 The install pins the `version` field from `.claude-plugin/plugin.json`, and the
 loaded copy lives in a version-named cache directory
 (`~/.claude/plugins/cache/dev-kit/dev-kit/<version>/`). The marketplace source
-tracks the `main` branch (`marketplace.json` → `source.ref: main`), so a new
+tracks the `main` branch (`.claude-plugin/marketplace.json` → `source.ref: main`), so a new
 version is available after each merge — see
 [Keeping the plugin up to date](#keeping-the-plugin-up-to-date).
 
@@ -528,10 +528,11 @@ whenever a parent skill needs a state lookup. Source:
 
 #### Production resources
 
-The default CLI registry wires the 5 core production handlers; the remaining
-URIs are reserved shapes that return exit code 2 if a caller asks for them
-before the corresponding handler ships. Live list + per-resource docstrings
-live in `lib/lcs_resources/`; the source is the source of truth.
+The default CLI registry wires the 6 core production handlers (`worktrees`,
+`branches`, `pr`, `sessions`, `spend`, `valuations`); the remaining URIs are
+reserved shapes that return exit code 2 if a caller asks for them before the
+corresponding handler ships. Live list + per-resource docstrings live in
+`lib/lcs_resources/`; the source is the source of truth.
 
 | URI | What it returns |
 |---|---|
@@ -860,13 +861,19 @@ right input** when running the dev-kit skills. The unit is a *case fixture + a
 recorded transcript → per-dimension rubric judgment*. Replay-only in v1: a case
 without a recorded transcript is `SKIPPED` (a setup gap, not a regression).
 
-**Three dimensions** (each axis 0–10):
+**Three eval dimensions** (each axis 0–10):
 
 | Dim | Axes | Measures |
 |---|---|---|
 | `review` | verdict consistency · severity calibration · precision · recall · code-sanity | review verdict + findings quality |
 | `security` | OWASP classification · severity accuracy · precision | A01–A10 mapping + false-positive rate |
 | `plan` | spec clarity · step atomicity · AC executability · dependency ordering | atomic, runnable, buildable plans |
+
+`/dev-kit:eval` covers these three. The `/dev-kit:evaluate` companion adds the
+**`harness-quality`** and **`os-quality`** dimensions (cross-cutting rubric
+checks for env / secret / CI cost), run by the same `--dim` flag on the
+underlying runner — see [`docs/skills/evaluate.md`](docs/skills/evaluate.md)
+and the `eval/rubrics/` registry.
 
 Per-case axis mean → verdict: **OK** ≥ 8.0 · **DRIFT_WARNING** 5.0–7.9 · **ROT**
 < 5.0 · **SKIPPED** (no transcript). The `review` dim embeds a 20-checkbox
