@@ -1,0 +1,308 @@
+title: "LCS UX: NL router, summary dimension, and discovery endpoints"
+status: design-discussion
+issue: TBD
+date: 2026-07-29
+tags: [lcs, ux, router, summaries, discovery, l7]
+sections:
+  - title: TL;DR
+    body: |
+      LCS today answers correctly but answers **badly**. Three concrete
+      gaps surfaced during a routine operator session on 2026-07-28:
+
+      1. The no-arg invocation (`/dev-kit:lcs`) lands on
+         `lcs://worktrees` and dumps 89 KB of JSON for 14 entries --
+         no summary, no staleness signal, the operator has to eyeball
+         14 timestamps to notice that 13 of those worktrees are
+         zombies on slot `0.3.100` while main is at `0.3.150`.
+      2. The handler set answers one-record questions
+         (`lcs://branches/<name>`, `lcs://sessions/<id>`,
+         `lcs://pr/<n>`) but provides **no discovery endpoint** for
+         any of them -- to call `lcs://sessions/<id>` you must already
+         know the UUID, and the canonical index
+         (`logs/sessions/<id>.json`) is empty until a separate dumper
+         runs.
+      3. Three URIs are documented in the SKILL.md body
+         (`lcs://hooks/coverage`, `lcs://interview/<step>`,
+         `lcs://research/cache`) but are **not registered** in
+         `bin/dev-kit-lcs.py`. They return exit 2 -- a documented
+         feature that is not a feature.
+
+      The fix is three small additions that turn LCS from
+      *"a per-record fetcher you must already know how to drive"*
+      into *"a state surface that earns its keep on aggregate
+      questions and stays honest about freshness."*
+
+  - title: Gap 1 -- NL router with a break-even rule
+    body: |
+      **Observation.** When an operator types
+      "what worktrees are stale?" or "what branch am I on?",
+      neither question currently routes through LCS -- the operator
+      shells out to `git worktree list` or `git branch --show-current`.
+      The friction is not the LCS call itself (one CLI invocation);
+      the friction is that the operator has to *already know* the
+      URI shape.
+
+      **Proposal.** Add a thin NL-to-URI router that fires only when
+      the question maps to a *multi-source aggregation no single
+      shell call produces*. Direct shell always wins when it can
+      answer in one call.
+
+      | Operator question | Single shell call? | Router action |
+      |---|---|---|
+      | "what branch am I on?" | yes (`git branch --show-current`) | **shell** |
+      | "what worktrees are stale?" | no (needs `git worktree list` + per-tree age + per-tree slot) | `lcs://worktrees` |
+      | "what's the slot version on branch X?" | partial (needs path resolution + `cat plugin.json`) | `lcs://branches/<name>/slot` |
+      | "what's PR #N's CI + slot?" | no (needs `gh pr checks` + `gh run view` + slot cross-ref) | `lcs://pr/<n>` |
+      | "token spend per worktree last 24h?" | no (walk `logs/**/*.jsonl` + parse + bucket) | `lcs://spend/24h` |
+      | "what session is doing X?" | no (must scan runtime transcripts) | `lcs://sessions/<id>` |
+
+      **Break-even rule** (encoded in the router, not the operator):
+
+      > If a single shell call answers the question, use the shell.
+      > If it requires N correlated calls across heterogeneous
+      > sources, route to LCS.
+
+      **Cost concern.** The dispatcher adds classifier + parse +
+      render overhead -- ~200 tokens per routed call. This is only
+      acceptable when LCS's aggregated answer replaces *N*
+      correlated shell calls (each ~50-200 tokens). Net: positive
+      ROI on multi-source aggregations, negative ROI on
+      one-tool questions. The router is the gate.
+
+      **Scope.** Router lives as a thin pre-LCS layer in
+      `bin/dev-kit-lcs.py` (or as a sibling `bin/dev-kit-lcs-route.py`).
+      It is **not** a skill -- a skill that decides whether to call
+      another skill is L6 anti-pattern (state-less reasoning surface
+      that next-gen models absorb). The router is a deterministic
+      classifier + URI lookup table.
+
+  - title: Gap 2 -- summary + staleness dimension on aggregations
+    body: |
+      **Observation.** `lcs://worktrees` returns 14 entries with
+      per-row `last_touched` and `slot_version`, but no aggregated
+      staleness signal. An operator reading
+      `{worktrees: [14 entries]}` assumes 14 active worktrees. In
+      reality: 1 active, 13 zombie slots parked on
+      `slot_version: 0.3.100` since July 21, while main is at
+      `0.3.150` (50 versions behind).
+
+      The aggregation **misleads by precision**. The shape says
+      `status: ok` and the operator trusts it.
+
+      **Proposal.** Add a `summary` block alongside the per-record
+      list on every aggregation resource. Surface freshness
+      dimensions the operator cannot infer by eyeballing per-row
+      timestamps.
+
+      ```yaml
+      data:
+        worktrees:
+          - { branch: main, ..., last_touched: 2026-07-28T14:49, slot_version: 0.3.150 }
+          - { branch: worktree-agent-..., ..., last_touched: 2026-07-21T05:18, slot_version: 0.3.100 }
+        summary:
+          total: 14
+          active: 1       # last_touched < 24h
+          stale: 13       # last_touched > 24h
+          slot_drift:
+            min: 0.3.100
+            max: 0.3.150
+            behind_count: 13
+          as_of: 2026-07-29T...
+      ```
+
+      **Why this matters.** Without `summary`, an aggregation of
+      14 stale records is operationally indistinguishable from an
+      aggregation of 14 active ones. The shape lies by being
+      technically correct. With `summary`, the operator sees
+      `active: 1, stale: 13` and prunes; with `slot_drift`, they
+      see the version gap and know what bumping buys them.
+
+      **Same treatment for other aggregations.** `lcs://branches`
+      (list, if added) carries `summary.local_only: N`,
+      `summary.ahead_of_origin: N`, etc. `lcs://spend/<window>`
+      already aggregates but should add `summary.by_worktree: {...}`
+      so the operator sees "13 zombie worktrees spent 0 tokens last
+      24h" without doing the join by hand.
+
+      **Freshness contract.** `summary.as_of` is mandatory on every
+      aggregation. The skill body should state this contract:
+      *"Every aggregation surfaces when it was assembled.
+      Per-row fields reflect call-time state, but `summary` is
+      what an operator reads first."*
+
+  - title: Gap 3 -- discovery endpoints for id-keyed resources
+    body: |
+      **Observation.** Three handlers require a parameter that the
+      operator cannot discover from LCS itself:
+
+      - `lcs://branches/<name>` -- no `lcs://branches` (list).
+      - `lcs://sessions/<id>` -- no `lcs://sessions` (list); canonical
+        index (`logs/sessions/<id>.json`) is empty.
+      - `lcs://pr/<n>` -- no `lcs://prs` (list); operator must `gh pr list`
+        first to learn `n`.
+
+      **Proposal.** Add a **list variant** for each id-keyed
+      resource, returning a small summary-shaped response (not the
+      full per-record payload):
+
+      | URI | Returns |
+      |---|---|
+      | `lcs://branches` | `{branches: [{name, local_head, ahead, behind, last_ci_conclusion}], summary: {...}}` |
+      | `lcs://sessions` | `{sessions: [{id, role, started_at, current_task, last_tool}], summary: {total, by_role}}` |
+      | `lcs://prs` | `{prs: [{n, title, head, ci_state, review_state}], summary: {...}}` |
+
+      Discovery calls are cheap (no per-record detail), let the
+      operator pick a row, then drill in with the
+      id-keyed variant for the full payload.
+
+      **Empty-index failure mode.** `lcs://sessions` returns
+      `summary.total: 0` when no canonical dumps exist. That's an
+      honest signal -- *no sessions indexed* -- not an error. The
+      skill body should call this out: list calls return empty +
+      summary rather than `partial` when the index simply hasn't
+      been populated. (Existing `LCSPartialError` semantics stay
+      reserved for *partial info on a real record*.)
+
+  - title: Gap 4 -- the documented-but-unwired URI trap
+    body: |
+      **Observation.** The SKILL.md body advertises
+      `lcs://hooks/coverage`, `lcs://interview/<step>`, and
+      `lcs://research/cache`. None are registered in
+      `bin/dev-kit-lcs.py`. All return exit 2.
+
+      A documented URI that is not a registered route is worse
+      than no URI: the operator reads the SKILL.md, types the URI,
+      gets exit 2, and concludes LCS is broken. The contract lies.
+
+      **Proposal.** Two changes:
+
+      1. **Document only registered routes.** Move
+         `hooks/coverage`, `interview`, `research/cache` from the
+         main URI table to a "reserved (planned)" footnote with an
+         explicit `status: not-registered` field. Operators reading
+         the table know which URIs are real.
+
+      2. **Add a `--list-routes` flag** (or extend
+         `--list-resources`) that prints the registered-vs-reserved
+         split from the CLI:
+
+         ```
+         $ python3 bin/dev-kit-lcs.py --list-routes
+         registered:
+           lcs://worktrees                       worktrees
+           lcs://branches/<name>                 branches
+           ...
+         reserved (not implemented):
+           lcs://hooks/coverage
+           lcs://interview/<step>
+           lcs://research/cache
+         ```
+
+         Reserved routes never lie about being callable; they
+         advertise themselves as planned.
+
+      This is a doc + CLI flag change, not a code change. No new
+      handlers.
+
+  - title: When to not use LCS
+    body: |
+      LCS is not the right tool for every state question. The
+      proposal explicitly carves out the cases where direct shell
+      is faster, cheaper, and clearer:
+
+      - **One-tool questions.** "what branch am I on?",
+        "is the working tree dirty?", "what's HEAD's SHA?" --
+        a single `git` call answers in <50 tokens. Routing through
+        LCS wastes 200+ tokens of classifier + parse overhead.
+      - **Trivial reads.** `cat package.json`, `ls .worktrees/`,
+        `gh pr view` for the current branch's PR -- these are
+        already one call each and don't need a stable contract
+        because no automation consumes them.
+      - **Operator conversation Q&A.** "is there a PR open?",
+        "did the version bump pass?" -- the operator wants a
+        yes/no and a sentence, not a JSON envelope. Direct
+        tool calls + a one-line summary beat the LCS round-trip.
+
+      LCS earns its keep when **the question requires N correlated
+      calls across heterogeneous sources**, OR **automation
+      downstream needs a stable JSON contract**. The router in
+      Gap 1 encodes this rule; the SKILL.md should say so plainly.
+
+  - title: Acceptance criteria
+    body: |
+      - [ ] `lcs://worktrees`, `lcs://branches` (list),
+            `lcs://sessions` (list), `lcs://prs` (list) each
+            return a `summary` block with `as_of`, freshness
+            dimensions, and slot/version drift where applicable.
+      - [ ] NL-to-URI router added as `bin/dev-kit-lcs-route.py`
+            (or sibling module) with the break-even rule
+            documented in the module docstring and tested.
+      - [ ] SKILL.md URI table marks reserved URIs explicitly;
+            `bin/dev-kit-lcs.py --list-routes` prints
+            `registered` vs `reserved (not implemented)`.
+      - [ ] `lcs://branches` (list), `lcs://sessions` (list),
+            `lcs://prs` (list) registered and return
+            summary-shaped responses (small payload, not the
+            full per-record detail).
+      - [ ] Tests for: `summary` block presence on every
+            aggregation; router break-even table; empty-index
+            list returns `summary.total: 0`, not `partial`.
+      - [ ] No regression in existing handlers'
+            `status: "ok"` envelopes (additive change only).
+
+  - title: Out of scope
+    body: |
+      - **Caching/TTL policy.** The proposal does not touch the
+        5-second in-memory snapshot TTL. Aggregation freshness
+        (`summary.as_of`) makes the staleness visible; it does
+        not shorten it. A separate proposal can address TTL
+        semantics if needed.
+      - **MCP transport.** This proposal is CLI-only.
+        `lcs://...` over MCP is a separate surface with its own
+        UX problems (notification protocol, capability
+        advertisement) and deserves its own proposal.
+      - **New handlers.** The proposal adds discovery + summary
+        dimensions to *existing* handlers; it does not add
+        `lcs://hooks/coverage` etc. Those are reserved until a
+        separate proposal implements them.
+      - **Authn/authz on `gh` calls.** The branches handler
+        calls `gh run list` per branch. Auth gating is a
+        separate concern.
+
+  - title: Related
+    body: |
+      - `docs/proposals/harness-architecture/live-context-server.html`
+        -- the parent LCS proposal (issue #280). This proposal
+        amends the UX surface; the handler set and URI contract
+        are unchanged.
+      - `skills/lcs/SKILL.md` -- the operator-facing surface that
+        must reflect Gap 1 (router) and Gap 4 (reserved-URI
+        honesty).
+      - `bin/dev-kit-lcs.py` -- the CLI driver that gains
+        `--list-routes` and the optional `--route <question>`
+        mode.
+      - `lib/lcs_resources/*.py` -- six production handlers; each
+        aggregation resource (`worktrees`, future
+        `branches`/`sessions`/`prs`) gains a `summary` block.
+      - `tools/token_efficiency_analyzer.py` -- the
+        router's break-even rule is *exactly* the kind of
+        "model mismatch / overspec" anti-pattern the analyzer
+        surfaces. Treat the router's ROI table as a regression
+        check: any future "let's route everything through LCS"
+        enthusiasm should fail because the analyzer flags the
+        regression.
+
+  - title: Next step
+    body: |
+      1. Open a GitHub issue referencing this proposal (see
+         `issue: TBD` in the frontmatter -- fill in once the issue
+         number is known).
+      2. Cut a build worktree off `origin/main` and route through
+         `/dev-kit:plan` to produce phases for Gaps 1-4.
+      3. Land `summary` blocks first (additive, no behavior
+         change, small blast radius). Router second. Reserved-URI
+         doc honesty third. Discovery endpoints last.
+      4. After each phase lands, run
+         `/dev-kit:token-analyzer` to confirm the router's
+         break-even rule is empirically holding (multi-source
+         questions route to LCS; single-shell questions don't).
