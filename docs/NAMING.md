@@ -19,7 +19,7 @@
 | `review` | `review-<subject>` | (none — `review` is standalone) |
 | `security` | `security-<subject>` | (none — `security` is standalone) |
 | `audit` | `audit-<subject>` | `audit` (slop / secret / outdated are inlined modes) |
-| `shortcuts` | `shortcut-<name>` | `shortcut-tdd-fast`, `shortcut-quick-fix` |
+| `shortcuts` | `shortcut-<name>` | `codex-cache-update`, `log`, `llm-refresh` (escape hatches) |
 | `ship` | (no skill, gate only) | — |
 
 ## Slash command

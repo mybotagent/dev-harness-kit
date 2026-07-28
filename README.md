@@ -431,8 +431,6 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 |---|---|
 | `/dev-kit:proposal` | Render `docs/proposals/<name>.yaml` → self-contained HTML |
 | `/dev-kit:docs-maintenance` | Audit stale docs, refresh README, drop volatile facts |
-| `/dev-kit:tdd-fast` | Skip Bootstrap + Plan → straight to Build (hotfix) |
-| `/dev-kit:shortcut-quick-fix` | Verify + debug on demand |
 
 ---
 
