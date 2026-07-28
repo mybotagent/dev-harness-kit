@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>05 — 플랜 가치 평가 하네스 (가치 게이트)</title>
 <style>
@@ -134,11 +135,20 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav style="max-width:1080px;margin:0 auto;padding:14px 24px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../../../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">Documentation Home</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Multi-Harness Proposal</span></span>
+  <span>
+    <a href="../../00-index.html#why" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Why</a>
+    <a href="../../00-index.html#quickstart" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Quickstart</a>
+    <a href="../../00-index.html#docs" style="margin-left:16px;color:#6e6e73;text-decoration:none;">All docs</a>
+  </span>
+</nav>
+
 <nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>05 — 플랜 가치 평가 하네스 (가치 게이트)</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">plan-value</span><span class="tag tag-info">gate</span><span class="tag tag-info">verification</span><span class="tag tag-info">l7</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">가치 평가 루브릭 (6차원)</a></li><li><a href="#sec-2">결정 임계값</a></li><li><a href="#sec-3">AEGIS Critic 패턴 (차용)</a></li><li><a href="#sec-4">인터페이스 (의사)</a></li><li><a href="#sec-5">흡수 위험 (L7)</a></li><li><a href="#sec-6">런타임 중립성 (결정 8)</a></li><li><a href="#sec-7">빌드 게이트 통합</a></li><li><a href="#sec-8">결정 8 강제 보장</a></li><li><a href="#sec-9">Related</a></li></ol></div>
+<div class="toc"><strong>목차</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">가치 평가 루브릭 (6차원)</a></li><li><a href="#sec-2">결정 임계값</a></li><li><a href="#sec-3">AEGIS Critic 패턴 (차용)</a></li><li><a href="#sec-4">인터페이스 (의사)</a></li><li><a href="#sec-5">흡수 위험 (L7)</a></li><li><a href="#sec-6">런타임 중립성 (결정 8)</a></li><li><a href="#sec-7">빌드 게이트 통합</a></li><li><a href="#sec-8">결정 8 강제 보장</a></li><li><a href="#sec-9">Related</a></li></ol></div>
 <h2 id="sec-0">정의</h2>
 <p><strong>플랜 가치 평가 하네스</strong>는 인터뷰 하네스(<code>03-ambiguity-resolver</code>) 가 모호함을 해소한 뒤, 그 플랜이 <strong>구현할 가치가 있는지</strong> 별도로 판단한다. 평가 하네스(<code>04-quality-judge</code>)와 별개다.</p>
 <ul><li><strong>인터뷰</strong> = "이 플랜은 무엇인가?" (사실 확인)</li><li><strong>평가</strong> = "이 산출물의 품질은 어떤가?" (품질 채점)</li><li><strong>플랜 가치 평가</strong> = "이 플랜은 만들 가치가 있는가?" (가치 판단)</li></ul>
@@ -206,5 +216,10 @@ def valuate(plan: Plan,
 <hr class="section-divider">
 
 <footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<div style="max-width:1080px;margin:32px auto 0;padding:18px 28px;border-top:1px solid #d2d2d7;font-size:13px;color:#6e6e73;">
+  <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">&larr; Documentation Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="../../../README.md" style="color:#0a84ff;text-decoration:none;">README</a>
+</div>
 </body>
 </html>

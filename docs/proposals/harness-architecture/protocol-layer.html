@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>01 — MCP: Model Context Protocol (와이어 프로토콜 계층)</title>
 <style>
@@ -134,11 +135,20 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav style="max-width:1080px;margin:0 auto;padding:14px 24px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../../../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">Documentation Home</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Multi-Harness Proposal</span></span>
+  <span>
+    <a href="../../00-index.html#why" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Why</a>
+    <a href="../../00-index.html#quickstart" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Quickstart</a>
+    <a href="../../00-index.html#docs" style="margin-left:16px;color:#6e6e73;text-decoration:none;">All docs</a>
+  </span>
+</nav>
+
 <nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>01 — MCP: Model Context Protocol (와이어 프로토콜 계층)</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">mcp</span><span class="tag tag-info">protocol</span><span class="tag tag-info">runtime-portability</span><span class="tag tag-info">l7</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">이 시스템에서의 역할</a></li><li><a href="#sec-2">왜 이걸 단독 주제로 다루는가</a></li><li><a href="#sec-3">런타임 중립성 (결정 8과의 관계)</a></li><li><a href="#sec-4">흡수 위험 분석 (L7 정렬)</a></li><li><a href="#sec-5">이 제안에서의 출시 작업</a></li></ol></div>
+<div class="toc"><strong>목차</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">이 시스템에서의 역할</a></li><li><a href="#sec-2">왜 이걸 단독 주제로 다루는가</a></li><li><a href="#sec-3">런타임 중립성 (결정 8과의 관계)</a></li><li><a href="#sec-4">흡수 위험 분석 (L7 정렬)</a></li><li><a href="#sec-5">이 제안에서의 출시 작업</a></li></ol></div>
 <h2 id="sec-0">정의</h2>
 <p><strong>MCP (Model Context Protocol)</strong>는 AI 모델을 외부 도구와 데이터 소스에 연결하는 <strong>공개 표준 와이어 프로토콜</strong>이다. 이 저장소에서는 MCP를 <strong>사용할 뿐 구축하지 않는다</strong> — Claude Code, Codex, 미래 SDK 모두 MCP를 지원한다.</p>
 <ul><li><strong>전송</strong>: JSON-RPC over stdio (또는 HTTP/SSE)</li><li><strong>프리미티브</strong>: <code>resources</code> (read, URI), <code>tools</code> (write, named),</li></ul>
@@ -187,11 +197,16 @@ a:hover { text-decoration: underline; }
 <p>MCP 자체는 출시할 것이 없다 — 이미 모든 런타임이 지원한다. 우리가 해야 할 일:</p>
 <ol><li><strong>LCS가 MCP 규격 서버로 구현됨</strong> (Phase 1, <code>02-live-context-server.html</code>)</li><li><strong>다른 엔진이 LCS의 MCP 리소스를 소비</strong> (Phase 3–6)</li><li><strong>런타임 어댑터가 MCP 통합을 망치지 않도록</strong> (Phase 0,</li></ol>
 <p><code>07-runtime-portability.html</code>)</p>
-<h2>Related</h2>
+<h2>관련</h2>
 <ul><li><code>02-live-context-server.html</code> — MCP 위의 첫 번째 서버</li><li><code>07-runtime-portability.html</code> — 결정 8 어댑터 계층</li><li><code>09-consolidated-architecture.html</code> — 통합 아키텍처</li><li><code>08-external-references.html</code> — insane-search의 Claude 종속 배포 기각 근거</li><li>Issue #280 — 이 제안이 종료함</li></ul>
 
 <hr class="section-divider">
 
 <footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<div style="max-width:1080px;margin:32px auto 0;padding:18px 28px;border-top:1px solid #d2d2d7;font-size:13px;color:#6e6e73;">
+  <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">&larr; Documentation Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="../../../README.md" style="color:#0a84ff;text-decoration:none;">README</a>
+</div>
 </body>
 </html>

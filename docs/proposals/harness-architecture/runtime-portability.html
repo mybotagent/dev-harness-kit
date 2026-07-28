@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>07 — 런타임 중립성 (결정 8) 어댑터 계층</title>
 <style>
@@ -134,11 +135,20 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
+<nav style="max-width:1080px;margin:0 auto;padding:14px 24px;border-bottom:1px solid #d2d2d7;font-size:13px;color:#6e6e73;display:flex;justify-content:space-between;align-items:center;">
+  <span><a href="../../../README.md" style="color:#0a84ff;text-decoration:none;font-weight:600;">dev-harness-kit</a> &nbsp;/&nbsp; <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">Documentation Home</a> &nbsp;/&nbsp; <span style="color:#6e6e73;">Multi-Harness Proposal</span></span>
+  <span>
+    <a href="../../00-index.html#why" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Why</a>
+    <a href="../../00-index.html#quickstart" style="margin-left:16px;color:#6e6e73;text-decoration:none;">Quickstart</a>
+    <a href="../../00-index.html#docs" style="margin-left:16px;color:#6e6e73;text-decoration:none;">All docs</a>
+  </span>
+</nav>
+
 <nav class="back-link"><a href="00-index.html">← 00-index</a></nav>
 <h1>07 — 런타임 중립성 (결정 8) 어댑터 계층</h1>
 <p class="meta">2026-07-21 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">runtime-portability</span><span class="tag tag-info">adapter</span><span class="tag tag-info">decision-8</span><span class="tag tag-info">l7</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">핵심 원칙</a></li><li><a href="#sec-2">런타임 분류 매트릭스 (18개 표면)</a></li><li><a href="#sec-3">런타임 어댑터 디렉토리 구조</a></li><li><a href="#sec-4">RuntimeAdapter 인터페이스 (의사)</a></li><li><a href="#sec-5">어댑터가 흡수하지 *않는* 것</a></li><li><a href="#sec-6">CI 매트릭스 (포터빌리티 강제)</a></li><li><a href="#sec-7">결정 8 vs 결정 3 — 정밀 분리</a></li><li><a href="#sec-8">Phase 0 (포터빌리티) — 모든 Phase의 선결 조건</a></li><li><a href="#sec-9">흡수 위험 (L7)</a></li><li><a href="#sec-10">Related</a></li></ol></div>
+<div class="toc"><strong>목차</strong><ol><li><a href="#sec-0">정의</a></li><li><a href="#sec-1">핵심 원칙</a></li><li><a href="#sec-2">런타임 분류 매트릭스 (18개 표면)</a></li><li><a href="#sec-3">런타임 어댑터 디렉토리 구조</a></li><li><a href="#sec-4">RuntimeAdapter 인터페이스 (의사)</a></li><li><a href="#sec-5">어댑터가 흡수하지 *않는* 것</a></li><li><a href="#sec-6">CI 매트릭스 (포터빌리티 강제)</a></li><li><a href="#sec-7">결정 8 vs 결정 3 — 정밀 분리</a></li><li><a href="#sec-8">Phase 0 (포터빌리티) — 모든 Phase의 선결 조건</a></li><li><a href="#sec-9">흡수 위험 (L7)</a></li><li><a href="#sec-10">Related</a></li></ol></div>
 <h2 id="sec-0">정의</h2>
 <p><strong>결정 8</strong>: 단일 런타임 종속 = 기각. 모든 신규 컴포넌트는 <strong>Claude Code + Codex + 미래 SDK 동등 동작</strong> 필수. 한쪽만 동작 = PR 차단.</p>
 <p>결정 3 (벤더 종속 배포 = 기각)이 <em>배포 방식</em>을 잠근 반면, 결정 8은 <em>동작 자체</em>를 잠근다. MCP 위에서 만든 서버는 자동으로 결정 8을 만족하지만 (왜? MCP가 모든 런타임의 공통 프로토콜이라서), 런타임 의존 데이터를 다루는 부분은 <strong>얇은 어댑터 계층</strong>으로 흡수해야 한다.</p>
@@ -231,5 +241,10 @@ a:hover { text-decoration: underline; }
 <hr class="section-divider">
 
 <footer>Generated 2026-07-23 · <a href="https://github.com/sh-ai-x/dev-harness-kit/issues/280">issue #280</a> · render via <code>/dev-kit:proposal</code></footer>
+<div style="max-width:1080px;margin:32px auto 0;padding:18px 28px;border-top:1px solid #d2d2d7;font-size:13px;color:#6e6e73;">
+  <a href="../../00-index.html" style="color:#0a84ff;text-decoration:none;">&larr; Documentation Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="../../../README.md" style="color:#0a84ff;text-decoration:none;">README</a>
+</div>
 </body>
 </html>
