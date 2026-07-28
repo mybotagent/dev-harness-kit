@@ -101,6 +101,25 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "anti_goals_clarity",
         "acceptance_rubric_clarity",
     ),
+    # Phase 7 (this PR): push_intent dim for the pre-push LLM judge
+    # (lib/push_intent_judge.py). Only the four value/meaning axes
+    # (VM-1..4 from judge-code-sanity.md) — clean-code and
+    # over-engineering belong to the dedicated CI maintenance gate.
+    "push_intent": (
+        "intent_clarity",
+        "scope_discipline",
+        "change_necessity",
+        "value_alignment",
+    ),
+    # Phase 7 (this PR): maintenance dim for the CI maintenance gate
+    # (.github/workflows/maintenance.yml). Composite code-sanity score
+    # + a docs-coverage score that mirrors the docs-updated sub-gate
+    # + a scope-discipline score mirroring VM-3.
+    "maintenance": (
+        "code_sanity_score",
+        "docs_coverage_score",
+        "scope_discipline_score",
+    ),
 }
 
 # Per-dim score range. Most dims are 0-10 (higher = better, with the

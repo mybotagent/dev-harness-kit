@@ -1,0 +1,28 @@
+{
+  "case_id": "maintenance-01_value_aligned",
+  "dim": "maintenance",
+  "category": "value-aligned-clean-change",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:000000000000",
+  "captured_at": "2026-07-27T00:00:00Z",
+  "input_path": "eval/cases/maintenance/maintenance-01_value_aligned.diff",
+  "transcript_path": "eval/transcripts/maintenance/maintenance-01_value_aligned.json",
+  "expected": {
+    "verdict": "OK",
+    "min_code_sanity_score": 8.0,
+    "min_docs_coverage_score": 8.0,
+    "min_scope_discipline_score": 8.0,
+    "items_flagged": [],
+    "scores": {
+      "code_sanity_score": 9.0,
+      "docs_coverage_score": 10.0,
+      "scope_discipline_score": 9.5
+    }
+  },
+  "expected_behavior": "A PR that adds lib/awesome.py (20 lines of well-named functions with a clear docstring) plus docs/awesome.md. No abstract base classes, no speculative params, no drive-by edits. The maintenance judge should approve with code_sanity_score >= 8.",
+  "iron_law_refs": ["L1"],
+  "code_refs": [
+    "lib/maintenance_gate.py",
+    "eval/prompts/judge-maintenance.md"
+  ]
+}

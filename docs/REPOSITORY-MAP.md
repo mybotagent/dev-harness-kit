@@ -21,6 +21,7 @@ dev-harness-kit/
 ├── fixtures/         # synthetic session-log fixtures for the analyzer
 ├── tests/            # pytest suite
 ├── eval/             # cases/ + transcripts/ + prompts/ + golden/
+│   └── golden/       # regression baselines (12 dim cases + 3 maintenance cases)
 ├── docs/
 │   └── proposals/    # design proposals -- per-umbrella <main>/<sub>.{yaml,html}
 │                     # with auto-attached "← Index" back-nav on sub-topics

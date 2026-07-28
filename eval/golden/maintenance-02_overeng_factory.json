@@ -1,0 +1,27 @@
+{
+  "case_id": "maintenance-02_overeng_factory",
+  "dim": "maintenance",
+  "category": "over-engineering-single-implementer",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:000000000001",
+  "captured_at": "2026-07-27T00:00:00Z",
+  "input_path": "eval/cases/maintenance/maintenance-02_overeng_factory.diff",
+  "transcript_path": "eval/transcripts/maintenance/maintenance-02_overeng_factory.json",
+  "expected": {
+    "verdict": "DRIFT_WARNING",
+    "max_code_sanity_score": 7.99,
+    "min_code_sanity_score": 5.0,
+    "items_flagged": ["OE-1", "OE-4"],
+    "scores": {
+      "code_sanity_score": 6.5,
+      "docs_coverage_score": 8.0,
+      "scope_discipline_score": 8.0
+    }
+  },
+  "expected_behavior": "A PR that introduces an abstract base class AbstractThing with exactly one implementer (OE-1) and a speculative `enable_legacy_mode=False` parameter for hypothetical future use (OE-4). The maintenance judge should flag OE-1 and OE-4 and emit Changes Requested (code_sanity_score 5-7.99).",
+  "iron_law_refs": ["L1"],
+  "code_refs": [
+    "lib/maintenance_gate.py",
+    "eval/prompts/judge-maintenance.md"
+  ]
+}

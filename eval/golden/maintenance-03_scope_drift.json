@@ -1,0 +1,28 @@
+{
+  "case_id": "maintenance-03_scope_drift",
+  "dim": "maintenance",
+  "category": "scope-drift-drive-by",
+  "schema_version": "2.0.0",
+  "baseline_hash": "sha256:000000000002",
+  "captured_at": "2026-07-27T00:00:00Z",
+  "input_path": "eval/cases/maintenance/maintenance-03_scope_drift.diff",
+  "transcript_path": "eval/transcripts/maintenance/maintenance-03_scope_drift.json",
+  "expected": {
+    "verdict": "DRIFT_WARNING",
+    "max_code_sanity_score": 7.99,
+    "min_scope_discipline_score": 0.0,
+    "max_scope_discipline_score": 7.0,
+    "items_flagged": ["VM-3", "VM-4"],
+    "scores": {
+      "code_sanity_score": 7.0,
+      "docs_coverage_score": 10.0,
+      "scope_discipline_score": 4.5
+    }
+  },
+  "expected_behavior": "A PR that bundles an unrelated lib/ refactor with a docs/ typo fix (VM-3 scope creep, VM-4 'while I was here' additions). The maintenance judge should flag VM-3 and VM-4 with scope_discipline_score below 8. The gate combines to Changes Requested because of the scope drift even though docs_coverage_score is high.",
+  "iron_law_refs": ["L1", "L4"],
+  "code_refs": [
+    "lib/maintenance_gate.py",
+    "eval/prompts/judge-maintenance.md"
+  ]
+}
