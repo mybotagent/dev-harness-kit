@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal vs Team adoption &mdash; dev-harness-kit</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #0a84ff;
+  --accent-dim: #e7f1ff;
+  --code-bg: #1c1c1e;
+  --code-fg: #f2f2f7;
+  --border: #d2d2d7;
+  --panel: #f5f5f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --muted: #98989d;
+    --accent: #409eff;
+    --accent-dim: #0a2540;
+    --code-bg: #0e0e10;
+    --code-fg: #e8e8ed;
+    --border: #2c2c2e;
+    --panel: #1c1c1e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--fg); line-height: 1.6; font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 28px 64px; }
+
+.wrap h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 12px; }
+.wrap h2 { font-size: 22px; font-weight: 700; margin: 32px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.wrap h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+.wrap h4 { font-size: 14px; font-weight: 600; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.wrap p { margin: 0 0 14px; }
+.wrap a { color: var(--accent); text-decoration: none; }
+.wrap a:hover { text-decoration: underline; }
+.wrap code {
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px; padding: 1px 6px; background: var(--panel);
+  border-radius: 4px; border: 1px solid var(--border);
+}
+.wrap pre {
+  background: var(--code-bg); color: var(--code-fg); padding: 14px 18px;
+  border-radius: 8px; overflow-x: auto; font-size: 12.5px;
+  line-height: 1.55; margin: 0 0 18px; border: 1px solid var(--border);
+}
+.wrap pre code { background: none; border: none; padding: 0; font-size: 12.5px; color: inherit; }
+.wrap table {
+  width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 14px;
+}
+.wrap th, .wrap td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+.wrap th { background: var(--panel); font-weight: 600; }
+.wrap ul, .wrap ol { padding-left: 22px; margin: 0 0 14px; }
+.wrap li { margin-bottom: 4px; }
+.wrap blockquote {
+  border-left: 3px solid var(--border); margin: 1rem 0;
+  padding: 0.2rem 1rem; color: var(--muted);
+}
+.wrap hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+.wrap nav.topnav { margin-bottom: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.wrap nav.topnav a { color: var(--accent); text-decoration: none; margin-left: 16px; }
+.wrap nav.topnav a:first-child { margin-left: 0; }
+.wrap nav.topnav a:hover { text-decoration: underline; }
+.wrap nav.topnav .label { color: var(--muted); }
+.wrap footer.back { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.wrap footer.back a { color: var(--accent); text-decoration: none; margin-right: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topnav">
+  <span><a href="../README.md">dev-harness-kit</a> &nbsp;/&nbsp; <a href="00-index.html">Documentation Home</a></span>
+  <span class="label">Personal vs Team adoption</span>
+</nav>
+
+<h1>Personal vs Team adoption</h1>
+<p>dev-kit is one plugin, two adoption levels. Pick one based on whether you use Claude Code solo or in a team.</p>
+<h2>Two levels</h2>
+<table>
+<thead>
+<tr>
+  <th>Level</th>
+  <th>Lives in</th>
+  <th>Configured via</th>
+  <th>Who edits it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Personal</strong></td>
+  <td><code>~/.claude/plugins/dev-kit/</code> (User-level install)</td>
+  <td><code>~/.claude/CLAUDE.md</code></td>
+  <td>you, only you</td>
+</tr>
+<tr>
+  <td><strong>Team</strong></td>
+  <td><code>&lt;project&gt;/.claude/plugins/dev-kit/</code> (Project-level install)</td>
+  <td><code>&lt;project&gt;/CLAUDE.md</code> + <code>&lt;project&gt;/&lt;subfolder&gt;/CLAUDE.md</code></td>
+  <td>the team, via PR</td>
+</tr>
+</tbody>
+</table>
+<p>Both installs use the same plugin artifact. Only the install location and config layer differ.</p>
+<h2>Install</h2>
+<pre><code class="language-bash"># Personal (User-level) — applies to every project you open
+claude plugin marketplace add sh-ai-x/dev-harness-kit
+claude plugin install dev-kit --scope user
+
+# Team (Project-level) — applies only to this project, committed via PR
+cd your-project
+claude plugin marketplace add sh-ai-x/dev-harness-kit
+claude plugin install dev-kit --scope project
+git add .claude/ &amp;&amp; git commit -m &quot;chore: install dev-kit plugin&quot;
+</code></pre>
+<h2>CLAUDE.md patterns</h2>
+<h3>Project root — <code>&lt;project&gt;/CLAUDE.md</code></h3>
+<p>The single source of truth for the whole repo. Commit this. It includes:</p>
+<ul>
+<li>Iron Laws (no test no code, root-cause-first, …)</li>
+<li>Project-wide conventions (language, framework, test runner, formatter)</li>
+<li>Build / lint / test commands</li>
+<li>Stage gates and what each one blocks</li>
+</ul>
+<h3>Sub-folder overrides — <code>&lt;project&gt;/&lt;subfolder&gt;/CLAUDE.md</code></h3>
+<p>Loaded automatically when Claude Code works in that folder. Used for:</p>
+<ul>
+<li>Per-package conventions (e.g. <code>packages/api/CLAUDE.md</code> says &quot;zod validation mandatory&quot;)</li>
+<li>Per-area guards (e.g. <code>migrations/CLAUDE.md</code> says &quot;never edit a committed migration&quot;)</li>
+<li>Per-stack rules (e.g. <code>frontend/CLAUDE.md</code> says &quot;vitest, no jest&quot;)</li>
+</ul>
+<p>These override root rules only when narrower. They never contradict the root Iron Laws.</p>
+<h3>Personal layer — <code>~/.claude/CLAUDE.md</code></h3>
+<p>Loaded on top of project rules for every session. Used for:</p>
+<ul>
+<li>Your personal prefs (default model, preferred editor, key bindings)</li>
+<li>Cross-project shortcuts</li>
+<li>Things you never want to commit to a repo</li>
+</ul>
+<h2>Team hooks (opt-in templates, NOT in the plugin)</h2>
+<p>The plugin ships a personal hook set wired into <code>hooks/hooks.json</code> and the
+Codex mirror at <code>.codex-plugin/hooks/hooks.json</code>. The exact count drifts
+as the plugin evolves (worktree-rule, ACP-tier-assert, and
+provider-divergence hooks were added on top of the original core), so it
+is NOT recorded here. Inspect the live inventory with:</p>
+<pre><code class="language-bash">grep -E '&quot;command&quot;' hooks/hooks.json | wc -l   # canonical hook count
+ls -1 docs/team-hooks/*.sh                     # team-hook templates
+</code></pre>
+<p>The 3 team hooks below are <strong>NOT</strong> registered in the plugin's
+<code>hooks/hooks.json</code> — they live in <code>docs/team-hooks/</code> as <strong>copy-paste
+templates</strong> that each project copies into its own <code>.claude/hooks/</code> and
+wires up in <code>.claude/settings.json</code>.</p>
+<table>
+<thead>
+<tr>
+  <th>Hook</th>
+  <th>Stage</th>
+  <th>Mode</th>
+  <th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>prettier-format</code></td>
+  <td>PostToolUse (Edit/Write)</td>
+  <td>advisory</td>
+  <td><code>docs/team-hooks/</code> (copy)</td>
+</tr>
+<tr>
+  <td><code>block-dangerous-commands</code></td>
+  <td>PreToolUse (Bash)</td>
+  <td><strong>hard-block</strong></td>
+  <td><code>docs/team-hooks/</code> (copy)</td>
+</tr>
+<tr>
+  <td><code>eslint-fix</code></td>
+  <td>PostToolUse (Edit/Write)</td>
+  <td>advisory</td>
+  <td><code>docs/team-hooks/</code> (copy)</td>
+</tr>
+</tbody>
+</table>
+<h3>Why team hooks are templates, not plugin content</h3>
+<p>Auto-formatting and hard-blocks are team policy, not personal preference. A solo dev who works in 5 repos shouldn't be forced into a 6th repo's formatter. And the plugin cannot enforce a team hook per-project: the plugin is <strong>scoped</strong> by Claude Code (one hooks.json per install), so a hook either fires on every project or none.</p>
+<p><strong>Solution</strong>: ship the scripts in <code>docs/team-hooks/</code> as copy-paste templates. Each team commits the copy that matches their policy.</p>
+<h3>Enable a team hook in a project</h3>
+<pre><code class="language-bash"># 1. Copy the templates into the project
+mkdir -p .claude/hooks
+cp docs/team-hooks/prettier-format.sh .claude/hooks/
+cp docs/team-hooks/block-dangerous-commands.sh .claude/hooks/
+cp docs/team-hooks/eslint-fix.sh .claude/hooks/
+chmod +x .claude/hooks/*.sh
+
+# 2. Wire them in .claude/settings.json
+</code></pre>
+<pre><code class="language-json">{
+  &quot;permissions&quot;: { &quot;allow&quot;: [&quot;Edit&quot;, &quot;Write&quot;, &quot;Bash&quot;] },
+  &quot;hooks&quot;: {
+    &quot;PreToolUse&quot;: [{
+      &quot;matcher&quot;: &quot;Bash&quot;,
+      &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;bash .claude/hooks/block-dangerous-commands.sh&quot; }]
+    }],
+    &quot;PostToolUse&quot;: [{
+      &quot;matcher&quot;: &quot;Write|Edit|MultiEdit&quot;,
+      &quot;hooks&quot;: [
+        { &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;bash .claude/hooks/prettier-format.sh&quot; },
+        { &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;bash .claude/hooks/eslint-fix.sh&quot; }
+      ]
+    }]
+  }
+}
+</code></pre>
+<p>The team shares this file via PR.</p>
+<h3>Why hard-block only on <code>block-dangerous-commands</code> (not the others)</h3>
+<p>Auto-format is reversible (git checkout). A blocked <code>rm -rf</code> or <code>git push --force</code> is <strong>not</strong> — it can destroy work or rewrite shared history. Only <code>block-dangerous-commands</code> hard-blocks. The other two are advisory (exit 0, print warning).</p>
+<h3>Coverage non-overlap with <code>bash-guard.sh</code></h3>
+<table>
+<thead>
+<tr>
+  <th>Concern</th>
+  <th>bash-guard</th>
+  <th>block-dangerous-commands</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Destructive file ops</td>
+  <td><code>rm -rf /</code>, <code>chmod 777</code></td>
+  <td><code>rm -rf</code> tokenized, curl|sh, fork bomb</td>
+</tr>
+<tr>
+  <td>Destructive git</td>
+  <td><code>git push --force.* main</code>, <code>git reset --hard</code>, <code>git clean -f</code></td>
+  <td><code>git push --force</code> (any), <code>git reset --hard</code>, <code>git clean -fd/-fdx</code></td>
+</tr>
+<tr>
+  <td>DDL/data</td>
+  <td><code>DROP TABLE</code>, <code>DROP DATABASE</code></td>
+  <td>(out of scope)</td>
+</tr>
+<tr>
+  <td>Supply chain</td>
+  <td><code>npm publish</code>, <code>eval $</code>, <code>&gt;/etc/passwd</code></td>
+  <td>(out of scope)</td>
+</tr>
+<tr>
+  <td>Mode</td>
+  <td>advisory → hard-block with <code>DEV_KIT_STRICT=1</code></td>
+  <td>always hard-block</td>
+</tr>
+</tbody>
+</table>
+<p>No double-coverage. Either hook alone is safe; running both is also safe (the second hook sees a no-op and exits 0).</p>
+<h3>Override per-folder</h3>
+<p>A sub-folder can override by adding its own <code>.claude/settings.json</code>. Example: <code>packages/legacy/</code> opts out of <code>prettier-format</code> because the legacy code is excluded from prettier for now.</p>
+<h2>Why the split</h2>
+<ul>
+<li><strong>Personal = your machine.</strong> Always on, never committed, changes with your mood.</li>
+<li><strong>Team = the repo.</strong> Always committed, changes via PR, reviewed by humans.</li>
+<li><strong>Folder = a sub-area.</strong> Inherits project, overrides for one directory.</li>
+</ul>
+<p>Three layers, one plugin, zero conflict.</p>
+
+<footer class="back">
+  <a href="00-index.html">&larr; Documentation Home</a>
+  <a href="../README.md">README</a>
+  <a href="team-adoption.md">MD version</a>
+</footer>
+</div>
+</body>
+</html>
