@@ -38,13 +38,24 @@ shapes are available through that CLI:
 | `lcs://sessions/<id>` | One recorded Claude / Codex session (turns, tools, tokens). |
 | `lcs://spend/<window>` | Token spend over a time window, bucketed by model + worktree. |
 | `lcs://valuations/<plan-id>` | A `valuate` verdict (decision + per-axis rationale). |
-| `lcs://hooks/coverage` | Which hook fires against which runtime (claude-code vs codex). |
-| `lcs://interview/<step>` | Current state of the skill / plugin interview (step + answers). |
-| `lcs://research/cache` | Research cache contents (queries, hits, freshness). |
 
-`hooks/coverage`, `interview`, and `research/cache` are URI shapes reserved for
-handlers that are not wired into the default CLI registry. An unregistered
-route returns exit code 2; the CLI does not fabricate a payload for it.
+## Reserved (planned, not implemented)
+
+Three URI shapes are documented for handlers that are **not wired** into the
+default CLI registry. Calling them returns exit code 2; the CLI does not
+fabricate a payload for a route it cannot dispatch. Run
+`python3 bin/dev-kit-lcs.py --list-routes` for the same split from the shell.
+
+- `status: not-registered` — none of these are wired into
+  ``build_default_registry()`` in ``bin/dev-kit-lcs.py``. They exist as
+  handler files in ``lib/lcs_resources/`` but are deliberately kept off the
+  default registry until a separate proposal lands the full handler.
+
+| URI | Status | Planned handler |
+|---|---|---|
+| `lcs://hooks/coverage` | `status: not-registered` | Which hook fires against which runtime (claude-code vs codex). |
+| `lcs://interview/<step>` | `status: not-registered` | Current state of the skill / plugin interview (step + answers). |
+| `lcs://research/cache` | `status: not-registered` | Research cache contents (queries, hits, freshness). |
 
 ## How it works
 

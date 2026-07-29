@@ -84,6 +84,37 @@ class _DemoResource:
         }
 
 
+# ──────────────────────────────────────────────────────────────────
+# Registered vs reserved route registry (Gap 4, issue #455)
+# ──────────────────────────────────────────────────────────────────
+
+# Canonical URI form for every production resource registered by
+# ``build_default_registry``. The left column is what an operator
+# types; the right column is the resource name the registry walks
+# against. ``worktrees`` is the only collection-form resource here —
+# the others are item-with-param URIs.
+REGISTERED_ROUTE_FORMS: dict[str, str] = {
+    "worktrees": "lcs://worktrees",
+    "branches":  "lcs://branches/<name>",
+    "pr":        "lcs://pr/<n>",
+    "sessions":  "lcs://sessions/<id>",
+    "spend":     "lcs://spend/<window>",
+    "valuations": "lcs://valuations/<plan-id>",
+}
+
+# URIs advertised in skills/lcs/SKILL.md but NOT registered in
+# ``build_default_registry``. ``--list-routes`` surfaces them under
+# "reserved (not implemented)" so operators can distinguish a
+# documented-but-unwired URI from a registered one. The list is the
+# single source of truth for the SKILL.md reserved section; update
+# both together.
+RESERVED_ROUTES: tuple[str, ...] = (
+    "lcs://hooks/coverage",
+    "lcs://interview/<step>",
+    "lcs://research/cache",
+)
+
+
 def build_default_registry() -> ResourceRegistry:
     """Build the default registry for the repository containing the CLI."""
     repo_root = Path.cwd()
@@ -113,6 +144,37 @@ def cmd_list_resources(server: LCSServer) -> int:
     for name in sorted(registry._by_name):  # noqa: SLF001
         handler = registry._by_name[name]  # noqa: SLF001
         print(f"  {name:32s}  {type(handler).__module__}.{type(handler).__name__}")
+    return 0
+
+
+def cmd_list_routes(server: LCSServer) -> int:
+    """Print the registered-vs-reserved split for the LCS URI namespace.
+
+    Registered routes list each live resource alongside its canonical
+    URI form, or a generic path form when no canonical template is
+    defined. Reserved routes are documented in ``skills/lcs/SKILL.md``
+    but are not wired into the default registry; calling them returns
+    exit 2. Surfacing them here makes that gap visible from the CLI
+    rather than as an exit-code surprise.
+    """
+    registry = server._registry  # noqa: SLF001 — CLI is the registry's user
+
+    # Registration order is stable, and iterating the live registry keeps
+    # optional/debug resources discoverable. Unmapped resources get an
+    # explicit generic form instead of disappearing from the listing.
+    print("registered:")
+    for resource_name in registry._by_name:  # noqa: SLF001
+        uri = REGISTERED_ROUTE_FORMS.get(
+            resource_name, f"lcs://{resource_name}/<path>",
+        )
+        print(f"  {uri:32s}{resource_name}")
+
+    # Reserved section: always emits the same set so the listing is
+    # deterministic regardless of which production resources are
+    # currently registered.
+    print("reserved (not implemented):")
+    for uri in RESERVED_ROUTES:
+        print(f"  {uri}")
     return 0
 
 
@@ -241,6 +303,8 @@ def main(argv: list[str]) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--list-resources", action="store_true",
                        help="list all registered LCS resources (user surface)")
+    group.add_argument("--list-routes", action="store_true",
+                       help="print registered + reserved LCS URI routes (user surface)")
     group.add_argument("--describe", metavar="NAME",
                        help="describe one resource (agent surface)")
     group.add_argument("--get", metavar="URI",
@@ -253,6 +317,8 @@ def main(argv: list[str]) -> int:
 
     if args.list_resources:
         return cmd_list_resources(server)
+    if args.list_routes:
+        return cmd_list_routes(server)
     if args.describe is not None:
         return cmd_describe(server, args.describe)
     if args.get is not None:
