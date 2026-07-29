@@ -34,8 +34,8 @@ JSON shape
 ----------
 ``score_interview_ambiguity(answers)`` returns
 ``{value_score, ambiguity_score, evidence_count, status}`` — matches
-the ``.dev-kit/hand-off/<step>.md`` 5-field frontmatter contract
-consumed by ``lcs://interview/<step>``.
+the ``.dev-kit/hand-off/<step>.md`` 5-field frontmatter contract that
+``/dev-kit:plan`` reads before emitting a PRD.
 """
 from __future__ import annotations
 
@@ -203,8 +203,8 @@ def _aggregate(per_field: Dict[str, int]) -> int:
 def score_interview_ambiguity(answers: Dict[str, str]) -> Dict:
     """Score a completed set of interview answers.
 
-    Returns the canonical 4-key hand-off shape consumed by
-    ``lcs://interview/<step>``:
+    Returns the canonical 4-key hand-off shape written to
+    ``.dev-kit/hand-off/<step>.md`` and read by ``/dev-kit:plan``:
         {
             "value_score":     float,  # fraction of fields clear
             "ambiguity_score": int,    # mean of per-field ambiguity

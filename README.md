@@ -35,7 +35,7 @@ kept here so an uncalled skill is still discoverable.
 
 Tier 1 covers the common cases; Tier 2 and Tier 3 are the focused-specialist
 extension set. Model-invoked sub-skills (`build-tdd`, `build-debug`,
-`build-verify`, `build-refactor`, `hook-doctor`, `lcs`) are deliberately
+`build-verify`, `build-refactor`, `hook-doctor`) are deliberately
 hidden from autocomplete and live one layer down — see
 [Skills by audience](#skills-by-audience) for the user-vs-model split. Confirm
 the live surface and frontmatter with:
@@ -49,30 +49,26 @@ python3 tools/skill_usage.py --days 0 --top 0
 
 **Start here if you are new to dev-harness-kit:**
 
-[`docs/home/00-index.html`](docs/home/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.  Korean version: [`docs/home/00-index.ko.html`](docs/home/00-index.ko.html).
+[`docs/home/00-index.html`](docs/home/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.
 
 ### What this plugin is, in two sentences
 
-dev-harness-kit ships the `Plan → Build → Review → Ship` loop for Claude Code and Codex in any repository. Underneath it sits the **Live Context Server (LCS)** — a read-only URI router at `lcs://<resource>` that lets every hook, agent, and operator ask the same question the same way, with a typed envelope (`{status, data, missing?, error?}`) instead of each one re-parsing `git` / `gh` / log files.
-
-### Why LCS exists (the one-paragraph version)
-
-Eight files in `hooks/` and `lib/` each needed the same live state — `slot_version`, PR status, session info, spend — and each shell-out to `git`/`gh`, parsed the JSON inline, and wrapped errors in its own shape. When `gh` was missing, one hook crashed, another silently fell back, a third lied. Hot loops re-spawned `gh` 60 times in a single babysit session. LCS is one Python module that every consumer now reads from; concurrent reads in a 5-second window collapse to one subprocess. The full numbers + before/after are in [`docs/home/00-index.html`](docs/home/00-index.html).
+dev-harness-kit ships the `Plan → Build → Review → Ship` loop for Claude Code and Codex in any repository. The hook matrix enforces branch hygiene, worktree isolation, and pre-commit test discipline directly on every Edit/Write/Bash call — the model can't talk its way past `git-guard` or `worktree-guard`.
 
 ### How to use it (the 60-second quickstart)
 
 ```bash
-# 1. See what LCS exposes
-python3 bin/dev-kit-lcs.py --list-resources
+# 1. Bootstrap a fresh repo
+/dev-kit:bootstrap
 
-# 2. Ask for live state
-python3 bin/dev-kit-lcs.py --get 'lcs://branches/main'
+# 2. Plan a feature
+/dev-kit:plan
 
-# 3. Read the full reference in your browser
-open docs/home/00-index.html
+# 3. Build, review, ship — every stage owns one skill
+/dev-kit:build && /dev-kit:review && /dev-kit:ship
 ```
 
-That is the whole LCS surface. Anything deeper is in the docs index.
+That is the whole loop. Anything deeper is in the docs index.
 
 ### Doc map (categorized)
 
@@ -83,30 +79,27 @@ easier to grep.
 
 | Topic | HTML | MD | What you get |
 |---|---|---|---|
-| Why + value + quickstart | [`docs/home/00-index.html`](docs/home/00-index.html) / [`.ko`](docs/home/00-index.ko.html) | [`docs/home/00-index.md`](docs/home/00-index.md) / [`.ko`](docs/home/00-index.ko.md) | Beginner landing — read first |
-| LCS reference (full) | [`docs/lcs/lcs-usage.html`](docs/lcs/lcs-usage.html) / [`.ko`](docs/lcs/lcs-usage.ko.html) | [`docs/lcs/lcs-usage.md`](docs/lcs/lcs-usage.md) / [`.ko`](docs/lcs/lcs-usage.ko.md) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
-| STAGES (what each loop step owns) | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | bootstrap → plan → build → review → security → ship |
+| Why + value + quickstart | [`docs/home/00-index.html`](docs/home/00-index.html) | [`docs/home/00-index.md`](docs/home/00-index.md) | Beginner landing — read first |
+| STAGES (what each loop step owns) | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | bootstrap → plan → valuate → build → review → security → ship |
 | CI install (run dev-kit CI elsewhere) | [`docs/quality/ci-setup.html`](docs/quality/ci-setup.html) | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
 | Maintenance gate (PR-only quality) | [`docs/quality/maintenance-gate.html`](docs/quality/maintenance-gate.html) | [`docs/quality/maintenance-gate.md`](docs/quality/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
 | Runtime portability (Claude Code ↔ Codex) | [`docs/architecture/RUNTIME-PORTABILITY.html`](docs/architecture/RUNTIME-PORTABILITY.html) | [`docs/architecture/RUNTIME-PORTABILITY.md`](docs/architecture/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
-| Multi-harness design proposal | [`docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.html`](docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.html) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | [`docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.md) + same proposal dir | 13 topic files (Korean) covering the architecture |
 | Naming convention (SSOT) | [`docs/naming/NAMING.html`](docs/naming/NAMING.html) | [`docs/naming/NAMING.md`](docs/naming/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
 | Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | 9 questions before code |
 | Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
 | Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | Why a single maintainer and a 20-person team adopt the harness differently |
 | Hook coverage gaps (P4 Bucket B audit) | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | Which hook events are wired vs. which aren't, per runtime |
 | ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | How Model-tier agents find and dispatch to Capability-tier skills |
-| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | The wire-format ACP uses to talk between agents; how it differs from LCS |
-| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | same | All 35 skills with category + α classification |
-| Decision records | [`docs/adr/`](docs/adr) | same | 5 locked ADRs (0001, 0010, 0020, 0021, 0022) |
+| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | The wire-format ACP uses to talk between agents |
+| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | same | All skills with category + α classification |
+| Decision records | [`docs/adr/`](docs/adr) | same | Locked ADRs |
 | Repo map | [`docs/repo/REPOSITORY-MAP.html`](docs/repo/REPOSITORY-MAP.html) | [`docs/repo/REPOSITORY-MAP.md`](docs/repo/REPOSITORY-MAP.md) | Where each component lives in the tree |
 
 If you have only five minutes, open [`docs/home/00-index.html`](docs/home/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
 
 The same docs are also available as Markdown:
 
-- [`docs/home/00-index.md`](docs/home/00-index.md) / [`docs/home/00-index.ko.md`](docs/home/00-index.ko.md) — landing (beginner intro + categorized index)
-- [`docs/lcs/lcs-usage.md`](docs/lcs/lcs-usage.md) / [`docs/lcs/lcs-usage.ko.md`](docs/lcs/lcs-usage.ko.md) — full LCS reference (URI grammar, resources, CLI surface, JSON-RPC, integration map, verification log)
+- [`docs/home/00-index.md`](docs/home/00-index.md) — landing (beginner intro + categorized index)
 
 The HTML versions are preferred for browsing (sticky topnav, collapsible
 sections, dark/light theme auto-switch, copy-able code blocks); the MD
@@ -125,8 +118,8 @@ model's tool calls — they cannot be absorbed by model improvements.
 | `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
-| `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, enriches the message with the live worktree list via `lcs://worktrees` (shell-out fallback) | All |
-| `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot via `lcs://branches/<name>` (shell-out fallback) on `git push` to a feature branch | All |
+| `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
+| `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
 | `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
 | `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
@@ -149,7 +142,6 @@ get absorbed; the **hooks and state machine don't**.
 - [Core concepts](#core-concepts)
   - [Worktree rule](#worktree-rule)
   - [Skills by audience](#skills-by-audience)
-  - [Live Context Server (LCS)](#live-context-server-lcs)
 - [Tooling](#tooling)
   - [Loghooks](#loghooks-dev-kitlog)
   - [Token efficiency analyzer](#token-efficiency-analyzer)
@@ -509,111 +501,20 @@ It also separates human-invocable skills from model-invoked sub-skills, and
 is where `/dev-kit:token-analyzer` and every other skill's full detail lives
 rather than in this README.
 
-### Live Context Server (LCS)
+### Skill composition
 
-The **LCS** is the harness's read-only state substrate. Every runtime fact
-the harness cares about — worktrees, branches, PRs, sessions, token spend,
-hook coverage, valuation verdicts, interview state, the research cache — is
-exposed through a single URI namespace:
+Each per-stage skill owns its own pre-flight check, AC, and hand-off:
 
-```text
-lcs://<resource>[/<param>]
-```
+| Skill | Stage | What it reads | What it writes |
+|---|---|---|---|
+| `/dev-kit:plan` | Plan | Operator prompt | `PRD.md`, `phases/<name>/step<N>.md`, `phases/<name>/index.json` |
+| `/dev-kit:valuate` | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
+| `/dev-kit:build` | Build | `phases/<name>/index.json` + per-step file | per-step `output.json` |
+| `/dev-kit:review` | Review | PR diff | verdict (Approve / Changes Requested / Blocked) |
+| `/dev-kit:security` | Security | PR diff | per-OWASP verdict |
+| `/dev-kit:ship` | Ship | Review verdict + AC outputs | `git tag` + CHANGELOG entry |
 
-The model (and the operator) asks the harness "what is the repo doing right
-now?" through one of two surfaces:
-
-| Surface | How | When to use |
-|---|---|---|
-| **Chat** — `/dev-kit:lcs` | Model-invoked skill that shells out to `bin/dev-kit-lcs.py` and renders the JSON payload inline. For NL questions about LCS state, the dispatcher consults `bin/dev-kit-lcs-route.py` (break-even rule: shell wins when one tool answers; LCS wins when N are needed). | "Show me every worktree", "what's the spend this hour", "is PR #447 MERGEABLE?", "what worktrees are stale?". |
-| **CLI** — `bin/dev-kit-lcs.py` | Stdlib-only launcher; `--get <uri>`, `--list-resources`, `--describe <name>`, or `--serve` (JSON-RPC on stdio, MCP-compatible). | Hooks / scripts / CI; anything that doesn't want a chat round-trip. |
-
-Both reach the same resource registry. The skill is hidden from autocomplete
-(`user-invocable: false`, `alpha: state`) — the model auto-invokes it
-whenever a parent skill needs a state lookup. Source:
-[`skills/lcs/SKILL.md`](skills/lcs/SKILL.md).
-
-#### Production resources
-
-The default CLI registry wires the 6 core production handlers (`worktrees`,
-`branches`, `pr`, `sessions`, `spend`, `valuations`); the remaining URIs are
-reserved shapes that return exit code 2 if a caller asks for them before the
-corresponding handler ships. Live list + per-resource docstrings live in
-`lib/lcs_resources/`; the source is the source of truth.
-
-| URI | What it returns |
-|---|---|
-| `lcs://worktrees` | Every git worktree, with a `summary` block (active/stale counts, `slot_drift`, `as_of`) for freshness at a glance. |
-| `lcs://worktrees/<branch>` | One worktree's HEAD SHA, slot version, last commit. |
-| `lcs://branches` | List variant: every local branch with summary stats (lets you discover a name before drilling in). |
-| `lcs://branches/<name>` | Local + remote branches, ahead/behind counts, last-CI status. |
-| `lcs://branches/<name>/slot` | Slot metadata (`slot-id`, runtime, last release). |
-| `lcs://prs` | List variant: every open PR with `n`, `title`, `head`, `ci_state`, `review_state`. |
-| `lcs://pr/<n>` | One PR's CI checks, review verdict, merge state, slot version. |
-| `lcs://sessions` | List variant: every indexed session with `id`, `role`, `started_at`, `current_task`, `last_tool`. |
-| `lcs://sessions/<id>` | One recorded Claude / Codex session (turns, tools, tokens). |
-| `lcs://spend/<window>` | Token spend over a time window, bucketed by model + worktree. |
-| `lcs://hooks/coverage` | Which hook fires against which runtime (claude-code vs codex). |
-| `lcs://interview/<step>` | Current state of the plan-emission interview (step + answers). |
-| `lcs://research/cache` | Research cache contents (queries, hits, freshness). |
-| `lcs://valuations/<plan-id>` | A `valuate` verdict (decision + per-axis rationale). |
-
-`<window>` is `today` / `last-hour` / an ISO range; `<step>` is the
-interview step id; the rest are obvious from context. URIs are pure — no side effects, no writes, no network I/O beyond `gh api` / `git` reads.
-
-**Listing what's wired vs. what's reserved.** A documented URI that is not a
-registered route is worse than no URI (the operator types the URI, gets exit
-2, and concludes LCS is broken), so `--list-routes` on the CLI splits the
-two:
-
-```bash
-python3 bin/dev-kit-lcs.py --list-routes
-# registered:
-#   lcs://worktrees            worktrees
-#   lcs://branches/<name>      branches
-#   ...
-# reserved (not implemented):
-#   lcs://hooks/coverage
-#   lcs://interview/<step>
-#   lcs://research/cache
-```
-
-**When to route to LCS vs. just shell out.** A separate sibling binary
-`bin/dev-kit-lcs-route.py` answers the NL question "what resource should
-handle this?" against a deterministic break-even rule: *if a single shell
-call answers the question, use the shell; if it requires N correlated calls
-across heterogeneous sources, route to LCS.* The router is not a skill (a
-skill that decides whether to call another skill is L6 anti-pattern); it
-is a thin CLI binary, ~200 tokens per routed call, ROI positive only on
-multi-source aggregations. See `python3 bin/dev-kit-lcs-route.py --list-rules`.
-
-#### Hook integration
-
-The 8 enforcement hooks consult LCS state instead of shelling out to `git`
-where the lookup would be expensive or error-prone:
-
-- `worktree-guard.sh` enriches the deny message with the live `lcs://worktrees`
-  list (falls back to a `git worktree list` shell-out if LCS is unreachable).
-- `git-guard.sh` verifies the `plugin.json` slot via `lcs://branches/<name>`
-  on `git push` to a feature branch (shell-out fallback).
-- `log-on-session-start.sh` resolves the active worktree through LCS at
-  session start so the loghooked transcript carries the right branch label.
-- `provider-divergence-check.sh` reads `lcs://branches/<name>` to check
-  the runtime-provider slot before nudging.
-
-This is the **Phase 2 batch** (PR #442). The dispatch is `lcs_server.run_lcs()`
-behind a thin shell wrapper; if the LCS Python module fails to import, the
-hook falls back to the shell-out path with a stderr note — failure to
-consult LCS never blocks the hook's primary job.
-
-#### When to add a new resource
-
-A new `lcs://<x>` shape is the right move when more than one skill / hook
-needs the same live read. Drop a module in `lib/lcs_resources/<x>.py`
-implementing the `Resource` protocol (`name`, `fetch(parsed) -> dict`,
-`schema: dict | None`); the dispatcher auto-registers it. The
-`/dev-kit:lcs` skill needs no change — it shells out and prints whatever
-the registry returns.
+The verdict envelope contract is pinned by `lib/valuation_engine.py:decision_is_canonical_envelope` (3 keys: `decision` / `rationale` / `blocking_findings`). The Phase 4 auto-gate that hard-blocked `build` on a non-PROCEED verdict was removed in #463 along with the LCS substrate that backed it; operators now run `/dev-kit:valuate` explicitly and the build proceeds unless they flag a non-PROCEED verdict.
 
 ---
 

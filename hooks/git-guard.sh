@@ -175,11 +175,12 @@ fi
 #    feature branch. The slot is the dev-kit plugin.json version the
 #    branch was built against; pushing with a stale slot collides with
 #    parallel-PR merge order (see worktree-guard's _compute_version_slot
-#    block for the slot formula). Read lcs://branches/<name> for the
-#    branch's `slot_version` field when LCS is available; fall back to
-#    reading origin/main's plugin.json version (the correct slot when
-#    no parallel PR is racing us). Both paths must produce the same
-#    value (parity test in tests/test_lcs_hook_integration.py).
+#    block for the slot formula). Slot source: origin/main's
+#    plugin.json version (the correct slot when no parallel PR is
+#    racing us). The LCS substrate (#463) used to expose a per-branch
+#    `slot_version` field here, but the CLI was net-negative on push
+#    latency and was dropped — direct shell on origin/main's
+#    plugin.json is the only path.
 _verify_slot() {
   local branch_name="" expected="" actual=""
   branch_name="$(git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null)" || return 0
@@ -188,13 +189,12 @@ _verify_slot() {
   # parallel PR is racing). For a true slot with parallel PRs, add
   # PR_index; the parallel-PR variant lives in worktree-guard.sh.
   #
-  # Earlier this hook also read lcs://branches/<name> via
-  # bin/dev-kit-lcs.py. The LCS call adds ~250 ms Python startup
-  # tax while saving only one `git rev-parse` fork (~30 ms); net cost
-  # was -220 ms per push. The direct shell path is preferable here.
-  # LCS remains load-bearing as the CLI substrate (bin/dev-kit-lcs.py
-  # is still callable directly by operators / future consumers /
-  # tests) and for any daemon-mode consumer once `--serve` ships.
+  # Earlier this hook also called the LCS CLI to read a per-branch
+  # `slot_version` field. The Python startup tax (~250 ms) outweighed
+  # the ~30 ms savings from skipping one `git rev-parse` fork by
+  # ~220 ms per push, so the LCS path was removed (PR #462). The LCS
+  # substrate itself was then dropped entirely (#463). Direct shell on
+  # origin/main's plugin.json is the only remaining path.
   expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   [ -n "${expected:-}" ] || return 0
@@ -207,7 +207,7 @@ _verify_slot() {
   actual_claude="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_claude=""
   actual_codex="$(python3 -c "import json;print(json.load(open('.codex-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_codex=""
   if [ "$actual_claude" != "$expected" ] || [ -n "$actual_codex" ] && [ "$actual_codex" != "$expected" ]; then
-    deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main or lcs://branches/${branch_name}). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
+    deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi
 }
 # Fire on ANY `git push` that the main-push block above did NOT

@@ -45,11 +45,18 @@ def _run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess
 
 class TestHarnessAudit(unittest.TestCase):
     def test_audit_covers_all_six_harnesses(self):
-        """audit dict must contain exactly 6 harnesses in HARNESSES order."""
+        """audit dict must contain exactly 5 harnesses in HARNESSES order.
+
+        The audit covered 6 harnesses through #447 (lcs / hooks / eval /
+        plan_value / research / interview). PR #463 dropped the LCS
+        substrate, so the lcs audit slot went with it; 5 harnesses
+        remain. The test name is preserved (renaming would churn git
+        history) but the assertion is updated.
+        """
         audit = harness_audit.run_audit(PROJECT_ROOT)
         names = [h["name"] for h in audit["harnesses"]]
         self.assertEqual(names, list(harness_audit.HARNESSES))
-        self.assertEqual(audit["summary"]["total"], 6)
+        self.assertEqual(audit["summary"]["total"], 5)
 
     def test_audit_json_output_machine_readable(self):
         """--json emits parseable JSON with the canonical shape."""
@@ -59,7 +66,7 @@ class TestHarnessAudit(unittest.TestCase):
         self.assertIn("summary", data)
         self.assertIn("read_only", data)
         self.assertEqual(data["read_only"], True)
-        self.assertEqual(len(data["harnesses"]), 6)
+        self.assertEqual(len(data["harnesses"]), 5)
 
     def test_audit_emits_html_report(self):
         """--html-out PATH writes a self-contained HTML file with one row per harness."""
@@ -71,8 +78,8 @@ class TestHarnessAudit(unittest.TestCase):
             html = out.read_text(encoding="utf-8")
             self.assertIn("<!DOCTYPE html>", html)
             self.assertIn("<table>", html)
-            # 6 harness rows + 1 header row = 7 <tr>
-            self.assertEqual(html.count("<tr>"), 7)
+            # 5 harness rows + 1 header row = 6 <tr>
+            self.assertEqual(html.count("<tr>"), 6)
             # No external assets / no JavaScript
             self.assertNotIn("<script", html)
             self.assertNotIn("http://", html.replace("http://www.w3.org", ""))
@@ -98,19 +105,29 @@ class TestHarnessAudit(unittest.TestCase):
                          "test_smoke.py was mutated by audit (would indicate state leak)")
 
     def test_audit_detects_missing_alpha_field(self):
-        """A SKILL.md missing the `alpha:` field must surface as alpha_valid=False."""
+        """A SKILL.md missing the `alpha:` field must surface as alpha_valid=False.
+
+        Used to test against `skills/lcs/SKILL.md` because that was the
+        simplest "state alpha" harness. After #463 the LCS substrate
+        (and `skills/lcs/SKILL.md`) is gone, so the test exercises the
+        same logic against `skills/evaluate/SKILL.md` (still shipped;
+        the audit function reads alpha from frontmatter for this
+        harness). The harness choice is incidental — the assertion is
+        "any SKILL.md whose alpha frontmatter is missing surfaces as
+        alpha_valid=False".
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "skills" / "lcs").mkdir(parents=True)
+            (root / "skills" / "evaluate").mkdir(parents=True)
             # SKILL.md without alpha field
-            (root / "skills" / "lcs" / "SKILL.md").write_text(
-                "---\nname: lcs\ncategory: design\n---\nbody\n",
+            (root / "skills" / "evaluate" / "SKILL.md").write_text(
+                "---\nname: evaluate\ncategory: enforcement\n---\nbody\n",
                 encoding="utf-8",
             )
             audit = harness_audit.run_audit(root)
-            lcs = next(h for h in audit["harnesses"] if h["name"] == "lcs")
-            self.assertFalse(lcs["alpha_valid"])
-            self.assertTrue(any("alpha" in f for f in lcs["findings"]))
+            eval_h = next(h for h in audit["harnesses"] if h["name"] == "eval")
+            self.assertFalse(eval_h["alpha_valid"])
+            self.assertTrue(any("alpha" in f for f in eval_h["findings"]))
 
     def test_audit_handles_missing_harnesses(self):
         """Missing research/interview files surface as findings, not exceptions."""
@@ -118,7 +135,7 @@ class TestHarnessAudit(unittest.TestCase):
             root = Path(tmp)
             # Empty repo — all harnesses should report findings, no crashes
             audit = harness_audit.run_audit(root)
-            self.assertEqual(audit["summary"]["total"], 6)
+            self.assertEqual(audit["summary"]["total"], 5)
             for h in audit["harnesses"]:
                 self.assertFalse(h["shipped"], f"{h['name']} unexpectedly shipped")
                 self.assertGreater(len(h["findings"]), 0,

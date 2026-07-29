@@ -1,13 +1,13 @@
 ---
 name: harness-audit
 category: audit
-description: 0-arg cross-harness quality audit. Reads on-disk state of 6 dev-kit harnesses (lcs / hooks / eval / plan_value / research / interview) and surfaces per-harness health: alpha classification, L7 alignment, resource completeness, rubric completeness. /dev-kit:harness-audit [--json] [--html-out PATH] [--project-root DIR].
+description: 0-arg cross-harness quality audit. Reads on-disk state of 5 dev-kit harnesses (hooks / eval / plan_value / research / interview) and surfaces per-harness health: alpha classification, L7 alignment, resource completeness, rubric completeness. /dev-kit:harness-audit [--json] [--html-out PATH] [--project-root DIR].
 alpha: analysis
 when_to_use:
   - User types /dev-kit:harness-audit
   - Reviewer wants a cross-harness dashboard before merging Phase 7.1–7.4
   - Operator needs to know which harnesses are missing after a partial Phase 0–6 merge
-  - Pre-release hygiene check covering the 6 shipped harnesses
+  - Pre-release hygiene check covering the 5 shipped harnesses
 allowed-tools: Read Bash Glob Grep
 disallowed-tools: Write Edit WebFetch
 model: sonnet
@@ -19,7 +19,7 @@ user-invocable: true
 # /dev-kit:harness-audit — Cross-harness quality audit (Phase 7, issues #387–#390)
 
 The `harness-audit` skill runs `tools/harness_audit.py` and returns one
-report covering the 6 dev-kit harnesses. The audit is **strictly
+report covering the 5 dev-kit harnesses. The audit is **strictly
 read-only** (verified by `tests/test_harness_audit.py::test_audit_is_read_only`)
 — it never writes to `.dev-kit/state.json`, never mutates `state.json`,
 never invokes network I/O.
@@ -31,8 +31,8 @@ Per-harness, the audit reports:
 - `alpha` classification (from SKILL.md frontmatter) — must be
   `state | enforcement | analysis` (Iron Law L6).
 - `alpha_valid` — True only when the alpha is in the L6 set.
-- `resource_count` / `resource_expected` — LCS resources or hook
-  scripts that exist vs. expected (per the 6-harness contract).
+- `resource_count` / `resource_expected` — hook scripts that exist vs.
+  expected (per the 5-harness contract).
 - `rubric_count` / `rubric_expected` — eval rubrics (harness-quality,
   os-quality) present under `eval/rubrics/`.
 - `shipped` — True iff the load-bearing files exist + alpha is valid.
@@ -41,16 +41,19 @@ Per-harness, the audit reports:
 The aggregate `summary` carries `shipped / total`, total `findings`
 count, and the list of harnesses with an invalid `alpha`.
 
-## 6 harnesses audited
+## 5 harnesses audited
 
 | Harness | What it checks | Why |
 |---|---|---|
-| `lcs` | `lib/lcs_server.py` + 9 LCS resources + `skills/lcs/SKILL.md` alpha | LCS is the live state substrate |
 | `hooks` | 7 hook scripts in `hooks/` + `.claude/settings.json` or `.codex/hooks.json` | Hooks enforce the worktree / CI gates |
 | `eval` | `lib/eval_runner.py` + `lib/llm_judge.py` + `eval/rubrics/*.yaml` + `skills/evaluate/SKILL.md` | Eval drives the agent-behavior rubric |
 | `plan_value` | `lib/valuation_engine.py` + rubric + judge prompt + `skills/valuate/SKILL.md` | Plan-value is the no-go gate before build |
 | `research` | `lib/research_engine.py` + `skills/research/SKILL.md` | Research is the citation enforcement layer |
 | `interview` | `lib/interview_engine.py` + `skills/interview/SKILL.md` | Interview resolves plan ambiguity |
+
+> The LCS substrate was dropped in #463 (no production consumers after
+> PR #462). The harness audit's 6th harness slot was the LCS substrate
+> itself; it was removed alongside the substrate.
 
 ## Output formats
 
@@ -68,12 +71,12 @@ JSON shape (the canonical contract):
 ```json
 {
   "harnesses": [
-    {"name": "lcs", "shipped": true, "alpha": "state",
-     "alpha_valid": true, "resource_count": 9, "resource_expected": 9,
+    {"name": "hooks", "shipped": true, "alpha": "enforcement",
+     "alpha_valid": true, "resource_count": 7, "resource_expected": 7,
      "rubric_count": 0, "rubric_expected": 0, "findings": []}
   ],
   "summary": {
-    "total": 6, "shipped": 6, "findings": 0,
+    "total": 5, "shipped": 5, "findings": 0,
     "alpha_invalid": [], "all_shipped": true
   },
   "read_only": true
@@ -118,17 +121,17 @@ deletion-oriented).
 
 `tests/test_harness_audit.py` covers:
 
-- `test_audit_covers_all_six_harnesses` — exactly 6 entries, in HARNESSES order
-- `test_audit_emits_html_report` — `--html-out` writes valid HTML with 6 rows
+- `test_audit_covers_all_six_harnesses` — exactly 5 entries, in HARNESSES order (updated for #463)
+- `test_audit_emits_html_report` — `--html-out` writes valid HTML with 5 rows
 - `test_audit_is_read_only` — no `.dev-kit/` files created, no state mutation
 - `test_audit_detects_missing_alpha_field` — invalid alpha → alpha_valid=False
-- `test_audit_json_output_machine_readable` — `--json` parses + has 6 entries
+- `test_audit_json_output_machine_readable` — `--json` parses + has 5 entries
 - `test_audit_handles_missing_harnesses` — research/interview absence → findings, not crash
 - `test_audit_detects_missing_rubrics` — `eval/rubrics/` absent → finding
 
 ## Next step
 
 After audit, hand off to:
-- `/dev-kit:ship` once all 6 harnesses are shipped + no L7 violations.
+- `/dev-kit:ship` once all 5 harnesses are shipped + no L7 violations.
 - `/dev-kit:inspect` for per-PR review (different question).
 - `/dev-kit:repair` if the audit reveals broken alpha / missing rubric.

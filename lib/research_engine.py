@@ -2,7 +2,8 @@
 """research_engine.py — Phase 0-3 escalation + verification gate for /dev-kit:research.
 
 Four escalation phases (deterministic, no model picks the phase):
-  Phase 0 - cache hit: lcs://research/cache lookup (in-memory / on-disk JSONL).
+  Phase 0 - cache hit: `.dev-kit/research/cache.jsonl` lookup (in-memory
+            mirror + on-disk JSONL).
   Phase 1 - direct search: single HTTP GET + OGP / JSON-LD metadata extract.
   Phase 2 - multi-source: fan-out across N candidate URLs, deduplicate claims.
   Phase 3 - human handoff: returns a structured NEEDS_HUMAN payload so the
@@ -671,7 +672,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--project-root", default=".",
-        help="project root for cache + LCS lookups (default: cwd)",
+        help="project root for cache lookups (default: cwd)",
     )
     args = parser.parse_args()
 

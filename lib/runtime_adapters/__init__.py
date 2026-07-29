@@ -1,10 +1,9 @@
 """runtime_adapters — runtime-neutral adapter surface.
 
-Phase 0 of the LCS plan (issue #329, #343) establishes the abstract surface
-that every Phase 1+ component is built against: a single `RuntimeAdapter`
-Protocol with two concrete implementations (`ClaudeCodeAdapter`,
-`CodexAdapter`). Downstream code asks the package "give me the right
-adapter for this environment" and only ever imports the abstract surface.
+Provides a single `RuntimeAdapter` Protocol with two concrete
+implementations (`ClaudeCodeAdapter`, `CodexAdapter`). Downstream code
+asks the package "give me the right adapter for this environment" and
+only ever imports the abstract surface.
 
 Importing this package from the project root is the supported entry point:
 
