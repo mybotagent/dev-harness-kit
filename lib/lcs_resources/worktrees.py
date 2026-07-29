@@ -4,8 +4,9 @@ Exposes the project's worktree set as a normalized JSON snapshot.
 Two URI forms:
 
   lcs://worktrees/
-      → {"status": "ok", "data": {"worktrees": [...]}}
-        list of {branch, path, head, dirty, last_touched}
+      → {"status": "ok", "data": {"worktrees": [...], "summary": {...}}}
+        list of {branch, path, head, dirty, last_touched} plus collection
+        summary fields {total, active, stale, slot_drift, as_of}
 
   lcs://worktrees/<branch>/
       → {"status": "ok", "data": {...}}

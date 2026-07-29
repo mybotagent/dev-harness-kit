@@ -20,8 +20,10 @@ Each entry's ``slot_version`` is parsed as a dotted tuple
 (``"0.3.150"`` → ``(0, 3, 150)``) so comparisons are numeric, not
 lexicographic. ``min``/``max`` are the lowest/highest parsed tuples
 across the set; ``None`` and unparseable values are excluded from the
-min/max computation but counted as "behind" in ``behind_count``
-because they cannot be at the max slot.
+min/max computation. When at least one valid version establishes a maximum,
+``None`` and unparseable values count as "behind" because they cannot be at
+that maximum. If no valid version exists, drift is not measurable and
+``behind_count`` is zero.
 """
 from __future__ import annotations
 
@@ -48,15 +50,19 @@ def _parse_slot_version(raw: Any) -> tuple[int, ...] | None:
         return None
 
 
-def summarize_worktrees(entries: list[dict]) -> dict:
+def summarize_worktrees(entries: list[dict], *, as_of: datetime | None = None) -> dict:
     """Build the Gap-2 summary block for a list of worktree entries.
 
     Each entry must carry ``last_touched`` (ISO-8601 string or ``None``)
     and ``slot_version`` (string or ``None``) — the two fields the
     summary aggregates. Missing fields are tolerated and degrade to
-    "stale" / "behind" respectively.
+    "stale" / "behind" respectively. ``as_of`` is injectable so callers
+    and tests can evaluate the 24-hour boundary deterministically.
     """
-    as_of_dt = datetime.now(timezone.utc)
+    as_of_dt = as_of or datetime.now(timezone.utc)
+    if as_of_dt.tzinfo is None:
+        as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+    as_of_dt = as_of_dt.astimezone(timezone.utc)
     cutoff = as_of_dt - FRESHNESS_WINDOW
 
     active = 0
@@ -72,7 +78,9 @@ def summarize_worktrees(entries: list[dict]) -> dict:
                 ts_dt = None
             if ts_dt is not None and ts_dt.tzinfo is None:
                 ts_dt = ts_dt.replace(tzinfo=timezone.utc)
-            if ts_dt is not None and ts_dt >= cutoff:
+            if ts_dt is not None:
+                ts_dt = ts_dt.astimezone(timezone.utc)
+            if ts_dt is not None and cutoff <= ts_dt <= as_of_dt:
                 active += 1
             else:
                 stale += 1

@@ -51,12 +51,13 @@ class TestSummaryHelperShape(unittest.TestCase):
 
     def test_active_plus_stale_equals_total(self):
         # Mix of fresh, stale, and missing-timestamp entries.
+        as_of = datetime(2026, 7, 29, 15, 0, 0, tzinfo=timezone.utc)
         entries = [
             {"last_touched": "2026-07-29T14:00:00+00:00", "slot_version": "0.3.150"},
             {"last_touched": "2026-07-20T00:00:00+00:00", "slot_version": "0.3.100"},
             {"last_touched": None, "slot_version": "0.3.100"},
         ]
-        summary = summarize_worktrees(entries)
+        summary = summarize_worktrees(entries, as_of=as_of)
         self.assertEqual(summary["active"] + summary["stale"], summary["total"])
         self.assertEqual(summary["total"], 3)
         # Two stale (one past 24h, one None), one fresh.
@@ -64,8 +65,6 @@ class TestSummaryHelperShape(unittest.TestCase):
         self.assertEqual(summary["active"], 1)
 
     def test_active_window_is_24h_from_as_of(self):
-        # Construct a fixed `as_of` by manipulating the input: a 23h-old
-        # entry is active; a 25h-old entry is stale.
         as_of = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
         entries = [
             {"last_touched": (as_of - timedelta(hours=23)).isoformat(),
@@ -73,18 +72,24 @@ class TestSummaryHelperShape(unittest.TestCase):
             {"last_touched": (as_of - timedelta(hours=25)).isoformat(),
              "slot_version": "0.3.150"},
         ]
-        # Run the helper twice within a second so as_of lands between
-        # the two timestamps' effective cutoffs. Then assert the split
-        # matches the 24h rule by reading the produced as_of and
-        # checking each timestamp relative to it.
-        summary = summarize_worktrees(entries)
-        produced_as_of = datetime.fromisoformat(summary["as_of"])
-        produced_cutoff = produced_as_of - timedelta(hours=24)
-        active_count = sum(
-            1 for e in entries
-            if datetime.fromisoformat(e["last_touched"]) >= produced_cutoff
-        )
-        self.assertEqual(summary["active"], active_count)
+        summary = summarize_worktrees(entries, as_of=as_of)
+        self.assertEqual(summary["active"], 1)
+        self.assertEqual(summary["stale"], 1)
+        self.assertEqual(summary["as_of"], as_of.isoformat())
+
+    def test_freshness_boundaries_and_future_timestamp(self):
+        as_of = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
+        cutoff = as_of - timedelta(hours=24)
+        entries = [
+            {"last_touched": cutoff.isoformat(), "slot_version": "0.3.150"},
+            {"last_touched": (cutoff - timedelta(seconds=1)).isoformat(),
+             "slot_version": "0.3.150"},
+            {"last_touched": (as_of + timedelta(seconds=1)).isoformat(),
+             "slot_version": "0.3.150"},
+        ]
+        summary = summarize_worktrees(entries, as_of=as_of)
+        self.assertEqual(summary["active"], 1)
+        self.assertEqual(summary["stale"], 2)
 
     def test_as_of_is_iso8601_utc(self):
         entries = [{"last_touched": "2026-07-28T14:49:00+00:00", "slot_version": "0.3.150"}]
@@ -153,23 +158,16 @@ class TestSummaryHelperShape(unittest.TestCase):
     def test_proposal_example_14_worktrees(self):
         """The exact proposal example: 14 entries, 1 active (at max),
         13 stale (all below max). behind_count == 13."""
-        entries = [{"last_touched": "2026-07-29T14:49:00+00:00",
+        as_of = datetime(2026, 7, 29, 15, 0, 0, tzinfo=timezone.utc)
+        entries = [{"last_touched": (as_of - timedelta(minutes=11)).isoformat(),
                     "slot_version": "0.3.150"}]
         for _ in range(13):
-            entries.append({"last_touched": "2026-07-21T05:18:00+00:00",
+            entries.append({"last_touched": (as_of - timedelta(days=8)).isoformat(),
                             "slot_version": "0.3.100"})
-        summary = summarize_worktrees(entries)
+        summary = summarize_worktrees(entries, as_of=as_of)
         self.assertEqual(summary["total"], 14)
-        # Cutoff shifts with as_of — assert the *gap* of 12 active=1 vs
-        # stale=13 by counting fresh relative to produced as_of.
-        as_of = datetime.fromisoformat(summary["as_of"])
-        cutoff = as_of - timedelta(hours=24)
-        fresh = sum(
-            1 for e in entries
-            if datetime.fromisoformat(e["last_touched"]) >= cutoff
-        )
-        self.assertEqual(summary["active"], fresh)
-        self.assertEqual(summary["stale"], 14 - fresh)
+        self.assertEqual(summary["active"], 1)
+        self.assertEqual(summary["stale"], 13)
         self.assertEqual(summary["slot_drift"]["min"], "0.3.100")
         self.assertEqual(summary["slot_drift"]["max"], "0.3.150")
         self.assertEqual(summary["slot_drift"]["behind_count"], 13)

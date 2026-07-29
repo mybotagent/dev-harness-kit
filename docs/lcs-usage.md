@@ -110,7 +110,18 @@ Collection — `lcs://worktrees`:
         "last_touched": "2026-07-28T02:01:14+00:00",
         "slot_version": "0.3.147"
       }
-    ]
+    ],
+    "summary": {
+      "total": 1,
+      "active": 1,
+      "stale": 0,
+      "slot_drift": {
+        "min": "0.3.147",
+        "max": "0.3.147",
+        "behind_count": 0
+      },
+      "as_of": "2026-07-29T04:00:00+00:00"
+    }
   }
 }
 ```
