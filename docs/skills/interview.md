@@ -9,7 +9,7 @@
 ## When to use it
 
 - The user types `/dev-kit:interview <plan-file>`.
-- The `plan` skill consumes `lcs://interview/<session>` before emitting a PRD.
+- The `plan` skill reads `.dev-kit/hand-off/<step>.md` before emitting a PRD.
 - The user wants to back-fill the 5 fields for an in-flight phase.
 - A reviewer wants the audit trail (`decision-log.md` + `loop-log.json`) for the interview loop.
 
@@ -17,4 +17,4 @@
 
 - `decision-log.md` — the 5 fields × iterations matrix
 - `loop-log.json` — per-turn safety / convergence / dedup metrics
-- An updated `lcs://interview/<session>` resource the `plan` stage reads from
+- An updated `.dev-kit/hand-off/<step>.md` the `plan` stage reads from

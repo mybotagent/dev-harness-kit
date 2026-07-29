@@ -5,7 +5,7 @@ description: "5-field safety-contract interview that gates plan emission. Drives
 alpha: enforcement
 when_to_use:
   - User types /dev-kit:interview <plan-file>
-  - Plan skill consumes lcs://interview/<session> before emitting PRD
+  - Plan skill consumes the interview hand-off before emitting PRD
   - User wants to back-fill the 5 fields for an in-flight phase
   - Reviewer wants the audit trail (decision-log.md + loop-log.json) for the interview loop
 allowed-tools: Read Write Glob AskUserQuestion
@@ -27,8 +27,9 @@ safety:
 Self-contained. Drives `lib.interview_engine` through one conversational
 loop until all 5 fields (goal / constraints / success_criteria /
 anti_goals / acceptance_rubric) clear the composite convergence test.
-The output is a `lcs://interview/<session>` payload (hand-off
-frontmatter) the plan skill reads before emitting PRD.md.
+The output is the hand-off frontmatter at
+`.dev-kit/hand-off/interview-<session>.md`, which the plan skill reads
+before emitting PRD.md.
 
 ## Iron Laws (Phase 6, MUST-15)
 
@@ -52,7 +53,7 @@ frontmatter) the plan skill reads before emitting PRD.md.
 
 Interview artifacts only. No code, no PRD, no build. Take a 1-line
 idea + a 5-field intake loop → write the hand-off frontmatter the plan
-skill consumes via `lcs://interview/<session>`.
+skill reads from `.dev-kit/hand-off/interview-<session>.md`.
 
 ## Inputs / outputs
 
@@ -149,6 +150,6 @@ On `.dev-kit/hand-off/interview-<session>.md` complete:
 
 ## Next step
 
-`/dev-kit:plan <idea>` — reads `lcs://interview/<session>` (the hand-off
-file above) before Gate 1. If `status: held`, refuse to emit PRD.md
-and surface the gap to the user.
+`/dev-kit:plan <idea>` — reads `.dev-kit/hand-off/interview-<session>.md`
+(the hand-off file above) before Gate 1. If `status: held`, refuse to
+emit PRD.md and surface the gap to the user.

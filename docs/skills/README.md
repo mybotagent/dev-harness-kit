@@ -133,7 +133,6 @@ step inside their parent skill's flow; you never type them directly.
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
 | [`interview`](interview.md) | `design` | `enforcement` | human |
-| [`lcs`](lcs.md) | `design` | `state` | model |
 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
 | [`log`](log.md) | `shortcuts` | `state` | human |
 | [`plan`](plan.md) | `plan` | `state` | human |

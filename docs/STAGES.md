@@ -34,21 +34,21 @@
 
 ## Stage 2 — Valuate (`/dev-kit:valuate`)
 
-- **Goal**: Decide whether the plan from Stage 1 is worth building. Returns one of `proceed` / `revise` / `hold` / `kill`. Persists the verdict to `lcs://valuations/<plan-id>` (file: `.dev-kit/valuations/<plan-id>.json`).
-- **Must**: (a) Score 6 rubric axes (problem_fit / roi_estimate / existing_solution_edge / team_capability / risk_vs_reward / measurability) via `lib/llm_judge.py:call_judge(axes=DIM_AXES["plan_value"])`. (b) Run `lib/valuation_engine.py:decide(plan, rubric_scores)` to produce the verdict. (c) Honor the absolute risk-floor rule: any axis < 2.0 → `kill`, regardless of all other axes. (d) Persist the verdict envelope (`decision` / `rationale` / `blocking_findings`) to `lcs://valuations/<plan-id>`.
-- **Must-Not**: Allow the LLM to emit the verdict directly. The engine is the only authority — the judge returns scores, not decisions. Emit `kill` / `hold` / `revise` when the gate would; the build stage depends on this.
-- **AC**: `.dev-kit/valuations/<plan-id>.json` exists with the canonical envelope. `lcs://valuations/<plan-id>` returns `{decision, rationale, blocking_findings}`. `python3 -m lib.valuation_engine --plan PRD.md --dry-run` exits 0 with a valid envelope.
-- **Active Skills**: `valuate` (`alpha: enforcement` — the no-go gate is deterministic)
+- **Goal**: Decide whether the plan from Stage 1 is worth building. Returns one of `proceed` / `revise` / `hold` / `kill`. Persists the verdict to `.dev-kit/valuations/<plan-id>.json`.
+- **Must**: (a) Score 6 rubric axes (problem_fit / roi_estimate / existing_solution_edge / team_capability / risk_vs_reward / measurability) via `lib/llm_judge.py:call_judge(axes=DIM_AXES["plan_value"])`. (b) Run `lib/valuation_engine.py:decide(plan, rubric_scores)` to produce the verdict. (c) Honor the absolute risk-floor rule: any axis < 2.0 → `kill`, regardless of all other axes. (d) Persist the verdict envelope (`decision` / `rationale` / `blocking_findings`) to `.dev-kit/valuations/<plan-id>.json`.
+- **Must-Not**: Allow the LLM to emit the verdict directly. The engine is the only authority — the judge returns scores, not decisions. Emit `kill` / `hold` / `revise` when the gate would.
+- **AC**: `.dev-kit/valuations/<plan-id>.json` exists with the canonical envelope. `python3 -m lib.valuation_engine --plan PRD.md --dry-run` exits 0 with a valid envelope.
+- **Active Skills**: `valuate` (`alpha: enforcement` — the engine is deterministic)
 - **Active Hooks**: `stop-verify`=ON. Others OFF.
-- **Hand-off out**: `lcs://valuations/<plan-id>` (the build stage reads this URI as its pre-flight valuation gate).
+- **Hand-off out**: `.dev-kit/valuations/<plan-id>.json` (the build stage reads this file as its pre-flight verdict; the build-stage auto-gate was removed in #463 — operators run `/dev-kit:valuate` explicitly and the build proceeds unless they flag a non-PROCEED verdict).
 
 ## Stage 3 — Build (`/dev-kit:build`)
 
 - **Goal**: Per-step code completion per `phases/<name>/step<N>.md` + regression GREEN.
-- **Must**: (a) Read `lcs://valuations/<plan-id>` before launching the first step; refuse with exit 2 if the verdict is not `proceed` (unless `--skip-valuation` is passed). (b) Follow `phases/<name>/step<N>.md` exactly. (c) Run AC commands and quote output. (d) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (e) 2-commit protocol (feat + chore).
+- **Must**: (a) Follow `phases/<name>/step<N>.md` exactly. (b) Run AC commands and quote output. (c) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (d) 2-commit protocol (feat + chore). Note: a Phase 4 auto-gate that read `.dev-kit/valuations/<plan-id>.json` and refused non-PROCEED verdicts lived here until #463; the gate was tied to a URI substrate that has since been dropped, so the auto-gate went with it. Operators run `/dev-kit:valuate` explicitly and the build proceeds.
 - **Must-Not**: Speculate on AC ("should work", "probably fine"). Delete `output.json`. Batch multiple changes.
 - **AC**: All steps `status=completed`. `pytest` exit code 0 + count quoted. 2-commit protocol followed.
-- **Active Skills**: `build-tdd`, `build-debug`, `build-verify`, `build-refactor` (the per-step harness runner + methodology selector live in `lib/execute.py` + `lib/methodology/`; prune's 3-pass sweep is inlined into `prune`), `valuate` (pre-flight no-go gate reads `lcs://valuations/<plan-id>` and refuses non-PROCEED; `--skip-valuation` flag is the permanent backward-compat escape hatch)
+- **Active Skills**: `build-tdd`, `build-debug`, `build-verify`, `build-refactor` (the per-step harness runner + methodology selector live in `lib/execute.py` + `lib/methodology/`; prune's 3-pass sweep is inlined into `prune`)
 - **Active Hooks**: `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` — all ON
 - **Sub-agent**: Phase 3 (planned). Currently sequential-only.
 - **Hand-off out**: `build→review.md`

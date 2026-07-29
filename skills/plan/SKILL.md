@@ -48,31 +48,24 @@ sub-skill invocation; everything below runs inside this single skill invocation.
 
 ## Interview consume gate (REQUIRED unless `--skip-interview`)
 
-Before Gate 1, consume the Phase 6 5-field safety contract from LCS.
-Use the `Skill` invocation form (the lcs viewer is on the
-`allowed-tools: ... Skill ...` allowlist) — the shell-out
-`python3 bin/dev-kit-lcs.py --get` form is NOT callable here because
-`disallowed-tools: Bash Edit ...` blocks arbitrary shell.
+Before Gate 1, consume the Phase 6 5-field safety contract from the
+interview hand-off at `.dev-kit/hand-off/<step>.md`. Read it with the
+`Read` tool (the LCS viewer was on `allowed-tools: ... Skill ...`
+but the LCS substrate was dropped in #463; the contract now lives in
+plain markdown that any consumer can read with `Read`).
 
-```python
-# session id defaults to "default"; pass via --interview-session <id>
-Skill("lcs", resource=f"lcs://interview/{INTERVIEW_SESSION or 'default'}")
-```
-
-Decision table (exit code is the `bin/dev-kit-lcs.py` return):
+Decision table (read `.dev-kit/hand-off/<step>.md` frontmatter):
 
 | `status` (hand-off frontmatter) | Plan action |
 |---|---|
 | `ok` | Proceed to Gate 1; treat interview answers as canonical PRD §1 inputs. |
 | `best-effort` | Proceed with a 1-line WARN to `.dev-kit/decision-log.md`; Gate 2 evidence-gate still applies. |
 | `user-acknowledged` | Proceed; treat as `best-effort` for downstream gating. |
-| `held` (or partial / error / no resource) | **STOP.** Do NOT ask Gate 1. Tell the user: "Interview contract not clear. Per Phase 6 (issue #385), plan refuses to emit PRD while `lcs://interview/<session>` is `held`. Run `/dev-kit:interview <plan-file>` first, then re-invoke `/dev-kit:plan`." |
+| `held` (or missing file / no `status` field) | **STOP.** Do NOT ask Gate 1. Tell the user: "Interview contract not clear. Per Phase 6 (issue #385), plan refuses to emit PRD while the interview hand-off is `held`. Run `/dev-kit:interview <plan-file>` first, then re-invoke `/dev-kit:plan`." |
 | `--skip-interview` flag present | Skip the consume entirely (backward compat). Write a SKIPPED line to `.dev-kit/decision-log.md` so the audit trail is honest. |
 
-The shell-out fallback (timeout / LCS unavailable) is the same as
-Gate 1's behavior: missing data → `status: held` → refuse to plan.
-Defence-in-depth: if `bin/dev-kit-lcs.py` exits non-zero or returns
-no `status` field, treat as `held`.
+Defence-in-depth: if the hand-off file is missing or frontmatter is
+malformed, treat as `held`.
 
 ## Core goal
 
@@ -83,8 +76,8 @@ gates in one Ralph loop → emit `PRD.md` + `phases/<name>/{index.json, step<N>.
 ## Inputs / outputs
 
 - **Input**: 1-line idea (from user prompt) + 1-5 AC + 1-3 non-goals.
-- **Flag**: `--skip-interview` bypasses the `lcs://interview/<session>`
-  consume gate below (Phase 6 backward compat).
+- **Flag**: `--skip-interview` bypasses the interview consume gate
+  below (Phase 6 backward compat).
 - **Output**:
   - `PRD.md` — 6-section plan
   - `phases/<name>/index.json` — phase state machine (see "Phase JSON schema")
@@ -393,9 +386,10 @@ Gate 5/5 ends with a single, deterministic handoff to the
 The proposal topic is `<main>/<sub>`:
 
 - `<main>` = the umbrella. For this project the umbrella is hardcoded
-  to `harness-architecture` (the design-domain name for issue #280's
-  12 sub-topics + 00-index). A future PR can externalize it to a
-  project-level config if a different umbrella is needed.
+  to the design-domain name (a future PR can externalize it to a
+  project-level config if a different umbrella is needed). The
+  `harness-architecture` umbrella was removed in #463 along with its
+  proposal bundle; the umbrella currently resolves to a per-PR topic.
 - `<sub>` = the phase directory name (the `<name>` in `phases/<name>/`
   emitted in Gate 4/5). One source of truth — same name as the
   phase directory, same name as the proposal sub-topic, same name
@@ -462,13 +456,11 @@ only from the skill chain.
 
 - 5-field loop declared (MUST-15): `safety_valve=8`, composite convergence,
   `narrowed_delta`, `dedup_metric`, `user_interrupt`.
-- **Interview consume gate (Phase 6)**: plan MUST read `lcs://interview/<session>`
-  via `Skill("lcs", resource="lcs://interview/<session>")` before Gate 1
-  (NOT `python3 bin/dev-kit-lcs.py --get` — plan's `disallowed-tools: Bash`
-  blocks shell-out; Skill IS in `allowed-tools`). `status: held` →
-  refuse to plan; `ok | best-effort | user-acknowledged` → proceed. The
-  `--skip-interview` flag bypasses the gate for backward compat only
-  and MUST be logged to `.dev-kit/decision-log.md`.
+- **Interview consume gate (Phase 6)**: plan MUST read
+  `.dev-kit/hand-off/<step>.md` frontmatter via `Read` before Gate 1.
+  `status: held` → refuse to plan; `ok | best-effort | user-acknowledged`
+  → proceed. The `--skip-interview` flag bypasses the gate for backward
+  compat only and MUST be logged to `.dev-kit/decision-log.md`.
 - No artifacts other than PRD.md, phases/<name>/, .dev-kit/decision-log.md, .dev-kit/hand-off/.
 - No code, no `package.json`, no `Dockerfile`, no test code.
 - "Just write the code" before PRD.md is complete → still no code.

@@ -2,7 +2,8 @@
 
 Pure-function gate that maps (plan, rubric_scores) -> {decision, rationale,
 blocking_findings}. The decision is one of four verdicts that the build
-stage reads from `lcs://valuations/<plan-id>` to enforce a no-go gate:
+stage reads the verdict from `.dev-kit/valuations/<plan-id>.json` (Phase 4
+gate, removed in #463 — operators now run /dev-kit:valuate explicitly):
 
     proceed → build is allowed
     revise  → build refused; the plan must be rewritten (back to plan stage)
@@ -208,10 +209,14 @@ def decide(
     }
 
 
-def decision_persists_to_lcs(decision: Dict[str, object]) -> bool:
-    """Return True iff `decision` is the canonical envelope to persist at
-    `lcs://valuations/<plan-id>`. A non-canonical envelope (missing keys,
-    wrong types) is rejected so the LCS resource can rely on the shape.
+def decision_is_canonical_envelope(decision: Dict[str, object]) -> bool:
+    """Return True iff `decision` is the canonical 3-key envelope.
+
+    The shape validator was named ``decision_persists_to_lcs`` when the
+    Phase 4 build gate persisted verdicts through the LCS CLI. The LCS
+    substrate was dropped in #463; the validator stays because the
+    envelope contract (decision / rationale / blocking_findings) is the
+    same one `/dev-kit:valuate` writes to disk and consumers read back.
     """
     if not isinstance(decision, dict):
         return False
@@ -235,7 +240,7 @@ __all__ = [
     "SCORE_MIN",
     "SCORE_MAX",
     "decide",
-    "decision_persists_to_lcs",
+    "decision_is_canonical_envelope",
     "cli_main",
 ]
 
@@ -282,7 +287,7 @@ def cli_main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="valuation_engine")
     parser.add_argument("--plan", required=True, help="path to plan YAML/JSON")
     parser.add_argument("--dry-run", action="store_true",
-                        help="print decision; do not persist to LCS")
+                        help="print decision envelope without writing")
     parser.add_argument("--json", action="store_true", help="emit JSON envelope")
     args = parser.parse_args(argv)
     try:
@@ -305,10 +310,10 @@ def cli_main(argv: Optional[List[str]] = None) -> int:
         print(f"rationale: {decision['rationale']}")
         for f in decision["blocking_findings"]:
             print(f"  - {f}")
-    if not args.dry_run and decision_persists_to_lcs(decision):
-        # The build pre-flight will look this up; the CLI itself does
-        # not write (kept pure so tests can use --dry-run without
-        # touching the on-disk LCS cache).
+    if not args.dry_run and decision_is_canonical_envelope(decision):
+        # The build pre-flight reads the persisted envelope; the CLI
+        # itself does not write (kept pure so tests can use --dry-run
+        # without touching the on-disk cache).
         pass
     return 0 if decision["decision"] == "proceed" else 1
 

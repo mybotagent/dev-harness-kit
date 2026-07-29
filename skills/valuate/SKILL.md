@@ -1,7 +1,7 @@
 ---
 name: valuate
 category: design
-description: Plan-value gate. Scores a plan on 6 axes via LLM judge and returns proceed / revise / hold / kill. The build stage reads the result from lcs://valuations/<plan-id> to enforce the no-go gate.
+description: Plan-value gate. Scores a plan on 6 axes via LLM judge and returns proceed / revise / hold / kill. Verdict envelope persists to .dev-kit/valuations/<plan-id>.json.
 alpha: enforcement
 when_to_use:
   - User types /dev-kit:valuate <plan-file>
@@ -27,9 +27,13 @@ The plan-value gate. The `/dev-kit:plan` stage reduces ambiguity;
 `/dev-kit:valuate` answers the next question: **is this plan worth
 building?** The gate is deterministic — the LLM scores six rubric axes,
 then `lib/valuation_engine.py:decide()` collapses them to one of four
-verdicts. The build stage reads the verdict from
-`lcs://valuations/<plan-id>` and refuses to start on anything but
-`proceed`.
+verdicts. The verdict envelope persists to
+`.dev-kit/valuations/<plan-id>.json`.
+
+> The build stage's hard auto-gate (refuse-on-non-PROCEED) was tied to
+> the LCS substrate and was removed in #463. Operators now run
+> `/dev-kit:valuate` explicitly; the verdict envelope is the operator's
+> signal to proceed or halt — `build` no longer reads it automatically.
 
 ## What it does
 
@@ -43,23 +47,22 @@ verdicts. The build stage reads the verdict from
    risk_vs_reward / measurability) each 0-5.
 4. Calls `lib/valuation_engine.py:decide(plan, rubric_scores)` and gets
    back `{decision, rationale, blocking_findings}`.
-5. Persists the verdict envelope to
-   `lcs://valuations/<plan-id>` (the LCS server writes
-   `.dev-kit/valuations/<plan-id>.json`).
-6. Prints the verdict + per-axis breakdown to stdout.
+5. The CLI prints the verdict + per-axis breakdown to stdout; the
+   envelope contract is pinned by
+   `lib/valuation_engine.py:decision_is_canonical_envelope`.
 
 The decision is **deterministic on identical input**: same plan + same
-rubric scores → same verdict. This is the contract that makes the build
-gate enforceable (L6 — `alpha: enforcement`).
+rubric scores → same verdict. This is the contract that makes the gate
+enforceable (L6 — `alpha: enforcement`).
 
 ## Verdict semantics
 
-| Verdict | What it means | Build stage reaction |
+| Verdict | What it means | Operator guidance |
 |---|---|---|
-| `proceed` | All dimensions >= 3, weighted avg >= 4 | Build proceeds |
-| `revise` | Some dimension < 3, but no risk-floor violation | Build refused; back to plan |
-| `hold` | Weighted avg in [3, 4), no below-floor dimensions | Build refused; re-evaluate later |
-| `kill` | Any dimension < 2 (absolute risk-floor rule) OR weighted avg < 3 | Build refused; archive |
+| `proceed` | All dimensions >= 3, weighted avg >= 4 | Proceed to `build` |
+| `revise` | Some dimension < 3, but no risk-floor violation | Back to `/dev-kit:plan` |
+| `hold` | Weighted avg in [3, 4), no below-floor dimensions | Re-evaluate later |
+| `kill` | Any dimension < 2 (absolute risk-floor rule) OR weighted avg < 3 | Archive as no-go |
 
 The absolute risk-floor rule is load-bearing: even a 5.0 on every other
 dimension cannot rescue a 1.5 on `risk_vs_reward`. The model cannot talk
@@ -83,7 +86,7 @@ python3 -m lib.valuation_engine --plan PRD.md [--interview .dev-kit/hand-off/pla
 | `--plan PATH` | Plan body (default: PRD.md) |
 | `--interview PATH` | Plan-stage interview hand-off (default: `.dev-kit/hand-off/plan-build.md`) |
 | `--rubric PATH` | Rubric YAML (default: `lib/valuation_rubrics/default.yaml`) |
-| `--plan-id ID` | Plan id used for `lcs://valuations/<id>` (default: derived from filename or git branch) |
+| `--plan-id ID` | Plan id used for the verdict filename (default: derived from filename or git branch) |
 | `--dry-run` | Skip LLM call; mock the 6 axes at 4.0/4.0/4.0/4.0/4.0/4.0 (proceed) |
 | `--json` | Emit only the JSON envelope to stdout |
 
@@ -104,29 +107,13 @@ python3 -m lib.valuation_engine --plan PRD.md [--interview .dev-kit/hand-off/pla
     "measurability": 4
   },
   "tokens_in": 1234,
-  "tokens_out": 89,
-  "lcs_uri": "lcs://valuations/<plan-id>",
-  "persisted_at": "<iso8601>"
+  "tokens_out": 89
 }
 ```
 
-The `lcs_uri` field confirms the verdict was written to
-`.dev-kit/valuations/<plan-id>.json` (read back as
-`lcs://valuations/<plan-id>`). The build stage uses the same URI to look
-up the latest verdict before starting work.
-
-## How the build gate reads the verdict
-
-```
-# /dev-kit:build pre-flight (lib/execute.py)
-python3 bin/dev-kit-lcs.py --get lcs://valuations/<plan-id>
-# if decision != "proceed" (and not --skip-valuation):
-#   refuse; print blocking_findings; exit 2
-```
-
-`--skip-valuation` is the permanent backward-compat escape hatch for
-plans that pre-date the gate; the flag is not deprecated and remains
-the recommended path when the user explicitly waives the gate.
+The envelope's 3-key shape (`decision` / `rationale` /
+`blocking_findings`) is the contract consumers must satisfy; it is
+pinned by `lib/valuation_engine.py:decision_is_canonical_envelope`.
 
 ## Hook integration (Valuate stage)
 
@@ -136,8 +123,7 @@ the recommended path when the user explicitly waives the gate.
 
 ## Next step
 
-- On `proceed` → `/dev-kit:build` runs (will read the same URI again as
-  its pre-flight gate).
+- On `proceed` → `/dev-kit:build` runs.
 - On `revise` → back to `/dev-kit:plan` to regenerate the PRD.
 - On `hold` → archive the verdict; user re-invokes `/dev-kit:valuate`
   after the wait period.
@@ -151,5 +137,3 @@ the recommended path when the user explicitly waives the gate.
 - `eval/prompts/judge-plan-value.md` — LLM judge prompt
 - `lib/llm_judge.py` — provider-agnostic judge (uses
   `DIM_AXES["plan_value"]` for the verdict sub-scores)
-- `lib/lcs_resources/valuations.py` (planned, Phase 4.7) — LCS handler
-  serving `lcs://valuations/<plan-id>`
