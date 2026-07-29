@@ -33,3 +33,26 @@ $ lcs://pr/460                      # full record for PR #460
 
 See `docs/proposals/lcs-ux/router-and-summaries.html` (Gap 3) for the
 design rationale and acceptance criteria.
+
+## Empty-index response shape
+
+When the underlying index is empty, the list endpoint returns
+`summary.total: 0` instead of `partial`. Example:
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "sessions": [],
+    "summary": {
+      "total": 0,
+      "by_role": {"claude-code": 0, "codex": 0},
+      "as_of": "2026-07-29T..."
+    }
+  }
+}
+```
+
+This is honest data (no sessions indexed), not an error. Run the
+canonical session dumper (`bin/dev-kit-sessions.py dump`) to
+populate the index if the empty result surprises you.
