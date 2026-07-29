@@ -191,9 +191,10 @@ _verify_slot() {
   # Earlier this hook also read lcs://branches/<name> via
   # bin/dev-kit-lcs.py. The LCS call adds ~250 ms Python startup
   # tax while saving only one `git rev-parse` fork (~30 ms); net cost
-  # was -220 ms per push. The direct jq path is preferable here. LCS
-  # remains load-bearing for the worktree-guard deny path, where
-  # the 221 -> 1 fork collapse is unambiguous.
+  # was -220 ms per push. The direct shell path is preferable here.
+  # LCS remains load-bearing as the CLI substrate (bin/dev-kit-lcs.py
+  # is still callable directly by operators / future consumers /
+  # tests) and for any daemon-mode consumer once `--serve` ships.
   expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   [ -n "${expected:-}" ] || return 0

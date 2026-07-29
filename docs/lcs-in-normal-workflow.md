@@ -59,7 +59,7 @@ That's the entire production surface after the trim.
 |---|---|---|---|
 | 1. Cut a worktree | `git worktree add -b feat/…` (typed by operator) | none — no hook fires on this raw git call from the shell out-of-band | no |
 | 2. `Edit lib/foo.py` | `worktree-guard.sh` fires | `git worktree list --porcelain` directly — no LCS | no |
-| 3. `git add … && git commit` | `git-guard.sh` fires | `git show origin/main:.claude-plugin/plugin.json | jq` directly — no LCS | no |
+| 3. `git add … && git commit` | `git-guard.sh` fires | `git show origin/main:.claude-plugin/plugin.json | python3 -c "import sys,json;…"` directly — no LCS | no |
 | 4. `git push` | `git-guard.sh` fires again | same direct jq fallback | no |
 | 5. CI runs | none of dev-kit's hooks; GitHub Actions | none | no |
 | 6. PR review | none of dev-kit's hooks; humans/LLM | none | no |

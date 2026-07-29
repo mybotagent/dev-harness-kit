@@ -143,33 +143,19 @@ esac
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
 
 # _worktree_list_rich — Phase 2.1 (issue #358).
-# Enumerate the project's worktrees for the deny message. Try LCS first
-# (lcs://worktrees/), fall back to `git worktree list --porcelain` when
-# LCS is unavailable (python missing, CLI not on disk, or read fails).
-# This block only runs on the deny path so the LCS startup cost is
-# outside the hot-path budget; the <50ms budget is measured against the
-# shell-out path, not against zero.
+# Enumerate the project's worktrees for the deny message. Uses
+# `git worktree list --porcelain` directly. The previous LCS-first /
+# shell-fallback shape (with timeout-primitive selection for the LCS
+# read) was removed in PR #462 because the per-call Python startup
+# cost made it net-negative; the deny-path latency budget is ~10 ms
+# with direct shell on this repo (~220 worktrees today).
+#
+# LCS remains load-bearing as the CLI substrate (bin/dev-kit-lcs.py
+# is still callable directly by operators / future consumers / tests)
+# and is the substrate for any future daemon-mode consumer once
+# `--serve` ships. This hook does not call it.
 _worktree_list_rich() {
-  local lcs_out timer_cmd=""
-  # Pick the first available timeout primitive. `timeout` ships
-  # with coreutils on Linux and the gnu-coreutils Homebrew formula
-  # on macOS (installed as `gtimeout`). Stock macOS has neither.
-  # `perl` is preinstalled on macOS and Linux; we use its `alarm`
-  # builtin to enforce a 0.5s hard cap. When none of the three is
-  # present, the LCS read runs without a timer — for small repos
-  # Historically this hook tried `bin/dev-kit-lcs.py --get lcs://worktrees/`
-  # first and fell back to `git worktree list --porcelain`. The LCS
-  # CLI adds ~250 ms Python startup tax per invocation while saving
-  # only one `git worktree list` fork (~10 ms) — net cost was -240 ms.
-  # On a 1000-worktree project the LCS read can block the hook for
-  # ~10s, which exceeds the deny-path latency budget. The shell-out
-  # path is fast (~10 ms) and is the safe default.
-  #
-  # LCS remains load-bearing for the CLI substrate (bin/dev-kit-lcs.py
-  # is still callable directly by operators / future consumers) and
-  # for any daemon-mode consumer once `--serve` ships. This hook
-  # uses direct shell today because the win was net negative.
-  unset lcs_out lcs_rows timer_cmd
+  : "no-op placeholder kept for structural symmetry with the prior shape"
   # Fallback: porcelain worktree list, branch stripped of refs/heads/.
   # Handle both `^branch refs/heads/X` and `^detached` so a CI
   # checkout in detached HEAD (the common case for `actions/checkout`
