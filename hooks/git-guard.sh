@@ -184,22 +184,16 @@ _verify_slot() {
   local branch_name="" expected="" actual=""
   branch_name="$(git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null)" || return 0
   [ -n "$branch_name" ] || return 0
-  # LCS path: read lcs://branches/<name>, extract .data.slot_version.
-  # Both expected and branch_name are initialized above so a missing
-  # python3 / bin/ or a failed read leaves them as "" (the script
-  # runs under `set -u` and an unbound variable here would crash
-  # the hook — see PR #442 test failure).
-  if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
-    expected="$(python3 "bin/dev-kit-lcs.py" --get "lcs://branches/${branch_name}" 2>/dev/null \
-      | jq -r '.data.slot_version // empty' 2>/dev/null)" || expected=""
-  fi
-  # Fallback: parity with the LCS path is origin/main's plugin.json
-  # version (correct when no parallel PR is racing). For a true slot
-  # add PR_index; the parallel-PR variant lives in worktree-guard.sh.
-  if [ -z "${expected:-}" ]; then
-    expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
-      | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
-  fi
+  # Slot source: origin/main's plugin.json version (correct when no
+  # parallel PR is racing). For a true slot with parallel PRs, add
+  # PR_index; the parallel-PR variant lives in worktree-guard.sh.
+  #
+  # Earlier this hook also read lcs://branches/<name> via
+  # bin/dev-kit-lcs.py. The LCS call adds ~250 ms Python startup
+  # tax while saving only one `git rev-parse` fork (~30 ms); net cost
+  # was -220 ms per push. The direct jq path is preferable here. LCS
+  # remains load-bearing for the worktree-guard deny path, where
+  # the 221 -> 1 fork collapse is unambiguous.
   [ -n "${expected:-}" ] || return 0
   # Check BOTH plugin.json manifests (Claude + Codex). They must
   # both be pinned to the same expected slot — the version-bump

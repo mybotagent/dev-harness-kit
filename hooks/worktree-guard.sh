@@ -157,53 +157,19 @@ _worktree_list_rich() {
   # `perl` is preinstalled on macOS and Linux; we use its `alarm`
   # builtin to enforce a 0.5s hard cap. When none of the three is
   # present, the LCS read runs without a timer — for small repos
-  # this is fine, for huge worktree sets the LCS read will block
-  # until completion (the shell-out fallback below is unaffected by
-  # the python call). The hook is a PreToolUse gate; a 10s hang on
-  # a 1000-worktree project is acceptable as long as the fallback
-  # is reliable.
-  if command -v timeout >/dev/null 2>&1; then
-    timer_cmd="timeout"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    timer_cmd="gtimeout"
-  elif command -v perl >/dev/null 2>&1; then
-    # perl -e 'alarm shift; exec @ARGV' — alarm(0.2) then exec the
-    # remaining args. On expiry perl exits 142 (SIGALRM), the
-    # caller sees non-zero and the || lcs_out="" fallback fires.
-    # 200ms is the budget for "fast enrichment" on the deny path;
-    # the shell-out fallback is fast (~10ms) and is the safe default
-    # when LCS is slow. 500ms was the original cap but tripped the
-    # <200ms latency budget on projects with 100+ worktrees.
-    timer_cmd="perl -e 'alarm shift; exec @ARGV' 0.2"
-  fi
-  if command -v python3 >/dev/null 2>&1 && [ -r "bin/dev-kit-lcs.py" ]; then
-    # Hard timeout: 500ms. The LCS read is supposed to be a fast
-    # enrichment; on a project with 100+ worktrees the per-worktree
-    # `git status --porcelain` calls add up, so cap the budget and
-    # fall through to the shell-out path if LCS doesn't answer in
-    # time.
-    if [ -n "$timer_cmd" ]; then
-      # shellcheck disable=SC2086  # timer_cmd is multi-word on purpose
-      lcs_out="$($timer_cmd python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
-    else
-      lcs_out="$(python3 "bin/dev-kit-lcs.py" --get lcs://worktrees/ 2>/dev/null)" || lcs_out=""
-    fi
-    if [ -n "$lcs_out" ] && printf '%s' "$lcs_out" | jq -e '.data.worktrees' >/dev/null 2>&1; then
-      # Capture the filtered output so we can decide whether the
-      # LCS path actually produced any rows. An empty LCS worktree
-      # collection (status=ok with [] payload) passes the jq -e
-      # check above but produces zero output here — fall through
-      # to the shell-out path so the user still sees at least the
-      # main checkout itself.
-      lcs_rows="$(printf '%s' "$lcs_out" | jq -r '
-        .data.worktrees[]? | "  " + (.path | sub("^" + (env.PWD | sub("/$"; "")) + "/?"; "")) + "\t" + .branch
-      ' 2>/dev/null)"
-      if [ -n "$lcs_rows" ]; then
-        printf '%s\n' "$lcs_rows"
-        return 0
-      fi
-    fi
-  fi
+  # Historically this hook tried `bin/dev-kit-lcs.py --get lcs://worktrees/`
+  # first and fell back to `git worktree list --porcelain`. The LCS
+  # CLI adds ~250 ms Python startup tax per invocation while saving
+  # only one `git worktree list` fork (~10 ms) — net cost was -240 ms.
+  # On a 1000-worktree project the LCS read can block the hook for
+  # ~10s, which exceeds the deny-path latency budget. The shell-out
+  # path is fast (~10 ms) and is the safe default.
+  #
+  # LCS remains load-bearing for the CLI substrate (bin/dev-kit-lcs.py
+  # is still callable directly by operators / future consumers) and
+  # for any daemon-mode consumer once `--serve` ships. This hook
+  # uses direct shell today because the win was net negative.
+  unset lcs_out lcs_rows timer_cmd
   # Fallback: porcelain worktree list, branch stripped of refs/heads/.
   # Handle both `^branch refs/heads/X` and `^detached` so a CI
   # checkout in detached HEAD (the common case for `actions/checkout`
