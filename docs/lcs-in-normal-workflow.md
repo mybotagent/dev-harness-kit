@@ -66,6 +66,8 @@ That's the entire production surface after the trim.
 
 **LCS reads in the typical workflow: 0.** The hooks that used to call it have been trimmed to direct shell because the cache benefit was empirically 0% (measured in this conversation) and the Python startup tax was net-negative per call.
 
+> **Scope note (added by the trim audit):** the "one task → one worktree → one branch → one PR" model is the *primary* dev-kit workflow, not the only one. Other shapes that exist in this codebase: (a) **version-bump PRs** (only `plugin.json` touched, often direct in main, e.g. PRs `b4aac41`, `690a7d1`); (b) **multi-PR splits** (one feature branch → several PRs, e.g. the LCS-UX rollout split #457/#458/#459/#460 across one branch); (c) **multi-commit PRs** (a single PR with 5–10 commits, typical for refactors); (d) **maintenance chores** (`docs/...`, `chore/...` paths) that don't fit the feature-work shape. For (d) the LCS row in the table above is the same: 0 reads.
+
 ### 4.2 Where LCS *should* be invoked, given a future state with `--serve`
 
 If you rebuild the LCS call path against a `--serve` daemon (one Python process, unix socket), the calls become:

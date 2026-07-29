@@ -194,6 +194,8 @@ _verify_slot() {
   # was -220 ms per push. The direct jq path is preferable here. LCS
   # remains load-bearing for the worktree-guard deny path, where
   # the 221 -> 1 fork collapse is unambiguous.
+  expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   [ -n "${expected:-}" ] || return 0
   # Check BOTH plugin.json manifests (Claude + Codex). They must
   # both be pinned to the same expected slot — the version-bump
