@@ -72,7 +72,7 @@ Failure exit codes: `1` = arg error, `2` = marker present + no `--force`, `3` = 
 - [bootstrap](bootstrap.md) — typically run before this skill.
 - [bootstrap-full](bootstrap-full.md) — composes `bootstrap` + this skill into one call.
 - `/dev-kit:build` — refuses to start without the `.dev-kit/ci-config.json` marker this skill writes.
-- `docs/ci-setup.md` — full usage docs.
+- `docs/quality/ci-setup.md` — full usage docs.
 
 ---
 *Source: [`skills/ci-setup/SKILL.md`](../../skills/ci-setup/SKILL.md)*

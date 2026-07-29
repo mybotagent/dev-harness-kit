@@ -122,7 +122,7 @@ sections:
       - `RuntimeAdapter` 추상 인터페이스
       - `tests/test_portability.py` — 런타임 주입 테스트
       - CI 매트릭스 (Claude Code lane + Codex lane)
-      - `docs/RUNTIME-PORTABILITY.md`
+      - `docs/architecture/RUNTIME-PORTABILITY.md`
 
       **일회성 비용**: ~500 LOC (Phase 0).
       **영구 보장**: 모든 후속 Phase에서 런타임 회귀 자동 차단.

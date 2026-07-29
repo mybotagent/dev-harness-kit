@@ -17,7 +17,7 @@
 #   - Never block — print warnings only
 #
 # This script is a TEMPLATE — copy into your project's .claude/hooks/
-# and reference from .claude/settings.json (see docs/team-adoption.md).
+# and reference from .claude/settings.json (see docs/adoption/team-adoption.md).
 
 set -uo pipefail
 

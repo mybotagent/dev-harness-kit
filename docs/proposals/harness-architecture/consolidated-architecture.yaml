@@ -58,7 +58,7 @@ sections:
       | `lib/interview_engine.py` (신규, Phase 6) | plan skill의 5-field 안전 계약 구현 — `safety_valve=8`, `narrowed_delta`, `dedup_metric: identical-ambiguity-cycle=2`, status `ok`/`held` |
       | `lib/analysis-core/cross_validate.py` (신규) | 리서치 교차검증 헬퍼 |
       | `tools/parallel_dispatch.py` | `with_rubric` 옵션 추가 (Phase 5) |
-      | `docs/STAGES.md` | "valuate" 단계 추가 |
+      | `docs/stages/STAGES.md` | "valuate" 단계 추가 |
       | `tests/test_smoke.py` | SKILL_COUNT 35 → 41 |
       | `skills/interview/SKILL.md` (신규, Phase 6) | frontmatter에 5-field 안전 계약 선언 (plan 패턴, MUST-15) |
 

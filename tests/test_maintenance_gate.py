@@ -70,7 +70,7 @@ class TestDocsUpdatedCheck(unittest.TestCase):
     def test_passes_when_no_prod_change(self):
         # PR only touches docs/ — no code change, no docs update needed.
         ok, reason = maintenance_gate.docs_updated_ok(
-            changed_files=["docs/STAGES.md"],
+            changed_files=["docs/stages/STAGES.md"],
             pr_body="",
         )
         self.assertTrue(ok, reason)
@@ -122,7 +122,7 @@ class TestDocsUpdatedCheck(unittest.TestCase):
         # count as "doc updates" — verify a PR that touches ONLY those
         # but no other docs file still fails when it also touches prod.
         ok, reason = maintenance_gate.docs_updated_ok(
-            changed_files=["lib/foo.py", "docs/STAGES.md"],
+            changed_files=["lib/foo.py", "docs/stages/STAGES.md"],
             pr_body="",
         )
         self.assertFalse(ok)

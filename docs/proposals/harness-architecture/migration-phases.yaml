@@ -37,7 +37,7 @@ sections:
       - `lib/runtime_adapters/{base,tokens,sessions,hooks,user_input,workspace,skill_install,claude_code,codex}.py`
       - `tests/test_portability.py`
       - `.github/workflows/test-portability.yml`
-      - `docs/RUNTIME-PORTABILITY.md`
+      - `docs/architecture/RUNTIME-PORTABILITY.md`
 
       **위험**: 매우 낮음 (인터페이스 + 결정적 테스트).
       **결정 8 영향**: 결정 8의 1차 alpha.
@@ -91,7 +91,7 @@ sections:
       - `lib/valuation_engine.py`
       - `lib/valuation_rubrics/default.yaml`
       - `skills/valuate/SKILL.md` (alpha: enforcement)
-      - `docs/STAGES.md` ("valuate" 단계 행)
+      - `docs/stages/STAGES.md` ("valuate" 단계 행)
       - `skills/build/SKILL.md` (no-go 게이트)
       - `tests/test_valuation_engine.py`
       - `tests/test_smoke.py` (SKILL_COUNT 37 → 38)

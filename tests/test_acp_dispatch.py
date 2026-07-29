@@ -11,7 +11,7 @@ Closes #282. Verifies:
     rendered envelopes contain no remaining `<PLACEHOLDER>` strings.
   * `dispatch(--dry-run)` returns DispatchResult objects without
     touching the filesystem (no worktrees, no envelope files).
-  * The 7 placeholders documented in `docs/acp-harness.md` §3.2 are
+  * The 7 placeholders documented in `docs/architecture/acp-harness.md` §3.2 are
     present as literal strings in the canonical template.
 
 Each test uses a throwaway git repo (init + linked worktree) so the
@@ -118,7 +118,7 @@ class FillPlaceholders(unittest.TestCase):
     def test_full_substitution(self) -> None:
         template = "TASK=`<TASK>` BRANCH=`<BRANCH>` CWD=`<CWD>`"
         # The contract is that ALL seven placeholders must be filled
-        # for every dispatch (docs/acp-harness.md §3.2). Provide the
+        # for every dispatch (docs/architecture/acp-harness.md §3.2). Provide the
         # full set even though this minimal template only references
         # three of them.
         values = {

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ACP — Agent Coordination Protocol (dev-harness-kit) &mdash; dev-harness-kit</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #0a84ff;
+  --accent-dim: #e7f1ff;
+  --code-bg: #1c1c1e;
+  --code-fg: #f2f2f7;
+  --border: #d2d2d7;
+  --panel: #f5f5f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --muted: #98989d;
+    --accent: #409eff;
+    --accent-dim: #0a2540;
+    --code-bg: #0e0e10;
+    --code-fg: #e8e8ed;
+    --border: #2c2c2e;
+    --panel: #1c1c1e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--fg); line-height: 1.6; font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 28px 64px; }
+
+.wrap h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 12px; }
+.wrap h2 { font-size: 22px; font-weight: 700; margin: 32px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.wrap h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+.wrap h4 { font-size: 14px; font-weight: 600; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.wrap p { margin: 0 0 14px; }
+.wrap a { color: var(--accent); text-decoration: none; }
+.wrap a:hover { text-decoration: underline; }
+.wrap code {
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px; padding: 1px 6px; background: var(--panel);
+  border-radius: 4px; border: 1px solid var(--border);
+}
+.wrap pre {
+  background: var(--code-bg); color: var(--code-fg); padding: 14px 18px;
+  border-radius: 8px; overflow-x: auto; font-size: 12.5px;
+  line-height: 1.55; margin: 0 0 18px; border: 1px solid var(--border);
+}
+.wrap pre code { background: none; border: none; padding: 0; font-size: 12.5px; color: inherit; }
+.wrap table {
+  width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 14px;
+}
+.wrap th, .wrap td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+.wrap th { background: var(--panel); font-weight: 600; }
+.wrap ul, .wrap ol { padding-left: 22px; margin: 0 0 14px; }
+.wrap li { margin-bottom: 4px; }
+.wrap blockquote {
+  border-left: 3px solid var(--border); margin: 1rem 0;
+  padding: 0.2rem 1rem; color: var(--muted);
+}
+.wrap hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+.wrap nav.topnav { margin-bottom: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.wrap nav.topnav a { color: var(--accent); text-decoration: none; margin-left: 16px; }
+.wrap nav.topnav a:first-child { margin-left: 0; }
+.wrap nav.topnav a:hover { text-decoration: underline; }
+.wrap nav.topnav .label { color: var(--muted); }
+.wrap footer.back { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.wrap footer.back a { color: var(--accent); text-decoration: none; margin-right: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topnav">
+  <span><a href="../../README.md">dev-harness-kit</a> &nbsp;/&nbsp; <a href="00-index.html">Documentation Home</a></span>
+  <span class="label">ACP — Agent Coordination Protocol (dev-harness-kit)</span>
+</nav>
+
+<hr />
+<p>paths:</p>
+<ul>
+<li>&quot;hooks/**&quot;</li>
+<li>&quot;bin/**&quot;</li>
+<li>&quot;tests/**&quot;</li>
+<li>&quot;skills/**&quot;</li>
+<li>&quot;.claude/skills/**&quot;</li>
+<li>&quot;docs/architecture/acp-harness.md&quot;</li>
+</ul>
+<hr />
+<h1>ACP — Agent Coordination Protocol (dev-harness-kit)</h1>
+<p>The ACP is the deterministic contract between the orchestrator (M), task
+sub-agents (T), and leaf sub-agents (L). It encodes the coordination rules
+that prior rounds discovered the hard way so future rounds do not reinvent
+them.</p>
+<p>This document is the design SSOT for ACP. Implementation lives in the
+narrow PRs listed in §7; each implementation PR is constrained by the
+contract pinned here.</p>
+<h2>1. Problem (the five symptoms this protocol closes)</h2>
+<table>
+<thead>
+<tr>
+  <th>#</th>
+  <th>Symptom</th>
+  <th>Root cause</th>
+  <th>ACP clause that closes it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td>Sub-agent <code>cwd</code> is the parent session's main checkout, not the worktree. &quot;Reuse this worktree&quot; hints are not propagated; hooks trip and the agent runs from <code>main</code>.</td>
+  <td>Dispatch prompt carries no <code>&lt;WORKTREE_PATH&gt;</code> and no <code>&lt;PARENT_SESSION_CWD&gt;</code>; the child has no way to know the parent's cwd was wrong.</td>
+  <td>§3 hand-off template (mandatory placeholders) + §5 cwd-discipline hook</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>Parallel branches see the same <code>origin/main</code> HEAD and each auto-bumps <code>+1</code> from it → identical <code>plugin.json</code> versions on multiple branches (slot collision).</td>
+  <td>The &quot;+1&quot; auto-bump is local; no allocator allocates slots across parallel branches.</td>
+  <td>§4 version-slot allocator</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td>After an agent finishes, a follow-up dispatch fires automatically (&quot;next PR&quot;) — the user did not ask for it.</td>
+  <td>The dispatcher is event-driven, not user-gated.</td>
+  <td>§2 tier-cognition (T must stop and assert done; M decides next dispatch)</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>Agents forget whether they are M / T / L and try out-of-scope operations (commit, push, source-file edits).</td>
+  <td>The role is implicit; nothing in the dispatch prompt makes it explicit.</td>
+  <td>§2 tier-assertion + §5 orch-branch isolation already in <code>worktree-guard.sh</code></td>
+</tr>
+<tr>
+  <td>5</td>
+  <td>Six bash-heredoc bypass patterns accumulate because the hook chain reads session cwd, not file-path.</td>
+  <td>Hooks scope by cwd, not by resolved-file-path.</td>
+  <td>§5 cwd-discipline hook scopes by <code>git -C &lt;path&gt; symbolic-ref --short HEAD</code> resolved from the file_path the tool is touching</td>
+</tr>
+</tbody>
+</table>
+<h2>2. Tier-cognition contract</h2>
+<h3>2.1 Roles (single source of truth)</h3>
+<table>
+<thead>
+<tr>
+  <th>Tier</th>
+  <th>Code</th>
+  <th>Lives on branch</th>
+  <th>Owns</th>
+  <th>Forbidden from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>M</strong></td>
+  <td>Orchestrator</td>
+  <td><code>orch/&lt;round-slug&gt;</code> (or the M's session-worktree of choice)</td>
+  <td>Round state, dispatch decisions, <code>handoffs.md</code> writes</td>
+  <td>Editing code, hooks, tests, manifests; pushing/committing to <code>main</code>; auto-dispatching after a T finishes</td>
+</tr>
+<tr>
+  <td><strong>T</strong></td>
+  <td>Task sub-agent</td>
+  <td><code>fix/&lt;slug&gt;</code> / <code>feat/&lt;slug&gt;</code> / <code>refactor/&lt;slug&gt;</code> / <code>chore/&lt;slug&gt;</code> / <code>test/&lt;slug&gt;</code> / <code>docs/&lt;slug&gt;</code> / <code>perf/&lt;slug&gt;</code> / <code>hotfix/&lt;slug&gt;</code> (one branch per T)</td>
+  <td>One PR's lifecycle (branch → commits → push → PR → review response → merge → worktree cleanup)</td>
+  <td>Editing files outside the PR's scope; pushing to <code>main</code>; force-pushing after review has started</td>
+</tr>
+<tr>
+  <td><strong>L</strong></td>
+  <td>Leaf sub-agent</td>
+  <td>inherits its T's worktree (cwd = T's worktree)</td>
+  <td>One read-only investigation: search files, read code, summarize — no edits</td>
+  <td>Any <code>Edit</code>/<code>Write</code>/<code>MultiEdit</code>; any <code>git commit</code>/<code>git push</code>; any <code>gh</code> mutation</td>
+</tr>
+</tbody>
+</table>
+<h3>2.2 Tier-assertion (mandatory on first tool call of every dispatched agent)</h3>
+<p>Every M, T, and L agent MUST emit, on its <strong>first tool call of the session</strong>, the literal line:</p>
+<pre><code>[tier-assert] I am Tier &lt;N&gt; (&lt;M|T|L&gt;). cwd is &lt;WORKTREE_PATH&gt;. I own &lt;OWNERSHIP_SENTENCE&gt;.
+</code></pre>
+<p>where:</p>
+<ul>
+<li><code>&lt;N&gt;</code> is <code>1</code> for M, <code>2</code> for T, <code>3</code> for L.</li>
+<li><code>&lt;WORKTREE_PATH&gt;</code> is the absolute path of the worktree the agent's session cwd resolves to. For L, that is the inherited T's worktree; for M, that is the orch-branch worktree.</li>
+<li><code>&lt;OWNERSHIP_SENTENCE&gt;</code> is one of:<ul>
+<li>M: <code>the round state and dispatch decisions only</code></li>
+<li>T: <code>ONE PR's lifecycle on branch &lt;BRANCH&gt;</code></li>
+<li>L: <code>read-only investigation for T on branch &lt;BRANCH&gt;; no edits</code></li>
+</ul>
+</li>
+</ul>
+<h3>2.3 Tier-assertion lint (<code>hooks/acp-tier-assert.sh</code>)</h3>
+<ul>
+<li><strong>Event</strong>: <code>PostToolUse</code>, matcher <code>Bash | Edit | Write | MultiEdit</code>.</li>
+<li><strong>Trigger</strong>: fires on every agent's first non-empty tool call. The hook tracks per-session state in a sidecar file under <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/tier-state/&lt;session-id&gt;.json</code> (see §6).</li>
+<li><strong>Behavior</strong>: reads the first ~4 KiB of the agent's session transcript from stdin (<code>{&quot;transcript&quot;:&quot;...&quot;}</code>); if the literal <code>[tier-assert] I am Tier</code> prefix is absent OR the <code>&lt;WORKTREE_PATH&gt;</code> does not match the discriminator (<code>git_dir != git_common_dir</code> resolved from the cwd) OR the <code>&lt;OWNERSHIP_SENTENCE&gt;</code> is malformed, <strong>deny with reason</strong> naming the missing field.</li>
+<li><strong>Fail-closed contract</strong>: missing <code>jq</code> → <code>PreToolUse</code> deny + exit 2 (same <code>require_jq</code> pattern as <code>hooks/lib/payload-parse.sh</code>).</li>
+<li><strong>Test surface</strong>: <code>tests/test_acp_tier_assert.py</code> — covers: presence + absence + cwd-mismatch + malformed ownership + jq-missing fail-closed + empty stdin no-op + non-Bash/Edit/Write matcher no-op.</li>
+</ul>
+<h2>3. Hand-off format</h2>
+<h3>3.1 Canonical template</h3>
+<p>The canonical sub-agent prompt template lives at <code>.claude/skills/_acp/sub-agent-prompt.md</code>. The leading underscore on <code>_acp</code> distinguishes it as a <em>private template directory</em>, not a discoverable skill (project skill rules: <code>rules/skill-authoring.md</code>).</p>
+<h3>3.2 Mandatory placeholders (the seven)</h3>
+<p>Every dispatch MUST populate all seven placeholders. The hand-off lint (<code>tests/test_acp_hand_off.py</code>) refuses any dispatch prompt missing one.</p>
+<table>
+<thead>
+<tr>
+  <th>Placeholder</th>
+  <th>Resolved from</th>
+  <th>What goes wrong if missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>&lt;TASK&gt;</code></td>
+  <td>the user request or the M's decomposition step</td>
+  <td>sub-agent has no goal</td>
+</tr>
+<tr>
+  <td><code>&lt;BRANCH&gt;</code></td>
+  <td><code>git symbolic-ref --short HEAD</code> of the worktree</td>
+  <td>T edits on the wrong branch (misfire §1 #1)</td>
+</tr>
+<tr>
+  <td><code>&lt;WORKTREE_PATH&gt;</code></td>
+  <td>absolute path of the worktree dir</td>
+  <td>sub-agent <code>cd</code>s to the parent checkout (misfire §1 #1)</td>
+</tr>
+<tr>
+  <td><code>&lt;CWD&gt;</code></td>
+  <td>the cwd the dispatched agent must use (always = <code>&lt;WORKTREE_PATH&gt;</code>)</td>
+  <td>cwd is parent session's checkout (misfire §1 #1)</td>
+</tr>
+<tr>
+  <td><code>&lt;PLUGIN_VERSION_TARGET&gt;</code></td>
+  <td><code>bin/version-slot compute &lt;PR_INDEX&gt;</code> output (§4)</td>
+  <td>slot collision (§1 #2)</td>
+</tr>
+<tr>
+  <td><code>&lt;LOCK_FILE&gt;</code></td>
+  <td>absolute path to <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/locks/&lt;branch&gt;.lock</code></td>
+  <td>two T's race the same branch (misfire §1 #1, §6)</td>
+</tr>
+<tr>
+  <td><code>&lt;PARENT_SESSION_CWD&gt;</code></td>
+  <td>absolute path of the M's cwd when it dispatched</td>
+  <td>sub-agent has no way to detect the parent-cwd misfire (§1 #1)</td>
+</tr>
+</tbody>
+</table>
+<h3>3.3 Test surface</h3>
+<p><code>tests/test_acp_hand_off.py</code> enforces:</p>
+<ul>
+<li>The template file exists at <code>.claude/skills/_acp/sub-agent-prompt.md</code>.</li>
+<li>The template's frontmatter (if any) declares it is a template, not a skill (no <code>name:</code>/<code>category:</code> matching the <code>skills/&lt;name&gt;/SKILL.md</code> shape).</li>
+<li>All seven placeholders are present as literal <code>&lt;NAME&gt;</code> strings.</li>
+<li>A redacted sample dispatch (provided in the test fixture) parses and resolves every placeholder against a stub orch-worktree.</li>
+</ul>
+<h2>4. Version-slot allocator</h2>
+<h3>4.1 Algorithm (canonical)</h3>
+<pre><code>slot = origin/main HEAD .claude-plugin/plugin.json version + (PR_merge_index - 1)
+</code></pre>
+<p>where <code>PR_merge_index</code> is 1-based: the first PR that lands after <code>origin/main</code>'s HEAD gets <code>+0</code> (no bump — it equals main's version), the second gets <code>+1</code>, and so on. <strong>Naive <code>+1</code> per PR is wrong</strong> because parallel branches all start from <code>origin/main</code> HEAD and would all bump <code>+1</code>.</p>
+<h3>4.2 The four subcommands (<code>bin/version-slot</code>)</h3>
+<table>
+<thead>
+<tr>
+  <th>Subcommand</th>
+  <th>Stdout</th>
+  <th>Exit</th>
+  <th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>bin/version-slot compute &lt;PR_INDEX&gt;</code></td>
+  <td>the slot version (e.g. <code>0.3.84</code>)</td>
+  <td>0</td>
+  <td>T computes what its target version is</td>
+</tr>
+<tr>
+  <td><code>bin/version-slot check</code></td>
+  <td><code>ok</code> or <code>drift: current=X target=Y</code></td>
+  <td>0 if ok else 1</td>
+  <td>T verifies its branch's <code>plugin.json</code> matches its slot before push</td>
+</tr>
+<tr>
+  <td><code>bin/version-slot pin &lt;PR_INDEX&gt;</code></td>
+  <td>re-pins <code>.claude-plugin/plugin.json</code> and <code>.codex-plugin/plugin.json</code> to the slot version (writes both files in the current worktree)</td>
+  <td>0</td>
+  <td>T re-pins after a slot drift</td>
+</tr>
+<tr>
+  <td><code>bin/version-slot pre-push-gate</code></td>
+  <td><code>ok</code> or the drift reason</td>
+  <td>0 if ok else 1</td>
+  <td>invoked from <code>git-guard.sh</code> pre-push; refuses to push when current &lt; target</td>
+</tr>
+</tbody>
+</table>
+<h3>4.3 Existing inline helper (reference, not canonical)</h3>
+<p><code>hooks/worktree-guard.sh</code> already carries a <code>_compute_version_slot</code> bash function (lines 46–62) that is the prototype. The future <code>bin/version-slot</code> implementation MUST be the deterministic extraction of that helper into a standalone Python script (so it is testable, lintable, and callable from pre-push hooks). The inline helper stays as a thin reference; removing it is out of scope for the slot PR.</p>
+<h3>4.4 Test surface</h3>
+<p><code>tests/test_version_slot.py</code> covers:</p>
+<ul>
+<li><code>compute</code> against a stubbed <code>git show origin/main:.claude-plugin/plugin.json</code> (Python <code>unittest.mock</code> against <code>subprocess.run</code>).</li>
+<li><code>check</code> passes when branch's <code>plugin.json</code> matches slot, fails with the drift string otherwise.</li>
+<li><code>pin</code> writes both <code>.claude-plugin/plugin.json</code> and <code>.codex-plugin/plugin.json</code> and bumps the trailing integer by exactly <code>(PR_INDEX - 1)</code>.</li>
+<li><code>pre-push-gate</code> exits 0 when branch ≥ target, exits 1 when branch &lt; target, includes the drift reason on stderr.</li>
+<li>Fallback (no <code>origin/main</code> reachable): the script returns <code>0.3.75</code> (the documented fallback) and stderr-logs <code>WARN: origin/main unreachable; using fallback</code>.</li>
+</ul>
+<h2>5. Worktree-cwd discipline</h2>
+<h3>5.1 Hook contract (<code>hooks/acp-cwd-discipline.sh</code>)</h3>
+<ul>
+<li><strong>Event</strong>: <code>PreToolUse</code>, matcher <code>Bash</code>.</li>
+<li><strong>Discriminator</strong>: when the Bash command's argv starts with <code>git</code>, <code>gh</code>, <code>core.hooksPath=</code>, <code>cat &gt;</code>, <code>cat &gt;&gt;</code>, <code>tee </code>, or any write-tool heredoc (<code>&lt;&lt;EOF</code>, <code>&lt;&lt;-EOF</code>, <code>&lt;&lt;'EOF'</code>), resolve the <strong>command's intended working dir</strong> from the argv (default: parent's cwd) and compare its <code>git symbolic-ref --short HEAD</code> to the expected branch.</li>
+<li><strong>Source of &quot;expected branch&quot;</strong>: for <code>git &lt;anything&gt;</code>, parse <code>git -C &lt;path&gt;</code> if present, else use parent cwd; for <code>cat &gt; &lt;path&gt;</code>, resolve <code>&lt;path&gt;</code> to absolute and <code>git -C &lt;absolute_dir&gt;</code>; for <code>gh</code>, use parent cwd.</li>
+<li><strong>Deny condition</strong>: the resolved branch is <code>main</code> AND the command is not a read-only inspection (<code>git status</code>, <code>git log</code>, <code>git diff</code>, <code>git show</code>).</li>
+<li><strong>Deny reason</strong>: literal — &quot;Use <code>git -C &lt;expected-worktree&gt;</code> or <code>cd &lt;expected-worktree&gt; &amp;&amp; &lt;cmd&gt;</code>. Branch resolution returned main for command: &lt;command_prefix&gt;.&quot;</li>
+<li><strong>Fail-closed contract</strong>: missing <code>jq</code> → deny + exit 2 (same <code>require_jq</code> pattern).</li>
+<li><strong>Out of scope</strong>: <code>git status</code>/<code>git log</code>/<code>git diff</code>/<code>git show</code> against <code>main</code> are allowed (they are read-only and the user may want to compare). Mirroring the existing <code>bash-guard.sh</code> heredoc block list (<code>base64</code>, <code>python -c</code>, <code>python3 -c</code>); the future impl PR widens that list to cover the six documented bypass patterns.</li>
+</ul>
+<h3>5.2 Mirroring in <code>bash-guard.sh</code></h3>
+<p><code>hooks/bash-guard.sh</code> already blocks <code>git push --force</code> and a small set of destructive patterns. The cwd-discipline hook complements it; <strong>no change to <code>bash-guard.sh</code> is required</strong> for the cwd-discipline contract. (If a future round finds that <code>bash-guard.sh</code>'s block-list grows stale, that is a separate PR on <code>bash-guard.sh</code>.)</p>
+<h3>5.3 Test surface</h3>
+<p><code>tests/test_acp_cwd.py</code> covers:</p>
+<ul>
+<li><code>git commit</code> from a non-orch <code>main</code> checkout → deny with the literal reason.</li>
+<li><code>git push</code> from a non-orch <code>main</code> checkout → deny.</li>
+<li><code>cat &gt; .worktrees/fix-x/foo.sh &lt;&lt;EOF</code> from the main checkout → deny.</li>
+<li><code>git -C .worktrees/fix-x commit ...</code> from the main checkout → allow (the <code>-C</code> re-roots the command).</li>
+<li><code>cd .worktrees/fix-x &amp;&amp; git commit ...</code> from the main checkout → allow (the <code>cd</code> re-roots; hook reads argv after <code>cd</code>).</li>
+<li><code>git status</code> from the main checkout → allow (read-only inspection).</li>
+<li>jq missing → deny + exit 2.</li>
+<li>Empty stdin → exit 0.</li>
+<li>Non-Bash matcher (e.g. Edit) → no-op (hook is Bash-scoped).</li>
+</ul>
+<h2>6. Round-meta protocol</h2>
+<h3>6.1 Round directory</h3>
+<p>Each round's metadata lives at <strong><code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/</code></strong> where <code>&lt;orch_worktree&gt;</code> is the absolute path of the M's worktree and <code>&lt;descriptor&gt;</code> is a short kebab-case slug for the round (e.g. <code>p3-skill-governance</code>).</p>
+<p>Layout:</p>
+<pre><code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/
+├── handoffs.md         # M-only writer; T/L readers (see §6.2)
+├── locks/              # branch-locks for parallel T dispatch (see §6.3)
+│   └── &lt;branch&gt;.lock   # flock(2)-style file lock per T branch
+├── tier-state/         # per-session tier-assert sidecar (see §2.3)
+│   └── &lt;session-id&gt;.json
+└── decisions.md        # M-only; material design choices and rationale
+</code></pre>
+<h3>6.2 <code>handoffs.md</code> write discipline</h3>
+<ul>
+<li><strong>M is the sole writer.</strong> T and L append a hand-off note to their dispatch prompt's <code>&lt;TASK&gt;</code> block; they NEVER edit <code>handoffs.md</code> themselves.</li>
+<li>M appends entries on each dispatch (<code>## &lt;timestamp&gt; — dispatch T(&lt;branch&gt;): &lt;one-line task&gt;</code>) and each T-completion (<code>## &lt;timestamp&gt; — T(&lt;branch&gt;) done: &lt;exit summary&gt;</code>).</li>
+<li>T's read-only access to <code>handoffs.md</code> is via the dispatch prompt's embedded copy of the relevant entries (the M embeds the last N entries in the dispatch).</li>
+</ul>
+<h3>6.3 Lock isolation</h3>
+<ul>
+<li>Per-branch flock lock at <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/locks/&lt;branch&gt;.lock</code>.</li>
+<li>Acquired by the dispatcher (M) before spawning the T that will own that branch.</li>
+<li>Released by M after the T's <code>git push</code> succeeds (or on explicit user cancel).</li>
+<li>A <code>git push</code> outside the lock → denied by a paired <code>git-guard.sh</code> rule (out of scope for THIS issue; tracked in the future lock-isolation PR).</li>
+</ul>
+<h3>6.4 Round close</h3>
+<ul>
+<li>Round directory is removed <strong>only by explicit user request</strong> (<code>rm -rf .dev-kit/round-&lt;descriptor&gt;/</code>).</li>
+<li>No auto-cleanup. No <code>git clean</code>. No <code>git worktree remove</code> from the round directory.</li>
+<li>The M's worktree removal follows the normal <code>git worktree remove</code> discipline in <code>rules/git-workflow.md</code> §5.</li>
+</ul>
+<h2>7. Acceptance criteria → future PR mapping</h2>
+<p>Each acceptance-criterion bullet from issue #274 maps to one future implementation PR. <strong>None of those PRs are part of this design issue.</strong> This design issue ships §1–§6 as the contract; the PRs below implement against it.</p>
+<table>
+<thead>
+<tr>
+  <th>AC bullet (issue #274)</th>
+  <th>Future PR (one each, narrow scope)</th>
+  <th>Touches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Tier-cognition assertion in <code>tests/test_skill_governance.py</code> (L6 enforcement)</td>
+  <td><code>feat(acp-tier-assert): lint hook + governance test</code></td>
+  <td><code>hooks/acp-tier-assert.sh</code>, <code>hooks/hooks.json</code>, <code>tests/test_acp_tier_assert.py</code>, <code>tests/test_skill_governance.py</code></td>
+</tr>
+<tr>
+  <td>Hand-off template + tests</td>
+  <td><code>feat(acp-hand-off): canonical template + lint</code></td>
+  <td><code>.claude/skills/_acp/sub-agent-prompt.md</code> (template scaffold only — the template ships with this design issue), <code>tests/test_acp_hand_off.py</code></td>
+</tr>
+<tr>
+  <td><code>bin/version-slot</code> script + tests</td>
+  <td><code>feat(acp-version-slot): standalone allocator + pre-push gate</code></td>
+  <td><code>bin/version-slot</code>, <code>tests/test_version_slot.py</code>, <code>hooks/git-guard.sh</code> (paired pre-push rule)</td>
+</tr>
+<tr>
+  <td><code>hooks/acp-cwd-discipline.sh</code> + tests</td>
+  <td><code>feat(acp-cwd-discipline): bash-scoped worktree resolver</code></td>
+  <td><code>hooks/acp-cwd-discipline.sh</code>, <code>hooks/hooks.json</code>, <code>tests/test_acp_cwd.py</code></td>
+</tr>
+<tr>
+  <td><code>docs/deterministic-harness.md</code> updated with ACP sections</td>
+  <td><code>docs(acp): merge into deterministic-harness.md</code></td>
+  <td><code>docs/deterministic-harness.md</code> (renames <code>docs/architecture/acp-harness.md</code>; pulls §1–§6 into the umbrella doc; adds force-push safety and lock-isolation sections)</td>
+</tr>
+<tr>
+  <td>Round-meta write discipline: M-only <code>handoffs.md</code></td>
+  <td><code>chore(acp-round-meta): hand-off lock + lifecycle doc</code></td>
+  <td><code>docs/architecture/acp-harness.md</code> §6 cross-link; a future enforcement hook (out of ACP scope; tracked separately)</td>
+</tr>
+<tr>
+  <td>No PR adds new docs UNLESS explicit user ask</td>
+  <td>enforced at review time by <code>/dev-kit:review</code> (existing gate)</td>
+  <td>n/a</td>
+</tr>
+</tbody>
+</table>
+<h2>8. Out of scope (explicit)</h2>
+<ul>
+<li><strong>A &quot;master ACP orchestrator&quot; process</strong> — the M role stays the existing orchestrator pattern (Claude Code session + Codex sub-agent). No new daemon.</li>
+<li><strong>A separate <code>bin/</code> daemon for sub-agent dispatch</strong> — the Agent tool stays the dispatch primitive.</li>
+<li><strong>Hooks on consumer projects</strong> — this protocol lives in <code>dev-harness-kit</code> only.</li>
+<li><strong>A consumer-project <code>.claude-plugin/plugin.json</code> migration</strong> — the slot allocator's fallback (<code>0.3.75</code>) handles unreachable <code>origin/main</code>; no migration tool ships in this issue.</li>
+<li><strong><code>docs/deterministic-harness.md</code> creation or update</strong> — future PR; tracked in §7.</li>
+<li><strong>Removal of the inline <code>_compute_version_slot</code> from <code>hooks/worktree-guard.sh</code></strong> — the inline helper stays as a reference until the standalone <code>bin/version-slot</code> is battle-tested.</li>
+</ul>
+<h2>9. Related</h2>
+<ul>
+<li>PR #266 (<code>feat/p3-skill-governance-gate</code>) — L6/L7 Iron Laws source (<code>alpha:</code> frontmatter gate, <code>tests/test_skill_governance.py</code>).</li>
+<li>PR #270 (<code>fix/worktree-guard-routing-question</code>) — version-slot rule + inline <code>_compute_version_slot</code> prototype.</li>
+<li><code>rules/git-workflow.md</code> — branch + worktree protocol (every-task-new-worktree rule).</li>
+<li><code>rules/skill-authoring.md</code> — skill frontmatter contract (L6 alpha gate).</li>
+<li><code>rules/session-hygiene.md</code> — model selection + cache discipline for ACP dispatches.</li>
+<li><code>hooks/worktree-guard.sh</code> — orch-branch isolation (M lives on <code>orch/*</code>; only <code>.dev-kit/round-*/**</code> is writable from a <code>orch/*</code> worktree).</li>
+<li><code>hooks/lib/worktree-detect.sh</code> — shared <code>worktree_detect()</code> discriminator (single source of truth).</li>
+<li><code>hooks/lib/payload-parse.sh</code> — shared <code>require_jq</code> + <code>deny</code> envelope (fail-closed pattern reused by every ACP hook).</li>
+<li><code>tools/token_efficiency_analyzer.py</code> — session cost dashboard; ACP dispatch prompts MUST follow session-hygiene §3 (volatile content in prompt tail).</li>
+<li>Memory: <code>feedback-rounds-leave-no-files.md</code>, <code>feedback-minimal-action-on-vague-prompts.md</code>.</li>
+</ul>
+
+<footer class="back">
+  <a href="00-index.html">&larr; Documentation Home</a>
+  <a href="../../README.md">README</a>
+  <a href="acp-harness.md">MD version</a>
+</footer>
+</div>
+</body>
+</html>

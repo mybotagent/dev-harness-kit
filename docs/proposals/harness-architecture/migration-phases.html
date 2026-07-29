@@ -171,7 +171,7 @@ Phase 7 (하네스 감사)</code></pre>
 
 <h2 id="sec-1">Phase 0 — 포터빌리티 (선결 조건)</h2>
 <p><strong>출시</strong>:</p>
-<ul><li><code>lib/runtime_adapters/{base,tokens,sessions,hooks,user_input,workspace,skill_install,claude_code,codex}.py</code></li><li><code>tests/test_portability.py</code></li><li><code>.github/workflows/test-portability.yml</code></li><li><code>docs/RUNTIME-PORTABILITY.md</code></li></ul>
+<ul><li><code>lib/runtime_adapters/{base,tokens,sessions,hooks,user_input,workspace,skill_install,claude_code,codex}.py</code></li><li><code>tests/test_portability.py</code></li><li><code>.github/workflows/test-portability.yml</code></li><li><code>docs/architecture/RUNTIME-PORTABILITY.md</code></li></ul>
 <p><strong>위험</strong>: 매우 낮음 (인터페이스 + 결정적 테스트). <strong>결정 8 영향</strong>: 결정 8의 1차 alpha. <strong>자체의 port 검증</strong>: 양 런타임 인터페이스 구현으로 결정 8 자체 검증.</p>
 <p><strong>선결 조건</strong>: Phase 0 없이 다른 Phase PR은 차단.</p>
 <hr class="section-divider">
@@ -196,7 +196,7 @@ Phase 7 (하네스 감사)</code></pre>
 
 <h2 id="sec-5">Phase 4 — 플랜 가치</h2>
 <p><strong>출시</strong>:</p>
-<ul><li><code>lib/valuation_engine.py</code></li><li><code>lib/valuation_rubrics/default.yaml</code></li><li><code>skills/valuate/SKILL.md</code> (alpha: enforcement)</li><li><code>docs/STAGES.md</code> ("valuate" 단계 행)</li><li><code>skills/build/SKILL.md</code> (no-go 게이트)</li><li><code>tests/test_valuation_engine.py</code></li><li><code>tests/test_smoke.py</code> (SKILL_COUNT 37 → 38)</li></ul>
+<ul><li><code>lib/valuation_engine.py</code></li><li><code>lib/valuation_rubrics/default.yaml</code></li><li><code>skills/valuate/SKILL.md</code> (alpha: enforcement)</li><li><code>docs/stages/STAGES.md</code> ("valuate" 단계 행)</li><li><code>skills/build/SKILL.md</code> (no-go 게이트)</li><li><code>tests/test_valuation_engine.py</code></li><li><code>tests/test_smoke.py</code> (SKILL_COUNT 37 → 38)</li></ul>
 <p><strong>위험</strong>: 낮음 (규칙 기반). <strong>Phase 0 의존</strong>: 어댑터 불필요 (자동 중립). <strong>차용</strong>: AEGIS Critic + verification 게이트. <strong>결정 6 영향</strong>: <code>no-go</code> 게이트 = verification 게이트 잠금의 첫 구현.</p>
 <hr class="section-divider">
 

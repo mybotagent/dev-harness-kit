@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ACP Dispatch — M-tier architecture &mdash; dev-harness-kit</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #0a84ff;
+  --accent-dim: #e7f1ff;
+  --code-bg: #1c1c1e;
+  --code-fg: #f2f2f7;
+  --border: #d2d2d7;
+  --panel: #f5f5f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --muted: #98989d;
+    --accent: #409eff;
+    --accent-dim: #0a2540;
+    --code-bg: #0e0e10;
+    --code-fg: #e8e8ed;
+    --border: #2c2c2e;
+    --panel: #1c1c1e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg); color: var(--fg); line-height: 1.6; font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 28px 64px; }
+
+.wrap h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 12px; }
+.wrap h2 { font-size: 22px; font-weight: 700; margin: 32px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.wrap h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+.wrap h4 { font-size: 14px; font-weight: 600; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.wrap p { margin: 0 0 14px; }
+.wrap a { color: var(--accent); text-decoration: none; }
+.wrap a:hover { text-decoration: underline; }
+.wrap code {
+  font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px; padding: 1px 6px; background: var(--panel);
+  border-radius: 4px; border: 1px solid var(--border);
+}
+.wrap pre {
+  background: var(--code-bg); color: var(--code-fg); padding: 14px 18px;
+  border-radius: 8px; overflow-x: auto; font-size: 12.5px;
+  line-height: 1.55; margin: 0 0 18px; border: 1px solid var(--border);
+}
+.wrap pre code { background: none; border: none; padding: 0; font-size: 12.5px; color: inherit; }
+.wrap table {
+  width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 14px;
+}
+.wrap th, .wrap td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+.wrap th { background: var(--panel); font-weight: 600; }
+.wrap ul, .wrap ol { padding-left: 22px; margin: 0 0 14px; }
+.wrap li { margin-bottom: 4px; }
+.wrap blockquote {
+  border-left: 3px solid var(--border); margin: 1rem 0;
+  padding: 0.2rem 1rem; color: var(--muted);
+}
+.wrap hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
+.wrap nav.topnav { margin-bottom: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+.wrap nav.topnav a { color: var(--accent); text-decoration: none; margin-left: 16px; }
+.wrap nav.topnav a:first-child { margin-left: 0; }
+.wrap nav.topnav a:hover { text-decoration: underline; }
+.wrap nav.topnav .label { color: var(--muted); }
+.wrap footer.back { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.wrap footer.back a { color: var(--accent); text-decoration: none; margin-right: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="topnav">
+  <span><a href="../../README.md">dev-harness-kit</a> &nbsp;/&nbsp; <a href="00-index.html">Documentation Home</a></span>
+  <span class="label">ACP Dispatch — M-tier architecture</span>
+</nav>
+
+<h1>ACP Dispatch — M-tier architecture</h1>
+<blockquote>
+<p>Companion to <code>docs/architecture/acp-harness.md</code>. Closes #282. Documents the
+M (orchestrator) → T (task sub-agent) → L (leaf sub-agent) hierarchy,
+the four communication channels that connect them, and the parallel
+worktree-cut pattern that fans N PRs out from a single round.</p>
+</blockquote>
+<h2>1. The three tiers (SSOT)</h2>
+<table>
+<thead>
+<tr>
+  <th>Tier</th>
+  <th>Code</th>
+  <th>Branch shape</th>
+  <th>Owns</th>
+  <th>Forbidden from</th>
+  <th>First tool call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>M</strong></td>
+  <td>Orchestrator</td>
+  <td><code>orch/&lt;round-slug&gt;</code></td>
+  <td>Round state, dispatch decisions, <code>handoffs.md</code> writes</td>
+  <td>Editing source code, hooks, tests, manifests; pushing/committing to <code>main</code>; auto-dispatching after a T finishes</td>
+  <td><code>[tier-assert] I am Tier 1 (M). …</code></td>
+</tr>
+<tr>
+  <td><strong>T</strong></td>
+  <td>Task sub-agent</td>
+  <td><code>fix/&lt;slug&gt;</code> / <code>feat/&lt;slug&gt;</code> / <code>refactor/&lt;slug&gt;</code> / <code>chore/&lt;slug&gt;</code> / <code>test/&lt;slug&gt;</code> / <code>docs/&lt;slug&gt;</code> / <code>perf/&lt;slug&gt;</code> / <code>hotfix/&lt;slug&gt;</code> (one branch per T)</td>
+  <td>One PR's lifecycle (branch → commits → push → PR → review → merge → cleanup)</td>
+  <td>Editing files outside the PR's scope; pushing to <code>main</code>; force-push after review has started</td>
+  <td><code>[tier-assert] I am Tier 2 (T). …</code></td>
+</tr>
+<tr>
+  <td><strong>L</strong></td>
+  <td>Leaf sub-agent</td>
+  <td>inherits T's worktree</td>
+  <td>One read-only investigation: search files, read code, summarize — no edits</td>
+  <td>Any <code>Edit</code>/<code>Write</code>/<code>MultiEdit</code>; any <code>git commit</code>/<code>git push</code>; any <code>gh</code> mutation</td>
+  <td><code>[tier-assert] I am Tier 3 (L). …</code></td>
+</tr>
+</tbody>
+</table>
+<p>The tier-assertion lint (<code>hooks/acp-tier-assert.sh</code>, wired in
+<code>hooks/hooks.json</code> PreToolUse <code>*</code>) refuses the first tool call of any
+session that has not emitted its mandatory <code>[tier-assert]</code> line. This
+single guard closes §1 #4 of <code>docs/architecture/acp-harness.md</code> (out-of-scope
+operations from agents that forgot their role).</p>
+<h2>2. The four communication channels</h2>
+<p>The three tiers share state through four channels. Every channel has a
+canonical location and a writer/reader contract; mixing them is the
+root cause of every symptom in <code>docs/architecture/acp-harness.md</code> §1.</p>
+<h3>2.1 Envelope (M → T, M → L)</h3>
+<p><strong>Writer</strong>: M.
+<strong>Reader</strong>: T / L (the single dispatched agent).
+<strong>Location</strong>: <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/dispatches/&lt;branch&gt;.md</code>.</p>
+<p>The envelope is the dispatch prompt itself — a copy of the canonical
+template at <code>.claude/skills/_acp/sub-agent-prompt.md</code> with all seven
+placeholders resolved:</p>
+<table>
+<thead>
+<tr>
+  <th>Placeholder</th>
+  <th>Resolved from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>&lt;TASK&gt;</code></td>
+  <td>the M's decomposition step</td>
+</tr>
+<tr>
+  <td><code>&lt;BRANCH&gt;</code></td>
+  <td>the T's target branch</td>
+</tr>
+<tr>
+  <td><code>&lt;WORKTREE_PATH&gt;</code></td>
+  <td>absolute path of the worktree dir</td>
+</tr>
+<tr>
+  <td><code>&lt;CWD&gt;</code></td>
+  <td>always = <code>&lt;WORKTREE_PATH&gt;</code></td>
+</tr>
+<tr>
+  <td><code>&lt;PLUGIN_VERSION_TARGET&gt;</code></td>
+  <td><code>bin/version-slot compute &lt;PR_INDEX&gt;</code></td>
+</tr>
+<tr>
+  <td><code>&lt;LOCK_FILE&gt;</code></td>
+  <td><code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/locks/&lt;branch&gt;.lock</code></td>
+</tr>
+<tr>
+  <td><code>&lt;PARENT_SESSION_CWD&gt;</code></td>
+  <td>absolute path of the M's cwd when it dispatched</td>
+</tr>
+</tbody>
+</table>
+<p>The lint (<code>tests/test_acp_hand_off.py</code>) refuses any dispatch with a
+missing placeholder. The Python helper <code>lib/acp_dispatch.py</code>
+(<code>ACPDispatcher.fill_placeholders</code>) raises <code>ValueError</code> on missing
+values at dispatch time, before the worktree is cut, so a misconfigured
+M fails fast.</p>
+<h3>2.2 Round state (M writes, T + L read)</h3>
+<p><strong>Writer</strong>: M.
+<strong>Reader</strong>: T + L (read-only).
+<strong>Location</strong>: <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/</code>.</p>
+<p>Three sub-paths:</p>
+<ul>
+<li><code>meta.json</code> — the round manifest (PR list, tier codes, dispatch
+timestamps, dependency edges). M is the sole writer; T and L
+reference it via the embedded copy in the envelope.</li>
+<li><code>handoffs.md</code> — append-only hand-off log. M writes one entry per
+dispatch (<code>## &lt;utc&gt; — dispatch T(&lt;branch&gt;): &lt;one-line task&gt;</code>) and
+one per completion (<code>## &lt;utc&gt; — T(&lt;branch&gt;) done: &lt;exit summary&gt;</code>).
+T and L append their hand-off note to the envelope's <code>&lt;TASK&gt;</code> block
+— they NEVER edit <code>handoffs.md</code> directly.</li>
+<li><code>locks/&lt;branch&gt;.lock</code> — per-branch flock lock held by M for the
+lifetime of a T's dispatch. The T's lock-file path is embedded in
+the envelope; the T must <code>touch</code> it on first tool call so <code>ls</code>
+surfaces the active branch set, and the M releases it after <code>git push</code> succeeds.</li>
+</ul>
+<h3>2.3 Tier sentinel (T writes, M reads)</h3>
+<p><strong>Writer</strong>: T (via <code>hooks/acp-tier-assert.sh</code>).
+<strong>Reader</strong>: M (audit), future <code>Eval</code> harness (regression scoring).
+<strong>Location</strong>: <code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/tier-state/&lt;session-id&gt;.json</code>.</p>
+<p>Once the tier-assertion lint passes for a session, the hook writes:</p>
+<pre><code class="language-json">{
+  &quot;asserted&quot;: true,
+  &quot;n&quot;: &quot;2&quot;,
+  &quot;letter&quot;: &quot;T&quot;,
+  &quot;cwd&quot;: &quot;/Users/.../acp-dispatch&quot;,
+  &quot;ownership&quot;: &quot;ONE PR's lifecycle on branch feat/acp-dispatch&quot;,
+  &quot;first_tool&quot;: &quot;Bash&quot;,
+  &quot;asserted_at&quot;: &quot;2026-07-18T22:34:12Z&quot;
+}
+</code></pre>
+<p>The hook then no-ops on every subsequent tool call in the same session
+(the sidecar is the &quot;tier-asserted&quot; cache). The M can read the sidecar
+set to confirm each T has actually asserted before <code>git push</code> is
+permitted; a future <code>Eval</code> regression can score the round on
+assertion-presence rate.</p>
+<h3>2.4 Hand-off notes (T → M, append-only)</h3>
+<p><strong>Writer</strong>: T (appends one line at completion).
+<strong>Reader</strong>: M (next dispatch reads the previous N entries to seed
+<code>&lt;TASK&gt;</code> context for dependent PRs).
+<strong>Location</strong>: appended to the T's dispatch envelope file at
+<code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/dispatches/&lt;branch&gt;.md</code>
+under a <code>## Hand-off</code> heading. M copies the last N entries into the
+next dispatch prompt so context propagates without a second writer
+on <code>handoffs.md</code>.</p>
+<h2>3. The M-tier dispatcher (<code>lib/acp_dispatch.py</code>)</h2>
+<p><code>ACPDispatcher</code> is the single M-tier entry point for the envelope +
+cut + lock pattern. It owns:</p>
+<ol>
+<li><strong>Read the canonical template</strong> from
+<code>.claude/skills/_acp/sub-agent-prompt.md</code> (override via
+<code>--template</code>).</li>
+<li><strong>Fill the seven placeholders</strong> in input order, raising
+<code>ValueError</code> on any missing value. Mirrors the
+<code>tests/test_acp_hand_off.py</code> lint contract.</li>
+<li><strong>Cut a worktree per PR</strong> via <code>git worktree add -b &lt;branch&gt; &lt;path&gt; origin/main</code>. Fails closed on duplicate paths or pre-existing
+branches; cleans up partial state on failure.</li>
+<li><strong>Write one envelope file per PR</strong> under
+<code>&lt;orch_worktree&gt;/.dev-kit/round-&lt;descriptor&gt;/dispatches/</code>.</li>
+<li><strong>Return <code>DispatchResult</code> per PR</strong> so the M can write <code>meta.json</code>
+and <code>handoffs.md</code> without re-reading the dispatcher.</li>
+</ol>
+<p>CLI shape:</p>
+<pre><code class="language-bash">python3 lib/acp_dispatch.py \
+    --round thin-harness \
+    --prs &quot;PR-3:l6-alpha,PR-2:launcher&quot; \
+    --parent-session-cwd /Users/sanghee/dev/dev-harness-kit \
+    --plugin-version-target 0.3.84 \
+    --dry-run
+</code></pre>
+<p><code>--dry-run</code> renders the envelopes without touching the filesystem —
+useful for <code>plan</code> and <code>review</code> stages where the M wants to preview the
+fan-out before cutting.</p>
+<h2>4. Parallel worktree-cut pattern</h2>
+<p>The dispatcher's fan-out loop extends the single-cut pattern in
+<code>hooks/worktree-auto-cut.sh:247-269</code>. Where the hook cuts ONE worktree
+per task prompt, <code>ACPDispatcher.dispatch()</code> cuts N worktrees from a
+single M invocation, with these guarantees:</p>
+<ul>
+<li><strong>Per-PR isolation</strong>: each <code>git worktree add</code> runs in its own
+subprocess. One failure rolls back that worktree only (<code>git worktree remove --force</code> + <code>git branch -D</code>); other worktrees stay.</li>
+<li><strong>Lock per branch</strong>: each T owns a lock file at
+<code>&lt;round&gt;/locks/&lt;branch&gt;.lock</code>. The dispatcher does not <code>flock</code> the
+locks itself — the M holds them externally and passes the path in
+the envelope. This keeps the dispatcher stateless so the M can
+re-dispatch a failed PR without lock coordination.</li>
+<li><strong>Pre-existing branch refuse</strong>: a PR whose target branch already
+exists (e.g. a stale branch from a prior aborted dispatch) raises
+<code>FileExistsError</code>. The M can rename + re-dispatch; this prevents the
+silent-collision class of bugs from §1 #2 of <code>docs/architecture/acp-harness.md</code>.</li>
+</ul>
+<p>The same shape works for both <code>single</code> and <code>parallel</code> orchestration
+modes (<code>git config --global dev-kit.orch.concurrency</code>). <code>single</code> runs
+the dispatcher once per PR; <code>parallel</code> runs the dispatcher once with
+all PRs in one batch.</p>
+<h2>5. First-entry-point 4-tier stack</h2>
+<p>When a dispatched T begins its session, it encounters four guards in
+order. Each closes a distinct failure mode from <code>docs/architecture/acp-harness.md</code> §1.</p>
+<p>| # | Hook (event) | Matcher | Closes | Mechanism |
+|---|---|---|---|---|
+| 1 | <code>acp-tier-assert.sh</code> (PreToolUse) | <code>*</code> | §1 #4 (out-of-scope ops from agents that forgot their role) | Deny the first tool call until the literal <code>[tier-assert] I am Tier …</code> line appears in the transcript. Sidecar at <code>tier-state/&lt;sid&gt;.json</code> caches the assert for the rest of the session. |
+| 2 | <code>acp-cwd-discipline.sh</code> (PreToolUse) | <code>Bash</code> | §1 #1 (sub-agent cwd is parent checkout) | Resolves the command's intended cwd from argv (<code>git -C &lt;path&gt;</code>, <code>cd &lt;path&gt;</code>, etc.) and compares against the T's expected branch. Deny with literal reason when main is the resolved branch. |
+| 3 | <code>worktree-guard.sh</code> (PreToolUse) | <code>Write|Edit|MultiEdit</code> | §1 #5 (six bash-heredoc bypass patterns) | Hard block on Edit/Write in the main checkout; the discriminator is <code>git_dir != git_common_dir</code> resolved from the worktree, not the session cwd. |
+| 4 | <code>git-guard.sh</code> (PreToolUse) | <code>Bash</code> | §1 #2 (slot collision on parallel PRs) | Pre-push slot check via <code>bin/version-slot pre-push-gate</code>; refuses <code>git push</code> when current version &lt; target slot. |</p>
+<p>Hooks 1 and 2 are ACP-specific (this PR + PR-3); hooks 3 and 4 are the
+existing project rules that ACP layers on top of.</p>
+<h2>6. Acceptance criteria (closes #282)</h2>
+<table>
+<thead>
+<tr>
+  <th>AC</th>
+  <th>Where verified</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>lib/acp_dispatch.py</code> exists with <code>ACPDispatcher.dispatch(round, prs)</code></td>
+  <td><code>tests/test_acp_dispatch.py::DispatchDryRun::test_dry_run_returns_results_without_cutting</code></td>
+</tr>
+<tr>
+  <td>7 mandatory placeholders filled</td>
+  <td><code>tests/test_acp_dispatch.py::FillPlaceholders::test_seven_placeholders_match_canonical_template</code></td>
+</tr>
+<tr>
+  <td>3-PR decomposition → 3 worktrees + 3 envelopes</td>
+  <td><code>tests/test_acp_dispatch.py::DispatchFullCut::test_three_prs_produce_three_worktrees_and_three_envelopes</code></td>
+</tr>
+<tr>
+  <td><code>hooks/hooks.json</code> PreToolUse <code>*</code> wired to <code>acp-tier-assert.sh</code></td>
+  <td><code>tests/test_acp_tier_assert.py::WiringTests::test_hooks_json_wires_pretooluse_star_to_acp_tier_assert</code></td>
+</tr>
+<tr>
+  <td>Tier-assert lint denies missing / malformed assertions</td>
+  <td><code>tests/test_acp_tier_assert.py::BehaviorTests::test_missing_assertion_denies</code> + <code>test_malformed_assertion_denies</code></td>
+</tr>
+<tr>
+  <td>Tier-assert lint allows valid T assertion and caches via sidecar</td>
+  <td><code>tests/test_acp_tier_assert.py::BehaviorTests::test_valid_t_assertion_allows</code> + <code>test_repeat_call_with_sidecar_is_noop</code></td>
+</tr>
+<tr>
+  <td>Hook fails closed when <code>jq</code> missing</td>
+  <td><code>hooks/acp-tier-assert.sh:23-26</code> (deny + exit 2 self-contained printf, mirrored from <code>worktree-guard.sh:74-79</code>)</td>
+</tr>
+</tbody>
+</table>
+<h2>7. Out of scope</h2>
+<ul>
+<li><strong><code>lib/acp_hand_off.py</code></strong> — the hand-off lint (<code>tests/test_acp_hand_off.py</code>)
+is a sibling PR (T3 in the thin-harness round).</li>
+<li><strong><code>bin/version-slot</code></strong> — extracted into a separate PR; the dispatcher
+accepts the pre-computed value via <code>--plugin-version-target</code>.</li>
+<li><strong><code>hooks/acp-cwd-discipline.sh</code></strong> — sibling PR; the dispatcher's
+argv-resolving pattern is documented in §4 but the hook itself is
+out of scope here.</li>
+<li><strong>Auto-dispatch on T completion</strong> — explicitly forbidden by
+<code>docs/architecture/acp-harness.md</code> §1 #3. The M reads the <code>[tier-done]</code> line
+emitted by the T and decides what runs next; the dispatcher does not
+spawn follow-up PRs.</li>
+</ul>
+<h2>8. Related</h2>
+<ul>
+<li><code>docs/architecture/acp-harness.md</code> — ACP design SSOT (§1–§6).</li>
+<li><code>.claude/skills/_acp/sub-agent-prompt.md</code> — canonical dispatch template.</li>
+<li><code>hooks/acp-tier-assert.sh</code> — tier-assertion lint (this PR).</li>
+<li><code>hooks/acp-cwd-discipline.sh</code> — cwd-discipline hook (sibling PR).</li>
+<li><code>hooks/worktree-guard.sh</code> — pre-existing worktree rule; layered on top of.</li>
+<li><code>hooks/git-guard.sh</code> — pre-existing pre-push slot gate; layered on top of.</li>
+<li><code>lib/acp_dispatch.py</code> — M-tier dispatcher (this PR).</li>
+<li><code>tests/test_acp_dispatch.py</code> — dispatcher regression (this PR).</li>
+<li><code>tests/test_acp_tier_assert.py</code> — tier-assert wiring + behavior (this PR).</li>
+<li><code>rules/git-workflow.md</code> — worktree + branch protocol.</li>
+<li><code>rules/session-hygiene.md</code> — model selection + cache discipline for ACP dispatches.</li>
+<li><code>bin/version-slot</code> — slot allocator (sibling PR).</li>
+<li>Issue #282 — original feature request.</li>
+<li>PR #266 (<code>feat/p3-skill-governance-gate</code>) — L6/L7 Iron Laws source.</li>
+<li>PR #270 (<code>fix/worktree-guard-routing-question</code>) — version-slot rule prototype.</li>
+</ul>
+
+<footer class="back">
+  <a href="00-index.html">&larr; Documentation Home</a>
+  <a href="../../README.md">README</a>
+  <a href="ACP-DISPATCH.md">MD version</a>
+</footer>
+</div>
+</body>
+</html>

@@ -122,8 +122,8 @@ sections:
         통합되어 `docs/proposals/`에서 삭제됨.
 
       ### 저장소 내부
-      - `docs/ACP-DISPATCH.md` — M/T/L 다중 에이전트 조정
-      - `docs/acp-harness.md` — ACP 하네스 노트
+      - `docs/architecture/ACP-DISPATCH.md` — M/T/L 다중 에이전트 조정
+      - `docs/architecture/acp-harness.md` — ACP 하네스 노트
       - `lib/analysis-core/` — 종합 엔진
       - `lib/render_report_html.py` + `bin/dev-kit-report.py` +
         `skills/report/SKILL.md` — 렌더 패턴 (재사용)

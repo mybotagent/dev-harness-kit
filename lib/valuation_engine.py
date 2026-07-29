@@ -242,7 +242,7 @@ __all__ = [
 
 # ---------------------------------------------------------------------------
 # CLI (Phase 4, issue #369 M2: documented in skills/valuate/SKILL.md
-# and docs/STAGES.md as `python3 -m lib.valuation_engine --plan PRD.md
+# and docs/stages/STAGES.md as `python3 -m lib.valuation_engine --plan PRD.md
 # --dry-run`.)
 # ---------------------------------------------------------------------------
 
