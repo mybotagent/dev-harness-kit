@@ -22,6 +22,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).parent.parent
 CLI = REPO_ROOT / "bin" / "dev-kit-lcs.py"
@@ -110,6 +111,17 @@ class TestListRoutes(unittest.TestCase):
         ):
             self.assertIn(resource_name, registered_lines,
                           f"{resource_name} missing from registered section")
+
+    def test_registered_section_includes_demo_route_when_enabled(self):
+        with mock.patch.dict(os.environ, {"DEV_KIT_LCS_DEMO": "1"}):
+            cp = _run_cli("--list-routes")
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        registered_lines = "\n".join(
+            _split_sections(cp.stdout).get("registered", [])
+        )
+        self.assertRegex(
+            registered_lines, r"(?m)^\s+lcs://demo/<path>\s+demo$",
+        )
 
 
 # ──────────────────────────────────────────────────────────────────

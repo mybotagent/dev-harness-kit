@@ -150,24 +150,24 @@ def cmd_list_resources(server: LCSServer) -> int:
 def cmd_list_routes(server: LCSServer) -> int:
     """Print the registered-vs-reserved split for the LCS URI namespace.
 
-    Registered routes list each production resource's canonical URI
-    form alongside the registry name. Reserved routes are documented
-    in ``skills/lcs/SKILL.md`` but are not wired into the default
-    registry; calling them returns exit 2. Surfacing them here makes
-    that gap visible from the CLI rather than as an exit-code
-    surprise.
+    Registered routes list each live resource alongside its canonical
+    URI form, or a generic path form when no canonical template is
+    defined. Reserved routes are documented in ``skills/lcs/SKILL.md``
+    but are not wired into the default registry; calling them returns
+    exit 2. Surfacing them here makes that gap visible from the CLI
+    rather than as an exit-code surprise.
     """
     registry = server._registry  # noqa: SLF001 — CLI is the registry's user
 
-    # Registered section: iterate over REGISTERED_ROUTE_FORMS in the
-    # fixed canonical order so the table is stable across runs. Skip
-    # entries whose resource name is not in the registry (lets the
-    # registry drop a handler without breaking this listing).
+    # Registration order is stable, and iterating the live registry keeps
+    # optional/debug resources discoverable. Unmapped resources get an
+    # explicit generic form instead of disappearing from the listing.
     print("registered:")
-    for resource_name in REGISTERED_ROUTE_FORMS:
-        if resource_name not in registry._by_name:  # noqa: SLF001
-            continue
-        print(f"  {REGISTERED_ROUTE_FORMS[resource_name]:32s}{resource_name}")
+    for resource_name in registry._by_name:  # noqa: SLF001
+        uri = REGISTERED_ROUTE_FORMS.get(
+            resource_name, f"lcs://{resource_name}/<path>",
+        )
+        print(f"  {uri:32s}{resource_name}")
 
     # Reserved section: always emits the same set so the listing is
     # deterministic regardless of which production resources are
