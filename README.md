@@ -525,7 +525,7 @@ now?" through one of two surfaces:
 
 | Surface | How | When to use |
 |---|---|---|
-| **Chat** — `/dev-kit:lcs` | Model-invoked skill that shells out to `bin/dev-kit-lcs.py` and renders the JSON payload inline. | "Show me every worktree", "what's the spend this hour", "is PR #447 MERGEABLE?". |
+| **Chat** — `/dev-kit:lcs` | Model-invoked skill that shells out to `bin/dev-kit-lcs.py` and renders the JSON payload inline. For NL questions about LCS state, the dispatcher consults `bin/dev-kit-lcs-route.py` (break-even rule: shell wins when one tool answers; LCS wins when N are needed). | "Show me every worktree", "what's the spend this hour", "is PR #447 MERGEABLE?", "what worktrees are stale?". |
 | **CLI** — `bin/dev-kit-lcs.py` | Stdlib-only launcher; `--get <uri>`, `--list-resources`, `--describe <name>`, or `--serve` (JSON-RPC on stdio, MCP-compatible). | Hooks / scripts / CI; anything that doesn't want a chat round-trip. |
 
 Both reach the same resource registry. The skill is hidden from autocomplete
@@ -543,11 +543,14 @@ corresponding handler ships. Live list + per-resource docstrings live in
 
 | URI | What it returns |
 |---|---|
-| `lcs://worktrees` | Every git worktree in the repo with branch + dirty status. |
+| `lcs://worktrees` | Every git worktree, with a `summary` block (active/stale counts, `slot_drift`, `as_of`) for freshness at a glance. |
 | `lcs://worktrees/<branch>` | One worktree's HEAD SHA, slot version, last commit. |
+| `lcs://branches` | List variant: every local branch with summary stats (lets you discover a name before drilling in). |
 | `lcs://branches/<name>` | Local + remote branches, ahead/behind counts, last-CI status. |
 | `lcs://branches/<name>/slot` | Slot metadata (`slot-id`, runtime, last release). |
+| `lcs://prs` | List variant: every open PR with `n`, `title`, `head`, `ci_state`, `review_state`. |
 | `lcs://pr/<n>` | One PR's CI checks, review verdict, merge state, slot version. |
+| `lcs://sessions` | List variant: every indexed session with `id`, `role`, `started_at`, `current_task`, `last_tool`. |
 | `lcs://sessions/<id>` | One recorded Claude / Codex session (turns, tools, tokens). |
 | `lcs://spend/<window>` | Token spend over a time window, bucketed by model + worktree. |
 | `lcs://hooks/coverage` | Which hook fires against which runtime (claude-code vs codex). |
@@ -556,8 +559,33 @@ corresponding handler ships. Live list + per-resource docstrings live in
 | `lcs://valuations/<plan-id>` | A `valuate` verdict (decision + per-axis rationale). |
 
 `<window>` is `today` / `last-hour` / an ISO range; `<step>` is the
-interview step id; the rest are obvious from context. URIs are pure — no
-side effects, no writes, no network I/O beyond `gh api` / `git` reads.
+interview step id; the rest are obvious from context. URIs are pure — no side effects, no writes, no network I/O beyond `gh api` / `git` reads.
+
+**Listing what's wired vs. what's reserved.** A documented URI that is not a
+registered route is worse than no URI (the operator types the URI, gets exit
+2, and concludes LCS is broken), so `--list-routes` on the CLI splits the
+two:
+
+```bash
+python3 bin/dev-kit-lcs.py --list-routes
+# registered:
+#   lcs://worktrees            worktrees
+#   lcs://branches/<name>      branches
+#   ...
+# reserved (not implemented):
+#   lcs://hooks/coverage
+#   lcs://interview/<step>
+#   lcs://research/cache
+```
+
+**When to route to LCS vs. just shell out.** A separate sibling binary
+`bin/dev-kit-lcs-route.py` answers the NL question "what resource should
+handle this?" against a deterministic break-even rule: *if a single shell
+call answers the question, use the shell; if it requires N correlated calls
+across heterogeneous sources, route to LCS.* The router is not a skill (a
+skill that decides whether to call another skill is L6 anti-pattern); it
+is a thin CLI binary, ~200 tokens per routed call, ROI positive only on
+multi-source aggregations. See `python3 bin/dev-kit-lcs-route.py --list-rules`.
 
 #### Hook integration
 
