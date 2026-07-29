@@ -35,8 +35,8 @@ _PROD_ROOTS: Tuple[str, ...] = (
 # count as "doc updates" for the docs-updated sub-gate. A PR that
 # touches ONLY these files (and prod code) still fails the gate.
 _AUTO_MANAGED_DOCS: frozenset = frozenset({
-    "docs/STAGES.md",
-    "docs/REPOSITORY-MAP.md",
+    "docs/stages/STAGES.md",
+    "docs/repo/REPOSITORY-MAP.md",
 })
 
 # Marker in the PR body that signals "docs not required". Operators

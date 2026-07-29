@@ -208,7 +208,7 @@ a:hover { text-decoration: underline; }
 <p><strong>근거</strong>: 결정 3이 <em>배포 방식</em>을 잠근 반면, 결정 8은 <em>동작 자체</em>를 잠근다. Claude Code만 동작 / Codex만 동작 = 부분 구현으로 간주.</p>
 <p><strong>범위</strong>: 모든 신규 컴포넌트. <code>/dev-kit:build</code>, <code>/dev-kit:eval</code>, <code>/dev-kit:review</code>, <code>/dev-kit:plan</code>, 신규 하네스 (lcs, interview, valuate, evaluate, research, harness-audit) 모두 Claude Code + Codex 양쪽에서 동작 필수.</p>
 <p><strong>메커니즘</strong>:</p>
-<ul><li><code>lib/runtime_adapters/</code> — 얇은 어댑터 1계층</li><li><code>RuntimeAdapter</code> 추상 인터페이스</li><li><code>tests/test_portability.py</code> — 런타임 주입 테스트</li><li>CI 매트릭스 (Claude Code lane + Codex lane)</li><li><code>docs/RUNTIME-PORTABILITY.md</code></li></ul>
+<ul><li><code>lib/runtime_adapters/</code> — 얇은 어댑터 1계층</li><li><code>RuntimeAdapter</code> 추상 인터페이스</li><li><code>tests/test_portability.py</code> — 런타임 주입 테스트</li><li>CI 매트릭스 (Claude Code lane + Codex lane)</li><li><code>docs/architecture/RUNTIME-PORTABILITY.md</code></li></ul>
 <p><strong>일회성 비용</strong>: ~500 LOC (Phase 0). <strong>영구 보장</strong>: 모든 후속 Phase에서 런타임 회귀 자동 차단.</p>
 <p><strong>관련 파일</strong>: <code>07-runtime-portability.html</code> (어댑터 계층), <code>11-migration-phases.html</code> (Phase 0).</p>
 <hr class="section-divider">

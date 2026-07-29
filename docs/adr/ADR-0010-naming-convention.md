@@ -3,7 +3,7 @@
 **Status**: Accepted
 
 ## Decision
-All artifacts follow the convention in `docs/NAMING.md`. Exception: ADRs.
+All artifacts follow the convention in `docs/naming/NAMING.md`. Exception: ADRs.
 
 ## Pattern per category
 - bootstrap: `<category>-<instrument>` (exception: `ci-setup` — slash-command brevity; lives under `bootstrap` category in frontmatter but is referenced as `/dev-kit:ci-setup`, not `/dev-kit:bootstrap-ci-setup`)

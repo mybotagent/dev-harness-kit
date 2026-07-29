@@ -9,7 +9,7 @@
   populates all seven placeholders. tests/test_acp_hand_off.py refuses
   any dispatch prompt missing a placeholder.
 
-  See docs/acp-harness.md §3 for the contract.
+  See docs/architecture/acp-harness.md §3 for the contract.
 -->
 
 # ACP dispatch: <TIER> on branch `<BRANCH>`
@@ -78,6 +78,6 @@ Then stop. Do not auto-dispatch a follow-up. M decides what runs next.
 
 ## Related
 
-- `docs/acp-harness.md` §2 (tier-cognition), §3 (this template), §4 (version-slot), §5 (cwd-discipline), §6 (round-meta).
+- `docs/architecture/acp-harness.md` §2 (tier-cognition), §3 (this template), §4 (version-slot), §5 (cwd-discipline), §6 (round-meta).
 - `rules/git-workflow.md` — branch + worktree + PR conventions.
 - `rules/session-hygiene.md` — model selection + cache discipline (volatile content stays in prompt tail).

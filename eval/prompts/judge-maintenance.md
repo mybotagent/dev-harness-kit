@@ -37,7 +37,7 @@ sub-gate) can use directly.
   docs-updated sub-gate: if any changed file lives under `lib/`,
   `tools/`, `hooks/`, `skills/`, or `.githooks/`, the PR must also
   touch at least one file under `docs/` (excluding
-  `docs/STAGES.md` / `docs/REPOSITORY-MAP.md` which are auto-managed)
+  `docs/stages/STAGES.md` / `docs/repo/REPOSITORY-MAP.md` which are auto-managed)
   OR the PR body must explicitly justify "docs not required" with a
   quoted link to a pre-existing doc that covers the change.
   Score = 10 when docs are present or justified; 0 when neither.

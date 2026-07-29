@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 # ---------------------------------------------------------------------------
-# Constants — single source of truth, mirror docs/acp-harness.md §3.2.
+# Constants — single source of truth, mirror docs/architecture/acp-harness.md §3.2.
 # ---------------------------------------------------------------------------
 
 # Seven mandatory placeholders in the canonical template. The test in
@@ -73,7 +73,7 @@ class DispatchSpec:
     pr_index : int
         1-based merge-order position of the PR within the round. Used
         by `bin/version-slot compute` to allocate a non-colliding plugin
-        version (`docs/acp-harness.md` §4).
+        version (`docs/architecture/acp-harness.md` §4).
     branch : str
         Target feature branch in `<type>/<slug>` form
         (`rules/git-workflow.md`). Example: `feat/acp-dispatch`.
@@ -194,7 +194,7 @@ def _fill_placeholders(template: str, values: dict[str, str]) -> str:
     if missing:
         raise ValueError(
             f"dispatch is missing mandatory placeholder(s): {', '.join(missing)}. "
-            f"See docs/acp-harness.md §3.2 — tests/test_acp_hand_off.py refuses any "
+            f"See docs/architecture/acp-harness.md §3.2 — tests/test_acp_hand_off.py refuses any "
             f"dispatch prompt missing one."
         )
     rendered = template
@@ -223,7 +223,7 @@ class ACPDispatcher:
     parent_session_cwd : Path
         Absolute path of the parent session's cwd. Embedded into every
         dispatch as `<PARENT_SESSION_CWD>` so the T can detect the
-        parent-cwd misfire (`docs/acp-harness.md` §1 #1).
+        parent-cwd misfire (`docs/architecture/acp-harness.md` §1 #1).
     plugin_version_target : str | None
         Pre-computed slot version (e.g. `0.3.84`). When None, the M
         should compute via `bin/version-slot compute <PR_INDEX>` before
@@ -355,8 +355,8 @@ class ACPDispatcher:
             f"PR index {spec.pr_index})\n\n"
             f"{spec.task}\n\n"
             f"See the canonical ACP contract:\n"
-            f"- docs/acp-harness.md §2 (tier-cognition)\n"
-            f"- docs/acp-harness.md §3 (this template)\n"
+            f"- docs/architecture/acp-harness.md §2 (tier-cognition)\n"
+            f"- docs/architecture/acp-harness.md §3 (this template)\n"
             f"- rules/git-workflow.md (worktree + branch protocol)\n"
         )
 

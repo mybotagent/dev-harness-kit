@@ -49,7 +49,7 @@ python3 tools/skill_usage.py --days 0 --top 0
 
 **Start here if you are new to dev-harness-kit:**
 
-[`docs/00-index.html`](docs/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.  Korean version: [`docs/00-index.ko.html`](docs/00-index.ko.html).
+[`docs/home/00-index.html`](docs/home/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.  Korean version: [`docs/home/00-index.ko.html`](docs/home/00-index.ko.html).
 
 ### What this plugin is, in two sentences
 
@@ -57,7 +57,7 @@ dev-harness-kit ships the `Plan → Build → Review → Ship` loop for Claude C
 
 ### Why LCS exists (the one-paragraph version)
 
-Eight files in `hooks/` and `lib/` each needed the same live state — `slot_version`, PR status, session info, spend — and each shell-out to `git`/`gh`, parsed the JSON inline, and wrapped errors in its own shape. When `gh` was missing, one hook crashed, another silently fell back, a third lied. Hot loops re-spawned `gh` 60 times in a single babysit session. LCS is one Python module that every consumer now reads from; concurrent reads in a 5-second window collapse to one subprocess. The full numbers + before/after are in [`docs/00-index.html`](docs/00-index.html).
+Eight files in `hooks/` and `lib/` each needed the same live state — `slot_version`, PR status, session info, spend — and each shell-out to `git`/`gh`, parsed the JSON inline, and wrapped errors in its own shape. When `gh` was missing, one hook crashed, another silently fell back, a third lied. Hot loops re-spawned `gh` 60 times in a single babysit session. LCS is one Python module that every consumer now reads from; concurrent reads in a 5-second window collapse to one subprocess. The full numbers + before/after are in [`docs/home/00-index.html`](docs/home/00-index.html).
 
 ### How to use it (the 60-second quickstart)
 
@@ -69,7 +69,7 @@ python3 bin/dev-kit-lcs.py --list-resources
 python3 bin/dev-kit-lcs.py --get 'lcs://branches/main'
 
 # 3. Read the full reference in your browser
-open docs/00-index.html
+open docs/home/00-index.html
 ```
 
 That is the whole LCS surface. Anything deeper is in the docs index.
@@ -83,30 +83,30 @@ easier to grep.
 
 | Topic | HTML | MD | What you get |
 |---|---|---|---|
-| Why + value + quickstart | [`docs/00-index.html`](docs/00-index.html) / [`.ko`](docs/00-index.ko.html) | [`docs/00-index.md`](docs/00-index.md) / [`.ko`](docs/00-index.ko.md) | Beginner landing — read first |
-| LCS reference (full) | [`docs/lcs-usage.html`](docs/lcs-usage.html) / [`.ko`](docs/lcs-usage.ko.html) | [`docs/lcs-usage.md`](docs/lcs-usage.md) / [`.ko`](docs/lcs-usage.ko.md) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
-| STAGES (what each loop step owns) | [`docs/STAGES.html`](docs/STAGES.html) | [`docs/STAGES.md`](docs/STAGES.md) | bootstrap → plan → build → review → security → ship |
-| CI install (run dev-kit CI elsewhere) | [`docs/ci-setup.html`](docs/ci-setup.html) | [`docs/ci-setup.md`](docs/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
-| Maintenance gate (PR-only quality) | [`docs/maintenance-gate.html`](docs/maintenance-gate.html) | [`docs/maintenance-gate.md`](docs/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
-| Runtime portability (Claude Code ↔ Codex) | [`docs/RUNTIME-PORTABILITY.html`](docs/RUNTIME-PORTABILITY.html) | [`docs/RUNTIME-PORTABILITY.md`](docs/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
-| Multi-harness design proposal | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.html`](docs/PROPOSAL-IMPLEMENTATION-PLAN.html) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | [`docs/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/PROPOSAL-IMPLEMENTATION-PLAN.md) + same proposal dir | 13 topic files (Korean) covering the architecture |
-| Naming convention (SSOT) | [`docs/NAMING.html`](docs/NAMING.html) | [`docs/NAMING.md`](docs/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
-| Pre-implementation gate | [`docs/PRE-IMPL-CHECK.html`](docs/PRE-IMPL-CHECK.html) | [`docs/PRE-IMPL-CHECK.md`](docs/PRE-IMPL-CHECK.md) | 9 questions before code |
-| Cost & risk | [`docs/COST-ANALYSIS.html`](docs/COST-ANALYSIS.html) | [`docs/COST-ANALYSIS.md`](docs/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
-| Team adoption | [`docs/team-adoption.html`](docs/team-adoption.html) | [`docs/team-adoption.md`](docs/team-adoption.md) | Why a single maintainer and a 20-person team adopt the harness differently |
-| Hook coverage gaps (P4 Bucket B audit) | [`docs/hook-coverage-gaps.html`](docs/hook-coverage-gaps.html) | [`docs/hook-coverage-gaps.md`](docs/hook-coverage-gaps.md) | Which hook events are wired vs. which aren't, per runtime |
-| ACP dispatch (M-tier architecture) | [`docs/ACP-DISPATCH.html`](docs/ACP-DISPATCH.html) | [`docs/ACP-DISPATCH.md`](docs/ACP-DISPATCH.md) | How Model-tier agents find and dispatch to Capability-tier skills |
-| ACP (Agent Coordination Protocol) | [`docs/acp-harness.html`](docs/acp-harness.html) | [`docs/acp-harness.md`](docs/acp-harness.md) | The wire-format ACP uses to talk between agents; how it differs from LCS |
+| Why + value + quickstart | [`docs/home/00-index.html`](docs/home/00-index.html) / [`.ko`](docs/home/00-index.ko.html) | [`docs/home/00-index.md`](docs/home/00-index.md) / [`.ko`](docs/home/00-index.ko.md) | Beginner landing — read first |
+| LCS reference (full) | [`docs/lcs/lcs-usage.html`](docs/lcs/lcs-usage.html) / [`.ko`](docs/lcs/lcs-usage.ko.html) | [`docs/lcs/lcs-usage.md`](docs/lcs/lcs-usage.md) / [`.ko`](docs/lcs/lcs-usage.ko.md) | URI grammar, every resource, CLI surface, JSON-RPC, integration map |
+| STAGES (what each loop step owns) | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | bootstrap → plan → build → review → security → ship |
+| CI install (run dev-kit CI elsewhere) | [`docs/quality/ci-setup.html`](docs/quality/ci-setup.html) | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
+| Maintenance gate (PR-only quality) | [`docs/quality/maintenance-gate.html`](docs/quality/maintenance-gate.html) | [`docs/quality/maintenance-gate.md`](docs/quality/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
+| Runtime portability (Claude Code ↔ Codex) | [`docs/architecture/RUNTIME-PORTABILITY.html`](docs/architecture/RUNTIME-PORTABILITY.html) | [`docs/architecture/RUNTIME-PORTABILITY.md`](docs/architecture/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
+| Multi-harness design proposal | [`docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.html`](docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.html) + [`docs/proposals/harness-architecture/00-index.html`](docs/proposals/harness-architecture/00-index.html) | [`docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.md`](docs/planning/PROPOSAL-IMPLEMENTATION-PLAN.md) + same proposal dir | 13 topic files (Korean) covering the architecture |
+| Naming convention (SSOT) | [`docs/naming/NAMING.html`](docs/naming/NAMING.html) | [`docs/naming/NAMING.md`](docs/naming/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
+| Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | 9 questions before code |
+| Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
+| Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | Why a single maintainer and a 20-person team adopt the harness differently |
+| Hook coverage gaps (P4 Bucket B audit) | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | Which hook events are wired vs. which aren't, per runtime |
+| ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | How Model-tier agents find and dispatch to Capability-tier skills |
+| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | The wire-format ACP uses to talk between agents; how it differs from LCS |
 | Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | same | All 35 skills with category + α classification |
 | Decision records | [`docs/adr/`](docs/adr) | same | 5 locked ADRs (0001, 0010, 0020, 0021, 0022) |
-| Repo map | [`docs/REPOSITORY-MAP.html`](docs/REPOSITORY-MAP.html) | [`docs/REPOSITORY-MAP.md`](docs/REPOSITORY-MAP.md) | Where each component lives in the tree |
+| Repo map | [`docs/repo/REPOSITORY-MAP.html`](docs/repo/REPOSITORY-MAP.html) | [`docs/repo/REPOSITORY-MAP.md`](docs/repo/REPOSITORY-MAP.md) | Where each component lives in the tree |
 
-If you have only five minutes, open [`docs/00-index.html`](docs/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
+If you have only five minutes, open [`docs/home/00-index.html`](docs/home/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
 
 The same docs are also available as Markdown:
 
-- [`docs/00-index.md`](docs/00-index.md) / [`docs/00-index.ko.md`](docs/00-index.ko.md) — landing (beginner intro + categorized index)
-- [`docs/lcs-usage.md`](docs/lcs-usage.md) / [`docs/lcs-usage.ko.md`](docs/lcs-usage.ko.md) — full LCS reference (URI grammar, resources, CLI surface, JSON-RPC, integration map, verification log)
+- [`docs/home/00-index.md`](docs/home/00-index.md) / [`docs/home/00-index.ko.md`](docs/home/00-index.ko.md) — landing (beginner intro + categorized index)
+- [`docs/lcs/lcs-usage.md`](docs/lcs/lcs-usage.md) / [`docs/lcs/lcs-usage.ko.md`](docs/lcs/lcs-usage.ko.md) — full LCS reference (URI grammar, resources, CLI surface, JSON-RPC, integration map, verification log)
 
 The HTML versions are preferred for browsing (sticky topnav, collapsible
 sections, dark/light theme auto-switch, copy-able code blocks); the MD
@@ -932,7 +932,7 @@ See `docs/adr/ADR-0022-eval-agent-behavior.md` for the full rationale.
 ## Repository layout
 
 The concept-level tree and directory guide live in the
-[`Repository map`](docs/REPOSITORY-MAP.md), so the main README stays
+[`Repository map`](docs/repo/REPOSITORY-MAP.md), so the main README stays
 searchable while the original layout reference remains available.
 
 ---
@@ -958,16 +958,16 @@ See `docs/adr/` for the full ADR series.
 
 ## Contributing
 
-Pass the pre-impl gate (`docs/PRE-IMPL-CHECK.md`) and the 8-dimension cost check
-(`docs/COST-ANALYSIS.md`), then:
+Pass the pre-impl gate (`docs/planning/PRE-IMPL-CHECK.md`) and the 8-dimension cost check
+(`docs/quality/COST-ANALYSIS.md`), then:
 
 ```bash
 python3 -m pytest tests/ -q
 claude plugin validate .claude-plugin/plugin.json
 ```
 
-Reference docs: [`docs/STAGES.md`](docs/STAGES.md),
-[`docs/NAMING.md`](docs/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
+Reference docs: [`docs/stages/STAGES.md`](docs/stages/STAGES.md),
+[`docs/naming/NAMING.md`](docs/naming/NAMING.md), [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 

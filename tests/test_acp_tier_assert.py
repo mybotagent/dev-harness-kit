@@ -4,7 +4,7 @@ Closes #282. Verifies two layers:
 
   * Wiring — `hooks/hooks.json` declares an `acp-tier-assert.sh`
     PreToolUse entry with matcher `*` (the contract from
-    `docs/acp-harness.md` §2.3). The hook script must exist and be
+    `docs/architecture/acp-harness.md` §2.3). The hook script must exist and be
     executable.
 
   * Behavior — `hooks/acp-tier-assert.sh` denies on missing or
@@ -81,7 +81,7 @@ class WiringTests(unittest.TestCase):
             "hooks/hooks.json does not wire acp-tier-assert.sh into any "
             "PreToolUse group. Add an entry with matcher='*' (or a "
             "broader matcher that covers every tool call) per "
-            "docs/acp-harness.md §2.3.",
+            "docs/architecture/acp-harness.md §2.3.",
         )
         matchers = sorted({m for m, _ in wired})
         # The contract says matcher='*'. Accept a broader set ('Bash|Edit|...').

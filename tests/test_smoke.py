@@ -118,7 +118,7 @@ class TestSmoke(unittest.TestCase):
             self.assertIn(stage, ahc.DEFAULT_MATRIX, f"stage {stage} missing from matrix")
 
     def test_pre_approved_gate_exists(self):
-        p = PROJECT_ROOT / "docs" / "PRE-IMPL-CHECK.md"
+        p = PROJECT_ROOT / "docs" / "planning" / "PRE-IMPL-CHECK.md"
         self.assertTrue(p.exists())
         content = p.read_text()
         # 5-Question + 8-Dimension sections both present
@@ -126,7 +126,7 @@ class TestSmoke(unittest.TestCase):
         self.assertIn("8-Dimension Cost/Risk", content)
 
     def test_cost_analysis_exists(self):
-        p = PROJECT_ROOT / "docs" / "COST-ANALYSIS.md"
+        p = PROJECT_ROOT / "docs" / "quality" / "COST-ANALYSIS.md"
         self.assertTrue(p.exists())
         content = p.read_text()
         # 8 dimensions all covered

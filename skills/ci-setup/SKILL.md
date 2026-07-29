@@ -65,7 +65,7 @@ Unless `--skip-verify`:
 3.4. `bash scripts/ci-local.sh` — expect exit 0 (skips test if no `tests/`).
 3.5. `act -l 2>/dev/null || echo "act not installed; falling back to scripts/ci-local.sh"` — WARN, not FAIL.
 
-Print summary table (file → outcome: created/overwritten/skipped/error) + pointer to `docs/ci-setup.md`.
+Print summary table (file → outcome: created/overwritten/skipped/error) + pointer to `docs/quality/ci-setup.md`.
 
 ## Phase 1.7 -- Lint pass (non-fatal; always runs, even on no-op idempotent re-install)
 
@@ -133,7 +133,7 @@ The install is considered successful even if `gh secret set` fails — secrets a
 
 - On success, `.dev-kit/ci-config.json` is written. This is the **contract** with `/dev-kit:build`.
 - `/dev-kit:build` refuses to start if this marker is absent — see `skills/build/SKILL.md` pre-flight gate.
-- For full usage docs: see `docs/ci-setup.md`.
+- For full usage docs: see `docs/quality/ci-setup.md`.
 
 ## Files Installed (15 expected paths)
 

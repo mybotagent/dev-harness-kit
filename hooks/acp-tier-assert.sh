@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # acp-tier-assert.sh — PreToolUse hook for any matcher (`*`).
 #
-# Enforces docs/acp-harness.md §2.3 — every dispatched ACP agent (M, T, or
+# Enforces docs/architecture/acp-harness.md §2.3 — every dispatched ACP agent (M, T, or
 # L) MUST emit, on the first tool call of its session, the literal line:
 #
 #   [tier-assert] I am Tier <N> (<M|T|L>). cwd is <WORKTREE_PATH>. I own <OWNERSHIP_SENTENCE>.
@@ -16,7 +16,7 @@
 #     naming the missing field. Otherwise allow.
 #   - The "seen tier-assert" state is per-session, persisted in a
 #     sidecar file under <orch_worktree>/.dev-kit/round-<descriptor>/
-#     tier-state/<session-id>.json (see docs/acp-harness.md §6.1).
+#     tier-state/<session-id>.json (see docs/architecture/acp-harness.md §6.1).
 #     Once the assertion passes, subsequent tool calls in the same
 #     session are no-ops so the hook does not re-scan on every Edit.
 #

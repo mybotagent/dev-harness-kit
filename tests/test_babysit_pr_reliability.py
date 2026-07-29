@@ -3,7 +3,7 @@ lib/babysit_pr_reliability.py.
 
 Pins the contract for the two helpers that close Gap #11 (stale lock)
 and Gap #12 (ghost workflow classification) from
-docs/hook-coverage-gaps.md:
+docs/hooks/hook-coverage-gaps.md:
 
   is_stale_lock(path, ttl_seconds, *, now_epoch=None)
     T1: missing path returns False (nothing to be stale)

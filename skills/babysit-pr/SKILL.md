@@ -654,7 +654,7 @@ trap 'rm -f .dev-kit/babysit.lock' EXIT
 ```
 
 The stale-lock detection is the close for Gap #11 in
-`docs/hook-coverage-gaps.md`. The helper is pure (no I/O randomness;
+`docs/hooks/hook-coverage-gaps.md`. The helper is pure (no I/O randomness;
 `now_epoch` is parameterizable for tests) so the same logic is used by
 `tests/test_babysit_pr_reliability.py::TestIsStaleLock` end-to-end.
 
