@@ -240,14 +240,31 @@ class TestBranchesResourceFetch(unittest.TestCase):
             self.assertNotIn("slot_version", result["data"])
 
     def test_empty_branch_segment_raises_partial(self):
+        # ``lcs://branches//`` (truly empty branch name) still raises;
+        # ``lcs://branches`` and ``lcs://branches/`` now route to the
+        # list form (Gap 3, issue #455 discovery endpoint).
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _init_repo(root)
             resource = BranchesResource(root)
-            parsed = parse_uri("lcs://branches/")
+            parsed = parse_uri("lcs://branches//")
             with self.assertRaises(Exception) as cm:
                 resource.fetch(parsed)
             self.assertIn("no branch name", str(cm.exception))
+
+    def test_bare_branches_returns_list_form(self):
+        # ``lcs://branches`` (no path params) now returns the list form
+        # added by Gap 3 (issue #455 discovery endpoint).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _init_repo(root)
+            resource = BranchesResource(root)
+            parsed = parse_uri("lcs://branches")
+            with patch("lcs_resources.branches.shutil.which", return_value=None):
+                result = resource.fetch(parsed)
+            self.assertEqual(result["status"], "ok")
+            self.assertIn("branches", result["data"])
+            self.assertIn("summary", result["data"])
 
 
 class TestLCSIntegration(unittest.TestCase):

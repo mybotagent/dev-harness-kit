@@ -1,28 +1,32 @@
-"""sessions resource — ``lcs://sessions/<id>``.
+"""sessions resource — ``lcs://sessions`` and ``lcs://sessions/<id>``.
 
-Exposes one runtime session as a normalized JSON snapshot. URI form:
+Two URI forms:
+
+  lcs://sessions
+      → {"status": "ok", "data": {"sessions": [...], "summary": {...}}}
+        List form: small per-session snapshot + summary block (see
+        ``_fetch_sessions_list``).
 
   lcs://sessions/<id>
-      → {"status": "ok|partial", "data": {id, role, cwd,
-          current_task, last_tool, started_at}}
-        missing=<list> when only partial info is available.
+      → {"status": "ok|partial", "data": {id, role, cwd, current_task,
+          last_tool, started_at}}
+        Per-session detail. Source priority (first hit wins):
+        1. ``<logs_root>/sessions/<id>.json`` — canonical dump.
+        2. ``<logs_root>/<id>.json`` — top-level alias.
+        3. ``<logs_root>/{claude-code,codex}/*<id>*.jsonl`` — transcripts.
 
-Source priority (first hit wins):
-  1. ``<logs_root>/sessions/<id>.json`` — canonical session state dump
-     written by Phase 0.4 ``sessions.py``. Schema = the 6 fields below.
-  2. ``<logs_root>/<id>.json`` — same canonical schema, top-level.
-  3. ``<logs_root>/{claude-code,codex}/*<id>*.jsonl`` — transcript-derived.
-     We scan line-by-line, parse each line, and take the first record
-     whose ``sessionId`` / ``session_id`` matches ``<id>``. From that
-     record set we extract the same 6 fields.
-
-If no record is found in any source, the resource returns a
-``status="partial"`` envelope with ``missing=["no session <id>"]`` so
-the LCS server surfaces the gap to the caller without aborting.
+Discovery endpoint (Gap 3, issue #455):
+- The list form enumerates every canonical dump + transcript and
+  emits a small per-session row (no ``cwd`` / ``_source_path`` —
+  those are heavy and surfaced on the per-record URI).
+- Empty index returns ``status="ok"`` with ``total: 0`` rather than
+  ``status="partial"``: a missing index is *honest data*, not a
+  partial read of an existing record.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -248,8 +252,115 @@ def _extract_started_at(record: dict) -> str:
     return ""
 
 
+def _now_iso() -> str:
+    """Current UTC time as ISO8601 with explicit +00:00 suffix."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _list_canonical_sessions(logs_root: Path) -> dict[str, dict]:
+    """Enumerate ``logs/sessions/*.json`` dumps → ``{sid: record}``.
+
+    File name (without extension) is the session id. Malformed JSON
+    is silently skipped — the canonical dumper is the trusted source
+    here and a bad record is best surfaced via a ``partial`` response
+    on the per-record URI, not by failing the entire list.
+    """
+    out: dict[str, dict] = {}
+    sessions_dir = logs_root / "sessions"
+    if not sessions_dir.is_dir():
+        return out
+    for path in sorted(sessions_dir.glob("*.json")):
+        sid = path.stem
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict):
+            # Inject id from the filename when the record omits it
+            # so downstream code can rely on a single key.
+            record.setdefault("id", sid)
+            out[sid] = record
+    return out
+
+
+def _list_top_level_sessions(logs_root: Path) -> dict[str, dict]:
+    """Enumerate top-level ``logs/*.json`` aliases → ``{sid: record}``.
+
+    Skips anything that lives in a subdirectory (canonical
+    ``sessions/`` and transcript ``{claude-code,codex}/`` are
+    handled separately) so we don't double-count or shadow the
+    canonical dumper.
+    """
+    out: dict[str, dict] = {}
+    if not logs_root.is_dir():
+        return out
+    for path in sorted(logs_root.glob("*.json")):
+        if path.parent != logs_root:
+            continue
+        sid = path.stem
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict):
+            record.setdefault("id", sid)
+            out[sid] = record
+    return out
+
+
+def _list_transcript_sessions(logs_root: Path) -> dict[str, dict]:
+    """Walk ``logs/{claude-code,codex}/*.jsonl`` → ``{sid: record}``.
+
+    Each jsonl contributes one synthesized record per distinct
+    session id. ``_aggregate_jsonl`` already enforces the
+    first-match-wins / last-match-wins aggregation rules so the
+    small-list fields (``current_task``, ``last_tool``,
+    ``started_at``) reflect the full transcript rather than just
+    the first line.
+    """
+    out: dict[str, dict] = {}
+    for subdir in _TRANSCRIPT_DIRS:
+        dir_path = logs_root / subdir
+        if not dir_path.is_dir():
+            continue
+        for jsonl in sorted(dir_path.glob("*.jsonl")):
+            # Extract the session id(s) from this transcript. The
+            # cheap filename-pre-filter doesn't apply here — we need
+            # to walk lines to discover ids. ``_aggregate_jsonl`` is
+            # id-specific so we can't reuse it for discovery; do a
+            # one-pass scan instead.
+            try:
+                with jsonl.open(encoding="utf-8") as fh:
+                    ids: set[str] = set()
+                    for raw in fh:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            record = json.loads(raw)
+                        except ValueError:
+                            continue
+                        if not isinstance(record, dict):
+                            continue
+                        sid = _record_session_id(record)
+                        if sid:
+                            ids.add(sid)
+            except OSError:
+                continue
+            for sid in ids:
+                if sid in out:
+                    # First-hit-wins for the transcript-derived row;
+                    # canonical / top-level JSON overrides below.
+                    continue
+                agg = _aggregate_jsonl(jsonl, sid)
+                if agg is not None:
+                    agg["_source_path"] = str(jsonl)
+                    out[sid] = agg
+    return out
+
+
 class SessionsResource(Resource):
-    """LCS resource for ``lcs://sessions/<id>``."""
+    """LCS resource for ``lcs://sessions[/<id>]``."""
 
     name = NAME
 
@@ -257,7 +368,12 @@ class SessionsResource(Resource):
         self._logs_root = logs_root
 
     def fetch(self, parsed: ParsedURI) -> dict:
-        if len(parsed.path_segments) < 2:
+        # List form: lcs://sessions (with or without trailing slash).
+        if not parsed.path_segments[1:]:
+            return self._fetch_sessions_list()
+
+        # Per-session form: lcs://sessions/<id>.
+        if len(parsed.path_segments) < 2 or not parsed.path_segments[1]:
             raise LCSPartialError(
                 data={"id": ""},
                 missing=["missing session id in URI"],
@@ -278,5 +394,59 @@ class SessionsResource(Resource):
                 "current_task": _extract_task(record),
                 "last_tool": _extract_last_tool(record),
                 "started_at": _extract_started_at(record),
+            },
+        }
+
+    def _fetch_sessions_list(self) -> dict:
+        """Build the ``lcs://sessions`` list payload + summary block.
+
+        Source priority (first hit wins per session id):
+        1. ``logs/sessions/<sid>.json`` (canonical Phase 0.4 dumps).
+        2. ``logs/<sid>.json`` (top-level alias).
+        3. ``logs/{claude-code,codex}/*.jsonl`` (transcripts).
+
+        Empty index returns ``status="ok"`` (NOT ``partial``) — an
+        empty index is honest data, not a partial read of an
+        existing record.
+
+        The list rows carry the small-list fields only:
+        ``id, role, started_at, current_task, last_tool``. Heavy
+        fields (``cwd``, ``_source_path``, ``_matched``) stay on
+        the per-record URI.
+        """
+        canonical = _list_canonical_sessions(self._logs_root)
+        top_level = _list_top_level_sessions(self._logs_root)
+        transcripts = _list_transcript_sessions(self._logs_root)
+
+        # Source priority: canonical > top-level > transcripts.
+        merged: dict[str, dict] = {}
+        for src in (canonical, top_level, transcripts):
+            for sid, record in src.items():
+                merged.setdefault(sid, record)
+
+        rows: list[dict] = []
+        by_role: dict[str, int] = {}
+        for sid in sorted(merged.keys()):
+            record = merged[sid]
+            role = _detect_role(record) or "claude-code"
+            row = {
+                "id": sid,
+                "role": role,
+                "started_at": _extract_started_at(record),
+                "current_task": _extract_task(record),
+                "last_tool": _extract_last_tool(record),
+            }
+            rows.append(row)
+            by_role[role] = by_role.get(role, 0) + 1
+
+        return {
+            "status": "ok",
+            "data": {
+                "sessions": rows,
+                "summary": {
+                    "total": len(rows),
+                    "by_role": by_role,
+                    "as_of": _now_iso(),
+                },
             },
         }
