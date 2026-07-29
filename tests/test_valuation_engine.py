@@ -3,8 +3,8 @@
 (Phase 4, issue #374).
 
 Targets the 4-way decision gate (proceed / revise / hold / kill) plus
-the LCS envelope persistence check. Pure-function module; no I/O, no
-network — stdlib + a tmpdir is the only setup.
+the canonical envelope shape validator. Pure-function module; no I/O,
+no network — stdlib + a tmpdir is the only setup.
 
 Test inventory (>=8 tests; pin all 4 decisions + envelope shape):
 
@@ -14,8 +14,8 @@ Test inventory (>=8 tests; pin all 4 decisions + envelope shape):
   * kill_by_risk_floor_absolute        — any axis < 2 -> kill (absolute rule)
   * kill_by_low_weighted_average       — weighted avg < 3 -> kill
   * hold_in_mid_band                   — weighted avg in [3,4), no below-floor axes -> hold
-  * decision_persists_to_lcs           — canonical envelope validator
-  * decision_persists_to_lcs_rejects   — non-canonical envelopes rejected
+  * decision_is_canonical_envelope     — canonical envelope validator
+  * decision_is_canonical_envelope_rejects — non-canonical envelopes rejected
   * rejects_unknown_axis               — out-of-rubric axis raises ValueError
   * rejects_out_of_range_score         — score > SCORE_MAX raises ValueError
   * weighted_average_is_stable         — same input -> same output (idempotent)
@@ -29,7 +29,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 import valuation_engine as ve  # noqa: E402
-
 
 # Canonical high-quality 6-axis scores (every dimension 4 — well above
 # the 3.0 dimension_floor and the 4.0 proceed_threshold on average).
@@ -169,41 +168,42 @@ class TestDeterminism(unittest.TestCase):
         self.assertEqual(a, b)
 
 
-class TestLcsEnvelopeShape(unittest.TestCase):
-    """decision_persists_to_lcs() — the LCS envelope validator.
+class TestCanonicalEnvelopeShape(unittest.TestCase):
+    """decision_is_canonical_envelope() — the verdict envelope validator.
 
-    The build gate's LCS read will trust whatever the engine writes.
-    Pin the shape so a malformed envelope (missing key, wrong type)
-    is rejected up front instead of crashing the build stage.
+    The verdict envelope is the contract /dev-kit:valuate writes to
+    `.dev-kit/valuations/<plan-id>.json` and downstream consumers read
+    back. Pin the shape so a malformed envelope (missing key, wrong
+    type) is rejected up front instead of crashing the build stage.
     """
 
-    def test_decision_persists_to_lcs_accepts_canonical(self):
+    def test_decision_is_canonical_envelope_accepts_canonical(self):
         result = ve.decide(_PLAN, HIGH_SCORES)
-        self.assertTrue(ve.decision_persists_to_lcs(result))
+        self.assertTrue(ve.decision_is_canonical_envelope(result))
 
-    def test_decision_persists_to_lcs_rejects_missing_keys(self):
+    def test_decision_is_canonical_envelope_rejects_missing_keys(self):
         # Drop blocking_findings -> not a canonical envelope.
         bad = {"decision": "proceed", "rationale": "ok"}
-        self.assertFalse(ve.decision_persists_to_lcs(bad))
+        self.assertFalse(ve.decision_is_canonical_envelope(bad))
 
-    def test_decision_persists_to_lcs_rejects_extra_keys(self):
-        # A key the LCS consumer doesn't recognize -> reject.
+    def test_decision_is_canonical_envelope_rejects_extra_keys(self):
+        # A key the envelope consumer doesn't recognize -> reject.
         bad = {
             "decision": "proceed",
             "rationale": "ok",
             "blocking_findings": [],
             "extra_field": "junk",
         }
-        self.assertFalse(ve.decision_persists_to_lcs(bad))
+        self.assertFalse(ve.decision_is_canonical_envelope(bad))
 
-    def test_decision_persists_to_lcs_rejects_bad_decision(self):
+    def test_decision_is_canonical_envelope_rejects_bad_decision(self):
         # "approve" is not one of the four canonical verdicts.
         bad = {
             "decision": "approve",
             "rationale": "ok",
             "blocking_findings": [],
         }
-        self.assertFalse(ve.decision_persists_to_lcs(bad))
+        self.assertFalse(ve.decision_is_canonical_envelope(bad))
 
 
 class TestInputValidation(unittest.TestCase):
@@ -269,7 +269,7 @@ class TestCli:
     must read the plan, run decide(), and print the canonical envelope."""
 
     def _write_plan(self, tmp, scores):
-        import json, yaml
+        import yaml
         p = tmp / "plan.yaml"
         p.write_text(yaml.safe_dump({"plan_value": scores}))
         return str(p)
@@ -301,7 +301,7 @@ class TestCli:
     def test_low_average_kills_before_revise(self, tmp_path):
         """The reorder fix: 2.5-average (kill-by-avg) should NOT return
         revise even though every dim is below floor."""
-        from valuation_engine import cli_main, decide
+        from valuation_engine import decide
         scores = {axis: 2.5 for axis in ("problem_fit", "roi_estimate",
                     "existing_solution_edge", "team_capability",
                     "risk_vs_reward", "measurability")}

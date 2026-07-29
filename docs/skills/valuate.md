@@ -4,7 +4,7 @@
 
 **Category:** `design` · **Alpha:** `enforcement` · **Invocation:** `/dev-kit:valuate <plan-file>` (human-invoked)
 
-`valuate` scores a plan on 6 axes via the LLM judge and returns `proceed` / `revise` / `hold` / `kill`. The `build` stage reads the verdict from `lcs://valuations/<plan-id>` to enforce the no-go gate — a `kill` or unresolved `hold` blocks build. Source: [`skills/valuate/SKILL.md`](../../skills/valuate/SKILL.md).
+`valuate` scores a plan on 6 axes via the LLM judge and returns `proceed` / `revise` / `hold` / `kill`. The verdict envelope persists to `.dev-kit/valuations/<plan-id>.json`. A `kill` or unresolved `hold` is the operator's signal not to start `build`. (The Phase 4 auto-gate that hard-blocked `build` on a non-PROCEED verdict was tied to the LCS substrate and was removed in #463; `build` no longer reads the verdict automatically.) Source: [`skills/valuate/SKILL.md`](../../skills/valuate/SKILL.md).
 
 ## When to use it
 

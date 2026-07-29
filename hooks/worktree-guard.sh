@@ -150,10 +150,8 @@ BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
 # cost made it net-negative; the deny-path latency budget is ~10 ms
 # with direct shell on this repo (~220 worktrees today).
 #
-# LCS remains load-bearing as the CLI substrate (bin/dev-kit-lcs.py
-# is still callable directly by operators / future consumers / tests)
-# and is the substrate for any future daemon-mode consumer once
-# `--serve` ships. This hook does not call it.
+# The LCS substrate was dropped entirely in #463; the CLI no longer
+# ships. Direct `git worktree list --porcelain` is the only path.
 _worktree_list_rich() {
   : "no-op placeholder kept for structural symmetry with the prior shape"
   # Fallback: porcelain worktree list, branch stripped of refs/heads/.

@@ -24,37 +24,19 @@ Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup`
 
 ## Pre-flight valuation gate (Phase 4, issue #373)
 
-Before launching any per-step sub-agent, build reads the latest verdict
-for the current plan from `lcs://valuations/<plan-id>` via
-`bin/dev-kit-lcs.py --get`. The verdict comes from
-`/dev-kit:valuate` (`lib/valuation_engine.py:decide()`).
+> **Removed in #463.** The build stage's hard auto-gate that read the
+> valuation verdict and refused non-PROCEED verdicts was tied to the LCS
+> substrate that backed the URI. The LCS substrate is gone; the
+> auto-gate went with it. Operators run `/dev-kit:valuate` explicitly
+> before invoking `/dev-kit:build`; a non-PROCEED verdict is the
+> operator's signal to halt, not a hard block.
 
-| Verdict | Reaction |
-|---|---|
-| `proceed` | Build proceeds normally |
-| `revise` | Build refused; print `blocking_findings`; exit 2 |
-| `hold` | Build refused; "re-evaluate later" message; exit 2 |
-| `kill` | Build refused; archive as no-go; exit 2 |
-
-The gate is fail-closed: a missing or unreadable
-`lcs://valuations/<plan-id>` is treated as "no verdict" and the build is
-refused with exit 2 unless `--skip-valuation` is passed. The flag is the
-permanent backward-compat escape hatch and is not deprecated — use it
-when the user explicitly waives the gate (e.g. legacy plans without a
-valuation record).
-
-```bash
-# Default (gate enforced):
-python3 bin/dev-kit-lcs.py --get lcs://valuations/<plan-id>
-
-# Bypass (legacy plans):
-/dev-kit:build --skip-valuation
-```
-
-The gate is deterministic on identical input — the engine is a pure
-function over the 6-axis rubric scores, so the build stage reads the
-verdict exactly as `/dev-kit:valuate` wrote it. This is the L6 contract:
-the model cannot talk its way past `kill` or `hold`.
+The verdict envelope (when it exists) is at
+`.dev-kit/valuations/<plan-id>.json`. If `/dev-kit:valuate` was run,
+the build proceeds and the verdict is operator context; if the verdict
+is `kill` or unresolved `hold`, the operator should not have invoked
+`build`. There is no auto-gate, no `--skip-valuation` flag, and no exit
+code based on the verdict.
 
 ## Behavior
 

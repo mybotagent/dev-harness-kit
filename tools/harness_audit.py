@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """harness_audit.py — Cross-harness quality audit (Phase 7, issue #387).
 
-Reads the on-disk state of 6 dev-kit harnesses (lcs, hooks, eval,
+Reads the on-disk state of 5 dev-kit harnesses (hooks, eval,
 plan-value, research, interview) and reports per-harness health:
 
 - alpha classification (SKILL.md frontmatter)
 - L7 alignment (alpha ∈ state|enforcement|analysis)
-- resource completeness (LCS resources present)
 - rubric completeness (eval/rubrics/*.yaml present)
 
 Read-only by construction — never writes to .dev-kit/state.json, never
@@ -23,7 +22,7 @@ AND no alpha_invalid; otherwise 1. No path returns 2 in practice
 (the only file writes are the user's chosen --html-out PATH or the
 default `.dev-kit/harness-audit-report.html` artifact).
 
-Per #387, the audit covers 6 harnesses and is **strictly read-only**
+Per #387, the audit covers 5 harnesses and is **strictly read-only**
 (verified by `tests/test_harness_audit.py::test_audit_is_read_only`).
 """
 from __future__ import annotations
@@ -44,14 +43,9 @@ _LIB_PATH = _PROJECT_ROOT_HINT / "lib"
 if _LIB_PATH.is_dir() and str(_LIB_PATH) not in sys.path:
     sys.path.insert(0, str(_LIB_PATH))
 
-HARNESSES = ("lcs", "hooks", "eval", "plan_value", "research", "interview")
+HARNESSES = ("hooks", "eval", "plan_value", "research", "interview")
 
 VALID_ALPHA = ("state", "enforcement", "analysis")
-
-LCS_EXPECTED_RESOURCES = frozenset({
-    "worktrees", "pr", "spend", "branches", "sessions",
-    "hooks_coverage", "interview", "research_cache", "valuations",
-})
 
 EVAL_EXPECTED_RUBRICS = frozenset({"harness-quality.yaml", "os-quality.yaml"})
 
@@ -99,34 +93,6 @@ def _py_modules(dirpath: Path) -> set:
     return {p.stem for p in dirpath.glob("*.py")} - {"__init__"}
 
 
-def audit_lcs(project_root: Path) -> HarnessAudit:
-    engine = (project_root / "lib" / "lcs_server.py").exists()
-    resource_dir = project_root / "lib" / "lcs_resources"
-    found = _py_modules(resource_dir)
-    matched = found & LCS_EXPECTED_RESOURCES
-    alpha, alpha_valid = _read_alpha(project_root, "lcs")
-    findings: List[str] = []
-    if not engine:
-        findings.append("missing lib/lcs_server.py")
-    missing_res = sorted(LCS_EXPECTED_RESOURCES - found)
-    if missing_res:
-        findings.append(f"missing LCS resources: {missing_res}")
-    if not alpha:
-        findings.append("skills/lcs/SKILL.md missing alpha frontmatter")
-    elif not alpha_valid:
-        findings.append(f"skills/lcs alpha={alpha!r} not in {VALID_ALPHA}")
-    return HarnessAudit(
-        name="lcs",
-        shipped=engine and not missing_res and alpha_valid,
-        alpha=alpha or "",
-        alpha_valid=alpha_valid,
-        resource_count=len(matched),
-        resource_expected=len(LCS_EXPECTED_RESOURCES),
-        rubric_count=0, rubric_expected=0,
-        findings=findings,
-    )
-
-
 def audit_hooks(project_root: Path) -> HarnessAudit:
     hooks_dir = project_root / "hooks"
     found_hooks = {p.name for p in hooks_dir.glob("*.sh")} if hooks_dir.is_dir() else set()
@@ -139,7 +105,7 @@ def audit_hooks(project_root: Path) -> HarnessAudit:
     missing_hooks = sorted(HOOKS_EXPECTED - found_hooks)
     if missing_hooks:
         findings.append(f"missing hook scripts: {missing_hooks}")
-    # Symmetric with audit_lcs / audit_eval / audit_plan_value: shipped iff
+    # Symmetric with audit_eval / audit_plan_value: shipped iff
     # ALL expected scripts present AND at least one runtime hook wiring.
     return HarnessAudit(
         name="hooks",
@@ -260,7 +226,6 @@ def audit_interview(project_root: Path) -> HarnessAudit:
 
 
 AUDITORS = {
-    "lcs": audit_lcs,
     "hooks": audit_hooks,
     "eval": audit_eval,
     "plan_value": audit_plan_value,

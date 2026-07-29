@@ -7,7 +7,8 @@ Pins the Phase 6 5-field safety contract:
 - `score_interview_ambiguity` (per-axis scores + status)
 - state machine (`next_question`, `apply_answer`, `should_terminate`,
   `narrowed_delta`, `dedup_metric`, `user_interrupt`)
-- JSON shape parity with `lcs://interview/<step>` 5-field contract
+- JSON shape parity with the interview hand-off 5-field frontmatter
+  contract at `.dev-kit/hand-off/interview-<step>.md`
 """
 from __future__ import annotations
 
@@ -166,10 +167,11 @@ class TestScoreInterviewAmbiguity(unittest.TestCase):
         self.assertEqual(s["evidence_count"], 4)
 
     def test_json_shape_matches_hand_off_contract(self):
-        # The contract is the same as lcs://interview/<step> 5-field
-        # frontmatter (excluding the "step" key which the resource
-        # adds). Pin the shape so a refactor cannot silently break
-        # LCS round-trips.
+        # The contract matches the interview hand-off 5-field
+        # frontmatter (excluding the "step" key the resource adds).
+        # Pin the shape so a refactor cannot silently break the
+        # contract that plan/interview consume from
+        # `.dev-kit/hand-off/interview-<step>.md`.
         s = ie.score_interview_ambiguity({
             "goal": "ship a P95 latency under 100ms by Q3",
             "constraints": "no vendor lock-in",
