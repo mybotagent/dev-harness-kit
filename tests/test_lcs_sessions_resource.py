@@ -282,14 +282,29 @@ class TestSessionsResourceFetch(unittest.TestCase):
             self.assertEqual(cm.exception.missing, ["no session nope"])
 
     def test_missing_session_id_segment(self):
+        # ``lcs://sessions//`` (truly empty id) still raises; bare
+        # ``lcs://sessions`` now routes to the list form (Gap 3,
+        # issue #455 discovery endpoint).
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             resource = SessionsResource(root)
-            parsed = parse_uri("lcs://sessions")
+            parsed = parse_uri("lcs://sessions//")
             from lcs_server import LCSPartialError
             with self.assertRaises(LCSPartialError) as cm:
                 resource.fetch(parsed)
             self.assertIn("missing session id", cm.exception.missing[0])
+
+    def test_bare_sessions_returns_list_form(self):
+        # ``lcs://sessions`` (no path params) now returns the list
+        # form added by Gap 3 (issue #455 discovery endpoint).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            resource = SessionsResource(root)
+            parsed = parse_uri("lcs://sessions")
+            result = resource.fetch(parsed)
+            self.assertEqual(result["status"], "ok")
+            self.assertIn("sessions", result["data"])
+            self.assertIn("summary", result["data"])
 
     def test_url_encoded_id(self):
         with tempfile.TemporaryDirectory() as td:

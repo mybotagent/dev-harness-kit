@@ -26,6 +26,16 @@ Resource name vs path-param disambiguation:
   match wins; the remaining segments become ``path_params``.
 - This lets nested resources (``hooks/coverage``) and item-with-param
   (``interview/<session-id>``) coexist without a separate grammar.
+
+Alias mechanism (Gap 3, issue #455):
+- A handler class may declare an ``aliases`` tuple of alternate single-
+  segment names. The longest-match resolver consults the alias index
+  as a fallback when no primary name hits.
+- Example: ``PRResource`` (name ``"pr"``) declares
+  ``aliases = ("prs",)`` so ``lcs://prs`` reaches the same handler
+  without registering a second resource.
+- Alias clashes (alias matches another resource's name OR another
+  resource's alias) raise :class:`LCSError` at registration time.
 """
 from __future__ import annotations
 
@@ -149,18 +159,32 @@ def _resolve_resource(
     Returns ``(handler, path_params)`` where ``path_params`` is the
     tuple of segments after the matched resource name. If no match,
     raises :class:`LCSError`.
+
+    Lookup order:
+    1. Longest-match against the primary-name index — every prefix
+       length from longest to shortest. The first registered name wins.
+    2. If no primary match, fall back to a single-segment alias match
+       on ``segments[0]``. Aliases are always single-segment (no
+       nesting); the remaining segments become ``path_params``.
+
+    The alias fallback exists so a resource can be reached under
+    multiple URI spellings (e.g. ``PRResource`` under both
+    ``lcs://pr/<n>`` and ``lcs://prs``) without registering a second
+    handler.
     """
     segments = parsed.path_segments
-    # Try every prefix length from longest to shortest. The first
-    # registered name wins, which means more-specific resources win
-    # over less-specific ones (e.g. ``hooks/coverage`` over ``hooks``).
+    # Primary lookup: every prefix length, longest first.
     for n in range(len(segments), 0, -1):
         candidate = "/".join(segments[:n])
-        if candidate in registry:
-            return registry.get(candidate), segments[n:]
+        if candidate in registry._by_name:  # noqa: SLF001 — internal index
+            return registry._by_name[candidate], segments[n:]  # noqa: SLF001
+    # Alias fallback: single-segment match on segments[0].
+    first = segments[0]
+    if first in registry._aliases:  # noqa: SLF001
+        return registry._aliases[first], segments[1:]  # noqa: SLF001
     raise LCSError(
         f"no registered resource matches URI segments {segments!r} "
-        f"(tried {len(segments)} prefix lengths)"
+        f"(tried {len(segments)} prefix lengths + alias fallback)"
     )
 
 
@@ -176,45 +200,108 @@ class Resource(Protocol):
     wraps raw handler exceptions into ``status="error"`` payloads so
     the read path never raises. Handlers that want a partial status
     should return the dict directly OR raise :class:`LCSPartialError`.
+
+    Handlers MAY declare ``aliases`` (tuple of strings) as a class
+    attribute. Each alias is an alternate single-segment name under
+    which the same handler can be reached. Aliases are only consulted
+    when no primary longest-match hit; they never shadow a primary
+    name. Clashes at registration time raise :class:`LCSError`.
     """
 
     name: str
+    aliases: tuple[str, ...]
 
     def fetch(self, parsed: ParsedURI) -> dict: ...
 
 
 class ResourceRegistry:
-    """Map of resource name → handler instance.
+    """Map of resource name → handler instance + alias → handler.
 
     Registration order is preserved for diagnostic listings, but lookup
-    is by name only. Duplicate registration raises :class:`LCSError` so
-    a typo in the handler's ``name`` attribute can't silently shadow an
-    existing handler.
+    is by name only. Duplicate primary registration raises
+    :class:`LCSError` so a typo in the handler's ``name`` attribute
+    can't silently shadow an existing handler. Aliases are validated
+    against both the primary index and the alias index; either kind
+    of clash raises :class:`LCSError`.
     """
 
     def __init__(self) -> None:
+        # _by_name: primary name -> handler (longest-match lookup).
         self._by_name: dict[str, Resource] = {}
+        # _aliases: alias -> handler (single-segment fallback).
+        self._aliases: dict[str, Resource] = {}
 
     def register(self, resource: Resource) -> None:
-        if not getattr(resource, "name", None):
+        name = getattr(resource, "name", None)
+        if not name:
             raise LCSError(f"resource {resource!r} has no 'name' attribute")
-        if resource.name in self._by_name:
+        if name in self._by_name:
             raise LCSError(
-                f"resource {resource.name!r} already registered "
-                f"(existing={self._by_name[resource.name]!r}, new={resource!r})"
+                f"resource {name!r} already registered "
+                f"(existing={self._by_name[name]!r}, new={resource!r})"
             )
-        self._by_name[resource.name] = resource
+        # The new primary name must not shadow an already-registered
+        # alias of a different resource. (Aliases of the SAME resource
+        # are allowed and meaningful only when the alias differs from
+        # the primary; identical alias == name is treated as redundant
+        # below.)
+        if name in self._aliases:
+            raise LCSError(
+                f"resource {name!r} clashes with an already-registered "
+                f"alias (owner={self._aliases[name]!r})"
+            )
+        # Validate aliases (defaults to empty tuple when unset).
+        aliases = tuple(getattr(resource, "aliases", ()) or ())
+        for alias in aliases:
+            if not isinstance(alias, str) or not alias:
+                raise LCSError(
+                    f"resource {name!r} has invalid alias {alias!r} "
+                    f"(must be non-empty string)"
+                )
+            if "/" in alias:
+                raise LCSError(
+                    f"resource {name!r} alias {alias!r} contains '/' "
+                    f"(aliases are single-segment only)"
+                )
+            if alias == name:
+                # Redundant: same string as the primary name. Silently
+                # skip rather than raise — the dispatcher already routes
+                # the primary name correctly, and a self-alias only
+                # risks double-indexing noise.
+                continue
+            if alias in self._by_name:
+                raise LCSError(
+                    f"resource {name!r} alias {alias!r} clashes with "
+                    f"an already-registered primary name "
+                    f"(owner={self._by_name[alias]!r})"
+                )
+            if alias in self._aliases:
+                raise LCSError(
+                    f"resource {name!r} alias {alias!r} clashes with "
+                    f"an already-registered alias "
+                    f"(owner={self._aliases[alias]!r})"
+                )
+        # Commit: primary first, then aliases (skipping self-aliases).
+        self._by_name[name] = resource
+        for alias in aliases:
+            if alias == name:
+                continue
+            self._aliases[alias] = resource
 
     def get(self, name: str) -> Resource:
-        try:
+        # Primary lookup first; alias fallback only if not found.
+        if name in self._by_name:
             return self._by_name[name]
-        except KeyError as exc:
-            raise LCSError(f"unknown resource {name!r}") from exc
+        if name in self._aliases:
+            return self._aliases[name]
+        raise LCSError(f"unknown resource {name!r}")
 
     def __contains__(self, name: str) -> bool:
-        return name in self._by_name
+        return name in self._by_name or name in self._aliases
 
     def __len__(self) -> int:
+        # Length counts primary registrations only; aliases are an
+        # alternate route to the same handler instance.
         return len(self._by_name)
 
 
