@@ -4,8 +4,9 @@ Exposes the project's worktree set as a normalized JSON snapshot.
 Two URI forms:
 
   lcs://worktrees/
-      → {"status": "ok", "data": {"worktrees": [...]}}
-        list of {branch, path, head, dirty, last_touched}
+      → {"status": "ok", "data": {"worktrees": [...], "summary": {...}}}
+        list of {branch, path, head, dirty, last_touched} plus collection
+        summary fields {total, active, stale, slot_drift, as_of}
 
   lcs://worktrees/<branch>/
       → {"status": "ok", "data": {...}}
@@ -29,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
+from lcs_resources._summary import summarize_worktrees
 from lcs_server import LCSPartialError, ParsedURI, Resource
 
 # Module-level: registering this resource with a registry is the
@@ -202,8 +204,17 @@ class WorktreesResource(Resource):
         worktrees = _summarize(blocks, self._repo_root)
 
         if not parsed.path_segments[1:]:
-            # Collection form: return the list.
-            return {"status": "ok", "data": {"worktrees": worktrees}}
+            # Collection form: return the list with the Gap-2 summary
+            # block (active/stale counts, slot drift, as_of) so the
+            # operator sees freshness at a glance instead of eyeballing
+            # 14 per-row timestamps.
+            return {
+                "status": "ok",
+                "data": {
+                    "worktrees": worktrees,
+                    "summary": summarize_worktrees(worktrees),
+                },
+            }
 
         # Item form: filter to the requested branch (segments[1] is the
         # branch name; URL-decoded so a "feat%2Ffoo" branch id works).
