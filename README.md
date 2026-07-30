@@ -163,6 +163,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 |---|---|
 | [`/dev-kit:inspect`](docs/skills/inspect.md) | Read-only whole-codebase health scan (dead code, duplication, smells) → one report. |
 | [`/dev-kit:token-analyzer`](docs/skills/token-analyzer.md) | Shows where your Claude Code / Codex token spend is going, as an HTML dashboard. |
+| [`/dev-kit:research`](docs/skills/research.md) | Every factual claim you write either cites a source or gets removed. |
 | [`/dev-kit:docs-maintenance`](docs/skills/docs-maintenance.md) | Audits stale docs and refreshes the README without baking in facts that go out of date. |
 | [`/dev-kit:log`](docs/skills/log.md) | Turns session logging on/off. It's what feeds `token-analyzer`, `skill-usage`, and the session monitor. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | Shows which skills you actually use, and how much — useful for pruning. |
@@ -244,34 +245,25 @@ that enforce it) lives in [`rules/git-workflow.md`](rules/git-workflow.md).
 
 ## Doc map
 
-Most topic docs ship in **both** `.md` (for grep and GitHub) and `.html` (for
-browsing with a sticky nav and dark/light theme). The landing page, the skill
-index, and the workflow-scenarios doc are Markdown-only. Where a Korean version
-exists, it's linked in the same row.
+The repo ships ~20 topic docs across `docs/<topic>/`. The full categorized
+table — HTML / MD / 한국어 sibling / what each doc gives you — lives in
+[`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md).
 
-| Topic | HTML | MD | 한국어 | What you get |
-|---|---|---|---|---|
-| Why + value + quickstart | — | [`docs/home/00-index.md`](docs/home/00-index.md) | [`00-index.ko.md`](docs/home/00-index.ko.md) | Beginner landing — read first |
-| When the flow doesn't go straight through | — | [`docs/workflow/WORKFLOW-SCENARIOS.md`](docs/workflow/WORKFLOW-SCENARIOS.md) | — | Resume a paused build, adapt a wrong plan, skip a step |
-| What each loop step owns | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | [`STAGES.ko.md`](docs/stages/STAGES.ko.md) | bootstrap → plan → valuate → build → review → security → ship |
-| CI install (run dev-kit CI elsewhere) | [`docs/quality/ci-setup.html`](docs/quality/ci-setup.html) | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) | [`ci-setup.ko.md`](docs/quality/ci-setup.ko.md) | `branch-policy` + validate + test + auto-fix workflows |
-| Maintenance gate (PR-only quality) | [`docs/quality/maintenance-gate.html`](docs/quality/maintenance-gate.html) | [`docs/quality/maintenance-gate.md`](docs/quality/maintenance-gate.md) | — | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
-| Runtime portability (Claude Code ↔ Codex) | [`docs/architecture/RUNTIME-PORTABILITY.html`](docs/architecture/RUNTIME-PORTABILITY.html) | [`docs/architecture/RUNTIME-PORTABILITY.md`](docs/architecture/RUNTIME-PORTABILITY.md) | [`RUNTIME-PORTABILITY.ko.md`](docs/architecture/RUNTIME-PORTABILITY.ko.md) | The contract both runtimes honor so plugin.json means the same thing |
-| Naming convention (SSOT) | [`docs/naming/NAMING.html`](docs/naming/NAMING.html) | [`docs/naming/NAMING.md`](docs/naming/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | [`NAMING.ko.md`](docs/naming/NAMING.ko.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
-| Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | — | 9 questions before code |
-| Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | — | Token ceilings, cost-gate trailer format |
-| Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | — | Why a single maintainer and a 20-person team adopt the harness differently |
-| Hook reference (the enforcement layer) | — | [`docs/hooks/HOOK-REFERENCE.md`](docs/hooks/HOOK-REFERENCE.md) | — | Every hook, by stage and by trigger event |
-| Hook coverage gaps | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | — | Which hook events are wired vs. which aren't, per runtime |
-| ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | [`ACP-DISPATCH.ko.md`](docs/architecture/ACP-DISPATCH.ko.md) | How Model-tier agents find and dispatch to Capability-tier skills |
-| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | [`acp-harness.ko.md`](docs/architecture/acp-harness.ko.md) | The wire-format ACP uses to talk between agents |
-| Skill reference | — | [`docs/skills/README.md`](docs/skills/README.md) | [`README.ko.md`](docs/skills/README.ko.md) | All skills with category + classification |
-| Decision records | — | [`docs/adr/`](docs/adr) | — | Locked ADRs (historical; English only) |
-| Repo map | [`docs/repo/REPOSITORY-MAP.html`](docs/repo/REPOSITORY-MAP.html) | [`docs/repo/REPOSITORY-MAP.md`](docs/repo/REPOSITORY-MAP.md) | — | Where each component lives in the tree |
+**Start here:**
 
-If you have five minutes, open [`docs/home/00-index.md`](docs/home/00-index.md)
-and read the first three sections (why, quickstart, value). Everything else can
-wait.
+| If you want to … | Open |
+|---|---|
+| Learn the *why* in five minutes | [`docs/home/00-index.md`](docs/home/00-index.md) (sections 1–3) |
+| Wire dev-kit into a new repo | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) |
+| See all stages in one place | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) |
+| Recover from a broken flow | [`docs/workflow/WORKFLOW-SCENARIOS.md`](docs/workflow/WORKFLOW-SCENARIOS.md) |
+| Audit cost or back a factual claim | [`docs/observability/token-efficiency.md`](docs/observability/token-efficiency.md) |
+| Pick up a session from a new shell | [`docs/observability/session-monitor.md`](docs/observability/session-monitor.md) |
+
+Everything else — HTML siblings, Korean docs, deep reference — is in
+[`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md). If you have five minutes,
+open [`docs/home/00-index.md`](docs/home/00-index.md) and read the first
+three sections (why, quickstart, value). Everything else can wait.
 
 ---
 
@@ -393,17 +385,25 @@ the session monitor — none of them have data until you turn it on.
 Captured transcripts land in `logs/<tool>/<branch>/<sid>.jsonl` and are
 gitignored. See [`docs/skills/log.md`](docs/skills/log.md).
 
-### Token efficiency analyzer
+### Token efficiency + research
 
-Run `/dev-kit:token-analyzer` and it turns your logged sessions into a
-self-contained HTML dashboard — no dependencies, no JavaScript, no network. It
-scores each session, flags cost anti-patterns, and estimates USD savings.
-
-The flags, the scoring rubric, the pricing table, and the underlying CLI
-(`tools/token_efficiency_analyzer.py`, for scripting or CI use) are documented
-in [`docs/skills/token-analyzer.md`](docs/skills/token-analyzer.md).
+Two skills share the same thesis: **every claim must be backed or removed**.
+`/dev-kit:token-analyzer` enforces that on **cost** — it replays your
+`/dev-kit:log` transcripts into a self-contained HTML dashboard, scores
+each session across 4 dimensions, flags 6 cost anti-patterns, and estimates
+the USD savings. `/dev-kit:research` enforces that on **citations** — every
+factual claim either carries `url + fetched_at + source_type` or is
+prefixed `[UNCITED]` for the reviewer to fix. Both are read-only data
+layers the model can't talk its way past.
 
 ![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
+
+Flags, the 4-dim scoring rubric, the 6 warning triggers, the pricing table,
+and Phase 0 → 3 citation escalation are all in
+[`docs/observability/token-efficiency.md`](docs/observability/token-efficiency.md).
+The single-skill cards live at
+[`docs/skills/token-analyzer.md`](docs/skills/token-analyzer.md) and
+[`docs/skills/research.md`](docs/skills/research.md).
 
 ### Cost gate
 
@@ -414,43 +414,33 @@ the trailer format are in [`docs/skills/cost-gate.md`](docs/skills/cost-gate.md)
 
 ### Session monitor
 
-`tools/session_monitor.py` finds a paused session and gets you back into it — the
-answer to "I closed my terminal, how do I return to that build?" (See the
-[workflow scenarios doc](docs/workflow/WORKFLOW-SCENARIOS.md#case-3-coming-back-from-a-different-terminal-or-day)
-for the narrative version.)
+`tools/session_monitor.py` finds a paused session and gets you back into it
+— the answer to *"I closed my terminal, how do I return to that build?"*
+The CLI form is genuinely CLI-friendly: a plain `--list` works from any
+shell, the picker needs a real TTY, and `--print-resume-command` emits
+the `cd <wt> && claude --resume <sid>` line for you to run with `!`.
+
+![session-monitor --list, dev-harness-kit, last 30 days](docs/screenshots/session-monitor.png)
 
 ```bash
-python3 tools/session_monitor.py                       # interactive picker (needs a real TTY)
+python3 tools/session_monitor.py                       # interactive picker (real TTY)
 python3 tools/session_monitor.py --list --days 30       # plain listing, any shell
 python3 tools/session_monitor.py --json --days 30        # machine-readable
 python3 tools/session_monitor.py --print-resume-command  # print the resume command and exit
 python3 tools/session_monitor.py --cli-setup             # install a `session-monitor` shell alias
 ```
 
-On Enter, the picker changes into the session's worktree and re-opens the
-conversation (`claude --resume <sid>` or `codex resume <sid>`); if the worktree
-is gone, it falls back to the main checkout with a warning.
+On Enter, the picker changes into the session's worktree and re-opens
+the conversation (`claude --resume <sid>` or `codex resume <sid>`); if the
+worktree is gone, it falls back to the main checkout with a warning.
 
-**Common flags**
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--days N` | `30` | Look-back window; older sessions are dropped |
-| `--repo <name>` | (none) | Substring filter on the repo basename |
-| `--logs-dir <path>` | `<main-repo>/logs` | Root for `claude-code/` and `codex/` subdirs |
-| `--list` | off | Plain stdout listing (works without a TTY) |
-| `--json` | off | Machine-readable output for scripts |
-| `--print-resume-command` | off | Print the cwd + resume command for the first session; exit |
-| `--cli-setup` | off | Install a `session-monitor` alias into `~/.zshrc`/`~/.bashrc`; exit |
-| `--dry-run` | off | With `--cli-setup`, print the alias block without writing |
-
-**Status glyphs**
-
-| Glyph | Status | Meaning |
-|:---:|---|---|
-| `●` | `live` | A running `claude`/`codex` process is in the session's worktree, or the last turn was within the recency window |
-| `○` | `idle` | Captured and within `--days`, but not recently active |
-| `⌀` | `stale` | Worktree is merged into `main` or gone; resume falls back to the main checkout |
+**LEARN MORE** — every flag, the status-glyph semantics, the picker
+architecture (termios + ANSI, no curses), and the "why a tool alongside
+a skill" rationale live in
+[`docs/observability/session-monitor.md`](docs/observability/session-monitor.md).
+For the narrative of *when* you'd reach for it (resuming from a different
+terminal or a different day), see
+[workflow scenarios, Case 3](docs/workflow/WORKFLOW-SCENARIOS.md#case-3-coming-back-from-a-different-terminal-or-day).
 
 ### Skill usage (`/dev-kit:skill-usage`)
 
