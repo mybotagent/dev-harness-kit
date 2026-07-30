@@ -261,6 +261,7 @@ exists, it's linked in the same row.
 | Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | — | 9 questions before code |
 | Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | — | Token ceilings, cost-gate trailer format |
 | Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | — | Why a single maintainer and a 20-person team adopt the harness differently |
+| Hook reference (the enforcement layer) | — | [`docs/hooks/HOOK-REFERENCE.md`](docs/hooks/HOOK-REFERENCE.md) | — | Every hook, by stage and by trigger event |
 | Hook coverage gaps | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | — | Which hook events are wired vs. which aren't, per runtime |
 | ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | [`ACP-DISPATCH.ko.md`](docs/architecture/ACP-DISPATCH.ko.md) | How Model-tier agents find and dispatch to Capability-tier skills |
 | ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | [`acp-harness.ko.md`](docs/architecture/acp-harness.ko.md) | The wire-format ACP uses to talk between agents |
@@ -482,9 +483,29 @@ Short pointers to the deeper material, so this README stays readable.
 short-circuit tool calls (block edits in the main checkout, deny destructive
 `git`/`rm`, redact secrets, enforce test-first, require quoted exit codes before a
 session ends). The skills are convenience wrappers around these hooks plus the
-build state machine. The full hook inventory (event, purpose, mode) is in the
-[repository map](docs/repo/REPOSITORY-MAP.md); the per-runtime wiring and gaps are
-in [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md).
+build state machine. The full hook inventory (by stage, and by the event that
+fires each one) is in
+[`docs/hooks/HOOK-REFERENCE.md`](docs/hooks/HOOK-REFERENCE.md); known coverage
+gaps and per-runtime wiring differences are in
+[`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md).
+
+**What each stage reads and writes**, so you can see the data flow at a glance:
+
+| Skill | Stage | Reads | Writes |
+|---|---|---|---|
+| `/dev-kit:plan` | Plan | Operator prompt | `PRD.md`, `phases/<name>/step<N>.md`, `phases/<name>/index.json` |
+| `/dev-kit:valuate` | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
+| `/dev-kit:build` | Build | `phases/<name>/index.json` + per-step file | per-step `output.json` |
+| `/dev-kit:review` | Review | PR diff | verdict (Approve / Changes Requested / Blocked) |
+| `/dev-kit:security` | Security | PR diff | per-OWASP verdict |
+| `/dev-kit:ship` | Ship | Review verdict + AC outputs | `git tag` + CHANGELOG entry |
+
+The verdict envelope `/dev-kit:valuate` writes (`decision` / `rationale` /
+`blocking_findings`) is pinned by
+`lib/valuation_engine.py:decision_is_canonical_envelope`. There used to be an
+auto-gate that hard-blocked Build on a non-`proceed` verdict; it was removed in
+PR #463 — see [Case 4 of the workflow scenarios doc](docs/workflow/WORKFLOW-SCENARIOS.md#case-4-skipping-the-valuate-step)
+for what that means in practice.
 
 **Agent-behavior eval** — `/dev-kit:eval` replays recorded transcripts and judges
 them against per-dimension rubrics (review / security / plan) plus a 20-checkbox
@@ -502,9 +523,20 @@ test keeps the two in sync. Check local hook status with
 **Repository layout** — the directory-by-directory guide is the
 [repository map](docs/repo/REPOSITORY-MAP.md).
 
-**Design principles and decision records** — the ADR series under
-[`docs/adr/`](docs/adr) captures the reasoning (single-source Iron Laws, 0-arg UX,
-worktree-per-task, plugin-as-single-source-of-truth, and so on).
+**Design principles:**
+
+- **NO-DUP** — Iron Laws live in one place (`CLAUDE.md §1`), enforced by hook + skill.
+- **NO-BOTTLENECK** — 0-arg UX, lazy `CLAUDE.md`, parallel sub-agents.
+- **NO-MEANINGLESS-LOOP** — explicit loop semantics + auto-STOP + user interrupt.
+- **Human-on-the-Loop** — auto-progress with the user as supervisor and a 1× interrupt.
+- **Methodology extension** — TDD / SDD / DDD / BDD / FDD selectable.
+- **A2A typed** — sub-agent ↔ main communication via a JSON-Schema SSOT.
+- **Plugin-only** — the plugin manifest is the single source of truth.
+- **Worktree-per-task** — enforced by hooks, documented in `rules/git-workflow.md`.
+- **Consumer-install** — one self-aware workflow set works in this repo and in consumer repos.
+
+The full reasoning behind each of these lives in the ADR series under
+[`docs/adr/`](docs/adr).
 
 ---
 
