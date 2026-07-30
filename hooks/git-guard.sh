@@ -31,6 +31,24 @@ CMD="$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.command // ""' 2>/dev/null
 # explicit repository path for branch checks so valid worktree commits are
 # not mistaken for commits on the parent's main branch.
 GIT_CWD="${PWD}"
+
+# A leading `cd <path> &&` / `cd <path>;` prefix changes the directory the
+# rest of the command actually runs in — resolve GIT_CWD relative to it
+# before the branch check, otherwise `cd <main-checkout> && git commit ...`
+# is checked against the session's own cwd instead of where the commit
+# really lands (issue #474).
+if [[ "$CMD" =~ ^[[:space:]]*cd[[:space:]]+([^\;\&]+)[[:space:]]*(\&\&|\;) ]]; then
+  CD_PATH="${BASH_REMATCH[1]}"
+  # Trim trailing whitespace, then strip one layer of surrounding quotes.
+  CD_PATH="${CD_PATH%"${CD_PATH##*[![:space:]]}"}"
+  CD_PATH="${CD_PATH%\"}"; CD_PATH="${CD_PATH#\"}"
+  CD_PATH="${CD_PATH%\'}"; CD_PATH="${CD_PATH#\'}"
+  case "$CD_PATH" in
+    /*) GIT_CWD="$CD_PATH" ;;
+    *) GIT_CWD="${GIT_CWD%/}/${CD_PATH}" ;;
+  esac
+fi
+
 if [[ "$CMD" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
   GIT_CWD="${BASH_REMATCH[1]}"
 fi
@@ -142,7 +160,7 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   # Block force-push. m5: bash-guard.sh only blocks force-push in strict mode
   # (DEV_KIT_STRICT=1) and only the `force+main` pattern — git-guard is the
   # only always-on block, so this check is the primary one.
-  if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push[[:space:]]+(-f|--force|--force-with-lease)([[:space:]]|$)'; then
+  if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push.*[[:space:]](-f|--force|--force-with-lease)([[:space:]]|$)'; then
     if printf '%s' "$CMD" | grep -qE -- '--force-with-lease'; then
       # --force-with-lease is allowed on your own unmerged branch; only block
       # if the push target is main (already caught above).
@@ -156,8 +174,12 @@ fi
 # 3. Block `git checkout main` (or `git switch main`) — it primes a direct
 #    commit to main in the next command. Allow `git checkout -b ...` (new branch).
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]'; then
-  # Allow `git checkout -b`, `git checkout <commit>`, `git checkout <file>`.
-  if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+(-b|-c|-[0-9]+[[:space:]]|[a-f0-9]{7,}[[:space:]]|--)'; then
+  # Allow `git checkout -b`, `git checkout <commit>`, `git checkout <file>`,
+  # and the file-restore form `git checkout <ref> -- <path>` (a `--` token
+  # appearing anywhere after the ref never changes HEAD, so it must not be
+  # treated as a branch switch — issue #471).
+  if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+(-b|-c|-[0-9]+[[:space:]]|[a-f0-9]{7,}[[:space:]]|--)' \
+     || printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+[^[:space:]]+[[:space:]]+--([[:space:]]|$)'; then
     :
   elif printf '%s' "$CMD" | grep -qE 'git[[:space:]]+(checkout|switch)[[:space:]]+(main|master)([[:space:]]|$)'; then
     deny "GIT GUARD" "switching to main in this checkout is forbidden. Use a worktree instead: \`git worktree add -b <type>/<slug> .worktrees/<slug> origin/main\`."
