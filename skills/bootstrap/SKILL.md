@@ -17,7 +17,7 @@ disable-model-invocation: false
 
 ## What it does
 
-Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) and then writes the project SSOT. On a fresh repo, exactly three files land on disk: `CLAUDE.md`, `AGENTS.md`, and `.dev-kit/.active-hooks.json`. No sanity report file. No hand-off file. AGENTS.md is a 1-line pointer (`CLAUDE.md`) for CLIs that read AGENTS.md instead of CLAUDE.md.
+Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) and then writes the project SSOT. On a fresh repo, exactly these files land on disk: `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. No sanity report file. No hand-off file. AGENTS.md is a 1-line pointer (`CLAUDE.md`) for CLIs that read AGENTS.md instead of CLAUDE.md. CLAUDE.md is a minimal pointer document — detailed content lives in the linked `index.md` files.
 
 ## Iron Law (no exceptions)
 **0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`).
@@ -31,7 +31,7 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
        ↓ (auto, Read + Glob + Bash; only consumed by --full-claude-md)
 [3] hook-matrix           → .dev-kit/.active-hooks.json (SSOT)
        ↓ (auto)
-[4] write-claude-md lib/write_project_md.py → CLAUDE.md + AGENTS.md (§1~§5 atomic)
+[4] write-claude-md lib/write_project_md.py → CLAUDE.md + AGENTS.md + 4 index.md files (atomic; CLAUDE.md is a slim pointer)
        ↓ (auto)
 [5] user review 1x (HOTL, MUST-29)
        ↓
@@ -87,9 +87,10 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
 
 ### Lazy-loading index (default mode)
 
-CLAUDE.md §3 is a pure reference (no inline tree/manifest/deps). The agent reads
-canonical source files on demand. `--full-claude-md` writes the full map to
-`docs/CODEBASE-MAP.md` instead of inlining.
+CLAUDE.md is a slim pointer (no inline tree/manifest/deps/laws). The agent reads
+`docs/CODEBASE-MAP.md`, `iron-laws/index.md`, `guidelines/index.md`,
+`hooks/index.md`, `rules/index.md` on demand. `--full-claude-md` writes the
+full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
 
 ### 4-section composition (only when `--full-claude-md`)
 
@@ -173,7 +174,7 @@ canonical source files on demand. `--full-claude-md` writes the full map to
 - **HOTL (MUST-29)**: steps 1~4 auto. §5 hand-off pointer auto-updated.
 - **YAGNI**: no extra option prompts ❌ (MUST-NOT-13). Only hidden flags like `--slim|--full`, `--persist-audit`.
 - **No-over-engineering (MUST-25)**: defaults handle 80%. Extra features require ADR.
-- **Minimal file footprint**: default run touches only `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`. Use `--persist-audit` to also write `.dev-kit/sanity-report.md`.
+- **Minimal file footprint**: default run touches `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. CLAUDE.md is a slim pointer to these index files; detailed content is lazy-loaded. Use `--persist-audit` to also write `.dev-kit/sanity-report.md`.
 
 ## Next step
 

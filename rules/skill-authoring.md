@@ -122,7 +122,7 @@ The repo's 39 skills over-invested in stateless reasoning surfaces that
 next-gen models will absorb. Codifying the rule stops re-accumulating new
 wrappers without forcing every existing skill through a migration sweep —
 the gate applies only to skills added *after* `origin/main`. See
-`CLAUDE.md` §1 L6 + L7.
+`iron-laws/index.md` L6 + L7.
 
 ### Lint: `tests/test_skill_governance.py`
 

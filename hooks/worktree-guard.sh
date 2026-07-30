@@ -189,11 +189,7 @@ Routing (after config is set):
   codex   + single   -> git worktree add ..., then spawn one sub-agent with cwd=<worktree>
   codex   + parallel -> spawn N sub-agents each with cwd=<worktree> and explicit task prompt
 
-Hard rules (Iron Laws §1):
-  L1: no prod code without verification artifact (test/contract/domain)
-  L3: no completion claim without quoted exit codes / test counts
-  L4: no TODO/FIXME/later/starting-point
-  L5: no option list when not asked
+Hard rules (Iron Laws: see iron-laws/index.md, L1/L3/L4/L5):
   M push / commit / PR to main: forbidden
   M edit of code files in any worktree: forbidden (Tier 1 = orchestrator)
   Other worktrees are private to their T; entry is allowed ONLY for hand-off docs

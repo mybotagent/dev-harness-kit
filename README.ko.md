@@ -868,9 +868,10 @@ python lib/eval_runner.py --project-root . --case review-04-factory-one-impl
 
 ## 설계 원칙
 
-- **NO-DUP** — Iron Law는 한 곳(`CLAUDE.md §1`)에만 있고, 훅 + 스킬로
-  시행된다.
-- **NO-BOTTLENECK** — 0-인자 UX, 지연 로딩되는 `CLAUDE.md`, 병렬
+- **NO-DUP** — Iron Law는 한 곳(`iron-laws/index.md`)에만 있고, 훅 + 스킬로
+  시행된다. CLAUDE.md는 슬림 포인터 문서이며, 상세 내용은 전용
+  `index.md` 파일(iron-laws, guidelines, hooks, rules)에 산다.
+- **NO-BOTTLENECK** — 0-인자 UX, 슬림 포인터 CLAUDE.md, 병렬
   서브에이전트.
 - **NO-MEANINGLESS-LOOP** — 명시적 루프 시맨틱 + 자동 STOP + 사용자
   인터럽트.

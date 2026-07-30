@@ -20,12 +20,13 @@ tools/, skills/, or hooks/ — see /dev-kit/review for the gate logic.
 
 <!-- REQUIRED when this PR touches production code (lib/, tools/, hooks/,
      skills/, .githooks/, .claude/, .codex/, .github/).
-     Per CLAUDE.md §1 L3: no completion claim without quoted exit code +
+     Per iron-laws/index.md L3: no completion claim without quoted exit code +
      test count + build log. Paste the actual line, not a paraphrase.
-     The strict-format line below is what the gate regex matches.
+     The format below is what the gate regex matches.
 
-     Format (regex):  `\d+ (passed|failed), \d+ skipped in [0-9.]+s`
-     Example:        1101 passed, 30 skipped in 195.50s (0:03:15)
+     Format (regex):  `\d+ (passed|failed)(, \d+ (skipped|xfailed|xpassed))? in [0-9.]+s`
+     Example (all-green, no skips):  74 passed in 21.93s
+     Example (all-green, with skips): 1101 passed, 30 skipped in 195.50s (0:03:15)
 -->
 
 ```
