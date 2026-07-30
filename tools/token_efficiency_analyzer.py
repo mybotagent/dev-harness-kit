@@ -283,6 +283,7 @@ def session_cost(s: dict, *, model: str | None = None) -> float:
         output_tokens=s["output_tokens"],
         cache_write_5m_tokens=s.get("ephemeral_5m", 0),
         cache_write_1h_tokens=s.get("ephemeral_1h", 0),
+        cache_write_tokens=s.get("cache_write_tokens", 0),
         cache_read_tokens=s["cache_read_tokens"],
     )
 
@@ -465,13 +466,21 @@ def _source_for(path: Path) -> str:
 
 
 def parse_iso(ts: str) -> datetime | None:
-    """Best-effort ISO-8601 parser; returns None on failure."""
+    """Best-effort ISO-8601 parser; returns None on failure.
+
+    Normalizes a naive result (no 'Z' suffix, no UTC offset) to UTC-aware
+    so it stays comparable to the tz-aware cutoff used by
+    ``filter_sessions`` instead of raising ``TypeError`` on comparison.
+    """
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _codex_nested_field(record: dict, field: str):
