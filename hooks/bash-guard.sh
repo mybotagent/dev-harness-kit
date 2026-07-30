@@ -16,9 +16,9 @@ CMD=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.command // ""')
 
 # Destructive patterns
 BLOCKED_PATTERNS=(
-  "rm -rf /"
+  "rm -rf /([[:space:]]|$)"
   "rm -rf ~"
-  "rm -rf \$HOME"
+  "rm -rf [\"']?\\\$HOME[\"']?"
   "git push --force.* main"
   "git push -f .* main"
   "git reset --hard"
