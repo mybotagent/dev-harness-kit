@@ -400,7 +400,7 @@ jobs:
           fi
 
       - name: L3 evidence gate (PR body must quote test count)
-        # Per CLAUDE.md §1 L3: "No completion claim without quoted exit
+        # Per iron-laws/index.md L3: "No completion claim without quoted exit
         # code / test count / build log." For PRs that touch production
         # code, the PR body MUST include a quoted pytest tail line matching
         # the strict format below. This is a stricter check than the
