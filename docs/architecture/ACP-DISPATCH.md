@@ -1,5 +1,7 @@
 # ACP Dispatch — M-tier architecture
 
+**Language:** English · [한국어](ACP-DISPATCH.ko.md)
+
 > Companion to `docs/architecture/acp-harness.md`. Closes #282. Documents the
 > M (orchestrator) → T (task sub-agent) → L (leaf sub-agent) hierarchy,
 > the four communication channels that connect them, and the parallel

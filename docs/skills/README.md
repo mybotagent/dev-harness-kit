@@ -1,5 +1,7 @@
 # Skills documentation index
 
+**Language:** English · [한국어](README.ko.md)
+
 This is the detailed, human-readable documentation layer for every skill
 shipped by the `dev-kit` plugin — one page per skill under `docs/skills/`,
 expanding on the terse `skills/<name>/SKILL.md` source each is generated
@@ -74,6 +76,8 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`ci-doctor`](ci-doctor.md) | `enforcement` | Read-only PASS/FAIL audit of CI readiness. |
 | [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits stale docs and refreshes the README without recording volatile facts. |
 | [`prune-propose`](prune-propose.md) | `state` | Usage-telemetry dump + per-skill delete proposal, user-approved. |
+| [`evaluate`](evaluate.md) | `enforcement` | Eval extension adding the `harness-quality` and `os-quality` dimensions on the same runner. |
+| [`harness-audit`](harness-audit.md) | `analysis` | Cross-harness quality audit across 5 dev-kit harnesses (hooks / eval / plan_value / research / interview). |
 
 ### Shortcuts / maintenance
 
@@ -88,6 +92,9 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | Skill | Alpha | Summary |
 |---|---|---|
 | [`proposal`](proposal.md) | `state` | Renders `docs/proposals/<main>/<sub>.yaml` to a self-contained review HTML. |
+| [`interview`](interview.md) | `enforcement` | 5-field safety-contract interview that gates plan emission. |
+| [`research`](research.md) | `enforcement` | 0-arg research gate: cache/direct/multi/human escalation + citation enforcement. |
+| [`valuate`](valuate.md) | `enforcement` | Plan-value gate; scores a plan on 6 axes and returns proceed/revise/hold/kill. |
 
 ---
 
@@ -153,5 +160,5 @@ step inside their parent skill's flow; you never type them directly.
 Skill detail pages (`docs/skills/<name>.md`) are generated for user-facing
 skills on a rolling basis; the per-skill row above links to the page when it
 ships, and the frontmatter (`name:`, `description:`, `alpha:`,
-`user-invocable:`) is the source of truth either way. Use the frontmatter
-search below to see what's currently live.
+`user-invocable:`) is the source of truth either way. Use the discovery
+commands near the top of this file to see what's currently live.

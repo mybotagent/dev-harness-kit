@@ -2,6 +2,8 @@
 
 > Single source of truth: this file + `tests/test_naming.py` regression tests.
 
+**Language:** English · [한국어](NAMING.ko.md)
+
 ## Skill directory / file
 
 - **Format**: `<category>-<verb-or-noun>.md` (kebab-case, English)
@@ -30,7 +32,7 @@
 
 ## Markdown docs / hand-off
 
-- `docs/{STAGES,NAMING,COST-ANALYSIS,PRE-IMPL-CHECK}.md` (PascalCase or kebab-case singular)
+- `docs/<topic>/{STAGES,NAMING,COST-ANALYSIS,PRE-IMPL-CHECK}.md` (PascalCase or kebab-case singular, grouped under a topic subdirectory)
 - ADR: `docs/adr/ADR-NNNN-kebab-slug.md` (zero-padded)
 - Hand-off: `hand-off/<from>→<to>.md` (Unicode arrow →; debug retry uses ↔)
 - Loop log: `.dev-kit/loop-log.json` (singular)
