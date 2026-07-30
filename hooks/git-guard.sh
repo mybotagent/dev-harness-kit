@@ -215,15 +215,7 @@ _verify_slot() {
     deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi
 }
-# Fire on ANY `git push` that the main-push block above did NOT
-# already deny. The earlier block matches the main/master ref
-# variants and the force-push flag; this block fires for everything
-# else — plain `git push` (tracking-branch push), `-u`, `--set-upstream`,
-# any origin+ref form, etc. Tag pushes (`git push origin tag v1`)
-# are intentionally NOT filtered out: they still consume a branch's
-# ref namespace and the slot check applies to the user's current
-# branch state, which is the meaningful invariant. The earlier
-# push-to-main block has already filtered out the main/master cases.
+# Fire on any `git push` the main-push block above did not deny.
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   _verify_slot
 fi

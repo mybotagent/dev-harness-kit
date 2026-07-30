@@ -33,37 +33,9 @@ require_jq slop-detector
 read_stdin_json slop-detector
 [ -z "$INPUT_JSON" ] && exit 0
 
-# ── locale ──────────────────────────────────────────────────────────────────
-# CI runners often default to POSIX/C locale, which makes `grep -E` reject
-# multi-byte (Korean) patterns in references/slop/{phrases,structures}.md with
-# "Invalid collation character" and silently emit zero matches. Force a UTF-8
-# locale before any grep call so the SSOT loads cleanly.
-#
-# Detection priority:
-#   1. Honour the caller's explicit LC_ALL/LANG if they already point at a UTF-8 locale.
-#   2. C.UTF-8 if installed (always present on glibc >= 2.13, which is every modern Linux CI).
-#   3. en_US.UTF-8 if installed (default on macOS).
-#   4. Fall back to printing a one-shot WARN and skip KO matching in T1/T2.
-#
-# NB: a previous revision buffered `locale -a` before grep -q to dodge SIGPIPE,
-# but the per-locale regex still misfires when the CI emits a slightly different
-# locale name (e.g. `C.utf8` lowercase). The C.UTF-8 case-insensitive probe is
-# robust enough.
-_existing_utf=0
-case "${LC_ALL:-}${LANG:-}" in *.[Uu][Tt][Ff]-?8*) _existing_utf=1 ;; esac
-if [ "$_existing_utf" = "1" ]; then
-  : # caller already set a UTF-8 locale; trust it
-elif _LOCALES="$(locale -a 2>/dev/null || true)" \
-     && printf '%s\n' "$_LOCALES" | grep -qiE '^C\.[Uu][Tt][Ff]-?8$'; then
-  export LC_ALL=C.UTF-8 LANG=C.UTF-8
-elif printf '%s\n' "$_LOCALES" | grep -qiE '^en_US\.[Uu][Tt][Ff]-?8$'; then
-  export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-else
-  # KO matching will emit grep "Invalid collation character" noise; surface it
-  # explicitly so the degradation is visible in CI logs.
-  printf '[slop-detector] WARN: no UTF-8 locale found in locale -a; KO pattern matching disabled. Currently: LC_ALL=%s LANG=%s.\n' "${LC_ALL:-unset}" "${LANG:-unset}" >&2
-fi
-unset _LOCALES _existing_utf 2>/dev/null || true
+# ── locale (extracted to hooks/lib/locale-utf8.sh — PR-F)
+# shellcheck source=lib/locale-utf8.sh
+source "${BASH_SOURCE[0]%/*}/lib/locale-utf8.sh"
 
 FILE=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.file_path // ""')
 extract_content
