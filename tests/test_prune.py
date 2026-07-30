@@ -13,22 +13,18 @@ Locks in the 4-phase prune contract. Asserts:
 - body never claims to call `rm` itself (mirrors feat-remove discipline)
 - frontmatter name matches directory name (covered by test_naming.py
   but pinned here for fast failure if the new file regresses)
-- Phase 2 routes to `skills/prune/scripts/discover_dependents.py` which is
+- Phase 2 routes to `python3 -m lib.analysis_core --delete --target <feat>`
   backed by `lib/analysis_core.runner.run_analysis(mode="delete", ...)`.
 """
 from __future__ import annotations
 
-import json
 import re
-import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 PRUNE_SKILL = PROJECT_ROOT / "skills" / "prune" / "SKILL.md"
-DISCOVER_DEPENDENTS = PROJECT_ROOT / "skills" / "prune" / "scripts" / "discover_dependents.py"
+DISCOVER_DEPENDENTS = PROJECT_ROOT / "lib" / "analysis_core"  # python3 -m lib.analysis_core (PR-H)
 
 
 class TestPruneSchema(unittest.TestCase):
@@ -144,164 +140,6 @@ class TestPruneSchema(unittest.TestCase):
             "never deletes files itself", self.text,
             "prune must declare it never calls rm/git-rm itself",
         )
-
-
-class TestDiscoverDependentsScript(unittest.TestCase):
-    """Positive-path coverage for the Phase-2 script.
-
-    The script is the contract Phase 2 (DEPENDENTS) leans on. It must:
-      - parse a Phase-1 candidate JSON (object or list shape)
-      - invoke `lib/analysis_core.runner.run_analysis(mode="delete", ...)`
-      - render a Markdown block with one row per finding + a verdict line
-      - exit 0 on a happy path and write the output file
-    """
-
-    def setUp(self) -> None:
-        if not DISCOVER_DEPENDENTS.exists():
-            self.skipTest(f"{DISCOVER_DEPENDENTS} missing")
-        # Keep the temp directory alive across the whole test — the
-        # script writes the report file, and we read it back after the
-        # subprocess returns. A `with tempfile.TemporaryDirectory()`
-        # scoped inside the test would clean up before the read.
-        self._tmp_ctx = tempfile.TemporaryDirectory()
-        self.tmp_p = Path(self._tmp_ctx.name)
-
-    def tearDown(self) -> None:
-        self._tmp_ctx.cleanup()
-
-    def _run(self, candidates_obj, target="prune", scope=None):
-        cand = self.tmp_p / "cand.json"
-        out = self.tmp_p / "out.md"
-        cand.write_text(json.dumps(candidates_obj), encoding="utf-8")
-        cmd = [
-            sys.executable, str(DISCOVER_DEPENDENTS),
-            "--target", target,
-            "--candidates", str(cand),
-            "--out", str(out),
-        ]
-        for s in scope or []:
-            cmd.extend(["--scope", str(s)])
-        proc = subprocess.run(
-            cmd, cwd=PROJECT_ROOT,
-            capture_output=True, text=True, timeout=30,
-        )
-        return proc, out
-
-    def test_prune_target_runs_full_suite(self):
-        """End-to-end happy path: a well-formed Phase-1 candidate set is
-        handed to discover_dependents.py, the engine produces a Markdown
-        report with verdict + per-row bullets, and the script exits 0.
-
-        This is the positive case the dispatch asked for: Phase 2 must
-        produce a report even when there is zero deletion work — the
-        sweep completed, no dependents, the script reports back.
-        """
-        # Object shape: {dim: [finding, ...]}. Each finding carries the
-        # whole-file deletion_proof the engine requires for `git rm`.
-        candidates = {
-            "dead": [{
-                "file": "skills/prune/SKILL.md",
-                "line": 1,
-                "severity": "major",
-                "confidence": "high",
-                "title": "Dead demo skill",
-                "tldr": "demo skill never invoked",
-                "failure_scenario": "demo skill has zero callers",
-                "deletion_scope": "whole-file",
-                "deletion_proof": {"no_importers": True, "no_callers": True},
-            }],
-        }
-        proc, out_path = self._run(candidates)
-        self.assertEqual(
-            proc.returncode, 0,
-            f"discover_dependents exited {proc.returncode}; "
-            f"stderr={proc.stderr!r}",
-        )
-        text = out_path.read_text(encoding="utf-8")
-        # Verdict line is the engine's verdict header.
-        self.assertIn("Verdict", text)
-        # The DEPENDENTS block has the per-row bullet shape.
-        self.assertIn("**File:**", text)
-
-    def test_missing_candidates_exits_2(self):
-        """A missing --candidates file must fail loudly with exit 2.
-
-        Exit 2 distinguishes a usage error (bad path / bad arg) from an
-        engine failure (exit 1) so the SKILL.md body can route Phase 2
-        to the right hand-off (re-run with the right path vs. open
-        build-debug for an engine bug).
-        """
-        out = self.tmp_p / "out.md"
-        proc = subprocess.run(
-            [
-                sys.executable, str(DISCOVER_DEPENDENTS),
-                "--target", "prune",
-                "--candidates", str(self.tmp_p / "does-not-exist.json"),
-                "--out", str(out),
-            ],
-            cwd=PROJECT_ROOT,
-            capture_output=True, text=True, timeout=15,
-        )
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("candidates file missing", proc.stderr)
-
-    def test_invalid_target_exits_2(self):
-        """An unresolved feature name must fail before analysis runs."""
-        cand = self.tmp_p / "cand.json"
-        out = self.tmp_p / "out.md"
-        cand.write_text("{}", encoding="utf-8")
-        proc = subprocess.run(
-            [
-                sys.executable, str(DISCOVER_DEPENDENTS),
-                "--target", "missing-feature",
-                "--candidates", str(cand),
-                "--out", str(out),
-            ],
-            cwd=PROJECT_ROOT,
-            capture_output=True, text=True, timeout=15,
-        )
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("target is not resolvable", proc.stderr)
-
-    def test_scope_outside_target_exits_2(self):
-        """An explicit scope outside the target root must be rejected."""
-        cand = self.tmp_p / "cand.json"
-        out = self.tmp_p / "out.md"
-        cand.write_text("{}", encoding="utf-8")
-        proc = subprocess.run(
-            [
-                sys.executable, str(DISCOVER_DEPENDENTS),
-                "--target", "prune",
-                "--scope", "skills/refactor",
-                "--candidates", str(cand),
-                "--out", str(out),
-            ],
-            cwd=PROJECT_ROOT,
-            capture_output=True, text=True, timeout=15,
-        )
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("scope must remain inside target root", proc.stderr)
-
-    def test_target_scope_defaults_to_feature_root(self):
-        """Without --scope, analysis is narrowed to the resolved skill root."""
-        candidates = {
-            "dead": [{
-                "file": "skills/refactor/SKILL.md",
-                "line": 1,
-                "severity": "major",
-                "confidence": "high",
-                "title": "Out of scope",
-                "tldr": "outside target",
-                "failure_scenario": "not under prune",
-                "deletion_scope": "whole-file",
-                "deletion_proof": {"no_importers": True, "no_callers": True},
-            }],
-        }
-        proc, out_path = self._run(candidates, target="prune")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        text = out_path.read_text(encoding="utf-8")
-        self.assertIn("## Verdict", text)
-        self.assertNotIn("**File:**", text)
 
 
 if __name__ == "__main__":
