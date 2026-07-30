@@ -7,6 +7,7 @@ hooks.json only registers the matrix reader (NOT duplicates).
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -99,7 +100,7 @@ def load_matrix(project_root: Path) -> Dict:
     path = project_root / ".dev-kit" / ".active-hooks.json"
     default: Dict = {
         "schema_version": "1.0.0",
-        "matrix": DEFAULT_MATRIX,
+        "matrix": copy.deepcopy(DEFAULT_MATRIX),
         "override": {
             "disabled_hooks": [],
             "strict_mode": False,

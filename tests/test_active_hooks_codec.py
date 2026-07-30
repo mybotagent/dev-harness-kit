@@ -103,6 +103,39 @@ class TestActiveHooksCodec(unittest.TestCase):
         # No side effect: file still absent.
         self.assertFalse(matrix_path.exists())
 
+    def test_set_stage_on_fileless_root_does_not_leak_into_other_fileless_root(self):
+        """Regression for issue #480.
+
+        set_stage() on a project root with no .active-hooks.json used to
+        mutate the module-level DEFAULT_MATRIX in place (because
+        load_matrix()'s fallback path returned a live reference to it).
+        That corruption then leaked into any other file-less project root
+        queried afterwards in the same process.
+        """
+        root_a = self.root / "project_a"
+        root_b = self.root / "project_b"
+        root_a.mkdir()
+        root_b.mkdir()
+
+        # Sanity: build/tdd-guard defaults to True, neither root has a file yet.
+        self.assertFalse((root_a / ".dev-kit" / ".active-hooks.json").exists())
+        self.assertFalse((root_b / ".dev-kit" / ".active-hooks.json").exists())
+        self.assertTrue(active_hooks_codec.DEFAULT_MATRIX["build"]["tdd-guard"])
+
+        # Mutate root_a's (file-less) matrix.
+        active_hooks_codec.set_stage(root_a, "build", "tdd-guard", False)
+
+        # root_b is a completely unrelated, also file-less project root.
+        # It must still see the documented default, not root_a's mutation.
+        data_b = active_hooks_codec.load_matrix(root_b)
+        self.assertTrue(data_b["matrix"]["build"]["tdd-guard"])
+        self.assertTrue(
+            active_hooks_codec.is_hook_active(root_b, "build", "tdd-guard")
+        )
+
+        # The module-level default itself must remain untouched.
+        self.assertTrue(active_hooks_codec.DEFAULT_MATRIX["build"]["tdd-guard"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
