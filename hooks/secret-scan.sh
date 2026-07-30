@@ -23,7 +23,7 @@ extract_content
 
 HITS=()
 for p in "${SECRET_PATTERNS[@]}"; do
-  MATCHES=$(echo "$CONTENT" | grep -oE "$p" 2>/dev/null | head -3)
+  MATCHES=$(echo "$CONTENT" | grep -oE "$p" 2>/dev/null | head -3 || true)
   if [ -n "$MATCHES" ]; then
     HITS+=("$p × $(echo "$MATCHES" | wc -l)")
   fi

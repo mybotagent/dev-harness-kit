@@ -335,14 +335,13 @@ class TestSecretScanRefactor(unittest.TestCase):
     now processed by the scan (where the pre-fix version returned ""
     and silently skipped the entire payload).
 
-    Note: secret-scan.sh has a pre-existing `set -eo pipefail` + grep
-    no-match interaction that causes the script to exit 1 (not 2)
-    on the first non-matching pattern. That's a separate bug, not
-    in scope of #78. The HIGH #3 fix is at the data layer
-    (extract_content joins edits[].new_string) — verified directly in
-    TestExtractContent. The consumer test below verifies the script
-    no longer silently exits 0 on MultiEdit credentials, which is
-    the externally observable change.
+    secret-scan.sh is advisory by design (header: "Default advisory
+    (exit 0)") — it always exits 0 when hits are found, reporting the
+    masked pattern name(s) via stderr instead. Issue #472 fixed a
+    `set -eo pipefail` + grep-no-match interaction that made the
+    script exit 1 and silently skip every pattern after the first
+    non-match, so these tests now assert on the real signal (the
+    stderr detection message) rather than the exit code.
     """
 
     def setUp(self):
@@ -352,38 +351,37 @@ class TestSecretScanRefactor(unittest.TestCase):
     def test_processes_multiedit_with_akia(self):
         """HIGH #3 regression: pre-fix, MultiEdit with AKIA returned
         exit 0 silently (scalar extraction returned ""). Post-fix the
-        script actually processes the edits, so the exit code changes
-        from 0 (silent skip) to non-zero (scan attempted)."""
+        script actually processes the edits, so the AKIA pattern shows
+        up in the stderr detection report."""
         payload = _multiedit_payload("/tmp/leak.py", [
             {"new_string": "AKIA1234567890ABCDEF leaked"},
         ])
         r = _run_hook("secret-scan.sh", payload)
-        self.assertNotEqual(r.returncode, 0,
-            f"MultiEdit with AKIA should be scanned (non-zero exit), got rc=0 (silent skip) — HIGH #3 regression: stderr={r.stderr!r}")
+        self.assertIn("AKIA", r.stderr,
+            f"MultiEdit with AKIA should be scanned and reported, got stderr={r.stderr!r}")
 
     def test_processes_write_with_akia(self):
         payload = _write_payload("/tmp/leak.py", "AKIA1234567890ABCDEF")
         r = _run_hook("secret-scan.sh", payload)
-        self.assertNotEqual(r.returncode, 0,
-            f"Write with AKIA should be scanned, got rc=0: {r.stderr!r}")
+        self.assertIn("AKIA", r.stderr,
+            f"Write with AKIA should be scanned and reported, got stderr={r.stderr!r}")
 
     def test_processes_edit_with_akia(self):
         payload = _edit_payload("/tmp/leak.py", "AKIA1234567890ABCDEF")
         r = _run_hook("secret-scan.sh", payload)
-        self.assertNotEqual(r.returncode, 0,
-            f"Edit with AKIA should be scanned, got rc=0: {r.stderr!r}")
+        self.assertIn("AKIA", r.stderr,
+            f"Edit with AKIA should be scanned and reported, got stderr={r.stderr!r}")
 
     def test_clean_multiedit_runs_without_error(self):
-        """Clean MultiEdit: script attempts the scan, may exit 0 or 1
-        (1 is the pre-existing set -e + grep-no-match issue, NOT a
-        regression). We only require the script doesn't crash before
-        reading the payload."""
+        """Clean MultiEdit: script attempts the scan and always exits 0
+        (advisory by design), with no detection report on stderr."""
         payload = _multiedit_payload("/tmp/clean.py", [
             {"new_string": "def hello():\n    return 42\n"},
         ])
         r = _run_hook("secret-scan.sh", payload)
-        self.assertIn(r.returncode, (0, 1),
-            f"clean MultiEdit should exit 0 or 1, got {r.returncode}: {r.stderr!r}")
+        self.assertEqual(r.returncode, 0,
+            f"clean MultiEdit should exit 0, got {r.returncode}: {r.stderr!r}")
+        self.assertNotIn("credential patterns detected", r.stderr)
 
     def test_fails_closed_when_jq_missing(self):
         """require_jq fail-closed contract also applies to secret-scan."""
