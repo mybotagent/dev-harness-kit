@@ -59,12 +59,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Runtime env signal check (post-runtime_adapters delete)"
-          echo "  ${'$'}{${'$'}{ matrix.runtime.env_signal }}: ${'$'}{!${'$'}{ matrix.runtime.env_signal }:-unset}"
           python3 -c "
-          import os
-          sig = os.environ.get('${'$'}{ matrix.runtime.env_signal }', '')
+          import os, sys
+          sig = os.environ.get('${{ matrix.runtime.env_signal }}', '')
           assert sig == '1', f'runtime env signal not set: {sig!r}'
-          print(f'  ${'$'}{ matrix.runtime.env_signal }={sig} (OK)')
+          print(f'  ${{ matrix.runtime.env_signal }}={sig} (OK)')
           "
           echo "::endgroup::"
 
