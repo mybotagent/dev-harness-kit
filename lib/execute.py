@@ -455,8 +455,13 @@ def _step_post_collect(
 
     # Issue #221 RC3: parse `<!-- status: blocked -->` BEFORE marking completed.
     blocked_reason = _extract_blocked_reason(stdout or "")
+    # Issue #477: write into the per-step worktree (`wt`), not the
+    # orchestrator's main checkout (`root`) — `_commit_step` below stages
+    # from `wt`'s independent working directory, so a JSON file written
+    # under `root/phases/...` would never be seen by `git add -A` there.
+    wt = ctx["wt"]
     write_step_output(
-        root, phase, step_num,
+        wt, phase, step_num,
         exit_code=exit_code,
         stdout=stdout or "",
         stderr=stderr or "",
@@ -473,7 +478,6 @@ def _step_post_collect(
         return exit_code
 
     # Issue #221 RC2: --allow-empty is GONE. add-A + conditional commit.
-    wt = ctx["wt"]
     feat_msg = f"feat({phase}): step {step_num}" + (f" — {step_name}" if step_name else "")
     _commit_step(wt, feat_msg)
     _commit_step(wt, f"chore({phase}): step {step_num} output")
