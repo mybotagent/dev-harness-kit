@@ -32,7 +32,7 @@ For each resumable step, `build`:
 2. Reads `step<N>.md` as the preamble and appends the acceptance-criteria guard plus a "3-cycle self-fix max" instruction (MUST-37).
 3. Marks the step `in_progress` via `update_step_status`, which stamps `started_at`.
 4. Invokes `subprocess.run(["claude", "-p", "--workdir", str(wt), full_prompt], capture_output=True, text=True)` — exactly one sub-agent per step (MUST-36).
-5. Writes `phases/<name>/step<N>-output.json` with the real `exit_code`, `stdout`, `stderr`, and `duration_seconds` — never a stubbed `0.01` or "stub completed" value.
+5. Writes `phases/<name>/step<N>-output.json` with the real `exit_code`, `stdout`, `stderr`, and `duration_seconds` — never a stubbed `0.01` or "stub completed" value. This write targets the per-step worktree (`wt`), not the orchestrator's root checkout: the chore commit below runs `git add -A` with `cwd=wt`, so a file written under `root/phases/...` would never be staged there.
 6. On non-zero exit: marks the step `error`, stashes the `error_message`, and returns non-zero with no commits made.
 7. On success: makes two commits on the per-step branch — `feat({phase}): step {N}[ — <name>]` then `chore({phase}): step {N} output` — and pushes the per-step branch to `origin` if `--push` was set.
 

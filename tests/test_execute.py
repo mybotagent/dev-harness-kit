@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -195,6 +196,70 @@ class TestExecute(unittest.TestCase):
         self.assertEqual(parsed[0]["status"], "pending")
         self.assertNotIn("started_at", parsed[0])
         self.assertNotIn("duration_seconds", parsed[0])
+
+
+class TestWriteStepOutputTargetsWorktree(unittest.TestCase):
+    """Issue #477 regression: write_step_output must be called with `wt`
+    (the per-step git worktree that _commit_step actually stages from),
+    never `root` (the orchestrator's main checkout). Uses REAL git — no
+    subprocess mocking — so it exercises the actual `git add -A` staging
+    behavior `_commit_step` relies on, not a mocked stand-in.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        # `root` = orchestrator's main checkout (a plain directory tree,
+        # NOT a git repo of its own — mirrors the real harness where only
+        # the per-step worktree is a git working directory the runner
+        # stages/commits from).
+        self.root = base / "root"
+        self.root.mkdir()
+        # `wt` = the per-step worktree: a real, independent git repo so
+        # `git add -A` / `git diff --cached` behave exactly as they do
+        # for a genuine `git worktree add` checkout.
+        self.wt = base / "wt"
+        self.wt.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(self.wt), check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=str(self.wt), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.wt), check=True)
+        (self.wt / "README.md").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=str(self.wt), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=str(self.wt), check=True, capture_output=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_output_written_to_root_is_never_staged_in_worktree(self):
+        """BEFORE the #477 fix: write_step_output(root, ...) writes the JSON
+        outside the worktree's working directory, so `git add -A` (cwd=wt)
+        can never see it — `_commit_step` finds nothing staged and no-ops."""
+        execute.write_step_output(
+            self.root, "0-mvp", 1,
+            exit_code=0, stdout="ok", stderr="", duration_seconds=0.1,
+        )
+        # The file exists under root, NOT under wt.
+        self.assertTrue((self.root / "phases" / "0-mvp" / "step1-output.json").exists())
+        self.assertFalse((self.wt / "phases" / "0-mvp" / "step1-output.json").exists())
+        committed = execute._commit_step(self.wt, "chore(0-mvp): step 1 output")
+        self.assertFalse(committed, "no file landed in wt, so _commit_step must no-op")
+
+    def test_output_written_to_wt_is_staged_and_committed(self):
+        """AFTER the #477 fix: write_step_output(wt, ...) writes the JSON
+        inside the worktree, so `git add -A` (cwd=wt) picks it up and
+        `_commit_step` produces a real commit containing the file."""
+        execute.write_step_output(
+            self.wt, "0-mvp", 1,
+            exit_code=0, stdout="ok", stderr="", duration_seconds=0.1,
+        )
+        self.assertTrue((self.wt / "phases" / "0-mvp" / "step1-output.json").exists())
+        committed = execute._commit_step(self.wt, "chore(0-mvp): step 1 output")
+        self.assertTrue(committed, "file landed in wt and must be staged + committed")
+        shown = subprocess.run(
+            ["git", "show", "--stat", "--pretty=format:", "HEAD"],
+            cwd=str(self.wt), check=True, capture_output=True, text=True,
+        ).stdout
+        self.assertIn("step1-output.json", shown)
 
 
 class TestUnimplementedStubRegistration(unittest.TestCase):
@@ -397,8 +462,13 @@ class TestRunSequential(unittest.TestCase):
             joined = " ".join(cmd)
             self.assertIn("TDD red", joined, f"preamble not in prompt: {cmd}")
             self.assertIn("3-cycle self-fix", joined, f"AC guard not appended: {cmd}")
-            # step output file written with REAL contents (no 'stub completed')
-            out = json.loads((self.root / "phases" / "0-mvp" / "step1-output.json").read_text())
+            # step output file written with REAL contents (no 'stub completed').
+            # Issue #477: the output JSON lands inside the per-step worktree
+            # (not the orchestrator's root checkout) since that's what
+            # `_commit_step` actually stages via `git add -A` cwd=wt.
+            out = json.loads(
+                (self.root / ".worktrees" / "0-mvp-step1" / "phases" / "0-mvp" / "step1-output.json").read_text()
+            )
             self.assertEqual(out["exit_code"], 0)
             self.assertEqual(out["stdout"], "all green")
             self.assertNotIn("stub completed", out["stdout"])
@@ -575,7 +645,10 @@ class TestRunSequential(unittest.TestCase):
             self.assertIn("blocked_reason", step1,
                           "blocked status must record the sub-agent's reason")
             # And the step-OUTPUT json must surface the marker verdict for audit.
-            output = json.loads((self.root / "phases" / "0-mvp" / "step1-output.json").read_text())
+            # Issue #477: written into the per-step worktree, not root.
+            output = json.loads(
+                (self.root / ".worktrees" / "0-mvp-step1" / "phases" / "0-mvp" / "step1-output.json").read_text()
+            )
             self.assertEqual(output["blocked"], True,
                              "output json must surface blocked=True for audit")
             self.assertIn("API key", output["blocked_reason"])
