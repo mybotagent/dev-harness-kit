@@ -18,11 +18,9 @@
 # advisory in this hook. worktree-guard.sh is the hard-block layer.
 
 # Source the shared preamble (set -uo pipefail, INPUT=$(cat),
-# worktree_detect, jq-missing warning) + the session-envelope helper.
+# worktree_detect, jq-missing warning).
 # shellcheck source=lib/hook-preamble.sh
 source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
-# shellcheck source=lib/session-envelope.sh
-source "${BASH_SOURCE[0]%/*}/lib/session-envelope.sh"
 
 # Warn (not fail) if jq is missing. The preamble already ran
 # worktree_detect, which leaves $WORKTREE_DETECT="" when jq is absent;
@@ -32,7 +30,12 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-extract_hook_cwd "session-start-check.sh"
+# extract_hook_cwd — read HOOK_CWD from stdin payload and cd into it.
+# Falls back to current $PWD if the payload cwd is missing or not a directory.
+HOOK_CWD="$(printf '%s' "${INPUT:-$(cat 2>/dev/null)}" | jq -r '.cwd // ""' 2>/dev/null)"
+if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
+  cd "$HOOK_CWD" || true
+fi
 
 # Discriminator: already populated by the preamble.
 case "$WORKTREE_DETECT" in
@@ -42,8 +45,9 @@ case "$WORKTREE_DETECT" in
 esac
 
 # In main checkout → emit nudge.
-BRANCH="$(current_branch)"
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
 NUDGE="GIT-WORKFLOW REMINDER (rules/git-workflow.md): this session started in the main repo checkout (branch='$BRANCH'). For any new implementation task, the rule requires a new worktree + client handoff + new branch. The hard edit-block is hooks/worktree-guard.sh (PreToolUse). If the user is just investigating or asking questions, proceed; before any Edit/Write, cut a worktree with: git fetch origin main && git worktree add -b <type>/<slug> .worktrees/<slug> origin/main. Claude Code then opens a new session in that path; Codex spawns/hand-offs a subagent with that path as its working directory."
 
-emit_worktree_nudge "SessionStart" "$NUDGE"
+jq -nc --arg ctx "$NUDGE" --arg ev "SessionStart" \
+  '{hookSpecificOutput:{hookEventName:$ev,additionalContext:$ctx}}'
 exit 0

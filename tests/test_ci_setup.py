@@ -222,14 +222,12 @@ class TestCiSetup(unittest.TestCase):
 
     def test_worktree_rule_files_are_in_expected_paths(self):
         """EXPECTED_PATHS includes the 7 worktree-rule files added in PR #22 +
-        the shared payload-parse helper (PR #78 / issue #273) and the
-        shared session-envelope helper (issue #277)."""
+        the shared payload-parse helper (PR #78 / issue #273)."""
         expected_new = {
             "hooks/worktree-guard.sh",
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/lib/payload-parse.sh",
-            "hooks/lib/session-envelope.sh",
             "hooks/hooks.json",
             ".claude/rules/git-workflow.md",
             "tests/test_worktree_guard.py",
@@ -249,7 +247,6 @@ class TestCiSetup(unittest.TestCase):
             "hooks/session-start-check.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/lib/payload-parse.sh",
-            "hooks/lib/session-envelope.sh",
         )
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
@@ -277,7 +274,6 @@ class TestCiSetup(unittest.TestCase):
                 self.assertTrue(len(marker[key]) > 0, f"marker.{key} should be non-empty")
             self.assertIn("hooks/worktree-guard.sh", marker["hooks"])
             self.assertIn("hooks/lib/payload-parse.sh", marker["hooks"])
-            self.assertIn("hooks/lib/session-envelope.sh", marker["hooks"])
             self.assertIn(".claude/rules/git-workflow.md", marker["rules"])
             self.assertIn("tests/test_worktree_guard.py", marker["tests"])
 
@@ -1001,93 +997,11 @@ class TestCiSetup(unittest.TestCase):
             )
             self.assertIn("usage", proc.stdout.lower())
 
-    # === Issue #277: hooks/lib/session-envelope.sh must ship to consumers ===
-
-    def test_session_envelope_in_expected_paths(self):
-        """EXPECTED_PATHS must list hooks/lib/session-envelope.sh — defined
-        by session-start-check.sh via
-        `source .../lib/session-envelope.sh`."""
-        self.assertIn(
-            "hooks/lib/session-envelope.sh",
-            self.ci_setup.EXPECTED_PATHS,
-            "EXPECTED_PATHS is missing hooks/lib/session-envelope.sh — fix #277",
-        )
-
-    def test_session_envelope_in_executable_paths(self):
-        """The helper is sourced at runtime; +x bit must be set after install."""
-        self.assertIn(
-            "hooks/lib/session-envelope.sh",
-            self.ci_setup.EXECUTABLE_PATHS,
-            "EXECUTABLE_PATHS is missing hooks/lib/session-envelope.sh — fix #277",
-        )
-
-    def test_ci_setup_installs_session_envelope(self):
-        """install_ci_config(force=True) lands session-envelope.sh under
-        hooks/lib/ with the executable bit set (issue #277 reproduction)."""
-        import stat
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            r = self.ci_setup.install_ci_config(target, force=True)
-            self.assertEqual(r.errors, [], f"errors: {r.errors}")
-            helper = target / "hooks" / "lib" / "session-envelope.sh"
-            self.assertTrue(
-                helper.exists(),
-                f"hooks/lib/session-envelope.sh missing from install target "
-                f"(created={r.created}, overwritten={r.overwritten})",
-            )
-            self.assertTrue(
-                helper.stat().st_mode & stat.S_IXUSR,
-                f"hooks/lib/session-envelope.sh must be +x "
-                f"(mode={oct(helper.stat().st_mode)})",
-            )
-            marker = json.loads(
-                (target / ".dev-kit" / "ci-config.json").read_text()
-            )
-            self.assertIn("hooks/lib/session-envelope.sh", marker["hooks"])
-
-    def test_session_envelope_installed_into_already_partial_consumer(self):
-        """A consumer repo with the pre-#277 install (marker + every old
-        EXPECTED_PATHS file except session-envelope.sh) gets the helper
-        on the next non-force install — same marker-pin path as #273."""
-        import tempfile
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td)
-            pre_277_paths = [
-                p for p in self.ci_setup.EXPECTED_PATHS
-                if p != "hooks/lib/session-envelope.sh"
-            ]
-            for rel in pre_277_paths:
-                src = self.ci_setup._resolve_template_source(rel)
-                self.assertTrue(src.is_file(), f"seed source missing: {rel}")
-                dst = target / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(src.read_bytes())
-            (target / ".dev-kit").mkdir()
-            seed_marker = target / ".dev-kit" / "ci-config.json"
-            seed_marker.write_text(json.dumps({
-                "schema_version": self.ci_setup.MARKER_SCHEMA_VERSION,
-                "installed_at": "2026-07-01T00:00:00Z",
-                "installed_by": "dev-kit:ci-setup",
-                "hooks": [p for p in pre_277_paths if p.startswith("hooks/")],
-            }))
-            self.assertFalse(
-                (target / "hooks" / "lib" / "session-envelope.sh").exists(),
-                "seed must NOT contain session-envelope.sh — that's the bug",
-            )
-            r = self.ci_setup.install_ci_config(target)
-            self.assertEqual(r.errors, [], f"errors: {r.errors}")
-            helper = target / "hooks" / "lib" / "session-envelope.sh"
-            self.assertTrue(
-                helper.exists(),
-                "non-force install must add session-envelope.sh that was missing pre-#277",
-            )
-
-    # === Issues #273 + #277 structural regression (issue suggestion):
+    # === Issue #273 structural regression (issue suggestion):
     # Walk every hook in EXPECTED_PATHS, grep for `source ... lib/X.sh`,
     # assert every sourced helper is also in EXPECTED_PATHS + EXECUTABLE_PATHS.
-    # Single test catches both #273 (payload-parse) AND #277 (session-envelope)
-    # AND any future helper that ships without being added to the catalog.
+    # Single test catches #273 (payload-parse) AND any future helper
+    # that ships without being added to the catalog.
     # Resolves the structural root cause: hand-maintained lists drift; this
     # test fails on the first drift, before it ships to consumers.
 

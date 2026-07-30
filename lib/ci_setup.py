@@ -94,13 +94,8 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # consumer repos shipped broken hooks that crashed with
     # `deny: command not found` on first Edit.
     "hooks/lib/payload-parse.sh",
-    # Shared `extract_hook_cwd` + nudge-envelope helper sourced by
-    # session-start-check.sh (the remaining `additionalContext` hook).
-    # Issue #277 is the same shape as #273: helper was added to the
-    # plugin tree + the plugin's own hooks but never catalogued for install,
-    # so consumers shipped hooks that crashed with
-    # `extract_hook_cwd: command not found`.
-    "hooks/lib/session-envelope.sh",
+    # Shared worktree-detect helper sourced by every rule-hook so the
+    # `--git-dir`/`--git-common-dir` discriminator doesn't drift.
     "hooks/lib/worktree-detect.sh",
     # Shared hook preamble (issue #310 slice 314): `set -uo pipefail`,
     # `INPUT=$(cat)`, worktree_detect dispatch, and the `::warning::jq
@@ -148,7 +143,6 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/review-yml-isolation.sh",
     "hooks/lib/payload-parse.sh",
     "hooks/lib/hook-preamble.sh",
-    "hooks/lib/session-envelope.sh",
     "hooks/lib/worktree-detect.sh",
     "tools/skill_usage.py",
 )
@@ -526,7 +520,6 @@ def _build_marker() -> dict:
             "hooks/session-start-check.sh",
             "hooks/review-yml-isolation.sh",
             "hooks/lib/payload-parse.sh",
-            "hooks/lib/session-envelope.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/hooks.json",
         ],
