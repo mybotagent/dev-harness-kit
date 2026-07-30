@@ -230,127 +230,28 @@ For each step in order:
    `step<N>.md` exists and the step number matches the index. If not,
    explicitly call `update_step_status(root, phase, step=N, status="pending")`.
 
-### Phase JSON schema
+### Phase JSON schema + step-file template + marker contract
 
-```json
-{
-  "schema_version": "1.0.0",
-  "phase": "0-mvp",
-  "project": "<repo-name>",
-  "created_at": "<iso8601>",
-  "worktree": "<branch-base>",
-  "ambiguity_score": 3,
-  "value_score": 4.7,
-  "evidence_count": 3,
-  "steps": [
-    {
-      "step": 0,
-      "name": "<kebab-slug>",
-      "title": "<human title>",
-      "status": "pending",
-      "ambiguity_delta": 0.0
-    }
-  ]
-}
-```
+**SSOT lives in `lib/execute.py`.** Do not redefine it here.
 
-### Per-step `status` (state machine)
+- Phase JSON schema → `lib/execute.py:register_step` + the `IndexSchema`
+  dataclass. Plan only emits via `register_step(root, phase, step=N, name=...)`;
+  runtime state transitions (`unimplemented → pending → in_progress →
+  completed | error | blocked`) are owned by the runner.
+- Step-file template (section order, headings, marker block) → read
+  `lib/execute.py:_step_file_template()` and follow its output verbatim.
+  Section order and marker placement are part of the plan ↔ build SSOT;
+  the build runner's parser reads the marker block, the agent reads the
+  sections.
+- Marker contract → `lib/execute.py:parse_status_marker()` + the
+  `VALID_STATUSES` / `SKIPPABLE_STATUSES` / `RESUMABLE_STATUSES`
+  constants. Status values: `completed | error | blocked`. Companion
+  fields: `summary | error_message | blocked_reason`. Marker value MUST
+  match `index.json[step].status`; runner trusts `index.json` on
+  disagreement.
+- Korean / mixed-language content is forbidden — see `rules/skill-authoring.md`.
 
-SSOT: `lib/execute.py:VALID_STATUSES` (+ `SKIPPABLE_STATUSES`, `RESUMABLE_STATUSES`).
-The plan skill only writes `unimplemented` (via `register_step`) and `pending`
-(after writing `step<N>.md`). Runtime states (`in_progress`, `completed`,
-`error`, `blocked`) are owned by the harness-runner; plan MUST NOT set them.
-See the source constants for the current set + transition table.
-
-### Step file template (pinned)
-
-`phases/<name>/step<N>.md` MUST follow this template verbatim — section
-order, headings, and the marker block in the `Verification & Status Update`
-section are part of the **plan ↔ build SSOT** (the build runner's parser
-reads the marker block; the agent reads the sections). Plan fills the
-placeholder lines in `{curly braces}`; the runner and the executing
-sub-agent fill the rest at runtime.
-
-````markdown
-# Step {N}: {title}
-
-## Status
-**pending** — last update: {iso8601 timestamp at plan-emit time}
-
-## Read first
-- `/PRD.md`
-- `/docs/ARCHITECTURE.md` (if it exists in this project)
-- `/docs/ADR.md` (if it exists in this project)
-- `phases/{phase}/step{0..N-1}.md` (prior step files in this phase)
-- {file paths created or modified by earlier steps in this phase}
-
-## Task
-{Signature-level instructions: file paths, function/class interfaces, logic
-outline. Implementation is the sub-agent's call. Non-negotiable rules
-(idempotency, security, data integrity, backward compat) MUST be written
-explicitly — "be careful" is not enough.}
-
-## Acceptance Criteria
-```bash
-{Executable verification commands. Each must exit 0 on success. Quote exit
-codes in the AC reply, e.g. "AC1: npm test → exit 0 (47 passed)".}
-```
-
-## Verification & Status Update (REQUIRED before claiming done)
-1. Run the AC commands above. Quote each exit code.
-2. Update `phases/{phase}/index.json` for THIS step (one of three outcomes):
-   - **Success** → `"status": "completed"`, `"summary": "<one-line: files created/modified + key decisions>"`
-   - **Unrecoverable failure** (3 retries exhausted) → `"status": "error"`, `"error_message": "<concrete error: which AC failed, with exit code + last 3 lines>"`
-   - **External dependency** (API key, manual config, human approval) → `"status": "blocked"`, `"blocked_reason": "<what's needed>"`, then STOP — do not continue to the next step.
-3. Emit EXACTLY these two HTML-comment markers as the **last two lines** of
-   the final reply. The build runner parses them with the regex in
-   `lib/execute.py:parse_status_marker()`:
-
-```
-<!-- status: completed | error | blocked -->
-<!-- summary: <one-line outcome> | error_message: <concrete error> | blocked_reason: <what's needed> -->
-```
-
-   The marker value MUST match the `status` field written to `index.json`
-   in step 2. If the marker is missing or malformed, the runner falls back
-   to the index.json status (so the contract is best-effort, not blocking).
-
-## Don't
-- {X를 하지 마라. 이유: Y — one prohibition per bullet, in this format}
-- {Do not break existing tests; do not bypass tdd-guard; do not modify
-  files outside the path scope declared in `## Read first`.}
-````
-
-### Marker contract (plan ↔ build SSOT)
-
-The two-line HTML-comment block in the `Verification & Status Update`
-section is the only place where the sub-agent's outcome reaches the
-runner. It is pinned here so the build runner's parser has a stable
-contract.
-
-| Marker | Allowed values | Companion marker |
-|---|---|---|
-| `<!-- status: ... -->` | `completed` \| `error` \| `blocked` | second line carries the matching field |
-| `<!-- summary: ... -->` | free text (one line) | required when `status: completed` |
-| `<!-- error_message: ... -->` | free text (one line) | required when `status: error` |
-| `<!-- blocked_reason: ... -->` | free text (one line) | required when `status: blocked` |
-
-**Rules:**
-
-- The two markers MUST be the last two lines of the sub-agent's final
-  reply. The runner scans the tail of stdout with a regex.
-- The `status:` marker value MUST match the field written to
-  `phases/{phase>/index.json` for that step. If they disagree, the
-  runner trusts the index.json (the marker is a hint, not a hard
-  contract).
-- If the marker is missing, the runner falls back to the exit code:
-  `exit 0` → `completed`, non-zero → `error` with
-  `error_message = f"claude exited {rc}"`. The `summary` field is left
-  empty in this fallback.
-- Parsing happens in `lib/execute.py` (added in the follow-up
-  `feat(execute): live spinner + summary carry-forward` PR). This
-  template pin defines the contract; the build PR implements the
-  parser.
+For a worked example, see `lib/execute.py:examples/plan_step_template.md`.
 
 ## Gate 5/5 — emit
 
