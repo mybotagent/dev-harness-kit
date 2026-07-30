@@ -19,7 +19,7 @@ user-invocable: true
 
 ## What it does
 
-Runs the full new-project pipeline in a single invocation: the three deterministic sub-stages now inlined into `bootstrap` (sanity → codebase-map → hook-matrix) + `lib/write_project_md.py` (writes `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`), then immediately hands off to the same `lib/ci_setup.py:install_ci_config()` path used by `/dev-kit:ci-setup` (installs the 15 CI templates + pre-push hook + writes `.dev-kit/ci-config.json` marker + runs Phase 1.5 pre-flight probe + Phase 1.7 lint + Phase 3 verify). End state on disk is identical to running `/dev-kit:bootstrap` followed by `/dev-kit:ci-setup --force`, with no intermediate user prompts.
+Runs the full new-project pipeline in a single invocation: the three deterministic sub-stages now inlined into `bootstrap` (sanity → codebase-map → hook-matrix) + `lib/write_project_md.py` (writes `CLAUDE.md` as a slim pointer doc, `AGENTS.md` symlink, `.dev-kit/.active-hooks.json`, plus `iron-laws/index.md` + `guidelines/index.md` + `hooks/index.md` + `rules/index.md` for the lazy-loaded content), then immediately hands off to the same `lib/ci_setup.py:install_ci_config()` path used by `/dev-kit:ci-setup` (installs the 15 CI templates + pre-push hook + writes `.dev-kit/ci-config.json` marker + runs Phase 1.5 pre-flight probe + Phase 1.7 lint + Phase 3 verify). End state on disk is identical to running `/dev-kit:bootstrap` followed by `/dev-kit:ci-setup --force`, with no intermediate user prompts.
 
 `/dev-kit:bootstrap` and `/dev-kit:ci-setup` remain standalone for granular cases (refreshing just one half, or onboarding an existing project that already has CLAUDE.md but no CI).
 
@@ -36,7 +36,7 @@ No visible flags. No option prompts (MUST-NOT-13).
        ├── sanity                     → stdout only
        ├── codebase-map               → §3 lazy-loading index (consumed only by --full-claude-md)
        ├── hook-matrix                → .dev-kit/.active-hooks.json (SSOT)
-       └── write_project_md.py        → CLAUDE.md + AGENTS.md (atomic)
+       └── write_project_md.py        → CLAUDE.md + AGENTS.md + 4 index.md files (atomic; CLAUDE.md is a slim pointer)
        ↓ (auto; --skip-ci short-circuits here)
 [2] ci-setup        (delegates to lib/ci_setup.py)
        ├── 1.5 pre-flight probe       → OK/WARN/INFO/SKIP per gh dep (non-blocking)
@@ -72,12 +72,12 @@ Same matrix as `/dev-kit:bootstrap`. `active-hooks.json` SSOT auto-initialized (
 - **Single hand-off**: no intermediate prompt between Phase 1 and Phase 2.
 - **Idempotent CI**: Phase 2 is marker-driven (same as standalone `ci-setup`). Without `--force`, re-runs are no-op on already-installed files.
 - **Never modifies dev-kit's own repo**: writes only into the target (default `$PWD`, or `--target DIR`).
-- **Minimal file footprint**: default run touches `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `.dev-kit/ci-config.json`, and the 15 CI template paths listed in `skills/ci-setup/SKILL.md`. Use `--skip-ci` to land only the first three.
+- **Minimal file footprint**: default run touches `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md` (+ `rules/index.md` if `rules/` exists), `.dev-kit/ci-config.json`, and the 15 CI template paths listed in `skills/ci-setup/SKILL.md`. CLAUDE.md is a slim pointer; detailed content lives in the linked index files. Use `--skip-ci` to land only the bootstrap set.
 
 ## Combined summary (printed on success)
 
 ```
-[bootstrap]  created: CLAUDE.md, AGENTS.md, .dev-kit/.active-hooks.json
+[bootstrap]  created: CLAUDE.md (slim pointer), AGENTS.md, .dev-kit/.active-hooks.json, iron-laws/index.md, guidelines/index.md, hooks/index.md (+ rules/index.md if rules/ exists)
 [ci-setup]   created: 15 files (see ci-setup/SKILL.md)
              marker:   .dev-kit/ci-config.json
              verify:   OK (validate.py + ci-local.sh)

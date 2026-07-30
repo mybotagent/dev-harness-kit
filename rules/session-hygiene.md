@@ -65,4 +65,4 @@ every session that makes tool calls, regardless of branch or task.
 
 - `tools/token_efficiency_analyzer.py` — per-session cost dashboard.
 - `.claude/rules/git-workflow.md` — branch + worktree protocol.
-- `CLAUDE.md` §1 — project Iron Laws (L1–L5).
+- `iron-laws/index.md` — project Iron Laws (L1-L8).

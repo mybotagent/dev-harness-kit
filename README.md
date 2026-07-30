@@ -578,8 +578,8 @@ test keeps the two in sync. Check local hook status with
 
 **Design principles:**
 
-- **NO-DUP** — Iron Laws live in one place (`CLAUDE.md §1`), enforced by hook + skill.
-- **NO-BOTTLENECK** — 0-arg UX, lazy `CLAUDE.md`, parallel sub-agents.
+- **NO-DUP** — Iron Laws live in one place (`iron-laws/index.md`), enforced by hook + skill. CLAUDE.md is a slim pointer document; detailed content lives in dedicated `index.md` files (iron-laws, guidelines, hooks, rules).
+- **NO-BOTTLENECK** — 0-arg UX, slim pointer CLAUDE.md, parallel sub-agents.
 - **NO-MEANINGLESS-LOOP** — explicit loop semantics + auto-STOP + user interrupt.
 - **Human-on-the-Loop** — auto-progress with the user as supervisor and a 1× interrupt.
 - **Methodology extension** — TDD / SDD / DDD / BDD / FDD selectable.

@@ -10,20 +10,23 @@
 - **목표**: 새 프로젝트에 최초 진입, 0 → 30분 생산성. 최소 설정: 새
   저장소에 정확히 3개 파일 작성.
 - **Must**: (a) 읽기 전용 sanity 감사(stdout에 출력; `--persist-audit`는
-  `.dev-kit/sanity-report.md`를 쓴다) (b) CLAUDE.md §3의 코드베이스
-  맵 지연 로딩 인덱스 (c) active-hooks.json SSOT 초기화 (d) CLAUDE.md
-  §1~§5 통합 레코드 (e) Codex 및 다른 CLI를 위한 AGENTS.md 공유 지침
-  인덱스 (f) `--full-claude-md` 옵트인이 `docs/CODEBASE-MAP.md`를 씀
+  `.dev-kit/sanity-report.md`를 쓴다) (b) CLAUDE.md는 슬림 포인터
+  문서로 작성되고 코드베이스 맵은 `docs/CODEBASE-MAP.md`로 지연 로딩
+  (`--full-claude-md` 시에만) (c) `.dev-kit/.active-hooks.json` SSOT 초기화
+  (d) CLAUDE.md는 `iron-laws/index.md`, `guidelines/index.md`,
+  `hooks/index.md`, `rules/index.md`로 상세 내용을 지연 로딩 (e) Codex 및
+  다른 CLI를 위한 AGENTS.md 공유 지침 인덱스
 - **Must-Not**: 파일 수정(sanity는 읽기 전용). 락파일 수정. 추측.
-  핸드오프 파일 영구 저장(CLAUDE.md §5 포인터로 충분).
-- **AC**: 새 저장소에서: CLAUDE.md + AGENTS.md + `.dev-kit/.active-hooks.json`
-  존재. CLAUDE.md §3 = 정식 소스 파일을 참조하는 지연 로딩 인덱스.
+  핸드오프 파일 영구 저장(CLAUDE.md의 `.dev-kit/hand-off/` 포인터로 충분).
+- **AC**: 새 저장소에서: CLAUDE.md (슬림 포인터), AGENTS.md,
+  `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`,
+  `hooks/index.md`, `rules/index.md` (`rules/` 존재 시) 모두 존재.
   `.dev-kit/` 디렉터리 자동 생성.
 - **활성 스킬**: `bootstrap`(sanity + codebase-map + hook-matrix가 인라인
   서브스테이지), `write_project_md`
 - **활성 훅**: `secret-scan`=읽기 전용. 나머지 OFF.
-- **핸드오프 출력**: CLAUDE.md의 §5 핸드오프 포인터(bootstrap에서 별도
-  `.dev-kit/hand-off/` 파일 없음)
+- **핸드오프 출력**: CLAUDE.md의 `.dev-kit/hand-off/` 포인터(bootstrap에서
+  별도 핸드오프 파일 없음)
 
 ## Stage B.5 — CI Setup (`/dev-kit:ci-setup`)
 

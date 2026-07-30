@@ -3,7 +3,7 @@
 state_codec.py — .dev-kit/state.json ↔ hand-off markdown conversion.
 
 Single source of truth for global state. Per MUST-22 dual-source SSOT:
-- CLAUDE.md §2 active stage (auto-loaded into context)
+- CLAUDE.md references `.dev-kit/state.json` (slim-pointer CLAUDE.md does NOT inline the stage; the model reads state.json on demand)
 - .dev-kit/state.json (machine-readable, atomic write)
 """
 from __future__ import annotations
@@ -93,7 +93,7 @@ def append_hand_off(project_root: Path, from_stage: str, to_stage: str, goal: st
 (none — 모든 gate 통과한 경우)
 
 ## §4 Next Stage Trigger
-`/dev-kit:{to_stage}` (0-arg). Preamble 자동 주입: CLAUDE.md §2 + 이 hand-off.
+`/dev-kit:{to_stage}` (0-arg). Preamble 자동 주입: `.dev-kit/state.json` + 이 hand-off.
 """
     atomic_write_text(path, content)
     return path
