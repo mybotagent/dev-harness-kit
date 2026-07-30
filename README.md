@@ -507,10 +507,10 @@ auto-gate that hard-blocked Build on a non-`proceed` verdict; it was removed in
 PR #463 — see [Case 4 of the workflow scenarios doc](docs/workflow/WORKFLOW-SCENARIOS.md#case-4-skipping-the-valuate-step)
 for what that means in practice.
 
-**Agent-behavior eval** — `/dev-kit:eval` replays recorded transcripts and judges
-them against per-dimension rubrics (review / security / plan) plus a 20-checkbox
-code-sanity checklist; `/dev-kit:evaluate` adds harness-quality and os-quality
-dimensions. Details in [`docs/skills/eval.md`](docs/skills/eval.md) and
+**Agent-behavior eval** — `/dev-kit:evaluate` replays recorded transcripts and
+judges them against per-dimension rubrics (review / security / plan) plus a
+20-checkbox code-sanity checklist; adding `--harness-quality` or `--os-quality`
+registers the matching cross-cutting rubric on the same runner. Details in
 [`docs/skills/evaluate.md`](docs/skills/evaluate.md), with the rationale in
 `docs/adr/ADR-0022-eval-agent-behavior.md`.
 
