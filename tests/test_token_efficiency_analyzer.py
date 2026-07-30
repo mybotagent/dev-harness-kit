@@ -795,7 +795,6 @@ class TestJsonOutput(unittest.TestCase):
     def test_explicit_logs_dir_does_not_discover_sibling_worktree_logs(self):
         import contextlib
         import io
-        from unittest import mock
 
         worktree_logs = self.tmpdir / ".worktrees" / "sibling" / "logs" / "claude-code"
         worktree_logs.mkdir(parents=True)
@@ -805,15 +804,13 @@ class TestJsonOutput(unittest.TestCase):
         )
 
         stdout_buf = io.StringIO()
-        with mock.patch("token_efficiency_analyzer.Path.cwd",
-                        return_value=self.tmpdir):
-            with contextlib.redirect_stdout(stdout_buf):
-                rc = main([
-                    "--repo", "fixture-repo",
-                    "--days", "30",
-                    "--logs-dir", str(self.tmpdir / "logs"),
-                    "--json",
-                ])
+        with contextlib.redirect_stdout(stdout_buf):
+            rc = main([
+                "--repo", "fixture-repo",
+                "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--json",
+            ])
 
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(stdout_buf.getvalue())["sessions"], 6)
