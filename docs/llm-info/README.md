@@ -6,7 +6,7 @@ This directory is the **single source of truth** for LLM pricing, plans, and mod
 
 | File | Purpose |
 |---|---|
-| `sources.json` | Provider registry: id → `{url, parser, currency}`. Read by `refresh.py`. |
+| `sources.json` | Provider registry: id → `{url, currency}`. Read by `refresh.py`; `url` is what `WebFetch` extracts pricing from. |
 | `claude.json` | Anthropic Claude pricing + active models + plans (USD) |
 | `codex.json` | OpenAI Codex / API pricing + active models + plans (USD; ChatGPT consumer plans out of scope) |
 | `minimax.json` | MiniMax pricing + active models (USD; converted from CNY @ FX 7.00 per the per-row notes) |
@@ -16,13 +16,7 @@ All values are **USD per million tokens**. The MiniMax row-level `notes` field r
 
 ## Verification (initial bootstrap, 2026-07-17)
 
-Every JSON value was hand-extracted from the vendor's official docs page during the initial bootstrap. To re-verify after a vendor changes prices:
-
-```bash
-python3 skills/llm-refresh/scripts/refresh.py --provider <id> --check
-```
-
-The script fetches the URL recorded in `sources.json`, parses the page, and reports any drift. To apply, drop `--check`.
+Every JSON value was hand-extracted from the vendor's official docs page during the initial bootstrap. To re-verify after a vendor changes prices, run `/dev-kit:llm-refresh` (or `--provider <id>`): it `WebFetch`es the URL recorded in `sources.json`, extracts the pricing table, and reports any drift via `refresh.py --check`. To apply, drop `--check`.
 
 | Provider | Verified page | Currency in JSON |
 |---|---|---|
@@ -44,12 +38,9 @@ Pricing drifts on every vendor release cycle. Mirroring those facts into README 
 
 ## Next step
 
-When a vendor announces a pricing or model-list change, run:
+When a vendor announces a pricing or model-list change, run `/dev-kit:llm-refresh`,
+review the printed diff against the live vendor page, `git add docs/llm-info/*.json`,
+commit, push.
 
-```bash
-python3 skills/llm-refresh/scripts/refresh.py
-```
-
-then review the printed diff, `git add docs/llm-info/*.json`, commit, push.
-
-For a sanity check before committing, append `--check` to see the diff without writing.
+For a sanity check before committing, use `/dev-kit:llm-refresh --check` (or
+`--provider <id> --check`) to see the diff without writing.

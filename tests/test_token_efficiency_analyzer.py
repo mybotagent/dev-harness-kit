@@ -153,12 +153,20 @@ class TestPricingFor(unittest.TestCase):
     def test_minimax_substring(self):
         # MiniMax tier must be matched by substring (covers MiniMax-M3,
         # MiniMax-M2.7, and any future variant) and NOT fall through to a
-        # Claude tier via DEFAULT_PRICING_KEY.
-        for mid in ("MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"):
+        # Claude tier via DEFAULT_PRICING_KEY. Standard-rate variants match
+        # the legacy fallback rate exactly; "highspeed" is a distinct,
+        # separately-priced row in the SSOT (2x standard, per the vendor's
+        # live pricing page) so it must NOT collapse to the standard rate.
+        for mid in ("MiniMax-M3", "MiniMax-M2.7"):
             p = pricing_for(mid)
             self.assertEqual(p["in"], PRICING["minimax"]["in"],
                              f"model {mid!r} did not route to minimax tier")
             self.assertEqual(p["out"], PRICING["minimax"]["out"])
+
+        p_highspeed = pricing_for("MiniMax-M2.7-highspeed")
+        p_standard = pricing_for("MiniMax-M2.7")
+        self.assertGreater(p_highspeed["in"], p_standard["in"],
+                           "MiniMax-M2.7-highspeed must price above the standard tier")
 
     def test_minimax_routed_before_claude_tiers(self):
         # If a future "minimax-sonnet" variant exists, it must NOT match

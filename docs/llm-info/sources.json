@@ -1,12 +1,11 @@
 {
-  "schema_version": "1.0.0",
-  "description": "Provider registry for /dev-kit:llm-refresh. URLs verified against each vendor's official docs page during initial bootstrap (2026-07-17). `parser` selects the parser in skills/llm-refresh/scripts/refresh.py.",
+  "schema_version": "2.0.0",
+  "description": "Provider registry for /dev-kit:llm-refresh. URLs verified against each vendor's official docs page during initial bootstrap (2026-07-17). Extraction is done by WebFetch against `url` — no per-provider parser to register here.",
   "providers": [
     {
       "id": "claude",
       "label": "Anthropic Claude",
       "url": "https://platform.claude.com/docs/en/about-claude/pricing",
-      "parser": "anthropic_html",
       "currency": "USD",
       "note": "Anthropic redirects anthropic.com/pricing → claude.com/pricing (consumer); API token pricing lives on platform.claude.com."
     },
@@ -14,7 +13,6 @@
       "id": "codex",
       "label": "OpenAI Codex / API",
       "url": "https://developers.openai.com/api/docs/pricing",
-      "parser": "openai_html",
       "currency": "USD",
       "note": "platform.openai.com/docs/pricing redirects here. ChatGPT consumer-plan pricing (Plus/Pro/Team) is at chatgpt.com/pricing and is out of scope for the API registry."
     },
@@ -22,15 +20,13 @@
       "id": "minimax",
       "label": "MiniMax",
       "url": "https://platform.minimaxi.com/docs/guides/pricing-paygo.md",
-      "parser": "minimax_md",
       "currency": "USD",
-      "note": "MiniMax publishes LLM token pricing only on the docs/guides pages; the /document/price page is the voice-resource-package tier (TTS) and is NOT the LLM registry. Prices in docs/llm-info/minimax.json are converted from CNY to USD at FX 7.00 per Mtok."
+      "note": "MiniMax publishes LLM token pricing only on the docs/guides pages; the /document/price page is the voice-resource-package tier (TTS) and is NOT the LLM registry. Prices in docs/llm-info/minimax.json are converted from CNY to USD (extraction prompt requires the FX rate used to be recorded in each model's notes)."
     },
     {
       "id": "deepseek",
       "label": "DeepSeek",
       "url": "https://api-docs.deepseek.com/quick_start/pricing",
-      "parser": "deepseek_html",
       "currency": "USD",
       "note": "Docusaurus site; one comparison table per page. Cache-hit/cache-miss both listed."
     }

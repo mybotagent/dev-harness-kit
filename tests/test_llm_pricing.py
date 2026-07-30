@@ -54,12 +54,16 @@ class TestSSOTLoader(unittest.TestCase):
         self.assertAlmostEqual(self.pricing["claude-opus-4-8"]["out"], 25.00, places=4)
 
     def test_loader_reads_gpt_5_5_pro_at_documented_rate(self):
+        # docs/llm-info/*.json ids are dash-slugs (`gpt-5-5-pro`); the live
+        # dotted API id (`gpt-5.5-pro`) matches via pricing_for()'s
+        # normalization, covered separately by
+        # test_normalized_matching_handles_dots_dashes_underscores below.
         codex = json.loads(CODEX_JSON.read_text(encoding="utf-8"))
-        pro_json = next(m for m in codex["models"] if m["id"] == "gpt-5.5-pro")
+        pro_json = next(m for m in codex["models"] if m["id"] == "gpt-5-5-pro")
         # The JSON price is in USD; loader must pass it through unchanged.
-        self.assertIn("gpt-5.5-pro", self.pricing)
-        self.assertAlmostEqual(self.pricing["gpt-5.5-pro"]["in"], pro_json["input_price_per_mtok"], places=4)
-        self.assertAlmostEqual(self.pricing["gpt-5.5-pro"]["out"], pro_json["output_price_per_mtok"], places=4)
+        self.assertIn("gpt-5-5-pro", self.pricing)
+        self.assertAlmostEqual(self.pricing["gpt-5-5-pro"]["in"], pro_json["input_price_per_mtok"], places=4)
+        self.assertAlmostEqual(self.pricing["gpt-5-5-pro"]["out"], pro_json["output_price_per_mtok"], places=4)
 
     def test_minimax_loader_loads_usd_rows(self):
         # MiniMax values are pre-converted from CNY to USD upstream; loader
