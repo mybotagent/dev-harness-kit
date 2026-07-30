@@ -331,24 +331,26 @@ bin/devkit-refresh.sh --dry-run    # preview first
 #    Type /skills, pick "Update".
 /skills  →  Update
 
-# 2. From any shell — CLI marketplace update. Pinpoints the cached
-#    copy at ~/.codex/plugins/cache/dev-kit/dev-kit/<version>/ and
-#    refreshes it from the marketplace.
-codex plugin update dev-kit
+# 2. From any shell — CLI marketplace update. Refreshes the marketplace
+#    clone of dev-kit (note: this can report "already up to date" while
+#    the versioned plugin cache still holds stale files; if symptoms
+#    persist, drop to #3).
+codex plugin marketplace upgrade dev-kit
 
-# 3. Escape hatch — does the same job as #2 with raw git pull + rsync,
-#    useful when the Codex CLI is unavailable or you're inside a session
-#    where the marketplace command path is broken.
+# 3. Escape hatch — does #2 PLUS an explicit rsync of the marketplace
+#    checkout into the versioned cache directory. Useful when the CLI
+#    is unavailable or you're inside a session where #2 reports success
+#    but the cache is still stale.
 bash skills/codex-cache-update/scripts/update.sh
 bash skills/codex-cache-update/scripts/update.sh --dry-run    # preview first
 ```
 
-For a non-default install (custom marketplace / cache root), pass the
-overrides:
+Override the marketplace / cache paths the script targets (e.g. when the
+auto-detected location is wrong):
 
 ```bash
-CODEX_MARKETPLACE_DIR="$HOME/.codex/.tmp/marketplaces/dev-kit" \
-CODEX_CACHE_ROOT="$HOME/.codex/plugins/cache/dev-kit/dev-kit" \
+CODEX_MARKETPLACE_DIR="/custom/path/to/marketplaces/dev-kit" \
+CODEX_CACHE_ROOT="/custom/path/to/cache/dev-kit/dev-kit" \
 bash skills/codex-cache-update/scripts/update.sh
 ```
 
@@ -420,7 +422,7 @@ Verify both are present and the provider is on the allowlist:
 ```bash
 gh variable list --repo <owner>/<repo> | grep CI_REVIEW_PROVIDER
 gh secret list --repo <owner>/<repo> | grep -E 'MINIMAX|ANTHROPIC|DEEPSEEK'
-bin/set-provider.sh                          # local check: on-list?
+bin/set-provider.sh                          # local check: current provider + allowlist + switch hint
 ```
 
 You can skip the manual `gh` calls by passing `--setup-secrets` to
