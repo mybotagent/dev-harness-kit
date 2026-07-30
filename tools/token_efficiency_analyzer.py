@@ -3274,11 +3274,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Token efficiency analyzer + HTML dashboard.")
     parser.add_argument("--repo", required=True, help="Repository name to filter (matches basename of cwd).")
     parser.add_argument("--days", type=int, default=30, help="Look-back window in days (default 30).")
-    parser.add_argument("--logs-dir", default=None, help="Logs root directory (default: ./logs).")
+    parser.add_argument(
+        "--logs-dir",
+        default=None,
+        help="Logs root directory (default: ./logs). When set explicitly, "
+             "sibling-worktree auto-discovery is disabled.",
+    )
     parser.add_argument("--include-worktree-logs", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Auto-discover logs from .worktrees/*/logs/ and legacy worktree roots (default: True). "
-                             "Pass --no-include-worktree-logs to disable.")
+                             "Pass --no-include-worktree-logs to disable. Implicitly disabled when --logs-dir "
+                             "is set explicitly.")
     parser.add_argument("--out", default=None, help="Output HTML path (default: token-dashboard-<repo>-<days>d.html).")
     parser.add_argument("--cost-gate-tokens", type=int, default=DEFAULT_COST_GATE_TOKENS,
                         help=f"Per-session input+cache_read gate (default {DEFAULT_COST_GATE_TOKENS:,}).")
