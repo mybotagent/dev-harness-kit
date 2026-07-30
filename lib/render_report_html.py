@@ -496,7 +496,7 @@ def compose_html(
     if not has_eval:
         parts.append('<div class="missing">No eval report found at '
                      '<code>.dev-kit/eval-report.md</code>. Run '
-                     '<code>/dev-kit:eval</code> first.</div>')
+                     '<code>/dev-kit:evaluate</code> first.</div>')
     else:
         parts.append(_render_eval_cards(eval_data.summary))
         if eval_data.per_dim_blocks:

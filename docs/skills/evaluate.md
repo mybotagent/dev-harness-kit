@@ -4,7 +4,7 @@
 
 **Category:** `eval` · **Alpha:** `enforcement` · **Invocation:** `/dev-kit:evaluate` (human-invoked)
 
-`evaluate` is the harness-quality + os-quality extension of `/dev-kit:eval`. It replays recorded transcripts and judges them against the registered rubrics in `eval/rubrics/` (notably `harness-quality.yaml` and `os-quality.yaml`), so a Phase 3 batch (or any harness change) is gated on `harness-quality` and an env / secret / CI cost change is gated on `os-quality`. Source: [`skills/evaluate/SKILL.md`](../../skills/evaluate/SKILL.md).
+`evaluate` measures whether the agent behaves correctly when running dev-kit skills, across three core dimensions (review, security, plan) plus two cross-cutting dimensions (`harness-quality`, `os-quality`). It replays recorded transcripts and judges them against the registered rubrics in `eval/rubrics/`, so a Phase 3 batch (or any harness change) is gated on `harness-quality` and an env / secret / CI cost change is gated on `os-quality`. No flags = the three core dimensions (the former standalone `eval` skill's scope, now folded in here). Source: [`skills/evaluate/SKILL.md`](../../skills/evaluate/SKILL.md).
 
 ## When to use it
 

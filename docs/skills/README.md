@@ -67,7 +67,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 
 | Skill | Alpha | Summary |
 |---|---|---|
-| [`eval`](eval.md) | `analysis` | Agent-behavior eval across review/security/plan dimensions + a 20-checkbox code-sanity rubric. |
+| [`evaluate`](evaluate.md) | `enforcement` | Agent-behavior eval across review/security/plan dimensions + a 20-checkbox code-sanity rubric, plus the `harness-quality` and `os-quality` dimensions on the same runner. |
 | [`repair`](repair.md) | `state` | 8-step Eval-Repair loop ending in a single Human Review approval. |
 | [`report`](report.md) | `analysis` | HTML viewer combining the latest eval + inspect reports. |
 | [`token-analyzer`](token-analyzer.md) | `analysis` | Token-efficiency dashboard rendered from session log transcripts. |
@@ -76,8 +76,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`ci-doctor`](ci-doctor.md) | `enforcement` | Read-only PASS/FAIL audit of CI readiness. |
 | [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits stale docs and refreshes the README without recording volatile facts. |
 | [`prune-propose`](prune-propose.md) | `state` | Usage-telemetry dump + per-skill delete proposal, user-approved. |
-| [`evaluate`](evaluate.md) | `enforcement` | Eval extension adding the `harness-quality` and `os-quality` dimensions on the same runner. |
-| [`harness-audit`](harness-audit.md) | `analysis` | Cross-harness quality audit across 5 dev-kit harnesses (hooks / eval / plan_value / research / interview). |
 
 ### Shortcuts / maintenance
 
@@ -133,10 +131,8 @@ step inside their parent skill's flow; you never type them directly.
 | [`config`](config.md) | `config` | `state` | human |
 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
-| [`eval`](eval.md) | `eval` | `analysis` | human |
 | [`evaluate`](evaluate.md) | `eval` | `enforcement` | human |
 | [`feat-remove`](feat-remove.md) | `build` | `state` | human |
-| [`harness-audit`](harness-audit.md) | `audit` | `analysis` | human |
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
 | [`interview`](interview.md) | `design` | `enforcement` | human |

@@ -26,8 +26,8 @@ DEFAULT_OUT = SKILLS_DIR / "README.md"
 
 
 # Fields we extract from the frontmatter. Some skill descriptions contain
-# unquoted colons (e.g. "/dev-kit:harness-audit [--json]"), which break a
-# full YAML parse — line-based extraction sidesteps that without forcing
+# unquoted colons (e.g. "/dev-kit:evaluate [--harness-quality]"), which break
+# a full YAML parse — line-based extraction sidesteps that without forcing
 # every author to learn YAML quoting rules.
 _FIELDS = ("name", "category", "alpha", "description", "user-invocable", "user_invocable")
 

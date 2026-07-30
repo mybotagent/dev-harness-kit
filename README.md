@@ -165,7 +165,7 @@ covers the full delivery loop. Highlights:
 - **Parallel Review / Security** — `/dev-kit:review` (correctness + security +
   architecture) and `/dev-kit:security` (OWASP A01–A10) fan out to subagents and
   run a verification pass that rejects false positives.
-- **Agent-behavior eval** — `/dev-kit:eval` replays recorded transcripts and
+- **Agent-behavior eval** — `/dev-kit:evaluate` replays recorded transcripts and
   judges them against per-dimension rubrics plus a code-sanity checklist.
 - **Eval-Repair loop** — auto-check → specialized fixer → final Human Review.
 - **Human-on-the-Loop** — the harness auto-progresses; the user approves last.
@@ -403,7 +403,7 @@ the authoritative, current surface — see [Skills by audience](#skills-by-audie
 
 | Command | Purpose |
 |---|---|
-| `/dev-kit:eval` | Agent-behavior eval (review/security/plan + code-sanity) |
+| `/dev-kit:evaluate` | Agent-behavior eval (review/security/plan + code-sanity, plus harness/os-quality) |
 | `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair Human Review |
 | `/dev-kit:report` | HTML viewer for eval + inspect reports |
 | `/dev-kit:token-analyzer` | Token-efficiency dashboard from session logs |
@@ -788,12 +788,12 @@ git config core.hooksPath .githooks
 
 ## Agent-behavior eval
 
-`/dev-kit:eval` measures whether the **agent produces the right output for the
+`/dev-kit:evaluate` measures whether the **agent produces the right output for the
 right input** when running the dev-kit skills. The unit is a *case fixture + a
 recorded transcript → per-dimension rubric judgment*. Replay-only in v1: a case
 without a recorded transcript is `SKIPPED` (a setup gap, not a regression).
 
-**Three eval dimensions** (each axis 0–10):
+**Three core eval dimensions** (each axis 0–10):
 
 | Dim | Axes | Measures |
 |---|---|---|
@@ -801,11 +801,11 @@ without a recorded transcript is `SKIPPED` (a setup gap, not a regression).
 | `security` | OWASP classification · severity accuracy · precision | A01–A10 mapping + false-positive rate |
 | `plan` | spec clarity · step atomicity · AC executability · dependency ordering | atomic, runnable, buildable plans |
 
-`/dev-kit:eval` covers these three. The `/dev-kit:evaluate` companion adds the
-**`harness-quality`** and **`os-quality`** dimensions (cross-cutting rubric
-checks for env / secret / CI cost), run by the same `--dim` flag on the
-underlying runner — see [`docs/skills/evaluate.md`](docs/skills/evaluate.md)
-and the `eval/rubrics/` registry.
+`/dev-kit:evaluate` (no flags) covers these three. Adding **`--harness-quality`**
+or **`--os-quality`** registers the matching cross-cutting rubric (env / secret /
+CI cost checks) on the same `--dim` flag on the underlying runner — see
+[`docs/skills/evaluate.md`](docs/skills/evaluate.md) and the `eval/rubrics/`
+registry.
 
 Per-case axis mean → verdict: **OK** ≥ 8.0 · **DRIFT_WARNING** 5.0–7.9 · **ROT**
 < 5.0 · **SKIPPED** (no transcript). The `review` dim embeds a 20-checkbox

@@ -20,7 +20,7 @@ Read the two latest markdown reports from `.dev-kit/` and write one
 self-contained HTML file at `.dev-kit/report.html`. Distinct human
 action ("view the report in a browser") with a distinct artifact.
 
-**Why a separate skill, not an `--html` flag on `/dev-kit:eval` or
+**Why a separate skill, not an `--html` flag on `/dev-kit:evaluate` or
 `/dev-kit:inspect`**: the user has to remember the flag and slash
 autocomplete does not surface flags. The HTML rendering is a separate
 action with a separate output, not a mode variation of eval or
@@ -69,7 +69,7 @@ browser never executes it. The contract is enforced by
 
 ## Hand-off
 
-Previous: `/dev-kit:eval` (writes `eval-report.md`),
+Previous: `/dev-kit:evaluate` (writes `eval-report.md`),
 `/dev-kit:inspect` (writes `inspect-report.md`).
 
 If either report is missing, the corresponding section renders a
@@ -79,7 +79,7 @@ artifacts on disk, no caching.
 
 ## Related
 
-- `/dev-kit:eval` -- source of `eval-report.md`
+- `/dev-kit:evaluate` -- source of `eval-report.md`
 - `/dev-kit:inspect` -- source of `inspect-report.md`
 - `lib/render_report_html.py` -- pure function that does the work
 - `bin/dev-kit-report.py` -- CLI driver that writes the file
