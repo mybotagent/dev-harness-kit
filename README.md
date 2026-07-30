@@ -5,6 +5,8 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+**Language:** English · [한국어](README.ko.md)
+
 ---
 
 ## Quick start
@@ -49,7 +51,7 @@ python3 tools/skill_usage.py --days 0 --top 0
 
 **Start here if you are new to dev-harness-kit:**
 
-[`docs/home/00-index.html`](docs/home/00-index.html) — the documented entry point. Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.
+[`docs/home/00-index.md`](docs/home/00-index.md) — the documented entry point ([한국어](docs/home/00-index.ko.md)). Walks through *why the system exists*, *what value you get*, a 60-second quickstart, and a categorized map of every doc, ADR, and skill in the repo.
 
 ### What this plugin is, in two sentences
 
@@ -72,38 +74,32 @@ That is the whole loop. Anything deeper is in the docs index.
 
 ### Doc map (categorized)
 
-Every doc ships in **both** `.md` and `.html` formats. The HTML column is
-preferred for browsing (sticky topnav, dark/light theme auto-switch,
-copy-able code blocks); the MD column renders natively on GitHub and is
-easier to grep.
+Most topic docs ship in **both** `.md` and `.html` formats — HTML for browsing
+(sticky topnav, dark/light theme auto-switch, copy-able code blocks), MD for
+grepping and native GitHub rendering. The landing page and the skill index are
+Markdown-only. Where a Korean sibling exists, it is linked in the same row.
 
-| Topic | HTML | MD | What you get |
-|---|---|---|---|
-| Why + value + quickstart | [`docs/home/00-index.html`](docs/home/00-index.html) | [`docs/home/00-index.md`](docs/home/00-index.md) | Beginner landing — read first |
-| STAGES (what each loop step owns) | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | bootstrap → plan → valuate → build → review → security → ship |
-| CI install (run dev-kit CI elsewhere) | [`docs/quality/ci-setup.html`](docs/quality/ci-setup.html) | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) | `branch-policy` + validate + test + auto-fix workflows |
-| Maintenance gate (PR-only quality) | [`docs/quality/maintenance-gate.html`](docs/quality/maintenance-gate.html) | [`docs/quality/maintenance-gate.md`](docs/quality/maintenance-gate.md) | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
-| Runtime portability (Claude Code ↔ Codex) | [`docs/architecture/RUNTIME-PORTABILITY.html`](docs/architecture/RUNTIME-PORTABILITY.html) | [`docs/architecture/RUNTIME-PORTABILITY.md`](docs/architecture/RUNTIME-PORTABILITY.md) | The contract both runtimes honor so plugin.json means the same thing |
-| Naming convention (SSOT) | [`docs/naming/NAMING.html`](docs/naming/NAMING.html) | [`docs/naming/NAMING.md`](docs/naming/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
-| Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | 9 questions before code |
-| Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | Token ceilings, cost-gate trailer format |
-| Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | Why a single maintainer and a 20-person team adopt the harness differently |
-| Hook coverage gaps (P4 Bucket B audit) | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | Which hook events are wired vs. which aren't, per runtime |
-| ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | How Model-tier agents find and dispatch to Capability-tier skills |
-| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | The wire-format ACP uses to talk between agents |
-| Skill reference | [`docs/skills/README.md`](docs/skills/README.md) | same | All skills with category + α classification |
-| Decision records | [`docs/adr/`](docs/adr) | same | Locked ADRs |
-| Repo map | [`docs/repo/REPOSITORY-MAP.html`](docs/repo/REPOSITORY-MAP.html) | [`docs/repo/REPOSITORY-MAP.md`](docs/repo/REPOSITORY-MAP.md) | Where each component lives in the tree |
+| Topic | HTML | MD | 한국어 | What you get |
+|---|---|---|---|---|
+| Why + value + quickstart | — | [`docs/home/00-index.md`](docs/home/00-index.md) | [`00-index.ko.md`](docs/home/00-index.ko.md) | Beginner landing — read first |
+| STAGES (what each loop step owns) | [`docs/stages/STAGES.html`](docs/stages/STAGES.html) | [`docs/stages/STAGES.md`](docs/stages/STAGES.md) | [`STAGES.ko.md`](docs/stages/STAGES.ko.md) | bootstrap → plan → valuate → build → review → security → ship |
+| CI install (run dev-kit CI elsewhere) | [`docs/quality/ci-setup.html`](docs/quality/ci-setup.html) | [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md) | [`ci-setup.ko.md`](docs/quality/ci-setup.ko.md) | `branch-policy` + validate + test + auto-fix workflows |
+| Maintenance gate (PR-only quality) | [`docs/quality/maintenance-gate.html`](docs/quality/maintenance-gate.html) | [`docs/quality/maintenance-gate.md`](docs/quality/maintenance-gate.md) | — | 20-checkbox rubric enforced in `.github/workflows/maintenance.yml` |
+| Runtime portability (Claude Code ↔ Codex) | [`docs/architecture/RUNTIME-PORTABILITY.html`](docs/architecture/RUNTIME-PORTABILITY.html) | [`docs/architecture/RUNTIME-PORTABILITY.md`](docs/architecture/RUNTIME-PORTABILITY.md) | [`RUNTIME-PORTABILITY.ko.md`](docs/architecture/RUNTIME-PORTABILITY.ko.md) | The contract both runtimes honor so plugin.json means the same thing |
+| Naming convention (SSOT) | [`docs/naming/NAMING.html`](docs/naming/NAMING.html) | [`docs/naming/NAMING.md`](docs/naming/NAMING.md) · [ADR-0010](docs/adr/ADR-0010-naming-convention.md) | [`NAMING.ko.md`](docs/naming/NAMING.ko.md) | Why a hook is `bash-guard.sh`, not `bashHook.sh` |
+| Pre-implementation gate | [`docs/planning/PRE-IMPL-CHECK.html`](docs/planning/PRE-IMPL-CHECK.html) | [`docs/planning/PRE-IMPL-CHECK.md`](docs/planning/PRE-IMPL-CHECK.md) | — | 9 questions before code |
+| Cost & risk | [`docs/quality/COST-ANALYSIS.html`](docs/quality/COST-ANALYSIS.html) | [`docs/quality/COST-ANALYSIS.md`](docs/quality/COST-ANALYSIS.md) | — | Token ceilings, cost-gate trailer format |
+| Team adoption | [`docs/adoption/team-adoption.html`](docs/adoption/team-adoption.html) | [`docs/adoption/team-adoption.md`](docs/adoption/team-adoption.md) | — | Why a single maintainer and a 20-person team adopt the harness differently |
+| Hook coverage gaps (P4 Bucket B audit) | [`docs/hooks/hook-coverage-gaps.html`](docs/hooks/hook-coverage-gaps.html) | [`docs/hooks/hook-coverage-gaps.md`](docs/hooks/hook-coverage-gaps.md) | — | Which hook events are wired vs. which aren't, per runtime |
+| ACP dispatch (M-tier architecture) | [`docs/architecture/ACP-DISPATCH.html`](docs/architecture/ACP-DISPATCH.html) | [`docs/architecture/ACP-DISPATCH.md`](docs/architecture/ACP-DISPATCH.md) | [`ACP-DISPATCH.ko.md`](docs/architecture/ACP-DISPATCH.ko.md) | How Model-tier agents find and dispatch to Capability-tier skills |
+| ACP (Agent Coordination Protocol) | [`docs/architecture/acp-harness.html`](docs/architecture/acp-harness.html) | [`docs/architecture/acp-harness.md`](docs/architecture/acp-harness.md) | [`acp-harness.ko.md`](docs/architecture/acp-harness.ko.md) | The wire-format ACP uses to talk between agents |
+| Skill reference | — | [`docs/skills/README.md`](docs/skills/README.md) | [`README.ko.md`](docs/skills/README.ko.md) | All skills with category + α classification |
+| Decision records | — | [`docs/adr/`](docs/adr) | — | Locked ADRs (historical; English only) |
+| Repo map | [`docs/repo/REPOSITORY-MAP.html`](docs/repo/REPOSITORY-MAP.html) | [`docs/repo/REPOSITORY-MAP.md`](docs/repo/REPOSITORY-MAP.md) | — | Where each component lives in the tree |
 
-If you have only five minutes, open [`docs/home/00-index.html`](docs/home/00-index.html) and read sections 1–3 (why, quickstart, value). Everything else can wait.
-
-The same docs are also available as Markdown:
-
-- [`docs/home/00-index.md`](docs/home/00-index.md) — landing (beginner intro + categorized index)
-
-The HTML versions are preferred for browsing (sticky topnav, collapsible
-sections, dark/light theme auto-switch, copy-able code blocks); the MD
-versions are easier to grep and render natively on GitHub.
+If you have only five minutes, open [`docs/home/00-index.md`](docs/home/00-index.md)
+([한국어](docs/home/00-index.ko.md)) and read sections 1–3 (why, quickstart,
+value). Everything else can wait.
 
 ## Enforcement hooks (the durable moat)
 

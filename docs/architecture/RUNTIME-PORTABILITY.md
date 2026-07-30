@@ -1,5 +1,7 @@
 # Runtime Portability
 
+**Language:** English · [한국어](RUNTIME-PORTABILITY.ko.md)
+
 This document is the canonical classification of every public API in
 `lib/runtime_adapters/` by **neutrality**: which parts of the contract
 are identical across Claude Code and Codex, and which parts require an

@@ -2,11 +2,10 @@
 
 > A unified harness plugin for shipping — Plan, Build, Review, Ship with typed
 > sub-agent delegation, an Eval-Repair loop, and Human-on-the-Loop supervision.
+> Hooks, agents, and operators share one Python codebase via direct subprocess
+> calls (no shared in-process state substrate).
 
-A unified harness plugin for shipping — Plan, Build, Review, Ship with typed
-sub-agent delegation, an Eval-Repair loop, and Human-on-the-Loop supervision.
-Hooks, agents, and operators share one Python codebase via direct subprocess
-calls (no shared in-process state substrate).
+**Language:** English · [한국어](00-index.ko.md)
 
 ---
 
@@ -16,11 +15,13 @@ calls (no shared in-process state substrate).
 harness spec + an Eval-Repair loop.**
 
 The plugin ships with a fixed set of skills (`/dev-kit:plan`,
-`/dev-kit:build`, `/dev-kit:review`, `/dev-kit:ship`, …), a 7-hook
-enforcement matrix (worktree-guard, git-guard, tdd-guard, bash-guard,
-secret-scan, slop-detector, stop-verify), and a stage-by-stage spec
-(`docs/stages/STAGES.md`) that pins which skill owns which step and
-what the acceptance criteria are.
+`/dev-kit:build`, `/dev-kit:review`, `/dev-kit:ship`, …), a hook-based
+enforcement matrix (`worktree-guard`, `git-guard`, `tdd-guard`,
+`bash-guard`, `secret-scan`, `slop-detector`, `stop-verify`, and more —
+see the full, current inventory in the root
+[`README.md` → Enforcement hooks](../../README.md#enforcement-hooks-the-durable-moat)),
+and a stage-by-stage spec (`docs/stages/STAGES.md`) that pins which
+skill owns which step and what the acceptance criteria are.
 
 | Property | Value |
 |---|---|
@@ -55,7 +56,7 @@ and a typed on-disk envelope (`.dev-kit/hand-off/*.md`,
 **Why it has to exist**: in a multi-runtime harness (Claude Code +
 Codex), every consumer that re-implements state-reading creates a
 cross-runtime failure surface. The hook matrix collapses that surface
-to seven shell scripts that every consumer shares.
+to a shared set of shell scripts that every consumer uses.
 
 ---
 
@@ -77,7 +78,7 @@ minute.
 ### Step 2 — explore the per-stage harness
 
 ```bash
-$ open docs/stages/STAGES.md   # the 7-stage spec
+$ open docs/stages/STAGES.md   # the per-stage spec
 ```
 
 ### Step 3 — explore the full skill surface
@@ -96,7 +97,7 @@ That is the entire surface. Anything more specific is in the docs.
 
 | Metric | Value | Detail |
 |---|---|---|
-| Hooks shipped | **7** | worktree-guard, git-guard, tdd-guard, bash-guard, secret-scan, slop-detector, stop-verify |
+| Hooks shipped | see [Enforcement hooks](../../README.md#enforcement-hooks-the-durable-moat) | `worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify`, and others — the table there is the current, maintained inventory |
 | Stage owners | **7** | bootstrap, plan, valuate, build, review, security, ship |
 | Eval-Repair loops | **2 dims** | harness-quality + os-quality |
 | Return shapes | **1 per stage** | typed envelope contract pinned by `docs/stages/STAGES.md` |
@@ -124,15 +125,10 @@ That is the entire surface. Anything more specific is in the docs.
 
 > Pick what fits your role. Read top-to-bottom for newcomers.
 
-> **New here?** Read the **Newcomer path** below first — it walks you through
-> the four pages that matter before everything else makes sense. Everyone
-> else: jump to the category that matches your role.
-
 ### Newcomer path (read in order)
 
 - **00 — Documentation Home** (this file)
-  > Why the system exists, what value you get, and a categorized index
-  > of every other doc.
+  > Why the system exists, what value you get, and where to go next.
 - [`../../README.md`](../../README.md) — repo `dev-harness-kit`
   > Repo-level overview: install, the Plan/Build/Review/Ship loop, command
   > reference, and the full skill surface.
@@ -140,12 +136,14 @@ That is the entire surface. Anything more specific is in the docs.
   > What happens in each stage of the loop (bootstrap → plan → build →
   > review → ship), and which skill owns which step.
 
-### Per-stage spec
+### Every other doc, by category
 
-- [STAGES.md](../stages/STAGES.md)
-  > The 7-stage unified record: must / must-not / AC for every stage,
-  > plus the cross-cutting audit / inspect / report / eval / repair
-  > skills.
+The root [`README.md` → Doc map](../../README.md#doc-map-categorized) is
+the single categorized index of every topic doc, ADR, and skill reference
+in the repo (architecture, naming, CI setup, cost/risk, team adoption, hook
+coverage, and the skill index) — with its HTML/Markdown/Korean siblings
+linked per row. This page stays a Markdown-only landing page and does not
+duplicate that table; follow the link above for the full map.
 
 ### Hooks + enforcement
 
