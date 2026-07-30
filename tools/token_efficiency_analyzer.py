@@ -3274,7 +3274,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Token efficiency analyzer + HTML dashboard.")
     parser.add_argument("--repo", required=True, help="Repository name to filter (matches basename of cwd).")
     parser.add_argument("--days", type=int, default=30, help="Look-back window in days (default 30).")
-    parser.add_argument("--logs-dir", default="logs", help="Logs root directory (default: ./logs).")
+    parser.add_argument("--logs-dir", default=None, help="Logs root directory (default: ./logs).")
     parser.add_argument("--include-worktree-logs", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Auto-discover logs from .worktrees/*/logs/ and legacy worktree roots (default: True). "
@@ -3300,7 +3300,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Pre-snapshot guard: surface "no logs found" as exit 2 BEFORE we
     # build a snapshot (no point building one for an empty scan).
-    logs_dir = Path(args.logs_dir)
+    explicit_logs_dir = args.logs_dir is not None
+    logs_dir = Path(args.logs_dir) if explicit_logs_dir else Path("logs")
+    include_worktree_logs = args.include_worktree_logs and not explicit_logs_dir
     # Cheap probe — does the user-supplied logs dir contain any JSONL?
     # ``build_analysis_snapshot`` does the heavy walk; we only need to
     # confirm a JSONL exists under the explicit logs dir (the worktree
@@ -3311,7 +3313,7 @@ def main(argv: list[str] | None = None) -> int:
     if not has_files:
         # Mirror the historical stderr message; keep exit code 2.
         print(f"[error] No JSONL logs found under {logs_dir}/(claude-code|codex)/"
-              f"{' (including sibling-worktree logs)' if args.include_worktree_logs else ''}",
+              f"{' (including sibling-worktree logs)' if include_worktree_logs else ''}",
               file=sys.stderr)
         return 2
 
@@ -3325,7 +3327,7 @@ def main(argv: list[str] | None = None) -> int:
         cost_gate_tokens=args.cost_gate_tokens,
         cost_gate_usd=args.cost_gate_usd,
         pricing_override=Path(args.pricing_override) if args.pricing_override else None,
-        include_worktree_logs=args.include_worktree_logs,
+        include_worktree_logs=include_worktree_logs,
     )
 
     # Empty-but-valid case: no error, but no selected sessions either.
