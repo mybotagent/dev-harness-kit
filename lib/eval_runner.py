@@ -28,7 +28,7 @@ import hashlib
 import json
 import logging
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -60,6 +60,170 @@ SESSION_AXES: tuple = (
     "over_engineering",
     "thoroughness",
 )
+
+
+# ---------- RUBRIC_REGISTRY (Phase 3) ----------
+#
+# Class-level registry of named eval rubrics. Each entry pairs a YAML
+# rubric path with the judge prompt path used to score it. The default
+# registry is empty so existing call sites that rely on the legacy
+# case-fixture + DIM_AXES path are untouched (backward-compat).
+#
+# `version` is a monotonic counter bumped on every successful
+# `register()` so audit consumers can detect registry drift without
+# diffing the full entry set.
+#
+# Iron Law L1: the registry is the deterministic counterpart to the
+# LLM judge prompt — it lets `skills/evaluate` (`alpha: enforcement`)
+# gate on a registered rubric before invoking the LLM, so a caller
+# cannot ask the judge to score an unknown rubric.
+
+class RubricRegistry:
+    """Class-level registry of named eval rubrics.
+
+    `register()` adds a (rubric_yaml_path, judge_prompt_path) pair
+    under a kebab-case name and bumps `version`. `lookup()` returns
+    the pair by name (raises KeyError on miss). `get_rubric()` is the
+    convenience accessor returning just the YAML path.
+
+    The registry is intentionally empty at import time — opt-in. The
+    `evaluate` skill calls `register()` for each rubric it ships with
+    (harness-quality, os-quality) so the public API is stable.
+    """
+
+    _entries: dict = {}
+    version: int = 0
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        rubric_yaml_path: str,
+        judge_prompt_path: str,
+    ) -> None:
+        """Add or replace an entry under `name`. Bumps `version`."""
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"rubric name must be a non-empty string, got {name!r}")
+        cls._entries[name] = {
+            "rubric_yaml_path": rubric_yaml_path,
+            "judge_prompt_path": judge_prompt_path,
+        }
+        cls.version += 1
+
+    @classmethod
+    def lookup(cls, name: str) -> dict:
+        """Return the entry dict for `name`. Raises KeyError on miss."""
+        if name not in cls._entries:
+            raise KeyError(
+                f"unknown rubric: {name!r}. Registered: {sorted(cls._entries)}"
+            )
+        return cls._entries[name]
+
+    @classmethod
+    def get_rubric(cls, name: str) -> str:
+        """Convenience: return just the rubric YAML path for `name`."""
+        return cls.lookup(name)["rubric_yaml_path"]
+
+    @classmethod
+    def clear(cls) -> None:
+        """Reset registry. Test-only helper."""
+        cls._entries = {}
+        cls.version = 0
+
+    @classmethod
+    def names(cls) -> tuple:
+        """Return all registered rubric names (sorted)."""
+        return tuple(sorted(cls._entries))
+
+
+# Convenience module-level instance — call sites use
+# `RUBRIC_REGISTRY.register(...)` / `.lookup(...)` directly.
+RUBRIC_REGISTRY = RubricRegistry
+
+
+@dataclass
+class CaseResult:
+    """One case outcome from run_eval.
+
+    Mutable because _judge_case populates fields incrementally before
+    returning; converted to dict at the API boundary via asdict().
+    """
+    case_id: str = ""
+    dim: str = ""
+    scores: Dict[str, float] = field(default_factory=dict)
+    tokens_in: int = 0
+    tokens_out: int = 0
+    raw: str = ""
+    verdict: str = ""
+    score: float = 0.0
+    error: Optional[str] = None
+
+
+def mock_skipped(case: Dict, axes: tuple) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 0.0 for ax in axes},
+        raw="TRANSCRIPT_MISSING", verdict="SKIPPED", score=0.0,
+    )
+
+
+def mock_drift_warning(case: Dict, axes: tuple) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 7.0 for ax in axes},
+        raw="DRY_RUN", verdict="DRIFT_WARNING", score=7.0,
+    )
+
+
+def real_result(case: Dict, *, scores: Dict[str, float],
+                tokens_in: int, tokens_out: int,
+                raw: str, verdict: str, score: float) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores=scores, tokens_in=tokens_in, tokens_out=tokens_out,
+        raw=raw, verdict=verdict, score=score,
+    )
+
+
+def exception_rot(case: Dict, axes: tuple, exc: Exception) -> CaseResult:
+    return CaseResult(
+        case_id=case["case_id"], dim=case["dim"],
+        scores={ax: 0.0 for ax in axes},
+        raw=str(exc), verdict="ROT", score=0.0, error=str(exc),
+    )
+
+
+def no_fixtures_result(dim: str) -> CaseResult:
+    """Synthetic result for a requested dim with zero case fixtures on disk.
+
+    P3(b) (eval-loop runtime hardening): a dim can be fully wired in code
+    (DIM_AXES, rubric YAML, judge prompt) yet have no `eval/cases/<dim>/`
+    fixtures. Without this, `run_eval(dim=...)` returns an empty result
+    set that renders as a clean "0 cases, 0 ROT" pass — indistinguishable
+    from "nothing to grade" and "all clear". `NO_FIXTURES` is a distinct
+    verdict so a caller can't mistake the two.
+    """
+    return CaseResult(
+        case_id=f"{dim}::no-fixtures", dim=dim, scores={},
+        raw=f"NO_FIXTURES: eval/cases/{dim}/ has zero case files",
+        verdict="NO_FIXTURES", score=0.0,
+    )
+
+
+def _coerce_score(raw: object) -> Optional[float]:
+    """Coerce a raw axis-score value to a float, or None on failure.
+
+    Shared between `_judge_case` (per-dim scores from the LLM) and
+    `run_golden_diff` (golden baseline scores from JSON). Returns None
+    for non-numeric inputs so the caller can skip the axis entirely
+    instead of silently treating bad data as 0.0.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------- discovery ----------
@@ -94,6 +258,19 @@ def discover_cases(project_root: Path) -> List[Dict]:
             data["raw_path"] = str(case_path.relative_to(project_root))
             cases.append(data)
     return cases
+
+
+def _dim_has_cases(project_root: Path, dim: str) -> bool:
+    """True iff `eval/cases/<dim>/` exists and has at least one `*.json` file.
+
+    Cheap existence check (no parse), used by `run_eval` to short-circuit
+    into a `NO_FIXTURES` verdict before a fixture-less dim silently
+    produces an empty, vacuously-clean result set (P3b).
+    """
+    dim_dir = project_root / "eval" / "cases" / dim
+    if not dim_dir.exists():
+        return False
+    return next(dim_dir.glob("*.json"), None) is not None
 
 
 # ---------- transcript I/O ----------
@@ -249,11 +426,13 @@ def judge_case(
 
 def _render_summary(results: List[Dict]) -> str:
     """Render the `## Summary` block: total cases + verdict counts."""
-    by_verdict: Dict[str, int] = {"OK": 0, "DRIFT_WARNING": 0, "ROT": 0, "SKIPPED": 0}
+    by_verdict: Dict[str, int] = {
+        "OK": 0, "DRIFT_WARNING": 0, "ROT": 0, "SKIPPED": 0, "NO_FIXTURES": 0,
+    }
     for r in results:
-        by_verdict[r.get("verdict", "OK")] += 1
+        by_verdict[r.get("verdict", "OK")] = by_verdict.get(r.get("verdict", "OK"), 0) + 1
     lines = ["## Summary", f"- Total cases: {len(results)}"]
-    for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED"):
+    for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED", "NO_FIXTURES"):
         lines.append(f"- {v}: {by_verdict[v]}")
     return "\n".join(lines)
 
@@ -289,7 +468,12 @@ def _render_per_dim_table(results: List[Dict]) -> str:
 
 
 def _render_per_case(results: List[Dict]) -> str:
-    """Render the `## Per-Case Results` block: one bullet per result."""
+    """Render the `## Per-Case Results` block: one bullet per result.
+
+    Appends `error=<msg>` to a case's bullet when its `error` field is set
+    (judge-infra failure), so a ROT from an API exception reads
+    differently from a ROT the judge assigned to genuinely low scores.
+    """
     lines = ["## Per-Case Results"]
     for r in results:
         verdict = r.get("verdict", "?")
@@ -300,8 +484,46 @@ def _render_per_case(results: List[Dict]) -> str:
             f"{ax}={r.get('scores', {}).get(ax, '-')}"
             for ax in llm_judge.DIM_AXES.get(dim, ())
         )
-        lines.append(f"- **{verdict}** `{case_id}` (dim={dim}) score={score} ({axes_str})")
+        line = f"- **{verdict}** `{case_id}` (dim={dim}) score={score} ({axes_str})"
+        error = r.get("error")
+        if error:
+            line += f" error={error}"
+        lines.append(line)
     return "\n".join(lines)
+
+
+# Fraction of a run's cases that must be ROT-with-error before the report is
+# flagged as a likely judge-infra failure rather than a genuine behavior
+# regression (P4, eval-loop runtime hardening).
+INFRA_FAILURE_ROT_ERROR_THRESHOLD = 0.8
+
+
+def _infra_failure_banner(results: List[Dict]) -> str:
+    """Return an `INFRA_FAILURE` banner when most ROT cases carry an error.
+
+    Heuristic: if >= ``INFRA_FAILURE_ROT_ERROR_THRESHOLD`` of all cases in
+    the run are both `verdict == "ROT"` and have a non-empty `error`
+    field, the run is far more likely to be a judge-call failure (bad API
+    key, rate limit, model rename) than a simultaneous regression across
+    every case. Returns "" when the run doesn't meet the threshold (no
+    banner emitted, report renders as before).
+    """
+    if not results:
+        return ""
+    rot_with_error = sum(
+        1 for r in results if r.get("verdict") == "ROT" and r.get("error")
+    )
+    ratio = rot_with_error / len(results)
+    if ratio < INFRA_FAILURE_ROT_ERROR_THRESHOLD:
+        return ""
+    return (
+        "## \u26a0\ufe0f INFRA_FAILURE\n"
+        f"{rot_with_error}/{len(results)} cases are ROT with a judge-call "
+        "error attached — this looks like a judge/API failure (bad key, "
+        "rate limit, model rename), not a genuine behavior regression. "
+        "Check the `error=` field on each case below before treating this "
+        "run as a real drift signal."
+    )
 
 
 def write_report(
@@ -322,11 +544,11 @@ def write_report(
         f"> Provider: {config.get('provider', 'minimax') if config else 'minimax'}\n"
         f"> Model: {config.get('model', 'MiniMax-M3[1m]') if config else 'MiniMax-M3[1m]'}\n"
     )
-    body = "\n\n".join([
-        _render_summary(results),
-        _render_per_dim_table(results),
-        _render_per_case(results),
-    ])
+    banner = _infra_failure_banner(results)
+    sections = [_render_summary(results), _render_per_dim_table(results), _render_per_case(results)]
+    if banner:
+        sections.insert(0, banner)
+    body = "\n\n".join(sections)
     path.write_text(f"{header}\n{body}\n", encoding="utf-8")
     return path
 
@@ -375,9 +597,11 @@ def _tally_and_emit(project_root: Path, results: List[CaseResult], config: Dict)
     """Tally verdicts, write the report, return the run summary dict."""
     results_dicts = [asdict(r) for r in results]
     write_report(project_root, results_dicts, config)
-    summary: Dict[str, int] = {v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED")}
+    summary: Dict[str, int] = {
+        v: 0 for v in ("OK", "DRIFT_WARNING", "ROT", "SKIPPED", "NO_FIXTURES")
+    }
     for r in results:
-        summary[r.verdict or "OK"] += 1
+        summary[r.verdict or "OK"] = summary.get(r.verdict or "OK", 0) + 1
     return {
         "results": results_dicts,
         "config": {k: v for k, v in config.items() if k != "api_key"},
@@ -406,6 +630,8 @@ def run_eval(
         config = llm_judge.load_config(project_root)
     if dim is not None and dim not in SUPPORTED_DIMS:
         raise ValueError(f"unknown dim={dim!r}; must be one of {SUPPORTED_DIMS}")
+    if dim is not None and not _dim_has_cases(project_root, dim):
+        return _tally_and_emit(project_root, [no_fixtures_result(dim)], config)
     cases = _discover_cases_for_run(project_root, dim, case)
     results = (_run_dry_run(project_root, cases) if dry_run or not config.get("api_key")
                else _run_real_judges(project_root, cases, config))
@@ -1114,18 +1340,3 @@ if __name__ == "__main__":
             print(json.dumps(reg["summary"], indent=2))
         else:
             print(json.dumps(report["summary"], indent=2))
-
-
-# ---------- Backward-compat re-export (PR-E) ----------
-# Rubric section moved to lib/eval/_rubric.py. Existing
-# `from eval_runner import RubricRegistry, CaseResult` calls keep working.
-from lib.eval._rubric import (  # noqa: E402,F401
-    RUBRIC_REGISTRY,
-    CaseResult,
-    RubricRegistry,
-    _coerce_score,
-    exception_rot,
-    mock_drift_warning,
-    mock_skipped,
-    real_result,
-)
