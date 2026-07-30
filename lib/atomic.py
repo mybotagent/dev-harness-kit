@@ -75,7 +75,7 @@ def read_json_or_default(path: Path, default: Any) -> Any:
     (`load_transcript`, `_load_session_cache`, `_golden_index`) that
     match the same pattern. They are intentionally left untouched in
     this slice because the eval subsystem is being refactored in
-    parallel under the `/dev-kit:eval` (review/security/plan) + the new
+    parallel under the `/dev-kit:evaluate` (review/security/plan) + the new
     `--session-log` / `--golden-diff` work; merging both refactors in
     one PR would conflict on `_load_session_cache`'s lru_cache key and
     on `_golden_index`'s "skip-on-error" contract. The follow-up is:

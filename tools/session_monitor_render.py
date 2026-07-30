@@ -44,7 +44,7 @@ judge deps). Keep in sync with eval/prompts/judge-session.md."""
 
 
 def build_eval_handshake(model: list[WorktreeInfo]) -> Dict:
-    """Per-session payload for the /dev-kit:eval `--session-log` judge.
+    """Per-session payload for `lib/eval_runner.py --session-log`'s judge.
 
     The monitor never calls the judge itself — it surfaces the contract
     (axes + per-session log path) so an external script can pipe

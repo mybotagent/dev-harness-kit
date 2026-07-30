@@ -43,7 +43,7 @@ code { background: #f0f0f0; padding: 0.1em 0.3em; border-radius: 3px; }
 <div class="missing">
   <p><b>No reports found.</b> Run one of these first:</p>
   <ul>
-    <li><code>/dev-kit:eval</code> -- writes <code>.dev-kit/eval-report.md</code></li>
+    <li><code>/dev-kit:evaluate</code> -- writes <code>.dev-kit/eval-report.md</code></li>
     <li><code>/dev-kit:inspect</code> -- writes <code>.dev-kit/inspect-report.md</code></li>
   </ul>
 </div>

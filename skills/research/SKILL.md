@@ -79,7 +79,7 @@ The skill is judged on two new `DIM_AXES` tuples (each 5 axes, mirror the
 | `research_claim` | citation-required / n-source agreement / primary present / timestamp present / rubric match |
 
 Prompts: `eval/prompts/judge-research-source.md` + `judge-research-claim.md`.
-No live eval is auto-triggered — wire via `/dev-kit:eval --dim research_source`
+No live eval is auto-triggered — wire via `/dev-kit:evaluate --dim research_source`
 or `--dim research_claim` once a case fixture exists.
 
 ## Iron Laws

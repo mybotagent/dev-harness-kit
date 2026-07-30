@@ -110,7 +110,7 @@ The deterministic `lib.interview_engine.score_interview_ambiguity`
 runs locally. The LLM judge (`eval/prompts/judge-interview-ambiguity.md`,
 5 axes: `goal_clarity` / `constraints_clarity` / `success_criteria_clarity`
 / `anti_goals_clarity` / `acceptance_rubric_clarity`) re-scores the
-final answer set when the user invokes `/dev-kit:eval --dim interview_ambiguity`.
+final answer set when the user invokes `/dev-kit:evaluate --dim interview_ambiguity`.
 
 The judge MUST return the same shape as `score_interview_ambiguity`
 (see `lib/llm_judge.py:DIM_AXES["interview_ambiguity"]`) so the

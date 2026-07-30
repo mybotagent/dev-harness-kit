@@ -172,7 +172,7 @@ Markdown 전용이다. 한국어 버전이 있는 경우 같은 행에 링크되
 - **병렬 Review / Security** — `/dev-kit:review`(정확성 + 보안 +
   아키텍처)와 `/dev-kit:security`(OWASP A01–A10)가 서브에이전트로
   팬아웃하고, 오탐을 걸러내는 검증 패스를 실행한다.
-- **에이전트 행동 평가** — `/dev-kit:eval`은 기록된 트랜스크립트를
+- **에이전트 행동 평가** — `/dev-kit:evaluate`는 기록된 트랜스크립트를
   재생하고 차원별 루브릭과 코드-새니티 체크리스트로 판정한다.
 - **Eval-Repair 루프** — 자동 점검 → 전문 수정기 → 최종 사람 검토.
 - **Human-on-the-Loop** — 하네스가 자동으로 진행하고, 사람이 마지막에
@@ -420,7 +420,7 @@ git push -u origin main
 
 | 명령 | 목적 |
 |---|---|
-| `/dev-kit:eval` | 에이전트 행동 평가 (review/security/plan + code-sanity) |
+| `/dev-kit:evaluate` | 에이전트 행동 평가 (review/security/plan + code-sanity, harness/os-quality 포함) |
 | `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair 사람 검토 |
 | `/dev-kit:report` | eval + inspect 리포트용 HTML 뷰어 |
 | `/dev-kit:token-analyzer` | 세션 로그 기반 토큰 효율 대시보드 |
@@ -818,12 +818,12 @@ git config core.hooksPath .githooks
 
 ## 에이전트 행동 평가
 
-`/dev-kit:eval`은 dev-kit 스킬을 실행할 때 **에이전트가 올바른
+`/dev-kit:evaluate`는 dev-kit 스킬을 실행할 때 **에이전트가 올바른
 입력에 올바른 출력을 내는지**를 측정한다. 단위는 *케이스 픽스처 + 기록된
 트랜스크립트 → 차원별 루브릭 판정*이다. v1은 재생 전용이다: 기록된
 트랜스크립트가 없는 케이스는 `SKIPPED`(회귀가 아니라 설정 공백)다.
 
-**세 가지 평가 차원** (각 축 0–10):
+**세 가지 핵심 평가 차원** (각 축 0–10):
 
 | 차원 | 축 | 측정하는 것 |
 |---|---|---|
@@ -831,9 +831,9 @@ git config core.hooksPath .githooks
 | `security` | OWASP 분류 · 심각도 정확도 · 정밀도 | A01–A10 매핑 + 오탐률 |
 | `plan` | 스펙 명확성 · 스텝 원자성 · AC 실행 가능성 · 의존성 순서 | 원자적이고, 실행 가능하고, 빌드 가능한 계획 |
 
-`/dev-kit:eval`이 이 세 가지를 커버한다. 동반 스킬 `/dev-kit:evaluate`는
-**`harness-quality`**와 **`os-quality`** 차원(env/시크릿/CI 비용에
-대한 횡단 루브릭 점검)을 같은 하부 러너의 `--dim` 플래그로 추가한다 —
+`/dev-kit:evaluate`(플래그 없이)가 이 세 가지를 커버한다. **`--harness-quality`**
+또는 **`--os-quality`**를 추가하면 같은 하부 러너의 `--dim` 플래그로
+해당 횡단 루브릭(env/시크릿/CI 비용 점검)을 등록한다 —
 [`docs/skills/evaluate.md`](docs/skills/evaluate.md)와
 `eval/rubrics/` 레지스트리를 참고한다.
 
