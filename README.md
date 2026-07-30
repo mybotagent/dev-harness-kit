@@ -395,18 +395,13 @@ gitignored. See [`docs/skills/log.md`](docs/skills/log.md).
 
 ### Token efficiency analyzer
 
-`/dev-kit:token-analyzer` (or the CLI `tools/token_efficiency_analyzer.py`) turns
-those logged sessions into a self-contained HTML dashboard — no dependencies, no
-JavaScript, no network. It scores each session, flags cost anti-patterns, and
-estimates USD savings.
+Run `/dev-kit:token-analyzer` and it turns your logged sessions into a
+self-contained HTML dashboard — no dependencies, no JavaScript, no network. It
+scores each session, flags cost anti-patterns, and estimates USD savings.
 
-```bash
-python3 tools/token_efficiency_analyzer.py --repo "my-project" --days 30
-open token-dashboard-my-project-30d.html
-```
-
-The flags, the scoring rubric, and the pricing table are documented in
-[`docs/skills/token-analyzer.md`](docs/skills/token-analyzer.md).
+The flags, the scoring rubric, the pricing table, and the underlying CLI
+(`tools/token_efficiency_analyzer.py`, for scripting or CI use) are documented
+in [`docs/skills/token-analyzer.md`](docs/skills/token-analyzer.md).
 
 ![Token efficiency dashboard — dev-harness-kit, last 30 days](docs/screenshots/token-dashboard-dev-harness-kit-30d.png)
 
