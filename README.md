@@ -165,6 +165,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | [`/dev-kit:token-analyzer`](docs/skills/token-analyzer.md) | Shows where your Claude Code / Codex token spend is going, as an HTML dashboard. |
 | [`/dev-kit:research`](docs/skills/research.md) | Every factual claim you write either cites a source or gets removed. |
 | [`/dev-kit:docs-maintenance`](docs/skills/docs-maintenance.md) | Audits stale docs and refreshes the README without baking in facts that go out of date. |
+| [`/dev-kit:ci-triage`](docs/skills/ci-triage.md) | Triages failing GitHub Actions runs across recent commits, deduplicates against a persisted case store, and judges each new failure against a model/context/harness taxonomy — every case must carry a re-runnable repro plus an executable regression test. |
 | [`/dev-kit:log`](docs/skills/log.md) | Turns session logging on/off. It's what feeds `token-analyzer`, `skill-usage`, and the session monitor. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | Shows which skills you actually use, and how much — useful for pruning. |
 
