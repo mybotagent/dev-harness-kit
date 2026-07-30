@@ -23,3 +23,10 @@
 ```
 
 `--dry-run` skips LLM calls (mocks each case at the per-dim threshold) — useful in CI without an API key. See `skills/evaluate/SKILL.md` for the full per-axis rubric, the `convergence: per-case axis mean >= 8.0` contract, and the `safety_valve: 1` / `dedup_metric: identical-case-score=2` frontmatter.
+
+## Failure modes
+
+- `--harness-quality` / `--os-quality` against a repo with zero `eval/cases/<dim>/` case fixtures returns a single `NO_FIXTURES` verdict — never a clean pass. `lib/eval_runner.run_eval` short-circuits into this verdict the moment it sees a fixture-less dim.
+- A per-case judge call that raises (bad API key, rate limit, model rename, etc.) is recorded as ROT with an `error=<msg>` field. The per-case report line surfaces that error next to the score, and `lib/eval_runner.write_report` prefixes the report with an `INFRA_FAILURE` banner when >= 80% of cases are ROT with an error attached — so a judge-infra failure is visually distinct from a genuine behavior regression.
+
+Both behaviors live in `lib/eval_runner.py` and were added to keep `harness` / `os` from silently looking green while nothing is actually graded, and to prevent the common confusion where a single bad API key looks like 100% of cases failing simultaneously.
