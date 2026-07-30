@@ -20,7 +20,7 @@ disable-model-invocation: false
 Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) and then writes the project SSOT. On a fresh repo, exactly these files land on disk: `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. No sanity report file. No hand-off file. AGENTS.md is a 1-line pointer (`CLAUDE.md`) for CLIs that read AGENTS.md instead of CLAUDE.md. CLAUDE.md is a minimal pointer document — detailed content lives in the linked `index.md` files.
 
 ## Iron Law (no exceptions)
-**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`).
+**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--full-claude-md`, `--team`, `--strict`, `--persist-audit`).
 
 ## 6-Step Orchestration (4 auto + 1 user confirm + 1 exit)
 
@@ -31,7 +31,7 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
        ↓ (auto, Read + Glob + Bash; only consumed by --full-claude-md)
 [3] hook-matrix           → .dev-kit/.active-hooks.json (SSOT)
        ↓ (auto)
-[4] write-claude-md lib/write_project_md.py → CLAUDE.md + AGENTS.md + 4 index.md files (atomic; CLAUDE.md is a slim pointer)
+[4] write-claude-md lib/write_project_md.py [--full-claude-md] → CLAUDE.md + AGENTS.md + 4 index.md files + docs/CODEBASE-MAP.md (atomic; CLAUDE.md is a slim pointer). Pass `--full-claude-md` when the operator requested the full codebase map (overwrites the always-on stub with the heavy 4-section content).
        ↓ (auto)
 [5] user review 1x (HOTL, MUST-29)
        ↓

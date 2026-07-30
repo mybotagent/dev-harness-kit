@@ -25,7 +25,7 @@ Runs the full new-project pipeline in a single invocation: the three determinist
 
 ## Iron Law
 
-**0-arg default OK. Hidden flags only:** `--target DIR` (install into a sibling project instead of `$PWD`), `--skip-ci` (stop after Phase 1 — useful when CI is added in a separate later session), `--force` (overwrite existing CI templates during Phase 2 — passed through to `install_ci_config(force=True)`), `--skip-verify` (skip Phase 3 verify), `--slim|--full` (CLAUDE.md mode — passed through to `write_project_md.py`), `--skip-sanity`, `--skip-map`, `--strict`, `--persist-audit`.
+**0-arg default OK. Hidden flags only:** `--target DIR` (install into a sibling project instead of `$PWD`), `--skip-ci` (stop after Phase 1 — useful when CI is added in a separate later session), `--force` (overwrite existing CI templates during Phase 2 — passed through to `install_ci_config(force=True)`), `--skip-verify` (skip Phase 3 verify), `--full-claude-md` (CLAUDE.md mode — passed through to `write_project_md.py`; overwrites the stub at `docs/CODEBASE-MAP.md` with the full 4-section codebase map), `--skip-sanity`, `--skip-map`, `--strict`, `--persist-audit`.
 
 No visible flags. No option prompts (MUST-NOT-13).
 
@@ -36,7 +36,7 @@ No visible flags. No option prompts (MUST-NOT-13).
        ├── sanity                     → stdout only
        ├── codebase-map               → §3 lazy-loading index (consumed only by --full-claude-md)
        ├── hook-matrix                → .dev-kit/.active-hooks.json (SSOT)
-       └── write_project_md.py        → CLAUDE.md + AGENTS.md + 4 index.md files (atomic; CLAUDE.md is a slim pointer)
+       └── write_project_md.py [--full-claude-md] → CLAUDE.md + AGENTS.md + 4 index.md files + docs/CODEBASE-MAP.md stub (atomic; CLAUDE.md is a slim pointer)
        ↓ (auto; --skip-ci short-circuits here)
 [2] ci-setup        (delegates to lib/ci_setup.py)
        ├── 1.5 pre-flight probe       → OK/WARN/INFO/SKIP per gh dep (non-blocking)
