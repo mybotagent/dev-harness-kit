@@ -792,6 +792,29 @@ class TestJsonOutput(unittest.TestCase):
         ])
         self.assertEqual(rc, 3)
 
+    def test_explicit_logs_dir_does_not_discover_sibling_worktree_logs(self):
+        import contextlib
+        import io
+
+        worktree_logs = self.tmpdir / ".worktrees" / "sibling" / "logs" / "claude-code"
+        worktree_logs.mkdir(parents=True)
+        sibling_log = (FIXTURE_LOGS / "aaaa-low-cache.jsonl").read_text()
+        (worktree_logs / "sibling.jsonl").write_text(
+            sibling_log.replace("aaaa-low-cache", "sibling-extra")
+        )
+
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            rc = main([
+                "--repo", "fixture-repo",
+                "--days", "30",
+                "--logs-dir", str(self.tmpdir / "logs"),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(stdout_buf.getvalue())["sessions"], 6)
+
     def test_json_empty_logs_returns_2(self):
         empty = self.tmpdir / "empty"
         (empty / "claude-code").mkdir(parents=True)
