@@ -440,7 +440,6 @@ def render_claude_md(
     refs = [
         "- **Iron Laws** → [`iron-laws/index.md`](iron-laws/index.md) (MUST-8 SSOT)",
         "- **Coding guidelines** → [`guidelines/index.md`](guidelines/index.md) (Karpathy-style, abbreviated)",
-        "- **Active stage** → `.dev-kit/state.json` (managed by `lib/state_codec.py`)",
         "- **Codebase map** → [`docs/CODEBASE-MAP.md`](docs/CODEBASE-MAP.md) "
         "(regenerate via `/dev-kit:bootstrap --full-claude-md`)",
         "- **Hook matrix** → [`hooks/index.md`](hooks/index.md) (MUST-13 SSOT; state in `.dev-kit/.active-hooks.json`)",

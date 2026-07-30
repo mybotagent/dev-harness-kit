@@ -84,9 +84,10 @@ class TestWriteProjectMd(unittest.TestCase):
             self.assertIn(path, md, f"CLAUDE.md must reference {path}")
         # Pointer for the codebase-map doc
         self.assertIn("docs/CODEBASE-MAP.md", md)
-        # Pointer for active stage + hand-off
-        self.assertIn(".dev-kit/state.json", md)
+        # Hand-off pointer (active stage lives in .dev-kit/state.json but
+        # the model doesn't need to read it; it's for tool/harness use only)
         self.assertIn(".dev-kit/hand-off/", md)
+        self.assertNotIn(".dev-kit/state.json", md)
 
     def test_render_claude_md_no_inline_laws_or_guidelines(self):
         """CLAUDE.md must NOT inline L1-L8 or G1-G4 (lazy-load via index)."""
