@@ -1,5 +1,5 @@
 {
-  "_comment": "Codex runtime hooks (Phase 2.4, issue #361). Parallel to hooks/hooks.json (Claude). Event names use the neutral form; lib/runtime_adapters/hooks.py maps them to Codex-native names at runtime. Worktree-guard + git-guard are wired here so Codex's before_tool_use events hit the same enforcement layer as Claude Code's PreToolUse events.",
+  "description": "Codex runtime hooks",
   "hooks": {
     "PreToolUse": [
       {
@@ -23,7 +23,6 @@
     ],
     "SessionStart": [
       {
-        "_commands_dir_registered_by_install_commands": true,
         "hooks": [
           {
             "command": "bash \"$PWD/bin/install-commands.sh\"",
@@ -39,8 +38,7 @@
             "type": "command",
             "command": "for i in python3 python py; do if \"$i\" -c \"\" </dev/null >/dev/null 2>&1; then \"$i\" tools/save_log.py --tool codex; exit 0; fi; done"
           }
-        ],
-        "_loghooks_managed": true
+        ]
       }
     ]
   }
