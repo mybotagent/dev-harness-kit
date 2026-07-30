@@ -418,16 +418,17 @@ jobs:
           set -uo pipefail
           PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json body --jq '.body // ""')"
 
-          # pytest -q canonical form is one of:
-          #   all-green:   `<N> passed, <N> skipped in <Ns>s`
-          #   partial-red: `<N> failed, <N> passed, <N> skipped in <Ns>s`
-          #   total-red:   `<N> failed in <Ns>s`
-          # The pattern below accepts any line that has BOTH a passed/failed
-          # number AND a `skipped` number within the same pytest summary,
-          # with a wall-clock time at the end. This matches all three
-          # canonical forms without forcing the author to hand-edit
-          # pytest's natural output.
-          PATTERN='[0-9]+ (passed|failed).*[0-9]+ skipped in [0-9.]+s|[0-9]+ failed in [0-9.]+s'
+          # pytest -q canonical summary line — any of these forms:
+          #   all-green (no skips):    `<N> passed in <Ns>s`
+          #   all-green (with skips):  `<N> passed, <N> skipped in <Ns>s`
+          #   partial-red:             `<N> failed, <N> passed, <N> skipped in <Ns>s`
+          #   total-red:               `<N> failed in <Ns>s`
+          # The `skipped` (or `xfailed` / `xpassed`) segment is OPTIONAL —
+          # pytest omits it when the count is 0, and we should not force
+          # authors to fabricate a skip count or add a deliberate
+          # `@unittest.skip` test just to satisfy the gate. The regex
+          # accepts the natural pytest -q output for every state.
+          PATTERN='[0-9]+ (passed|failed)(, [0-9]+ (skipped|xfailed|xpassed))? in [0-9.]+s'
           if printf '%s' "$PR_BODY" | grep -qE "$PATTERN"; then
             echo "L3-evidence OK: pytest tail line found in PR body"
             exit 0
@@ -435,7 +436,11 @@ jobs:
 
           if [ "$TOUCHES_PROD" = "true" ]; then
             echo "::error::PR body lacks a quoted pytest tail line."
-            echo "::error::Required (Iron Law L3):  '<N> passed, <N> skipped in <Ns>s'"
+            echo "::error::Required (Iron Law L3): a pytest summary line of the form"
+            echo "::error::  '<N> passed in <Ns>s'      (all-green, no skipped)"
+            echo "::error::  '<N> passed, <N> skipped in <Ns>s'"
+            echo "::error::  '<N> failed, <N> passed, <N> skipped in <Ns>s'"
+            echo "::error::  '<N> failed in <Ns>s'"
             echo "::error::Use the .github/pull_request_template.md 'Iron Law L3' section,"
             echo "::error::paste the EXACT line from your local pytest run (not a paraphrase)."
             exit 1
