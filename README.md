@@ -323,14 +323,45 @@ bin/devkit-refresh.sh
 bin/devkit-refresh.sh --dry-run    # preview first
 ```
 
-**Codex:**
+**Codex** — three refresh paths, in the order you should reach for them:
 
 ```bash
+# 1. From inside a Codex session — slash menu. Refreshes the in-session
+#    skill cache so /dev-kit:* picks up the new version immediately.
+#    Type /skills, pick "Update".
+/skills  →  Update
+
+# 2. From any shell — CLI marketplace update. Pinpoints the cached
+#    copy at ~/.codex/plugins/cache/dev-kit/dev-kit/<version>/ and
+#    refreshes it from the marketplace.
+codex plugin update dev-kit
+
+# 3. Escape hatch — does the same job as #2 with raw git pull + rsync,
+#    useful when the Codex CLI is unavailable or you're inside a session
+#    where the marketplace command path is broken.
 bash skills/codex-cache-update/scripts/update.sh
-bash skills/codex-cache-update/scripts/update.sh --dry-run
+bash skills/codex-cache-update/scripts/update.sh --dry-run    # preview first
 ```
 
-After any refresh, restart the client or run `/reload-plugins` where supported.
+For a non-default install (custom marketplace / cache root), pass the
+overrides:
+
+```bash
+CODEX_MARKETPLACE_DIR="$HOME/.codex/.tmp/marketplaces/dev-kit" \
+CODEX_CACHE_ROOT="$HOME/.codex/plugins/cache/dev-kit/dev-kit" \
+bash skills/codex-cache-update/scripts/update.sh
+```
+
+**Live-source dev (recommended for contributors)** — sidestep the cache
+entirely by pointing Codex at your local checkout. Edits are live with no
+re-install:
+
+```bash
+codex --plugin-dir /path/to/dev-harness-kit
+```
+
+After any refresh, restart the client or run `/reload-plugins` where
+supported.
 
 ---
 
@@ -362,9 +393,44 @@ git add -A && git commit -m "chore(ci): refresh dev-kit templates" # 5. commit
 different operators can use different providers in the same repo. Locally, set
 `CI_REVIEW_PROVIDER` in `.env` (managed via `bin/set-provider.sh <provider>`,
 which is gitignored and per-user). In CI, set the GitHub repo variable
-`vars.CI_REVIEW_PROVIDER` and the matching secret (`MINIMAX_API_KEY`,
-`ANTHROPIC_API_KEY`, or `DEEPSEEK_API_KEY`). Full detail and the Codex-side setup
-live in [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md).
+`vars.CI_REVIEW_PROVIDER` and the matching secret.
+
+**Before your first PR — set these in GitHub:**
+
+| Provider | Repo variable (provider picker) | Repo secret (API key) |
+|---|---|---|
+| `minimax` (default) | `CI_REVIEW_PROVIDER` | `MINIMAX_API_KEY` |
+| `anthropic` | `CI_REVIEW_PROVIDER` | `ANTHROPIC_API_KEY` |
+| `deepseek` | `CI_REVIEW_PROVIDER` | `DEEPSEEK_API_KEY` |
+
+```bash
+# 1. Pick the provider (variable -- visible to workflows).
+gh variable set CI_REVIEW_PROVIDER --repo <owner>/<repo> --body minimax
+
+# 2. Drop in the matching API key (secret -- masked in logs).
+gh secret set MINIMAX_API_KEY --repo <owner>/<repo>
+
+# 3. (Only if your fork of sh-ai-x/dev-harness-kit is private) — a PAT
+#    scoped to that repo, so the action can pull the templates.
+gh secret set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions
+```
+
+Verify both are present and the provider is on the allowlist:
+
+```bash
+gh variable list --repo <owner>/<repo> | grep CI_REVIEW_PROVIDER
+gh secret list --repo <owner>/<repo> | grep -E 'MINIMAX|ANTHROPIC|DEEPSEEK'
+bin/set-provider.sh                          # local check: on-list?
+```
+
+You can skip the manual `gh` calls by passing `--setup-secrets` to
+`/dev-kit:ci-setup`: it reads `CI_REVIEW_PROVIDER`, enumerates the required
+secrets via `required_secrets_for_provider()`, and prompts for each before
+calling `gh secret set`. Install still succeeds if a secret-set fails — it's
+surfaced as a warning, not an error.
+
+Full detail and the Codex-side setup live in
+[`docs/quality/ci-setup.md`](docs/quality/ci-setup.md).
 
 ---
 
