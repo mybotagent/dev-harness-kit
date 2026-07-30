@@ -38,6 +38,7 @@ Format: **`<type>/<slug>`**
 | `chore/` | deps, build, CI, tooling | `chore/bump-pytest-9` |
 | `perf/` | performance, no behavior change | `perf/index-json-parse` |
 | `hotfix/` | emergency revert of a merged main commit | `hotfix/revert-abc123` |
+| `prune/` | deletion pass over slop/dead features (not refactoring; see `/dev-kit:prune`) | `prune/dead-skill`, `prune/inspect-2026-07-17` |
 
 ### Slug rules
 
