@@ -72,7 +72,7 @@ def _yamlish(block: str) -> dict:
 class TestSourcesRegistry(unittest.TestCase):
     def test_sources_json_loads_and_has_schema_version(self):
         data = json.loads((LLM_INFO / "sources.json").read_text(encoding="utf-8"))
-        self.assertEqual(data.get("schema_version"), "1.0.0")
+        self.assertEqual(data.get("schema_version"), "2.0.0")
         self.assertIsInstance(data.get("providers"), list)
 
     def test_sources_json_lists_all_four_providers(self):
@@ -85,16 +85,12 @@ class TestSourcesRegistry(unittest.TestCase):
             path = LLM_INFO / f"{p['id']}.json"
             self.assertTrue(path.exists(), f"missing provider file: {path.relative_to(PROJECT_ROOT)}")
 
-    def test_sources_json_parser_is_registered(self):
+    def test_sources_json_has_no_parser_field(self):
+        # Extraction moved to WebFetch (LLM-based); a per-provider `parser`
+        # kind no longer exists to register.
         providers = json.loads((LLM_INFO / "sources.json").read_text(encoding="utf-8"))["providers"]
-        # Import PARSERS via subprocess-free trick: parse the literal in refresh.py source.
-        text = REFRESH_PY.read_text(encoding="utf-8")
-        # The PARSERS dict literal must mention every parser kind.
         for p in providers:
-            self.assertIn(
-                f'"{p["parser"]}"', text,
-                f"parser kind '{p['parser']}' (provider {p['id']}) not wired in refresh.py",
-            )
+            self.assertNotIn("parser", p, f"provider {p['id']}: stale 'parser' field")
 
 
 class TestProviderPayloads(unittest.TestCase):
@@ -152,10 +148,11 @@ class TestProviderPayloads(unittest.TestCase):
 
 class TestRefreshScript(unittest.TestCase):
     """Behavioural contract for refresh.py: script exists, compiles, exposes
-    the documented CLI, and rejects misuse. Network-touching behaviour is
-    pinned by the JSON SSOT contract tests in TestProviderPayloads +
-    TestSourcesRegistry; parser behaviour is left to live runs against the
-    vendor pages (see SKILL.md "Next step").
+    the documented CLI, and rejects misuse. The script no longer fetches or
+    parses vendor pages (that's WebFetch, driven by SKILL.md's Body) — it
+    only validates a stdin JSON payload, diffs, and atomically writes. Those
+    responsibilities are pinned here; the JSON SSOT contract itself is
+    pinned by TestProviderPayloads + TestSourcesRegistry.
     """
     def test_refresh_py_exists(self):
         self.assertTrue(REFRESH_PY.is_file(), f"missing script: {REFRESH_PY}")
@@ -180,10 +177,48 @@ class TestRefreshScript(unittest.TestCase):
     def test_refresh_py_rejects_unknown_provider(self):
         r = subprocess.run(
             [sys.executable, str(REFRESH_PY), "--provider", "bogus-vendor"],
-            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT), input="",
         )
         self.assertEqual(r.returncode, 3, f"unknown provider must exit 3, got {r.returncode}")
         self.assertIn("bogus-vendor", r.stderr + r.stdout)
+
+    def test_refresh_py_rejects_empty_stdin(self):
+        r = subprocess.run(
+            [sys.executable, str(REFRESH_PY), "--provider", "claude", "--check"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT), input="",
+        )
+        self.assertEqual(r.returncode, 3, f"empty stdin must exit 3, got {r.returncode}")
+
+    def test_refresh_py_rejects_invalid_payload_schema(self):
+        r = subprocess.run(
+            [sys.executable, str(REFRESH_PY), "--provider", "claude", "--check"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            input=json.dumps({"models": [{"id": "x"}]}),
+        )
+        self.assertEqual(r.returncode, 2, f"missing model keys must exit 2, got {r.returncode}")
+
+    def test_refresh_py_rejects_negative_price(self):
+        bad_model = {
+            "id": "x", "display_name": "X", "context_window": 100000,
+            "input_price_per_mtok": -1.0, "output_price_per_mtok": 1.0,
+            "deprecated": False, "notes": "",
+        }
+        r = subprocess.run(
+            [sys.executable, str(REFRESH_PY), "--provider", "claude", "--check"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            input=json.dumps({"models": [bad_model]}),
+        )
+        self.assertEqual(r.returncode, 2, f"negative price must exit 2, got {r.returncode}")
+
+    def test_refresh_py_check_reports_no_change_for_identical_payload(self):
+        existing = json.loads((LLM_INFO / "claude.json").read_text(encoding="utf-8"))
+        r = subprocess.run(
+            [sys.executable, str(REFRESH_PY), "--provider", "claude", "--check"],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            input=json.dumps({"models": existing["models"], "currency": existing["currency"]}),
+        )
+        self.assertEqual(r.returncode, 0, f"identical payload must exit 0, got {r.returncode}: {r.stderr}")
+        self.assertIn("no change", r.stdout)
 
 
 class TestSkillFrontmatter(unittest.TestCase):
@@ -191,9 +226,6 @@ class TestSkillFrontmatter(unittest.TestCase):
     def setUpClass(cls):
         cls.text = SKILL_MD.read_text(encoding="utf-8")
         cls.fm = _frontmatter(cls.text)
-        for raw, key in (("WebFetch", "disallowed-tools"),):
-            cls._has_disallow_raw = raw
-            cls._has_disallow_key = key
 
     def test_skill_md_exists(self):
         self.assertTrue(SKILL_MD.is_file(), f"missing: {SKILL_MD}")
@@ -207,10 +239,12 @@ class TestSkillFrontmatter(unittest.TestCase):
                    "repair", "status"}
         self.assertIn(self.fm.get("category"), allowed)
 
-    def test_disallowed_tools_includes_webfetch(self):
-        disallowed = self.fm.get("disallowed-tools", "")
-        self.assertIn("WebFetch", disallowed,
-                      "WebFetch must be disallowed (repo policy)")
+    def test_allowed_tools_includes_webfetch(self):
+        # Extraction is LLM-based (WebFetch reads the vendor page); the
+        # deterministic part (schema validation, diff, atomic write) is
+        # scripts/refresh.py, invoked via Bash. See SKILL.md "Trust model".
+        allowed = self.fm.get("allowed-tools", "")
+        self.assertIn("WebFetch", allowed)
 
     def test_disallowed_tools_includes_write_and_edit(self):
         # Body delegates all writes to scripts/refresh.py via Bash; SKILL must not

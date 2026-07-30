@@ -1,83 +1,335 @@
 {
-  "provider": "codex",
-  "label": "OpenAI Codex / API",
-  "source_url": "https://developers.openai.com/api/docs/pricing",
-  "fetched_at": "2026-07-17T03:30:00+0900",
   "currency": "USD",
+  "fetched_at": "2026-07-30T20:04:15+0900",
+  "label": "OpenAI Codex / API",
   "models": [
     {
-      "id": "gpt-5.5",
-      "display_name": "GPT-5.5",
       "context_window": 400000,
-      "input_price_per_mtok": 5.00,
-      "output_price_per_mtok": 30.00,
       "deprecated": false,
-      "notes": "Top-of-line general model"
+      "display_name": "gpt-5.6-sol",
+      "id": "gpt-5-6-sol",
+      "input_price_per_mtok": 5.0,
+      "notes": "Long context (>272K est.): $10.00/$45.00 in/out.",
+      "output_price_per_mtok": 30.0
     },
     {
-      "id": "gpt-5.5-pro",
-      "display_name": "GPT-5.5 Pro",
       "context_window": 400000,
-      "input_price_per_mtok": 30.00,
-      "output_price_per_mtok": 180.00,
       "deprecated": false,
-      "notes": "Reasoning-flagship tier"
+      "display_name": "gpt-5.6-terra",
+      "id": "gpt-5-6-terra",
+      "input_price_per_mtok": 2.5,
+      "notes": "Long context: $5.00/$22.50 in/out.",
+      "output_price_per_mtok": 15.0
     },
     {
-      "id": "gpt-5.4",
-      "display_name": "GPT-5.4",
       "context_window": 400000,
-      "input_price_per_mtok": 2.50,
-      "output_price_per_mtok": 15.00,
       "deprecated": false,
-      "notes": ""
+      "display_name": "gpt-5.6-luna",
+      "id": "gpt-5-6-luna",
+      "input_price_per_mtok": 1.0,
+      "notes": "Long context: $2.00/$9.00 in/out.",
+      "output_price_per_mtok": 6.0
     },
     {
-      "id": "gpt-5.4-mini",
-      "display_name": "GPT-5.4 mini",
+      "context_window": 272000,
+      "deprecated": false,
+      "display_name": "gpt-5.5",
+      "id": "gpt-5-5",
+      "input_price_per_mtok": 5.0,
+      "notes": "Top-of-line general model. <272K tier; long-context (>272K): $10.00/$45.00.",
+      "output_price_per_mtok": 30.0
+    },
+    {
+      "context_window": 272000,
+      "deprecated": false,
+      "display_name": "gpt-5.5-pro",
+      "id": "gpt-5-5-pro",
+      "input_price_per_mtok": 30.0,
+      "notes": "Reasoning-flagship tier. <272K tier; long-context (>272K): $60.00/$270.00.",
+      "output_price_per_mtok": 180.0
+    },
+    {
+      "context_window": 272000,
+      "deprecated": false,
+      "display_name": "gpt-5.4",
+      "id": "gpt-5-4",
+      "input_price_per_mtok": 2.5,
+      "notes": "<272K tier; long-context (>272K): $5.00/$22.50.",
+      "output_price_per_mtok": 15.0
+    },
+    {
       "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5.4 mini",
+      "id": "gpt-5-4-mini",
       "input_price_per_mtok": 0.75,
-      "output_price_per_mtok": 4.50,
-      "deprecated": false,
-      "notes": ""
+      "notes": "",
+      "output_price_per_mtok": 4.5
     },
     {
-      "id": "gpt-5.4-nano",
-      "display_name": "GPT-5.4 nano",
       "context_window": 400000,
-      "input_price_per_mtok": 0.20,
-      "output_price_per_mtok": 1.25,
       "deprecated": false,
-      "notes": "Cheapest active OpenAI general model"
+      "display_name": "gpt-5.4 nano",
+      "id": "gpt-5-4-nano",
+      "input_price_per_mtok": 0.2,
+      "notes": "Cheapest active OpenAI general model.",
+      "output_price_per_mtok": 1.25
     },
     {
-      "id": "gpt-5.3-codex",
-      "display_name": "GPT-5.3 Codex",
+      "context_window": 272000,
+      "deprecated": false,
+      "display_name": "gpt-5.4-pro",
+      "id": "gpt-5-4-pro",
+      "input_price_per_mtok": 30.0,
+      "notes": "<272K tier; long-context (>272K): $60.00/$270.00.",
+      "output_price_per_mtok": 180.0
+    },
+    {
       "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5.2",
+      "id": "gpt-5-2",
       "input_price_per_mtok": 1.75,
-      "output_price_per_mtok": 14.00,
-      "deprecated": false,
-      "notes": "Codex-CLI optimized"
+      "notes": "",
+      "output_price_per_mtok": 14.0
     },
     {
-      "id": "o4-mini-2025-04-16",
-      "display_name": "o4-mini (2025-04-16)",
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5.2-pro",
+      "id": "gpt-5-2-pro",
+      "input_price_per_mtok": 21.0,
+      "notes": "",
+      "output_price_per_mtok": 168.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5.1",
+      "id": "gpt-5-1",
+      "input_price_per_mtok": 1.25,
+      "notes": "",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5",
+      "id": "gpt-5",
+      "input_price_per_mtok": 1.25,
+      "notes": "",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5-mini",
+      "id": "gpt-5-mini",
+      "input_price_per_mtok": 0.25,
+      "notes": "",
+      "output_price_per_mtok": 2.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5-nano",
+      "id": "gpt-5-nano",
+      "input_price_per_mtok": 0.05,
+      "notes": "",
+      "output_price_per_mtok": 0.4
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "gpt-5-pro",
+      "id": "gpt-5-pro",
+      "input_price_per_mtok": 15.0,
+      "notes": "",
+      "output_price_per_mtok": 120.0
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "gpt-4.1",
+      "id": "gpt-4-1",
+      "input_price_per_mtok": 2.0,
+      "notes": "",
+      "output_price_per_mtok": 8.0
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "gpt-4.1-mini",
+      "id": "gpt-4-1-mini",
+      "input_price_per_mtok": 0.4,
+      "notes": "",
+      "output_price_per_mtok": 1.6
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "gpt-4.1-nano",
+      "id": "gpt-4-1-nano",
+      "input_price_per_mtok": 0.1,
+      "notes": "",
+      "output_price_per_mtok": 0.4
+    },
+    {
+      "context_window": 128000,
+      "deprecated": false,
+      "display_name": "gpt-4o",
+      "id": "gpt-4o",
+      "input_price_per_mtok": 2.5,
+      "notes": "",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 128000,
+      "deprecated": false,
+      "display_name": "gpt-4o-mini",
+      "id": "gpt-4o-mini",
+      "input_price_per_mtok": 0.15,
+      "notes": "",
+      "output_price_per_mtok": 0.6
+    },
+    {
       "context_window": 200000,
-      "input_price_per_mtok": 4.00,
-      "output_price_per_mtok": 16.00,
       "deprecated": false,
-      "notes": "Reasoning model snapshot"
+      "display_name": "o1",
+      "id": "o1",
+      "input_price_per_mtok": 15.0,
+      "notes": "Reasoning model.",
+      "output_price_per_mtok": 60.0
     },
     {
-      "id": "o3-deep-research",
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "o1-pro",
+      "id": "o1-pro",
+      "input_price_per_mtok": 150.0,
+      "notes": "Reasoning model, pro tier.",
+      "output_price_per_mtok": 600.0
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "o3",
+      "id": "o3",
+      "input_price_per_mtok": 2.0,
+      "notes": "Reasoning model.",
+      "output_price_per_mtok": 8.0
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "o3-pro",
+      "id": "o3-pro",
+      "input_price_per_mtok": 20.0,
+      "notes": "Reasoning model, pro tier.",
+      "output_price_per_mtok": 80.0
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "o4-mini",
+      "id": "o4-mini",
+      "input_price_per_mtok": 1.1,
+      "notes": "Reasoning model snapshot.",
+      "output_price_per_mtok": 4.4
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "o3-mini",
+      "id": "o3-mini",
+      "input_price_per_mtok": 1.1,
+      "notes": "Reasoning model.",
+      "output_price_per_mtok": 4.4
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5.3 Codex",
+      "id": "gpt-5-3-codex",
+      "input_price_per_mtok": 1.75,
+      "notes": "Codex-CLI optimized. Priority tier: $3.50/$28.00.",
+      "output_price_per_mtok": 14.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5.2 Codex",
+      "id": "gpt-5-2-codex",
+      "input_price_per_mtok": 1.75,
+      "notes": "Codex-CLI optimized. Priority tier: $3.50/$28.00.",
+      "output_price_per_mtok": 14.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5.1 Codex Max",
+      "id": "gpt-5-1-codex-max",
+      "input_price_per_mtok": 1.25,
+      "notes": "Codex-CLI optimized. Priority tier: $2.50/$20.00.",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5.1 Codex",
+      "id": "gpt-5-1-codex",
+      "input_price_per_mtok": 1.25,
+      "notes": "Codex-CLI optimized. Priority tier: $2.50/$20.00.",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5 Codex",
+      "id": "gpt-5-codex",
+      "input_price_per_mtok": 1.25,
+      "notes": "Codex-CLI optimized. Priority tier: $2.50/$20.00.",
+      "output_price_per_mtok": 10.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": false,
+      "display_name": "GPT-5.1 Codex mini",
+      "id": "gpt-5-1-codex-mini",
+      "input_price_per_mtok": 0.25,
+      "notes": "Codex-CLI optimized, mini tier.",
+      "output_price_per_mtok": 2.0
+    },
+    {
+      "context_window": 400000,
+      "deprecated": true,
+      "display_name": "codex-mini-latest",
+      "id": "codex-mini-latest",
+      "input_price_per_mtok": 1.5,
+      "notes": "Legacy Codex CLI alias, superseded by gpt-5.x-codex family.",
+      "output_price_per_mtok": 6.0
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
       "display_name": "o3 Deep Research",
+      "id": "o3-deep-research",
+      "input_price_per_mtok": 10.0,
+      "notes": "Deep-research agent pricing.",
+      "output_price_per_mtok": 40.0
+    },
+    {
       "context_window": 200000,
-      "input_price_per_mtok": 5.00,
-      "output_price_per_mtok": 20.00,
       "deprecated": false,
-      "notes": "Deep-research agent pricing"
+      "display_name": "o4-mini Deep Research",
+      "id": "o4-mini-deep-research",
+      "input_price_per_mtok": 2.0,
+      "notes": "Deep-research agent pricing.",
+      "output_price_per_mtok": 8.0
     }
   ],
   "plans": [],
-  "plans_note": "ChatGPT consumer-plan pricing (Plus/Pro/Team) is at chatgpt.com/pricing; the API docs page does not list subscription tiers. Refresh of plans requires a second pass with that consumer URL — out of scope for v1 of this registry."
+  "plans_note": "ChatGPT consumer-plan pricing (Plus/Pro/Team) is at chatgpt.com/pricing; the API docs page does not list subscription tiers. Refresh of plans requires a second pass with that consumer URL — out of scope for v1 of this registry.",
+  "provider": "codex",
+  "source_url": "https://developers.openai.com/api/docs/pricing"
 }

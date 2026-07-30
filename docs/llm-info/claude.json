@@ -1,95 +1,185 @@
 {
-  "provider": "claude",
-  "label": "Anthropic Claude",
-  "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
-  "fetched_at": "2026-07-17T03:30:00+0900",
   "currency": "USD",
+  "fetched_at": "2026-07-30T20:04:15+0900",
+  "label": "Anthropic Claude",
   "models": [
     {
-      "id": "claude-fable-5",
+      "context_window": 1000000,
+      "deprecated": false,
       "display_name": "Claude Fable 5",
-      "context_window": 1000000,
-      "input_price_per_mtok": 10.00,
-      "output_price_per_mtok": 50.00,
-      "deprecated": false,
-      "notes": "1M context at standard pricing; new tokenizer (~30% more tokens for same text). Batch: $5 / $25."
+      "id": "claude-fable-5",
+      "input_price_per_mtok": 10,
+      "notes": "Base input/output pricing.",
+      "output_price_per_mtok": 50
     },
     {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "Claude Mythos 5 (limited availability)",
       "id": "claude-mythos-5",
-      "display_name": "Claude Mythos 5",
-      "context_window": 1000000,
-      "input_price_per_mtok": 10.00,
-      "output_price_per_mtok": 50.00,
-      "deprecated": false,
-      "notes": "Limited availability. 1M context at standard pricing."
+      "input_price_per_mtok": 10,
+      "notes": "Limited availability.",
+      "output_price_per_mtok": 50
     },
     {
-      "id": "claude-opus-4-8",
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "Claude Opus 5",
+      "id": "claude-opus-5",
+      "input_price_per_mtok": 5,
+      "notes": "Fast mode available at $10/$50 per MTok.",
+      "output_price_per_mtok": 25
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
       "display_name": "Claude Opus 4.8",
+      "id": "claude-opus-4-8",
+      "input_price_per_mtok": 5,
+      "notes": "Fast mode available at $10/$50 per MTok.",
+      "output_price_per_mtok": 25
+    },
+    {
       "context_window": 1000000,
-      "input_price_per_mtok": 5.00,
-      "output_price_per_mtok": 25.00,
       "deprecated": false,
-      "notes": "Current top-of-line Opus. 1M context at standard pricing. Fast-mode premium: $10 / $50 (deprecated on 4.7 only)."
+      "display_name": "Claude Opus 4.7",
+      "id": "claude-opus-4-7",
+      "input_price_per_mtok": 5,
+      "notes": "",
+      "output_price_per_mtok": 25
     },
     {
-      "id": "claude-sonnet-5",
-      "display_name": "Claude Sonnet 5",
       "context_window": 1000000,
-      "input_price_per_mtok": 3.00,
-      "output_price_per_mtok": 15.00,
       "deprecated": false,
-      "notes": "Standard pricing effective 2026-09-01 ($3/$15); introductory $2/$10 runs through 2026-08-31. 1M context."
+      "display_name": "Claude Opus 4.6",
+      "id": "claude-opus-4-6",
+      "input_price_per_mtok": 5,
+      "notes": "",
+      "output_price_per_mtok": 25
     },
     {
-      "id": "claude-haiku-4-5",
-      "display_name": "Claude Haiku 4.5",
       "context_window": 200000,
-      "input_price_per_mtok": 1.00,
-      "output_price_per_mtok": 5.00,
       "deprecated": false,
-      "notes": "Cheapest active Claude. Batch: $0.50 / $2.50."
+      "display_name": "Claude Opus 4.5",
+      "id": "claude-opus-4-5",
+      "input_price_per_mtok": 5,
+      "notes": "",
+      "output_price_per_mtok": 25
     },
     {
-      "id": "claude-opus-4-1",
-      "display_name": "Claude Opus 4.1",
       "context_window": 200000,
-      "input_price_per_mtok": 15.00,
-      "output_price_per_mtok": 75.00,
       "deprecated": true,
-      "notes": "Deprecated per vendor deprecation page; kept for one cycle so consumers can see the migration target."
+      "display_name": "Claude Opus 4.1",
+      "id": "claude-opus-4-1",
+      "input_price_per_mtok": 15,
+      "notes": "Deprecated.",
+      "output_price_per_mtok": 75
+    },
+    {
+      "context_window": 200000,
+      "deprecated": true,
+      "display_name": "Claude Opus 4",
+      "id": "claude-opus-4",
+      "input_price_per_mtok": 15,
+      "notes": "Retired, except on Google Cloud.",
+      "output_price_per_mtok": 75
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "Claude Sonnet 5 (introductory, through Aug 31 2026)",
+      "id": "claude-sonnet-5-intro",
+      "input_price_per_mtok": 2,
+      "notes": "Introductory pricing through 2026-08-31; reverts to $3/$15.",
+      "output_price_per_mtok": 10
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "Claude Sonnet 5 (standard, from Sep 1 2026)",
+      "id": "claude-sonnet-5",
+      "input_price_per_mtok": 3,
+      "notes": "Standard pricing effective 2026-09-01.",
+      "output_price_per_mtok": 15
+    },
+    {
+      "context_window": 1000000,
+      "deprecated": false,
+      "display_name": "Claude Sonnet 4.6",
+      "id": "claude-sonnet-4-6",
+      "input_price_per_mtok": 3,
+      "notes": "",
+      "output_price_per_mtok": 15
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "Claude Sonnet 4.5",
+      "id": "claude-sonnet-4-5",
+      "input_price_per_mtok": 3,
+      "notes": "",
+      "output_price_per_mtok": 15
+    },
+    {
+      "context_window": 200000,
+      "deprecated": true,
+      "display_name": "Claude Sonnet 4",
+      "id": "claude-sonnet-4",
+      "input_price_per_mtok": 3,
+      "notes": "Retired, except on Bedrock and Google Cloud.",
+      "output_price_per_mtok": 15
+    },
+    {
+      "context_window": 200000,
+      "deprecated": false,
+      "display_name": "Claude Haiku 4.5",
+      "id": "claude-haiku-4-5",
+      "input_price_per_mtok": 1,
+      "notes": "",
+      "output_price_per_mtok": 5
+    },
+    {
+      "context_window": 200000,
+      "deprecated": true,
+      "display_name": "Claude Haiku 3.5",
+      "id": "claude-haiku-3-5",
+      "input_price_per_mtok": 0.8,
+      "notes": "Retired, except on Bedrock and Google Cloud.",
+      "output_price_per_mtok": 4
     }
   ],
   "plans": [
     {
+      "includes": "Web + mobile Claude, limited Sonnet usage",
       "name": "Free",
-      "price_per_month_usd": 0.00,
-      "includes": "Web + mobile Claude, limited Sonnet usage"
+      "price_per_month_usd": 0.0
     },
     {
+      "includes": "5x Free usage, Claude Code on web/desktop, file uploads; $17/mo on annual plan",
       "name": "Pro",
-      "price_per_month_usd": 20.00,
-      "includes": "5x Free usage, Claude Code on web/desktop, file uploads; $17/mo on annual plan"
+      "price_per_month_usd": 20.0
     },
     {
+      "includes": "From $100/mo; 20x Free usage, priority access at peak",
       "name": "Max",
-      "price_per_month_usd": 100.00,
-      "includes": "From $100/mo; 20x Free usage, priority access at peak"
+      "price_per_month_usd": 100.0
     },
     {
+      "includes": "$20/mo on annual billing; standard Claude Code seats",
       "name": "Team Standard",
-      "price_per_month_usd": 25.00,
-      "includes": "$20/mo on annual billing; standard Claude Code seats"
+      "price_per_month_usd": 25.0
     },
     {
+      "includes": "$100/mo on annual billing; premium Claude Code seats",
       "name": "Team Premium",
-      "price_per_month_usd": 125.00,
-      "includes": "$100/mo on annual billing; premium Claude Code seats"
+      "price_per_month_usd": 125.0
     },
     {
+      "includes": "$20/seat + usage at API rates",
       "name": "Enterprise",
-      "price_per_month_usd": 20.00,
-      "includes": "$20/seat + usage at API rates"
+      "price_per_month_usd": 20.0
     }
-  ]
+  ],
+  "provider": "claude",
+  "source_url": "https://platform.claude.com/docs/en/about-claude/pricing"
 }

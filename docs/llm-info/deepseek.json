@@ -1,28 +1,28 @@
 {
-  "provider": "deepseek",
-  "label": "DeepSeek",
-  "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
-  "fetched_at": "2026-07-17T03:30:00+0900",
   "currency": "USD",
+  "fetched_at": "2026-07-30T20:04:15+0900",
+  "label": "DeepSeek",
   "models": [
     {
-      "id": "deepseek-v4-flash",
-      "display_name": "DeepSeek-V4-Flash",
       "context_window": 1000000,
-      "input_price_per_mtok": 0.14,
-      "output_price_per_mtok": 0.28,
       "deprecated": false,
-      "notes": "Cache hit: $0.0028 / MTok. Max output 384k. Non-thinking mode only."
+      "display_name": "DeepSeek-V4-Flash",
+      "id": "deepseek-v4-flash",
+      "input_price_per_mtok": 0.14,
+      "notes": "Cache hit: $0.0028/MTok. Max output 384k. Non-thinking mode only.",
+      "output_price_per_mtok": 0.28
     },
     {
-      "id": "deepseek-v4-pro",
-      "display_name": "DeepSeek-V4-Pro",
       "context_window": 1000000,
-      "input_price_per_mtok": 0.435,
-      "output_price_per_mtok": 0.87,
       "deprecated": false,
-      "notes": "Cache hit: $0.003625 / MTok. Max output 384k. Supports both thinking and non-thinking modes (default = thinking)."
+      "display_name": "DeepSeek-V4-Pro",
+      "id": "deepseek-v4-pro",
+      "input_price_per_mtok": 0.435,
+      "notes": "Cache hit: $0.003625/MTok. Max output 384k. Supports both thinking and non-thinking modes (default = thinking).",
+      "output_price_per_mtok": 0.87
     }
   ],
-  "plans": []
+  "plans": [],
+  "provider": "deepseek",
+  "source_url": "https://api-docs.deepseek.com/quick_start/pricing"
 }

@@ -7,7 +7,8 @@
 ## What this skill does
 
 Fetches the official public pricing page for each tracked LLM provider
-(Anthropic, OpenAI, MiniMax, DeepSeek), parses the live page, and writes
+(Anthropic, OpenAI, MiniMax, DeepSeek) via `WebFetch`, extracts the current
+token-pricing table (LLM-based, not a per-vendor regex parser), and writes
 the result into `docs/llm-info/<provider>.json`. The same JSON is the
 single source of truth consumed by:
 
@@ -38,7 +39,7 @@ separately:
 ```
 docs/llm-info/
 ├── README.md
-├── sources.json             # provider registry {url, parser, currency}
+├── sources.json             # provider registry {url, currency}
 ├── claude.json
 ├── codex.json
 ├── minimax.json
@@ -58,73 +59,72 @@ docs/llm-info/
 
 ### Direct CLI (debug + scripts)
 
+`refresh.py` does not fetch or parse anything itself — it validates a JSON
+payload on stdin, diffs it against the committed file, and atomically
+writes. Extraction is `WebFetch`, driven by `SKILL.md`'s Body.
+
 ```bash
-# from the repo root
-python3 skills/llm-refresh/scripts/refresh.py
-python3 skills/llm-refresh/scripts/refresh.py --provider codex --check
-python3 skills/llm-refresh/scripts/refresh.py --json --sources /custom/path/sources.json
+# from the repo root — payload is the WebFetch-extracted model array
+echo '{"models": [...]}' | python3 skills/llm-refresh/scripts/refresh.py --provider codex --check
+echo '{"models": [...]}' | python3 skills/llm-refresh/scripts/refresh.py --provider codex --json
 ```
 
 ### Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | all providers up to date (with `--check`) OR all writes succeeded |
-| 1 | `--check` saw at least one diff (no writes happened) |
-| 2 | fetch or parse failure for at least one provider |
-| 3 | usage error (unknown provider id, missing `sources.json`) |
+| 0 | up to date (with `--check`) OR write succeeded |
+| 1 | `--check` saw a diff (no write happened) |
+| 2 | stdin payload failed schema validation |
+| 3 | usage error (unknown provider id, missing `sources.json`, empty/bad stdin JSON) |
 
 ## Trust model
 
 - **User-initiated, never auto.** No cron, no CI workflow re-runs
   the refresh. The user runs the skill manually after seeing a vendor
   announcement. Same explicit-intent pattern as `bin/set-provider.sh`.
-- **No silent overwrites.** The script diffs the parsed payload
-  against the existing file and reports "no change" when equal. Atomic
-  writes only happen on a real diff, via `lib/atomic.atomic_write_json`.
-- **Parser failure is loud, not silent.** Each per-provider parser
-  raises `ValueError` (or `RuntimeError` on fetch) when the live page's
-  structure drifts. The error message names the failing parser; rerun
-  with `--check` to confirm.
-- **WebFetch is intentionally not used.** The repo's hook policy
-  disallows `WebFetch`; refresh.py uses `urllib.request.urlopen` with
-  a Mozilla-class User-Agent header instead (the same pattern as
-  `lib/llm_judge.py`).
+- **No silent overwrites.** The script diffs the extracted payload
+  against the existing file (ignoring the `fetched_at` stamp) and reports
+  "no change" when equal. Atomic writes only happen on a real diff, via
+  `lib/atomic.atomic_write_json`.
+- **Bad schema is loud, not silent.** `refresh.py` raises on a missing key,
+  non-numeric price, negative price, or empty `models` list and exits 2.
+  That catches a malformed extraction; it does NOT catch a wrong-but
+  well-typed number (e.g. right shape, wrong currency) — that's what the
+  `git diff` review in step 5 below is for. A prior hand-rolled parser
+  produced exactly that failure mode (MiniMax CNY prices mislabeled as
+  USD) and it passed every automated check because the JSON was
+  well-formed; only diff review catches it.
+- **WebFetch is used deliberately.** Extraction reads an arbitrary,
+  vendor-controlled page layout — the kind of task an LLM adapts to and a
+  regex/HTML-table parser breaks on the first redesign. See SKILL.md
+  "What it does" for the incident that motivated this.
 
 ## How to add a new provider
 
-1. Append one row to `docs/llm-info/sources.json`:
+1. Append one row to `docs/llm-info/sources.json` — no parser code needed:
    ```json
    {
      "id": "<provider_id>",
      "label": "<Human name>",
      "url": "https://vendor.example.com/pricing",
-     "parser": "<parser_kind>",
      "currency": "USD"
    }
    ```
-2. Add a parser function to `skills/llm-refresh/scripts/refresh.py`
-   named `parse_<parser_kind>` with the signature
-   `parse_<parser_kind>(content: str, meta: dict) -> dict`.
-   The returned dict must match the schema documented in
-   `docs/llm-info/README.md` (top-level keys `provider`, `label`,
-   `source_url`, `fetched_at`, `currency`, `models`, `plans`).
-3. Add the parser to the `PARSERS` dict in the same file.
-4. Run the skill with `--provider <provider_id>` against the live page,
-   review the printed diff, and commit `docs/llm-info/<provider_id>.json`.
+2. Run the skill (or `WebFetch` the URL by hand with the extraction prompt
+   in `SKILL.md`'s Body), review the printed diff, and commit
+   `docs/llm-info/<provider_id>.json`.
 
 ## How to handle a vendor price change
 
-1. `python3 skills/llm-refresh/scripts/refresh.py --provider <id> --check`
-   — preview the diff without writing.
+1. Run the skill with `--check` for that provider — preview the diff
+   without writing (see "Direct CLI" above for the exact pipeline).
 2. Compare the diff to the vendor's published change. Confirm only
-   the expected prices moved.
-3. If a parser fix is needed (page restructured), edit the parser,
-   re-run `--check`, and ensure the output matches the vendor's
-   current page.
-4. Drop `--check` to write the file.
-5. `git diff docs/llm-info/<id>.json` — sanity-check the JSON.
-6. `git add docs/llm-info/<id>.json` + commit. The PR description
+   the expected prices moved, and the currency is what you expect.
+3. Drop `--check` to write the file.
+4. `git diff docs/llm-info/<id>.json` — sanity-check the JSON against the
+   live vendor page, not just against valid-JSON-shape.
+5. `git add docs/llm-info/<id>.json` + commit. The PR description
    must include "pricing re-verified against <URL> on <YYYY-MM-DD>"
    per `rules/token-pricing.md`.
 

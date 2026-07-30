@@ -2,9 +2,11 @@ interface:
   display_name: "LLM Refresh"
   short_description: "Refresh vendor pricing & model registry from official sources"
   default_prompt: |
-    Run `python3 skills/llm-refresh/scripts/refresh.py` to refresh
-    docs/llm-info/<provider>.json files from Claude, Codex, MiniMax, and
-    DeepSeek official pricing pages. Print the diff and never silently
-    overwrite. Use `--check` to preview and `--provider <id>` to refresh a
-    single provider. Exit 1 means a diff was detected; exit 2 means
-    fetch or parse failed.
+    For each provider in docs/llm-info/sources.json (Claude, Codex, MiniMax,
+    DeepSeek): fetch the provider's official pricing page, extract the
+    current token-pricing table into the schema documented in
+    skills/llm-refresh/SKILL.md's Body, and pipe it as JSON on stdin to
+    `python3 skills/llm-refresh/scripts/refresh.py --provider <id>`. Print
+    the diff and never silently overwrite. Use `--check` to preview. Exit 1
+    means a diff was detected; exit 2 means the extracted payload failed
+    schema validation; exit 3 means a usage error.
