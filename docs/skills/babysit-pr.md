@@ -30,7 +30,7 @@ On start: `mkdir -p .dev-kit`; if `.dev-kit/babysit.lock` exists, check stalenes
 
 ### Ghost-workflow classification
 
-`gh pr checks` may report a check whose underlying workflow file was deleted server-side, staying pending indefinitely. `lib/babysit_pr_reliability.py:classify_check(check_dict, now_epoch, ghost_threshold_seconds=300)` classifies a check as a "ghost" when it has no `databaseId`, or its `startedAt`/`updatedAt` is older than 300s (5 min) — replacing the plain wait-and-retry with a surfaced "recovery-required" message instead of spinning to `MAX_ITERS`.
+`gh pr checks` may report a check whose underlying workflow file was deleted server-side, staying pending indefinitely. `lib/babysit_pr_reliability.py:classify_check(check_dict, now_epoch, ghost_threshold_seconds=300)` classifies a check as a "ghost" when it has no `databaseId` (regardless of state or age), or when it has a `databaseId` but its `startedAt`/`updatedAt` is older than 300s (5 min). A check with a `databaseId` but no `startedAt`/`updatedAt` at all has no elapsed time to measure against the threshold, so it classifies as "pending" instead of "ghost" — this covers a freshly-requested check (age zero) right after a push, which would otherwise be ghosted immediately and trigger unnecessary recovery/retry logic. It still ghosts out once it ages past the threshold, because by then it carries a stale `startedAt`/`updatedAt`. This replaces the plain wait-and-retry with a surfaced "recovery-required" message instead of spinning to `MAX_ITERS`.
 
 ### Algorithm (13-step loop, plus a pre-loop opt-out check)
 

@@ -18,13 +18,18 @@ Two pure-function primitives consumed by the babysit-pr skill
         failing   -- conclusion in {failure, cancelled, timed_out,
                                     stale, error}
         pending   -- conclusion is None and the check looks alive
-                     (startedAt or updatedAt within ghost_threshold_seconds)
-        ghost     -- conclusion is None, no startedAt/updatedAt within
-                     ghost_threshold_seconds, OR explicit databaseId is
-                     missing entirely (GitHub's signal that the workflow
-                     run has been pruned from the checks table).
-                     The skill should stop waiting on a ghost check and
-                     surface it as a recovery-required failure.
+                     (startedAt/updatedAt within ghost_threshold_seconds,
+                     OR neither is set yet -- a freshly requested/queued
+                     check has no timestamp to measure elapsed time
+                     against, so it stays pending rather than ghosting
+                     at age zero)
+        ghost     -- conclusion is None AND (startedAt/updatedAt is set
+                     but older than ghost_threshold_seconds, OR explicit
+                     databaseId is missing entirely -- GitHub's signal
+                     that the workflow run has been pruned from the
+                     checks table). The skill should stop waiting on a
+                     ghost check and surface it as a recovery-required
+                     failure.
       The function never raises: malformed inputs return "pending" (the
       most conservative non-alarming default).
 
@@ -211,7 +216,6 @@ def classify_check(
         return "pending"
 
     conclusion = check.get("conclusion")
-    state = (check.get("state") or "").lower()
 
     # Terminal conclusions: never ghost.
     if isinstance(conclusion, str):
@@ -245,10 +249,14 @@ def classify_check(
     if last_seen is None:
         # No timestamp to anchor against. "expected" / "waiting" /
         # "queued" / "requested" states mean a check that has never
-        # started -- they ghost out only after the threshold; otherwise
-        # we leave them pending so the first run sees them.
-        if state in {"expected", "waiting", "queued", "requested"}:
-            return "ghost"
+        # started -- with no startedAt/updatedAt there is no elapsed
+        # time to compare against ghost_threshold_seconds, so a
+        # freshly-requested check (age zero) is pending, not ghost.
+        # They ghost out only once the threshold below is actually
+        # exceeded -- which requires a timestamp to measure against, so
+        # a check that legitimately ages past the threshold will carry
+        # a stale startedAt/updatedAt and fall through to the
+        # `last_seen is not None` branch instead.
         return "pending"
 
     age = now_epoch - last_seen

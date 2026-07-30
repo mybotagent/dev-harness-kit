@@ -22,6 +22,11 @@ docs/hooks/hook-coverage-gaps.md:
     T11: long-pending with databaseId but old updatedAt returns "ghost"
     T12: malformed check returns "pending" (never raises)
     T13: short-pending keep returning "pending"
+    T14: fresh requested/queued/expected/waiting check with a
+         databaseId but no startedAt/updatedAt at all (age zero)
+         returns "pending", not "ghost" (issue #481 regression)
+    T15: same states, but with a stale (past-threshold) updatedAt,
+         still correctly return "ghost"
 """
 from __future__ import annotations
 
@@ -263,6 +268,45 @@ class TestClassifyCheck(unittest.TestCase):
             }, self.NOW),
             "pending",
         )
+
+    # T14 -- issue #481 regression: a check that was JUST requested (has
+    # a databaseId but neither startedAt nor updatedAt has appeared yet
+    # because CI has not picked it up) must NOT ghost at age zero. The
+    # inline comment right above the fixed branch documents this: these
+    # states "ghost out only after the threshold" -- with no timestamp
+    # at all there is no elapsed time to measure, so the only sound
+    # default is "pending".
+    def test_fresh_requested_check_with_no_timestamp_is_pending_not_ghost(self) -> None:
+        for state in ("expected", "waiting", "queued", "requested"):
+            check = {
+                "conclusion": None,
+                "state": state,
+                "databaseId": 555,
+                # No startedAt/updatedAt at all -- just requested.
+            }
+            self.assertEqual(
+                bpr.classify_check(check, self.NOW),
+                "pending",
+                f"state={state!r} with databaseId but no timestamp should be pending, not ghost",
+            )
+
+    # T15 -- same states, but genuinely past the threshold (stale
+    # updatedAt), must still correctly classify as "ghost". This pins
+    # that the fix for T14 did not weaken the real threshold gate.
+    def test_stale_requested_check_past_threshold_is_still_ghost(self) -> None:
+        old_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(self.NOW - 3600))
+        for state in ("expected", "waiting", "queued", "requested"):
+            check = {
+                "conclusion": None,
+                "state": state,
+                "databaseId": 556,
+                "updatedAt": old_iso,
+            }
+            self.assertEqual(
+                bpr.classify_check(check, self.NOW),
+                "ghost",
+                f"state={state!r} with databaseId and stale updatedAt should still ghost",
+            )
 
 
 if __name__ == "__main__":
