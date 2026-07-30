@@ -4,7 +4,7 @@
 
 **Category:** `repair` · **Alpha:** `state` · **Invocation:** `/dev-kit:repair approve|reject|defer <asset>` (human-invoked)
 
-`repair` is the 8-step Eval-Repair loop: it reads a golden set, scores an asset against it, root-causes the failures, invokes a specialized fixer, re-evaluates the candidate fix, validates against the golden invariant, and writes a draft diff — but never applies that diff itself. The final step is always a single human decision (`approve`, `reject`, or `defer`), and the skill never auto-commits (MUST-NOT-31). It exists to close the loop between eval failures (from `/dev-kit:eval`) and a reviewable, human-gated fix.
+`repair` is the 8-step Eval-Repair loop: it reads a golden set, scores an asset against it, root-causes the failures, invokes a specialized fixer, re-evaluates the candidate fix, validates against the golden invariant, and writes a draft diff — but never applies that diff itself. The final step is always a single human decision (`approve`, `reject`, or `defer`), and the skill never auto-commits (MUST-NOT-31). It exists to close the loop between eval failures (from `/dev-kit:evaluate`) and a reviewable, human-gated fix.
 
 ## When to use it
 
@@ -47,7 +47,7 @@ The skill's `allowed-tools` are `Read Grep Glob Bash Agent`; `Edit` and `Write` 
 
 ## Related
 
-- `/dev-kit:eval` — the source of the failures this skill root-causes and repairs.
+- `/dev-kit:evaluate` — the source of the failures this skill root-causes and repairs.
 - `/dev-kit:babysit-pr` — recommended on abnormal exit if the failure looks like a golden-asset regression.
 
 ---

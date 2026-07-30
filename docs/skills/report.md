@@ -4,7 +4,7 @@
 
 **Category:** `audit` · **Alpha:** `analysis` · **Invocation:** `/dev-kit:report` (human-invoked)
 
-`report` renders the two latest markdown reports produced by `/dev-kit:eval` and `/dev-kit:inspect` into one self-contained HTML file at `.dev-kit/report.html`. It exists as its own skill rather than an `--html` flag on either producer because "view the report in a browser" is a distinct human action with a distinct artifact — the user has to remember a flag and slash autocomplete does not surface flags, so a dedicated command is the better UX.
+`report` renders the two latest markdown reports produced by `/dev-kit:evaluate` and `/dev-kit:inspect` into one self-contained HTML file at `.dev-kit/report.html`. It exists as its own skill rather than an `--html` flag on either producer because "view the report in a browser" is a distinct human action with a distinct artifact — the user has to remember a flag and slash autocomplete does not surface flags, so a dedicated command is the better UX.
 
 ## When to use it
 

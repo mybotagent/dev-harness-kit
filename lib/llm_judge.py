@@ -8,7 +8,7 @@ Two axis families:
   completeness / correctness / consistency). Kept for backward-compat
   with tests/test_llm_judge.py and any external callers.
 - DIM_AXES: per-dim agent-behavior rubric axes used by the new
-  /dev-kit:eval (review / security / plan). Each tuple is the axis
+  /dev-kit:evaluate (review / security / plan). Each tuple is the axis
   set a per-dim judge prompt is expected to return.
 """
 from __future__ import annotations
