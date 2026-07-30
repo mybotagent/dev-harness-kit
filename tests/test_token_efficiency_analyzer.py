@@ -31,6 +31,7 @@ from token_efficiency_analyzer import (  # noqa: E402
     DEFAULT_PRICING_KEY,
     PRICING,
     _aggregate_worktree_rows,
+    _session_cost,
     _source_for,
     aggregate_session,
     cache_miss_reclaim,
@@ -46,10 +47,12 @@ from token_efficiency_analyzer import (  # noqa: E402
     load_pricing_override,
     main,
     model_downgrade_reclaim,
+    parse_iso,
     pricing_for,
     render_dashboard,
     score_cache_utilization,
     score_session,
+    session_cost,
     worktree_from_cwd,
     worktree_from_path,
 )
@@ -320,6 +323,38 @@ class TestCostUsd(unittest.TestCase):
             ),
             0.625,
         )
+
+
+class TestSessionCost(unittest.TestCase):
+    def test_includes_legacy_cache_write_tokens(self):
+        """Bug #478 regression: session_cost() must price the legacy flat
+        cache_write_tokens bucket (no 5m/1h ephemeral split) instead of
+        silently dropping it, matching its sibling _session_cost() so the
+        Cost Gate and the dashboard's Active Sessions table agree on the
+        same session's cost.
+        """
+        s = _make_session(model="claude-sonnet-5", input_tokens=0, output_tokens=0,
+                           cache_write_tokens=1_000_000, cache_read_tokens=0)
+        self.assertGreater(session_cost(s), 0.0)
+        self.assertEqual(session_cost(s), _session_cost(s))
+
+
+class TestParseIso(unittest.TestCase):
+    def test_naive_timestamp_normalized_to_utc(self):
+        """Bug #479 regression: parse_iso() must attach tzinfo to a naive
+        timestamp (no 'Z' suffix, no UTC offset) so the result stays
+        comparable to filter_sessions()'s tz-aware cutoff
+        (datetime.now(timezone.utc) - timedelta(days=days)) instead of
+        raising `TypeError: can't compare offset-naive and offset-aware
+        datetimes`.
+        """
+        dt = parse_iso("2020-01-01T12:00:00")
+        self.assertIsNotNone(dt)
+        self.assertIsNotNone(dt.tzinfo)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+        # Must not raise TypeError when compared against a tz-aware cutoff
+        # (a fixed past date keeps this assertion clock-independent).
+        self.assertTrue(datetime.now(timezone.utc) > dt)
 
 
 class TestEvaluateWarnings(unittest.TestCase):
