@@ -32,10 +32,12 @@ The skill then **judges** each `unjudged` entry. Every case must declare:
 
 Judgments are recorded via `python3 lib/ci_triage.py record --from-json <path>`, which validates the cause pair and rejects an empty `repro` / `regression_test` before flipping the case to `status: open`.
 
+Once a case is judged, `python3 lib/ci_triage.py process [--auto-fix] [--verify-window N]` closes the loop. The engine walks every `open` case, applies known-pattern fixes when the case's own `proposal` names the exact commands to run (currently `gh api -X PUT .../actions/workflows/<id>/disable` + `enable` for stale trigger registrations), re-scans the workflow's recent runs, and flips the case to `status: processed` once no new failures have appeared after `resolution.fix_applied_at`. The full forensic trail — `commands_run`, `verify_pre`/`verify_post`, `commit` + linked `pr` for code-fix resolutions, and a `post_fix_scan` summary — is persisted in the same store, so a reader can jump from "what failed" to "what fixed it" without leaving `.dev-kit/ci-triage-log.json`. Already-processed cases are skipped (idempotent).
+
 ## Why it's shaped this way
 
 - **Reproduction-shaped, not analysis-shaped.** A case is not "done" because it has a good write-up. `repro` and `regression_test` are both required so a reader can re-run the failure later to confirm the fix actually closed it.
-- **Dedup by signature, not by commit.** The store's unit of record is a failure signature; commits/runs are occurrences under it. Never write a fresh case for a signature that's already `open` or `fixed`.
+- **Dedup by signature, not by commit.** The store's unit of record is a failure signature; commits/runs are occurrences under it. Never write a fresh case for a signature that's already `open` or `processed`.
 - **No fabricated root cause.** `evidence` must cite the specific log line, API field, or timestamp comparison that supports the classification. If the evidence is inconclusive, say so — don't guess a cause to fill the field.
 - **Full SHA only.** Any code path that calls `gh run list --commit` must resolve to the full 40-char SHA first. A short SHA does not error — it silently returns an empty run list, which looks identical to "no CI ran for this commit."
 
