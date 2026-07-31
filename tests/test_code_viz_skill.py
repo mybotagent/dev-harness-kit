@@ -27,6 +27,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
+# Playwright-driven tests (skill validator + meta-test) require the
+# playwright Python package AND the headless chromium binary. Skip the
+# whole module when either is missing so CI without browser tooling still
+# runs the heredoc-compile + structural assertions; the validator
+# subprocess and the modal-click meta-test are local-environment concerns.
+pytest.importorskip("playwright", reason="playwright not installed; skipping Playwright-dependent tests")
+
 PROJECT_ROOT = Path(__file__).parent.parent
 SKILL_FILE = PROJECT_ROOT / "skills" / "code-viz" / "SKILL.md"
 

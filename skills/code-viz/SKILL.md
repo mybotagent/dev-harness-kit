@@ -1,8 +1,8 @@
 ---
 name: code-viz
-category: analysis
+category: audit
 description: 0-arg. Walk a target directory, emit one self-contained HTML with Mermaid diagrams (top-level layout + categorized file map), and validate via Playwright headless. Catches "Syntax error in text" before declaring done. ~150 LOC total.
-alpha: analysis
+alpha: state
 when_to_use:
   - User types /dev-kit:code-viz on a fresh repo and wants a one-page visual triage
   - User wants to see file categories and key files without reading code
