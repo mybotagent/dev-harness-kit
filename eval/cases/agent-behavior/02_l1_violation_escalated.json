@@ -1,0 +1,17 @@
+{
+  "case_id": "agent-behavior-02-l1-violation-escalated",
+  "dim": "agent-behavior",
+  "schema_version": 1,
+  "description": "Adversarial case: a worktree with TODO/FIXME in committed lib/ code. Expected verdict = ESCALATED (deterministic floor triggered by D4 L1 violation signal).",
+  "worktree_path": "../../../tests/fixtures/agent-behavior/l1-violation/",
+  "expected": {
+    "verdict": "ESCALATED",
+    "deterministic_mean_min": 0.0,
+    "per_dim_min": {
+      "D1_outcome": 1,
+      "D2_process": 1,
+      "D3_efficiency": 1,
+      "D4_safety": 1
+    }
+  }
+}
