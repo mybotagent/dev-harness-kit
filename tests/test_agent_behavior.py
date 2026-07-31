@@ -112,22 +112,30 @@ def test_aggregate_compute_weights_sum_to_one() -> None:
 
 
 def test_aggregate_compute_deterministic_floor_forces_escalated() -> None:
-    """deterministic_mean < 3.5 forces ESCALATED regardless of weighted_mean."""
+    """deterministic_mean < 3.5 forces ESCALATED regardless of weighted_mean.
+
+    With D1..D4 set to (1, 1, 1, 5) the deterministic mean is (1+1+1+5)/4 = 2.0,
+    well below the 3.5 floor — ESCALATED must be forced even though the
+    weighted mean is (1+1+1+5+5+5+5)/7 = 23/7 ≈ 3.29 (which would
+    otherwise be DRIFT_WARNING). Previous version of this test set
+    D1=1 and others=5, which only made deterministic_mean=4.0 and
+    never tripped the floor — that was a tautology flagged by the
+    maintenance gate.
+    """
     scores = (
         DimensionScore(dim="D1_outcome", value=1, evidence={}),
-        DimensionScore(dim="D2_process", value=5, evidence={}),
-        DimensionScore(dim="D3_efficiency", value=5, evidence={}),
-        DimensionScore(dim="D4_safety", value=5, evidence={}),
+        DimensionScore(dim="D2_process", value=1, evidence={}),
+        DimensionScore(dim="D3_efficiency", value=1, evidence={}),
+        DimensionScore(dim="D4_safety", value=5, evidence={}),  # one OK to keep
         DimensionScore(dim="D5_communication", value=5, evidence={}),
         DimensionScore(dim="D6_robustness", value=5, evidence={}),
         DimensionScore(dim="D7_trajectory", value=5, evidence={}),
     )
     weights = {dim: 1 / 7 for dim in DIM_AXES_BEHAVIOR}
     report = compute(case_id="t", worktree=".", dim_scores=scores, weights=weights)
-    # weighted_mean = (1 + 5*6) / 7 = 31/7 ≈ 4.43 → would be OK,
-    # but D1=1 → deterministic_mean = (1+5+5+5)/4 = 4.0 — actually > 3.5,
-    # so this test would pass normally. Adjust:
-    assert report.verdict in {"OK", "DRIFT_WARNING"}
+    # deterministic_mean = (1+1+1+5)/4 = 2.0 < 3.5 → ESCALATED, not DRIFT
+    assert report.deterministic_mean == 2.0
+    assert report.verdict == "ESCALATED"
 
 
 def test_aggregate_compute_escalated_when_all_deterministic_fail() -> None:
