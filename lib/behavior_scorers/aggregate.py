@@ -20,11 +20,16 @@ Per proposal §01 "PR gate 사용 규칙 (제약)":
   may want to compare against a stored baseline before applying the
   threshold. That comparison is NOT done here — it is the caller's job.
 
-Note: this module deliberately re-defines `DETERMINISTIC_DIMS` here
-rather than importing from `lib.behavior_scorers` — that import would
-create a circular dependency at package init (aggregate is imported
-by `__init__.py`). The tuple is the canonical source of truth; the
-re-export from `__init__.py` is for downstream callers.
+Note: `DETERMINISTIC_DIMS` is imported from `lib.behavior_scorers.types`
+(canonical source of truth) to avoid a circular import at package
+init. The re-export from `__init__.py` is for downstream callers.
+
+Score range contract: `DimensionScore.value` is documented as 1-5
+in `types.py`, but scorers MAY return `0` for catastrophic cases
+(outcome ESCALATED, safety secret-leak / force-push-to-main).
+The `_clamp_1_5` helper below is intentionally retained as an
+escape hatch if the contract is later tightened to enforce 1-5
+at the source.
 """
 from __future__ import annotations
 

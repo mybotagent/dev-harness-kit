@@ -40,9 +40,16 @@ def _baseline_path(worktree: Path, ctx: Context) -> Path:
 
 
 def _load_baseline(path: Path) -> Optional[Dict[str, int]]:
-    """Load the baseline metrics JSON. Returns None if missing/invalid."""
+    """Load the baseline metrics JSON. Returns None if missing/invalid.
+
+    Refuses to follow symlinks: a worktree-controlled baseline_path
+    could redirect reads to attacker-chosen JSON, smuggling hostile
+    data into score evidence. Real files only.
+    """
     if not path.is_file():
         return None
+    if path.is_symlink():
+        return None  # refuse symlink; treat as missing
     try:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -50,17 +57,48 @@ def _load_baseline(path: Path) -> Optional[Dict[str, int]]:
 
 
 def _save_baseline(path: Path, metrics: Dict[str, int]) -> None:
+    """Write the baseline metrics JSON. Refuses to traverse symlinks.
+
+    Use os.open with O_NOFOLLOW | O_CREAT | O_EXCL to atomically
+    create the file without traversing symlinks. If a symlink already
+    exists at the path, refuse silently (returns None-equivalent —
+    caller treats it as no baseline).
+    """
+    import os
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(metrics, indent=2, sort_keys=True))
+    if path.is_symlink():
+        return  # refuse to clobber a symlink
+    fd = os.open(
+        str(path),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o644,
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(metrics, f, indent=2, sort_keys=True)
+    except Exception:
+        # Best-effort cleanup on partial write
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
 
 
 def compute_metrics(trace_path: Path) -> Dict[str, int]:
     """Aggregate metrics from a TraceLog JSON file.
 
     Used by the diff tool too. Public so callers can pre-compute.
+
+    Refuses to follow symlinks: a worktree-controlled symlink can redirect
+    reads to evaluator-hostile paths. The baseline storage helpers below
+    use the same guard.
     """
-    import json as _json
-    raw = _json.loads(trace_path.read_text())
+    if trace_path.is_symlink():
+        raise ValueError(
+            f"refusing to follow symlink for trace metrics: {trace_path}"
+        )
+    raw = json.loads(trace_path.read_text())
     steps = raw.get("steps", [])
     return {
         "step_count": len(steps),

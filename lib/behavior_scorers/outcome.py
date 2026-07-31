@@ -51,12 +51,20 @@ def _read_eval_verdict(worktree: Path) -> str:
 def _run_tests(worktree: Path) -> Dict[str, Any]:
     """Run `pytest -q` from the worktree. Return counts.
 
-    If pytest is not installed or no tests are present, return
-    `{"passed": 0, "failed": 0, "skipped": True}` so the scorer can
-    decide how to treat "no tests".
+    Returns a dict with one of three states:
+    - `no_tests`: pytest was not run because the worktree has neither
+      a `tests/` dir nor a `pyproject.toml`. Treated as vacuously
+      passing in `score()` (no tests to fail).
+    - `unverified`: pytest failed to execute (timeout, FileNotFound,
+      nonzero returncode, or no parseable summary). NOT treated as
+      passing — this is the fix for the previous behavior that gave
+      D1=5 on collection errors.
+    - `executed`: pytest ran cleanly with a parseable summary.
+
+    Captured output is bounded at 256 KB to prevent unbounded reads.
     """
     if not (worktree / "tests").exists() and not (worktree / "pyproject.toml").exists():
-        return {"passed": 0, "failed": 0, "skipped": True, "reason": "no tests dir"}
+        return {"passed": 0, "failed": 0, "state": "no_tests", "reason": "no tests dir"}
     try:
         proc = subprocess.run(
             ["python3", "-m", "pytest", "-q", "--no-header"],
@@ -65,13 +73,36 @@ def _run_tests(worktree: Path) -> Dict[str, Any]:
             text=True,
             timeout=120,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return {"passed": 0, "failed": 0, "skipped": True, "reason": str(exc)}
-    output = (proc.stdout or "") + (proc.stderr or "")
+    except FileNotFoundError as exc:
+        return {"passed": 0, "failed": 0, "state": "unverified",
+                "reason": f"pytest not installed: {exc}"}
+    except subprocess.TimeoutExpired as exc:
+        return {"passed": 0, "failed": 0, "state": "unverified",
+                "reason": f"pytest timeout: {exc}"}
+    # Bound the captured output to keep memory + parse predictable.
+    raw = (proc.stdout or "") + (proc.stderr or "")
+    if len(raw) > 256_000:
+        raw = raw[-256_000:]
     # pytest summary line: "5 passed, 2 failed in 0.42s"
-    passed = sum(int(x) for x in re.findall(r"(\d+)\s+passed", output))
-    failed = sum(int(x) for x in re.findall(r"(\d+)\s+failed", output))
-    return {"passed": passed, "failed": failed, "skipped": False}
+    passed = sum(int(x) for x in re.findall(r"(\d+)\s+passed", raw))
+    failed = sum(int(x) for x in re.findall(r"(\d+)\s+failed", raw))
+    if proc.returncode != 0:
+        return {
+            "passed": passed, "failed": failed, "state": "unverified",
+            "reason": f"pytest exit={proc.returncode}",
+            "returncode": proc.returncode,
+        }
+    if passed + failed == 0:
+        # No parseable summary — could be collection error or no tests.
+        # If the worktree HAS tests/ but pytest returned nothing, treat
+        # as unverified; the previous behavior gave pass_rate=1.0 which
+        # silently awarded D1=5 on broken test suites.
+        if (worktree / "tests").exists():
+            return {"passed": 0, "failed": 0, "state": "unverified",
+                    "reason": "no parseable pytest summary"}
+        return {"passed": 0, "failed": 0, "state": "no_tests",
+                "reason": "no tests dir"}
+    return {"passed": passed, "failed": failed, "state": "executed"}
 
 
 def _read_slop_count(worktree: Path) -> int:
@@ -91,25 +122,36 @@ def _read_slop_count(worktree: Path) -> int:
 
 
 def score(worktree: Path, ctx: Context) -> DimensionScore:
-    """Score D1 from pytest + slop-detector + eval-report."""
+    """Score D1 from pytest + slop-detector + eval-report.
+
+    Three-state scoring: no_tests (vacuously passing), executed
+    (uses pass rate), unverified (cannot determine — does NOT score 5).
+    """
     tests = _run_tests(worktree)
     slop = _read_slop_count(worktree)
     eval_verdict = _read_eval_verdict(worktree)
+    test_state = tests.get("state", "executed")
 
-    # Test pass rate.
-    if tests.get("skipped"):
-        pass_rate = 1.0  # no tests → nothing to fail
-        tests_evidence = "skipped"
-    else:
+    # Test pass rate — only meaningful for executed state.
+    if test_state == "executed":
         total = tests["passed"] + tests["failed"]
-        pass_rate = tests["passed"] / total if total else 1.0
+        pass_rate = tests["passed"] / total if total else 0.0
         tests_evidence = f"passed={tests['passed']}, failed={tests['failed']}"
+    elif test_state == "no_tests":
+        pass_rate = 1.0  # vacuously true
+        tests_evidence = "no_tests"
+    else:  # unverified
+        pass_rate = 0.0  # explicitly NOT a pass
+        tests_evidence = f"unverified: {tests.get('reason', 'unknown')}"
 
     # Score mapping.
     if eval_verdict == "ESCALATED":
         value = 0
     elif eval_verdict == "ROT":
         value = 1 if pass_rate < 0.95 else 2
+    elif test_state == "unverified":
+        # Unverified: do NOT give D1=5. Cap at 3 (DRIFT).
+        value = 3 if pass_rate >= 0.5 else 2
     elif eval_verdict == "DRIFT_WARNING" or tests["failed"] > 0:
         value = 3
     elif pass_rate >= 1.0 and slop == 0 and eval_verdict in ("OK", "UNKNOWN"):
@@ -124,6 +166,7 @@ def score(worktree: Path, ctx: Context) -> DimensionScore:
         value=value,
         evidence={
             "tests": tests_evidence,
+            "test_state": test_state,
             "pass_rate": round(pass_rate, 4),
             "slop_violations": slop,
             "eval_verdict": eval_verdict,

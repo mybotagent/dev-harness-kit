@@ -119,12 +119,48 @@ class TraceLog:
     def save(self, worktree: Path) -> Path:
         """Write the trace JSON to `worktree/eval/transcripts/<case_id>/<UTC>.json`.
 
-        Returns the written path. Creates intermediate directories.
+        Hardens against the LLM review findings (trace path escape /
+        symlink-directed writes):
+        - case_id must be a single safe relative component (no `..`,
+          no `/`, no leading `-`, no absolute path).
+        - the parent transcript directory must resolve strictly under
+          `worktree/eval/transcripts/` (containment check).
+        - existing symlinks at the destination are refused; the parent
+          directory is rejected if it is itself a symlink.
+        - collision-safe filename: timestamp + microsecond + uuid4 suffix
+          prevents same-second overwrites (the previous version had
+          only second resolution).
+
+        Returns the written path. Raises ValueError on path validation
+        failure.
         """
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        out_dir = Path(worktree) / "eval" / "transcripts" / self.case_id
+        import uuid
+
+        case_id = self.case_id
+        if not case_id or case_id.startswith(".") or case_id.startswith("-"):
+            raise ValueError(f"case_id must be a safe component: {case_id!r}")
+        if "/" in case_id or "\\" in case_id or ".." in case_id:
+            raise ValueError(f"case_id must not contain path separators or '..': {case_id!r}")
+        if Path(case_id).is_absolute():
+            raise ValueError(f"case_id must be relative: {case_id!r}")
+
+        worktree = Path(worktree).resolve()
+        transcripts_root = (worktree / "eval" / "transcripts").resolve()
+        out_dir = (transcripts_root / case_id).resolve()
+        try:
+            out_dir.relative_to(transcripts_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"case_id resolves outside transcripts root: {out_dir}"
+            ) from exc
+        # Refuse symlinked parents (worktree-controlled escape vector).
+        if out_dir.exists() and out_dir.is_symlink():
+            raise ValueError(f"refusing to write through symlink: {out_dir}")
         out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / f"{ts}.json"
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        suffix = uuid.uuid4().hex[:8]
+        out = out_dir / f"{ts}-{suffix}.json"
         out.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=False))
         return out
 
