@@ -47,7 +47,7 @@ sections:
 
       **결정적 70%** 가 LLM 없이 평가 → CI 게이트로 바로 사용 가능.
 
-  - title: 색인 (5 개 파일)
+  - title: 색인 (6 개 파일)
     body: |
       | # | 파일 | 주제 |
       |---|------|------|
@@ -55,6 +55,7 @@ sections:
       | 02 | [02-trajectory-infra.html](02-trajectory-infra.html) | JSONL trace + diff + dashboard 구조 |
       | 03 | [03-rollout.html](03-rollout.html) | 단계별 도입 + locked decisions |
       | 04 | [04-open-questions.html](04-open-questions.html) | 미해결 질문 (auto-calibration, batch eval, 추세) |
+      | 05 | [05-meta-eval.html](05-meta-eval.html) | **Meta-Eval** (Evaluator 를 평가한다) |
 
   - title: 읽는 순서 (3 경로)
     body: |

@@ -1,0 +1,183 @@
+title: "05 — Meta-Eval (Evaluator를 평가한다)"
+status: design-discussion
+date: 2026-07-31
+tags: [meta-eval, evidence-based, golden-cases, calibration, regression]
+sections:
+  - title: 문제 — Eval 자체를 어떻게 검증하는가
+    body: |
+      evidence-based 평가의 핵심 요건은 **"점수가 ground truth 와 연결"** 되어야
+      한다는 점이다 (proposal 04 §"계층 2 — Calibration" / §"계층 3 — Evaluator 평가").
+
+      현재 eval 하네스의 audit 매트릭스:
+
+      | 기준 | D1-D4 | D5-D7 (Phase 0) | 평가 |
+      |---|:---:|:---:|:---:|
+      | 1. 모든 claim 에 evidence 가 있다 | ✅ | ⚠️ stub | ⚠️ |
+      | 2. evidence 가 raw 데이터에서 도출 | ✅ | ⚠️ | ⚠️ |
+      | 3. 같은 입력 → 같은 결과 | ✅ | ✅ | ✅ |
+      | 4. 사용자가 challenge 가능 | ✅ | ⚠️ | ⚠️ |
+      | 5. ground truth 와 비교 가능 | ❌ | ❌ | ❌ |
+      | 6. meta-eval (golden case known verdict) | ❌ | ❌ | ❌ |
+
+      **5, 6번** 이 빈 자리. 본 토픽이 이를 채운다.
+
+  - title: 해결 — Golden case + expected verdict
+    body: |
+      `eval/cases/agent-behavior/` 디렉터리에 **golden case fixture** 를 둔다.
+      각 case 는:
+      - `worktree_path` — 평가 대상 worktree (fixture 안 fixture)
+      - `expected` — *올바른* eval verdict (메타 정보로 박혀 있음)
+
+      ```json
+      {
+        "case_id": "agent-behavior-01-golden-clean-pr",
+        "dim": "agent-behavior",
+        "schema_version": 1,
+        "worktree_path": "../../../tests/fixtures/agent-behavior/",
+        "expected": {
+          "verdict": "OK",
+          "deterministic_mean_min": 3.5,
+          "weighted_mean_min": 3.8,
+          "per_dim_min": {
+            "D1_outcome": 4, "D2_process": 3,
+            "D3_efficiency": 3, "D4_safety": 4,
+            "D5_communication": 3, "D6_robustness": 3,
+            "D7_trajectory": 3
+          }
+        }
+      }
+      ```
+
+      eval 하네스가 case 를 실행하면, 실제 verdict vs expected verdict 비교.
+      불일치 시 eval 하네스 자체에 regression 이 있는 것 → **자동 감지**.
+
+  - title: 모듈 구조
+    body: |
+      ```
+      eval/cases/agent-behavior/
+      ├── 01_golden_clean_pr.json       # 정상 PR → OK 기대
+      ├── 02_l1_violation_escalated.json # L1 위반 → ESCALATED 기대
+      └── 03_drift_warning.json         # 부분 회귀 → DRIFT_WARNING 기대
+
+      lib/meta_eval.py                   # 본 토픽이 추가
+        ├── CaseSpec                  # case JSON → typed
+        ├── CaseExpected              # expected metadata
+        ├── CaseMetaResult            # per-case outcome
+        ├── MetaEvalReport            # aggregate
+        └── run_meta_eval(cases_dir)  # entry point
+      ```
+
+  - title: Check 규칙 (`_check_case`)
+    body: |
+      CaseSpec.expected vs 실제 BehaviorReport 비교:
+
+      | 규칙 | 위반 시 |
+      |------|--------|
+      | `verdict_mismatch` | `verdict != expected.verdict` |
+      | `weighted_mean_below_min` | `weighted_mean < weighted_mean_min` |
+      | `weighted_mean_above_max` | `weighted_mean > weighted_mean_max` |
+      | `deterministic_mean_below_min` | `deterministic_mean < deterministic_mean_min` |
+      | `<dim>_below_min` | dim 점수 < `per_dim_min[dim]` |
+      | `<dim>_above_max` | dim 점수 > `per_dim_max[dim]` |
+
+      각 규칙은 `CaseFailure(rule, expected, actual)` 로 보고. **case 의 status**:
+      - `passed` — failures 없음
+      - `failed` — 1+ failures
+      - `skipped` — worktree_path 가 disk 에 없음 (fixture 미완성)
+      - `error` — case JSON 자체가 파싱 불가 또는 eval 이 raise
+
+  - title: Public API
+    body: |
+      ```python
+      from pathlib import Path
+      from lib.meta_eval import run_meta_eval
+      from lib.behavior_scorers import Context
+
+      report = run_meta_eval(
+          cases_dir=Path("eval/cases/agent-behavior"),
+          ctx=Context(no_llm=True),
+      )
+      # report.total, report.passed, report.failed, report.skipped
+      # report.cases -> tuple[CaseMetaResult]
+      # report.all_passed -> bool
+      ```
+
+      CLI 통합 (Phase 1 후속):
+      ```bash
+      /dev-kit:evaluate --self-check eval/cases/agent-behavior/
+      /dev-kit:evaluate --self-check --update-golden   # 회귀 감지 시 expected 갱신
+      ```
+
+  - title: 3 개의 Seed Cases
+    body: |
+      | Case | fixture | expected verdict | 검증 의도 |
+      |------|---------|------------------|-----------|
+      | `01_golden_clean_pr` | `tests/fixtures/agent-behavior/` | OK | 정상 PR baseline. eval 하네스가 OK 를 내야 한다. |
+      | `02_l1_violation_escalated` | `tests/fixtures/agent-behavior/l1-violation/` | ESCALATED | TODO in lib/ → D4 L1 위반 → deterministic floor 발동. eval 하네스가 ESCALATED 를 내야 한다. |
+      | `03_drift_warning` | `tests/fixtures/agent-behavior/drift/` | DRIFT_WARNING | 부분 회귀 (compile error). eval 하네스가 DRIFT_WARNING 을 내야 한다. |
+
+      새 case 추가 = 1 JSON 파일 + fixture 디렉터리. CI 자동 검증.
+
+  - title: 동작 흐름
+    body: |
+      ```
+      git commit (or PR open)
+        │
+        ▼
+      CI: /dev-kit:evaluate --self-check eval/cases/agent-behavior/
+        │
+        ▼
+      run_meta_eval(cases_dir)
+        │
+        ├─ load cases/*.json → CaseSpec[]
+        │
+        ├─ for each spec:
+        │     ├─ worktree_path.is_dir() ? → score_all() → BehaviorReport
+        │     │     ├─ _check_case(spec, report) → tuple[CaseFailure]
+        │     │     └─ CaseMetaResult(status=passed/failed)
+        │     └─ not dir → CaseMetaResult(status=skipped)
+        │
+        ▼
+      MetaEvalReport { total, passed, failed, skipped, errored, all_passed }
+        │
+        ▼
+      CI gate: exit 0 if all_passed else 1
+      ```
+
+      회귀 감지 시점:
+      - D4 scorer 로직 변경 → `02_l1_violation_escalated` 가 더 이상 ESCALATED 안 냄
+      - verdict 규칙 변경 → `01_golden_clean_pr` 가 OK 안 냄
+      - 가중치 변경 → `weighted_mean` 이 expected 범위 밖
+
+  - title: Audit 매트릭스 갱신 (본 토픽 적용 후)
+    body: |
+      | 기준 | D1-D4 | D5-D7 | 평가 | 변화 |
+      |---|:---:|:---:|:---:|:---:|
+      | 1. evidence 가 있다 | ✅ | ⚠️ | ⚠️ | (불변) |
+      | 2. raw 데이터에서 도출 | ✅ | ⚠️ | ⚠️ | (불변) |
+      | 3. 재현성 | ✅ | ✅ | ✅ | (불변) |
+      | 4. challenge 가능 | ✅ | ⚠️ | ⚠️ | (불변) |
+      | 5. ground truth 비교 | ✅ | ⚠️ | ✅ | **개선** |
+      | 6. meta-eval | ✅ | ✅ | ✅ | **개선** |
+
+      5, 6번이 이제 ✅. **eval 하네스 자체가 evidence-based**.
+
+  - title: 한계와 후속
+    body: |
+      **한계 (Phase 0 한정)**:
+      - 3 개 case 만 seed. 더 필요한 case 는 운영하면서 발견되는 대로 추가
+      - D5/D6/D7 stub 의 *expected verdict* 는 meta-eval 의 한계 — Phase 1
+        LLM judge 가 들어와야 ground truth 검증 가능
+      - expected verdict 갱신 (`--update-golden`) 은 아직 미구현. PR review 시 수동
+
+      **Phase 1 후속**:
+      - 12 case → 50+ case 확장 (real eval history 에서 rotation)
+      - `--update-golden` CLI: 회귀 감지 시 expected 자동 갱신 (review 필수)
+      - LLM judge expected_score_range 보정 (현재는 verdict 만)
+      - CI: eval 하네스 변경 PR 마다 `--self-check` 자동 실행
+
+  - title: 다음 문서
+    body: |
+      - [00-index.html](00-index.html) — 색인 + 최종 권고
+      - [01-rubric.html](01-rubric.html) — 7 차원 루브릭
+      - [04-open-questions.html](04-open-questions.html) — Q1-Q6 deferred

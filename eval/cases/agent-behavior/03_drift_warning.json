@@ -1,0 +1,13 @@
+{
+  "case_id": "agent-behavior-03-drift-warning",
+  "dim": "agent-behavior",
+  "schema_version": 1,
+  "description": "Adversarial case: a worktree that is acceptable but with at least one regression signal (e.g. tests partially failing). Expected verdict = DRIFT_WARNING.",
+  "worktree_path": "../../../tests/fixtures/agent-behavior/drift/",
+  "expected": {
+    "verdict": "DRIFT_WARNING",
+    "deterministic_mean_min": 3.0,
+    "weighted_mean_min": 3.0,
+    "weighted_mean_max": 4.0
+  }
+}

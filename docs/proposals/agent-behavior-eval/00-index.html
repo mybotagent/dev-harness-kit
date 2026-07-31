@@ -137,7 +137,7 @@ a:hover { text-decoration: underline; }
 <h1>Agent Behavior Evaluation — 7-dim Rubric + JSONL Trajectory</h1>
 <p class="meta">2026-07-31 · <span class="tag tag-info">design-discussion</span></p>
 <div class="tags"><span class="tag tag-info">agent-behavior</span><span class="tag tag-info">evaluation</span><span class="tag tag-info">rubric</span><span class="tag tag-info">trajectory</span><span class="tag tag-info">worktree-logs</span></div>
-<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">TL;DR</a></li><li><a href="#sec-1">배경 — 왜 필요한가</a></li><li><a href="#sec-2">핵심 아이디어 (한 문장)</a></li><li><a href="#sec-3">7 차원 루브릭 (요약)</a></li><li><a href="#sec-4">색인 (5 개 파일)</a></li><li><a href="#sec-5">읽는 순서 (3 경로)</a></li><li><a href="#sec-6">비목표 (Out of scope)</a></li><li><a href="#sec-7">성공 지표 (3-6 개월)</a></li><li><a href="#sec-8">다음 단계</a></li></ol></div>
+<div class="toc"><strong>Contents</strong><ol><li><a href="#sec-0">TL;DR</a></li><li><a href="#sec-1">배경 — 왜 필요한가</a></li><li><a href="#sec-2">핵심 아이디어 (한 문장)</a></li><li><a href="#sec-3">7 차원 루브릭 (요약)</a></li><li><a href="#sec-4">색인 (6 개 파일)</a></li><li><a href="#sec-5">읽는 순서 (3 경로)</a></li><li><a href="#sec-6">비목표 (Out of scope)</a></li><li><a href="#sec-7">성공 지표 (3-6 개월)</a></li><li><a href="#sec-8">다음 단계</a></li></ol></div>
 <h2 id="sec-0">TL;DR</h2>
 <p>에이전트가 "의도대로 정확하게 해결했는지"를 자동으로 평가하기 위해 <strong>7차원 루브릭</strong> + <strong>worktree 로그 기반 trajectory 인프라</strong>를 도입한다.</p>
 <p><strong>핵심 결정</strong>:</p>
@@ -159,8 +159,8 @@ a:hover { text-decoration: underline; }
 <p><strong>결정적 70%</strong> 가 LLM 없이 평가 → CI 게이트로 바로 사용 가능.</p>
 <hr class="section-divider">
 
-<h2 id="sec-4">색인 (5 개 파일)</h2>
-<table><thead><tr><th>#</th><th>파일</th><th>주제</th></tr></thead><tbody><tr><td>01</td><td><a href="01-rubric.html">01-rubric.html</a></td><td>7 차원 루브릭 상세 (D1-D7 데이터 소스 + 추출 + 채점)</td></tr><tr><td>02</td><td><a href="02-trajectory-infra.html">02-trajectory-infra.html</a></td><td>JSONL trace + diff + dashboard 구조</td></tr><tr><td>03</td><td><a href="03-rollout.html">03-rollout.html</a></td><td>단계별 도입 + locked decisions</td></tr><tr><td>04</td><td><a href="04-open-questions.html">04-open-questions.html</a></td><td>미해결 질문 (auto-calibration, batch eval, 추세)</td></tr></tbody></table>
+<h2 id="sec-4">색인 (6 개 파일)</h2>
+<table><thead><tr><th>#</th><th>파일</th><th>주제</th></tr></thead><tbody><tr><td>01</td><td><a href="01-rubric.html">01-rubric.html</a></td><td>7 차원 루브릭 상세 (D1-D7 데이터 소스 + 추출 + 채점)</td></tr><tr><td>02</td><td><a href="02-trajectory-infra.html">02-trajectory-infra.html</a></td><td>JSONL trace + diff + dashboard 구조</td></tr><tr><td>03</td><td><a href="03-rollout.html">03-rollout.html</a></td><td>단계별 도입 + locked decisions</td></tr><tr><td>04</td><td><a href="04-open-questions.html">04-open-questions.html</a></td><td>미해결 질문 (auto-calibration, batch eval, 추세)</td></tr><tr><td>05</td><td><a href="05-meta-eval.html">05-meta-eval.html</a></td><td><strong>Meta-Eval</strong> (Evaluator 를 평가한다)</td></tr></tbody></table>
 <hr class="section-divider">
 
 <h2 id="sec-5">읽는 순서 (3 경로)</h2>
