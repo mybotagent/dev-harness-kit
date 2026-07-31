@@ -120,7 +120,13 @@ verification requirements to a spawned subagent.
 2. **`hooks/worktree-guard.sh`** (PreToolUse, Write|Edit|MultiEdit matcher) — HARD BLOCK on edits in the main checkout. Discriminator: `git rev-parse --git-dir == --git-common-dir` evaluated from the repo toplevel (canonicalized via `realpath`). Any Edit/Write/MultiEdit attempted while the session cwd is the main checkout is denied with an actionable message naming the worktree command. **Fails closed** (deny) when `jq` is missing.
 3. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks. **Fails open with a stderr warning** when `jq` is missing.
 4. **`hooks/lib/worktree-detect.sh`** — shared `worktree_detect()` helper. Both rule-hooks source this so the `--git-dir`/`--git-common-dir` discriminator doesn't drift across files.
-6. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
+5. **GitHub branch protection on `main`** (server-side, enforced via repo Settings / `gh api PUT /branches/main/protection`) — **rejects direct push to `main` at the server**. Combined with the client-side hooks (`.githooks/pre-push` opt-in, `worktree-guard`, `git-guard`), this is defense-in-depth: client-side catches Claude Code sessions, server-side catches everyone else (raw git, other tools, bypass attempts). Configuration:
+   - `required_status_checks.strict = true` with contexts `["test (python 3.12)", "lint (ruff)", "validate"]`
+   - `required_pull_request_reviews.required_approving_review_count = 1`, `dismiss_stale_reviews = true`
+   - `required_linear_history = true` (no merge commits)
+   - `enforce_admins = true` (no emergency bypass — even admins must use a PR)
+6. **`.github/workflows/ci.yml::branch-policy`** (CI job, `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`) — **defense-in-depth audit signal**, NOT a hard gate. With branch protection on, direct push to `main` is rejected at the server before this job runs, so it normally never fires. But if branch protection is ever weakened (admin API toggle, repo transfer, manual emergency bypass), this job records the bypass attempt as a `::warning::` in the Actions history so the violation is visible to anyone watching the log. Warn-only by design — the hard block lives in branch protection (item 5); this job's job is to leave an audit trail if that ever fails.
+7. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
    - All non-main branches match `<type>/<slug>` format
    - No `TODO` / `wip` / `tmp` slugs in the last 30 commits' branch names
    - Recent merged PR titles follow Conventional Commits
@@ -128,12 +134,12 @@ verification requirements to a spawned subagent.
    - `task-detector.sh` was removed (PR-1) — early-warning advisory duplicated the worktree rule that worktree-guard.sh enforces as a hard block
    - `session-start-check.sh` nudges when started in the main checkout, stays silent in worktrees, stays silent on missing `cwd`
    - `hooks.json` wires the remaining hooks into the correct event matchers
-7. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
+8. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
 
 ## Out of scope (intentionally not enforced)
 
 - Branch deletion hygiene (handled by `git worktree remove` discipline).
-- Merge queue / protected-branch GitHub settings (operational concern, lives in repo Settings — see ADR-0021 if added later).
+- Merge queue (handled at the repo Settings level if/when added — not part of the rule set).
 - Issue template enforcement (handled by `.github/ISSUE_TEMPLATE/`).
 
 ## Exceptions
