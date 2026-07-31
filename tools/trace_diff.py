@@ -105,6 +105,11 @@ class ThresholdBreach:
     detail: str
 
 
+def _axis_dropped(b: int, c: int) -> bool:
+    """True when an axis score dropped by more than 1 (both ends valid)."""
+    return b > 0 and c > 0 and (b - c) > 1
+
+
 def check_thresholds(
     deltas: Tuple[Delta, ...],
     axis_deltas: Tuple[Tuple[str, int, int], ...],
@@ -130,7 +135,7 @@ def check_thresholds(
                 f"latency_total_ms ratio={d.ratio:.2f}",
             ))
     for dim, b, c in axis_deltas:
-        if b > 0 and c > 0 and (b - c) > 1:
+        if _axis_dropped(b, c):
             breaches.append(ThresholdBreach(
                 "axis_score_drop>1",
                 f"{dim}: {b} -> {c}",
@@ -162,7 +167,7 @@ def render_report(
     if axis_deltas:
         lines.append("Per-axis score delta:")
         for dim, b, c in axis_deltas:
-            marker = " ⚠️" if (b > 0 and c > 0 and (b - c) > 1) else ""
+            marker = " ⚠️" if _axis_dropped(b, c) else ""
             lines.append(f"  {dim:<22} {b:>2} -> {c:<2}{marker}")
         lines.append("─" * 50)
     if breaches:
