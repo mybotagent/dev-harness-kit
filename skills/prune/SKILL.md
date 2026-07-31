@@ -56,16 +56,17 @@ One pass = one kind. Confirm regression test pass after each. The skill
 ## Phase 2 — DEPENDENTS sweep
 
 After Phase 1 finds deletion candidates, the skill invokes
-`skills/prune/scripts/discover_dependents.py` (a thin wrapper over
-`lib/analysis_core.runner.run_analysis(mode="delete", ...)`) to walk the call
-graph of every candidate and surface live importers / callers / runtime
-references. Output is a DEPENDENTS block inside the report that names each
-call site with file + line. **Phase blocks** until the user explicitly acks
-each dependent line. Default behavior: dependents block. Pass `--no-block`
-only when the user has signed off in advance (e.g. via `--force`).
+`python3 -m lib.analysis_core --delete --target <feat>` (the
+single-source CLI entry into the engine at `lib/analysis_core/__main__.py`)
+to walk the call graph of every candidate and surface live importers /
+callers / runtime references. Output is a DEPENDENTS block inside the
+report that names each call site with file + line. **Phase blocks** until
+the user explicitly acks each dependent line. Default behavior:
+dependents block. Pass `--no-block` only when the user has signed off in
+advance (e.g. via `--force`).
 
 ```
-[2/4] DEPENDENTS   → discover_dependents.py --target <feat>
+[2/4] DEPENDENTS   → python3 -m lib.analysis_core --delete --target <feat>
        → quoted: dependents report path + user ack per row
 ```
 

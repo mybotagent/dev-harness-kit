@@ -1,36 +1,10 @@
 #!/usr/bin/env bash
-# worktree-auto-cut.sh — UserPromptSubmit hook.
+# worktree-auto-cut.sh — UserPromptSubmit hook (advisory, never blocks).
 #
-# Auto-prepares a new worktree when the user starts a new task in the
-# main checkout. worktree-guard.sh handles the hard block; this hook adds
-# this one (a) derives a slug from the prompt, (b) cuts the worktree
-# (with all preconditions checked first), and (c) bootstraps the
-# log-on scaffold inside the new worktree so the user's first session
-# in it is already captured by /dev-kit:token-analyzer.
-#
-# The hook never blocks. On any failure (network, dirty main, slug
-# derivation, etc.) it falls back to a manual-cut nudge so the user
-# is never stuck. On success it returns an additionalContext telling
-# the assistant to hand off the task to a subagent in the new path.
-#
-# Discriminator: WORKTREE_DETECT = "main" + task-intent prompt.
-# Silent in worktrees, outside git, on non-task prompts, and when jq
-# is missing. Fails open with a stderr warning on missing jq.
-#
-# Slug policy: `<type>/<verb>-<word1>-<short-hash>` (Q1(a) — descriptive
-# + collision-proof). Type defaults to "fix" — the hook does NOT infer
-# feat/refactor from the verb because the user can rename before commit.
-# Hash = first 6 chars of `git hash-object` on a deterministic seed
-# derived from the prompt, so two users with the same prompt get the
-# same hash.
-#
-# Preconditions (any failure → fall back to manual nudge):
-#   1. `git status --porcelain` is empty (main is clean)
-#   2. The derived branch does not already exist
-#   3. `git fetch <remote> <main-ref>` succeeds (or, if no remote,
-#      `git rev-parse --verify <main-ref>` succeeds — local fallback)
-#   4. `git worktree add` succeeds
-#   5. `log-on.sh` runs to completion inside the new worktree
+# Auto-derives a `<type>/<verb>-<word1>-<hash>` slug from the prompt, cuts
+# the worktree (with preconditions), and bootstraps log-on. Falls back
+# to a manual-cut nudge on any failure. Slug derivation details are
+# in the design doc at docs/designs/worktree-auto-cut.md (PR #320).
 #
 # Source the shared preamble (set -uo pipefail, INPUT=$(cat),
 # worktree_detect, jq-missing warning).

@@ -352,16 +352,6 @@ def clear_cache() -> None:
     _pricing_cache.cache_clear()
 
 
-def pricing_keys() -> List[str]:  # type: ignore[name-defined]  # legacy test-only helper
-    """Return every key the loader currently resolves — for assertion in tests.
-
-    Legacy helper kept as a stable SSOT lookup for existing test code. New
-    callers should prefer ``iter_known_ids`` which returns the same set
-    without going through the deprecated back-compat alias.
-    """
-    return sorted(set(_pricing_cache()) | set(LEGACY_FALLBACK))
-
-
 # ---------------------------------------------------------------------------
 # Public lookup surface (issue #310 overarch)
 #

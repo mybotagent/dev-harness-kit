@@ -20,47 +20,6 @@
 # The discriminator lives in hooks/lib/worktree-detect.sh so the
 # three rule-hooks don't drift. See .claude/rules/git-workflow.md.
 
-# VERSION-SLOT RULE (canonical contract — see PR #270 for the
-# implementation and test):
-#   slot = origin/main HEAD plugin.json version + (PR merge-order index - 1)
-# Sub-agents pushing a PR MUST verify slot, re-pin both plugin.json
-# files if mismatched, then push with --force-with-lease.
-# Slot examples (assuming origin/main HEAD = 0.3.75):
-#   PR #266 -> slot 1 -> 0.3.76
-#   PR #267 -> slot 2 -> 0.3.77
-#   PR #271 -> slot 6 -> 0.3.81
-#
-# _compute_version_slot — version-slot helper for parallel-PR pushes.
-#
-# Computes the plugin.json version slot for a PR given its merge-order
-# position. The formula:
-#   slot = origin/main HEAD version + (PR_index - 1)
-# where PR_index is 1-based (1 = first merged, 2 = second, etc.).
-#
-# Sub-agents pushing a PR MUST call this to verify their plugin.json
-# matches the slot BEFORE pushing. If mismatch: re-pin both files,
-# commit, then push with --force-with-lease.
-#
-# Reference: see the "VERSION-SLOT RULE" block above in the hook
-# header comments for the full rationale and slot examples.
-_compute_version_slot() {
-  local pr_index="${1:-1}"   # 1-based merge-order position
-  local main_version
-  main_version=$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
-    | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)
-  if [ -z "$main_version" ]; then
-    printf '0.3.75\n'   # fallback (origin unavailable)
-    return 0
-  fi
-  python3 -c "
-import sys
-v = '${main_version}'
-parts = v.split('.')
-parts[2] = str(int(parts[2]) + ${pr_index} - 1)
-print('.'.join(parts))
-"
-}
-
 # Source the shared preamble (set -uo pipefail, INPUT=$(cat),
 # worktree_detect, jq-missing warning) + payload-parse.sh for the
 # `deny` helper. The jq-missing warning is informational here — this

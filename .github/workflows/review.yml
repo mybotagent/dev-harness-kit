@@ -64,7 +64,7 @@ jobs:
   review:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
     # The bump content is version-bump.yml-generated and merged by a
     # human (auto-merge is disabled by policy). Running /dev-kit:review
@@ -213,7 +213,7 @@ jobs:
   security:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     # Skip on bump-PRs — same rationale as `review:` above.
     if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
     outputs:

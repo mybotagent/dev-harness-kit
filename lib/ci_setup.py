@@ -94,13 +94,8 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # consumer repos shipped broken hooks that crashed with
     # `deny: command not found` on first Edit.
     "hooks/lib/payload-parse.sh",
-    # Shared `extract_hook_cwd` + nudge-envelope helper sourced by
-    # session-start-check.sh (the remaining `additionalContext` hook).
-    # Issue #277 is the same shape as #273: helper was added to the
-    # plugin tree + the plugin's own hooks but never catalogued for install,
-    # so consumers shipped hooks that crashed with
-    # `extract_hook_cwd: command not found`.
-    "hooks/lib/session-envelope.sh",
+    # Shared worktree-detect helper sourced by every rule-hook so the
+    # `--git-dir`/`--git-common-dir` discriminator doesn't drift.
     "hooks/lib/worktree-detect.sh",
     # Shared hook preamble (issue #310 slice 314): `set -uo pipefail`,
     # `INPUT=$(cat)`, worktree_detect dispatch, and the `::warning::jq
@@ -148,7 +143,6 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/review-yml-isolation.sh",
     "hooks/lib/payload-parse.sh",
     "hooks/lib/hook-preamble.sh",
-    "hooks/lib/session-envelope.sh",
     "hooks/lib/worktree-detect.sh",
     "tools/skill_usage.py",
 )
@@ -526,7 +520,6 @@ def _build_marker() -> dict:
             "hooks/session-start-check.sh",
             "hooks/review-yml-isolation.sh",
             "hooks/lib/payload-parse.sh",
-            "hooks/lib/session-envelope.sh",
             "hooks/lib/worktree-detect.sh",
             "hooks/hooks.json",
         ],
@@ -659,30 +652,11 @@ def install_ci_config(
     print_checklist: bool = False,
     lint: bool = True,
 ) -> InstallReport:
-    """Install dev-kit's CI templates into `target_dir`. Idempotent + content-aware.
+    """Install dev-kit's CI templates into `target_dir`.
 
-    A no-op (all files skipped, marker reused) when the marker exists and every
-    EXPECTED_PATHS file is already in place. With `force=True`, all template
-    files are overwritten regardless.
-
-    Args:
-        target_dir: absolute path to the target project root. Must exist
-            and be a directory (raises FileNotFoundError otherwise).
-        force: when True, overwrite existing target files matching
-            EXPECTED_PATHS. Default False (skip + report).
-        print_checklist: when True and the install succeeds (no errors),
-            print the post-install checklist after the marker is written.
-            Default False to preserve existing test contracts.
-
-    Returns:
-        InstallReport with created/overwritten/skipped/errors lists and the
-        path to the marker file (always written unless target is read-only).
-
-    Raises:
-        FileNotFoundError: target_dir is missing or not a directory, OR a
-            template source file is missing (the plugin is incomplete).
-        NotADirectoryError: target_dir exists but is a regular file/symlink
-            to one.
+    Idempotent: no-op when marker exists and every EXPECTED_PATHS file is
+    in place. `force=True` overwrites regardless. Returns InstallReport;
+    raises FileNotFoundError / NotADirectoryError for bad targets.
     """
     started = time.monotonic()
     target = _validate_target(target_dir)
@@ -924,12 +898,8 @@ def _lint_if_block_scalar_hashes(content: str, rel: str) -> List[str]:
 def lint_installed_workflows(target_dir: Path) -> List[str]:
     """Scan installed EXPECTED_PATHS for known-stale patterns.
 
-    Returns a list of human-readable findings (one per match). The intent
-    is to surface patterns that previously made the install look healthy
-    locally (validate.py + ci-local.sh both pass) but produced red CI in
-    GitHub Actions. The skill body renders the findings in the install
-    summary and the user can act on them -- the install itself is never
-    blocked by lint output.
+    Returns one human-readable finding per match. Lint output is
+    advisory; the install itself never blocks on it.
     """
     out: List[str] = []
     target = Path(target_dir).resolve()

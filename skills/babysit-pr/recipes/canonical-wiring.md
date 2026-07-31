@@ -1,0 +1,157 @@
+# Canonical babysit-pr wiring
+
+This is the Python block executed at the top of every `/dev-kit:babysit-pr`
+invocation, after the §Lock file protocol. It installs the side-effect shims
+that `lib.babysit_pr_cli.run_babysit_once` requires, resolves ownership
+metadata (operator handle, repo owner/name, collaborators list, PR number),
+calls the helper, and maps the helper's exit codes to the orchestrator's
+contract.
+
+If this wiring block is missing from the skill body, the flag reaches the
+§Algorithm pseudocode but never `run_babysit_once`, so the bypass silently
+no-ops and the PR is left waiting for human review. The
+`tests/test_babysit_pr_cli.py` suite pins the helper's behaviour in
+isolation; this recipe is the only place the slash-arguments-reach-the-helper
+contract lives.
+
+```python
+import sys, os
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+
+import babysit_pr_cli as bpc   # noqa: E402  (path set up above)
+
+bpc._write_stdout   = lambda s: print(s, flush=True)
+bpc._write_stderr   = lambda s: print(s, file=sys.stderr, flush=True)
+bpc._post_pr_comment = lambda n, body: subprocess.run(   # noqa:731
+    ["gh", "pr", "comment", str(n), "--body", body], check=True)
+
+argv = sys.argv[1:]
+operator = subprocess.run(
+    ["gh", "api", "/user", "-q", ".login"], check=True,
+    capture_output=True, text=True).stdout.strip()
+codeowners_path = Path(".github/CODEOWNERS")
+
+# Resolve owner/name from the GitHub Actions env
+# (`GITHUB_REPOSITORY` is "owner/name") or fall back to `gh repo view`
+# so this block works both inside CI and from a local shell. Hard-fail
+# loudly if neither resolves -- the older wiring referenced undefined
+# `owner` / `repo` identifiers that NameError'd before the helper ran.
+repo_full = os.environ.get("GITHUB_REPOSITORY")
+if not repo_full:
+    repo_full = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner",
+         "-q", ".nameWithOwner"],
+        check=True, capture_output=True, text=True).stdout.strip()
+repo_owner, repo_name = repo_full.split("/", 1)
+
+# The collaborators API call uses `check=True` so a non-zero exit
+# (404, rate limit, permission error) raises. The orchestrator
+# treats a confirmed non-zero as `collaborator_lookup_ok=False`
+# and refuses the bypass with EXIT_OWNERSHIP_UNKNOWN. Empty
+# stdout on a successful call is treated as `lookup_ok=True`
+# with an empty collaborators list (and combined with the
+# positive-ownership check below, refuses on empty CODEOWNERS).
+collaborator_proc = subprocess.run(
+    ["gh", "api",
+     f"/repos/{repo_owner}/{repo_name}/collaborators?per_page=100",
+     "-q", ".[].login"],
+    capture_output=True, text=True)
+collaborator_lookup_ok = (collaborator_proc.returncode == 0)
+collaborators = (collaborator_proc.stdout.splitlines() or [])
+pr_number = int(subprocess.run(
+    ["gh", "pr", "view", "--json", "number", "-q", ".number"],
+    capture_output=True, text=True).stdout.strip())
+
+rc = bpc.run_babysit_once(
+    argv=argv,
+    operator_handle=operator,
+    codeowners_path=codeowners_path,
+    collaborator_handles=collaborators,
+    collaborator_lookup_ok=collaborator_lookup_ok,
+    pr_number=pr_number,
+)
+# Map the helper's exit codes to the orchestrator's contract:
+#   EXIT_OK (0)                 -> 0  (ownership confirmed, audit
+#                                    comment posted; PR NOT merged --
+#                                    the operator merges manually)
+#   EXIT_MULTI_OWNER (1)        -> 0  (alternate owners found;
+#                                    human-gate per §Algorithm step 3D)
+#   EXIT_RATIONALE_REQUIRED (2) -> 2  (operator must add --rationale)
+#   EXIT_OWNERSHIP_UNKNOWN (4)  -> 0  (collaborator/CODEOWNERS
+#                                    could not be confirmed; the
+#                                    bypass refused itself, the
+#                                    helper printed the reason; the
+#                                    fallback path is the human-gate)
+if rc in (bpc.EXIT_OK, bpc.EXIT_MULTI_OWNER, bpc.EXIT_OWNERSHIP_UNKNOWN):
+    sys.exit(0)
+sys.exit(rc)
+```
+
+## Sub-agent prompt body (moved from SKILL.md)
+
+When delegating to a sub-agent via the `Agent` tool with
+`subagent_type: "general-purpose"`, use this prompt body verbatim. The
+sub-agent inherits the parent's cd'd cwd as its working directory:
+
+```
+cd <worktree_path>
+
+You are the PR babysitter for branch "<headRefName>" (PR #<number>, URL <pr_url>).
+Operate ONLY inside <worktree_path>. Do NOT touch the main checkout.
+
+Algorithm (condensed from the parent skill's Algorithm section):
+  1. SNAPSHOT — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS via `gh pr view` /
+     `gh pr checks`.
+  2. TERMINATE — if REVIEW_VERDICT == "APPROVED" AND every check.conclusion
+     ∈ {success, skipped, neutral}, print "PR approved" and exit 0.
+  3. CLASSIFY — A) CI failing, B) CI pending (wait), C) CHANGES_REQUESTED,
+     D) REVIEW_REQUIRED (exit 0 with human-gate message).
+  4. WAIT — if any check pending and no failures, sleep 30s and goto 1.
+  5. FETCH LOGS — for each failing check, `gh run view <id> --log-failed`;
+     truncate to last 200 lines; capture exit code + first error.
+  6. DIAGNOSE — one root cause per failing check: test failure, lint/format,
+     type-check, secret detected (abort), review feedback.
+  7. APPLY FIX — Edit/Write. One logical change per iteration.
+  8. VERIFY LOCAL — re-run the failing command; MUST-L3: quote exit code +
+     test count in this format:
+       local:  <command> → <result> (exit <code>)
+  9. COMMIT — `git add <specific paths>` (NEVER `git add -p`).
+  10. PUSH — `git push origin HEAD`.
+  11. LOG — append to .dev-kit/babysit.log:
+         <ISO-8601> iter=<n> check=<name> fix=<one-line> exit=<code>
+  12. SLEEP — `gh pr checks --watch` or sleep 20s.
+  13. INCREMENT iter; goto 1.
+
+Termination conditions:
+  - APPROVED + green → exit 0.
+  - REVIEW_REQUIRED → exit 0 with "waiting for human review" message.
+  - CHANGES_REQUESTED → apply + iterate.
+  - 3 consecutive iterations with no progress → exit 1 with the blocker list.
+
+Lock file: write <worktree_path>/.dev-kit/babysit.lock (NOT the parent's
+main-checkout lock). On exit: `trap 'rm -f .dev-kit/babysit.lock' EXIT`.
+
+Iron Laws (apply to every claim of progress):
+  - L1: no prod code without verification artifact.
+  - L2: no fix without reproducing the bug.
+  - L3: no completion claim without quoted exit code / test count / build log.
+  - L4: no TODO/FIXME/"we'll extend later".
+  - L5: no option list when not asked. One answer.
+
+Safety valves (forbidden):
+  - git push --force to main/master.
+  - gh pr merge — always forbidden. Merging into main is a human-only
+    action; the babysitter (including the single-operator opt-out,
+    `--operator-is-only-human`) only ever confirms ownership and posts
+    an audit comment, never merges.
+  - secret auto-removal (abort + exit 1 on credential detection).
+  - destructive git ops: reset --hard, clean -fd, branch -D.
+  - pytest.skip / @unittest.skip / removing tests / commenting assertions.
+  - marking required checks optional / continue-on-error.
+  - closing the PR to bypass the LLM review gate.
+  - || true / || echo skipped on steps that exist to fail loudly.
+  - raising exit thresholds to mask flaky steps.
+  - "fixed" claims without the quoted `local:  ... (exit <code>)` line.
+```

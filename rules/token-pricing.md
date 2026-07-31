@@ -134,25 +134,9 @@ DeepSeek notes:
 
 ## Lessons we already paid for
 
-- **`gpt-5` is a substring of `gpt-5.6-*`.** Putting the shorter key
-  first in the matcher silently stole every 5.6-* id at 4× cheaper
-  legacy pricing. Longest-prefix-first is mandatory when sharing a
-  hierarchical namespace. The shared loader enforces this.
-- **Two PRICING dicts drift.** `tools/token_efficiency_analyzer.py`
-  used to have its own PRICING and so did `lib/cost_gate.py`. Both
-  silently misbilled sessions until 2026-07-17 — that's why they now
-  both go through `lib/llm_pricing.py`.
-- **Capture-side filtering can strip token metadata before storage.**
-  If the analyzer reports `model = ""` and zero tokens for sessions
-  from a provider, the fix is upstream in the capture script (e.g.
-  `tools/save_log.py:_codex_has_event_text` keeps only conversation
-  text and drops `payload.info.model` / `payload.info.token_usage`).
-  The analyzer cannot recover data that was never written.
-- **Fixtures pin parsers, not rates.** A pricing rate can change
-  monthly; a parser matching the page structure is a contract that
-  changes much less often. Tests under `skills/llm-refresh/tests/fixtures/`
-  pin the parser once and let the rate drift until someone re-runs
-  `/dev-kit:llm-refresh` to refresh the JSON.
+See `docs/lessons-token-pricing.md` (post-mortem: substring matchers,
+double PRICING dicts, capture-side metadata stripping, fixture shape).
+This rule file stays focused on the Iron Law + workflow contract.
 
 ## Forbidden patterns
 

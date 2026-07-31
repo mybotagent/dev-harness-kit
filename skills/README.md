@@ -38,7 +38,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`build-refactor`](build-refactor/SKILL.md) 🔒 | `enforcement` | 4-pass cleanup (dead → dup → naming → coverage). No cleanup without regression test (MUST-L1 + L4). |
 | [`build-tdd`](build-tdd/SKILL.md) 🔒 | `enforcement` | Red-Green-Refactor cycle. Active when methodology=tdd (default). No production code without a failing test. tdd-guard hook enforces. |
 | [`build-verify`](build-verify/SKILL.md) 🔒 | `enforcement` | verification-before-completion. No "done" without quoted exit code + test count + build log (MUST-L3, hook stop-verify). |
-| [`feat-remove`](feat-remove/SKILL.md) | `state` | Safely remove a feature. Sweeps the call graph, flags dependents, produces a deletion report, and verifies the full suite stays green after deletion. |
+| [`feat-remove`](feat-remove/SKILL.md) | `state` | DEPRECATED. Use /dev-kit:prune --target <feature> instead. |
 | [`prune`](prune/SKILL.md) | `analysis` | 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring). |
 | [`refactor`](refactor/SKILL.md) | `analysis` | 0-arg cleanup chain. One slash wraps inspect -> build-refactor -> review. 3 gated phases with quoted exit codes between each. |
 

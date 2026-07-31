@@ -193,30 +193,13 @@ if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+branch[[:space:]]+-D'; then
   fi
 fi
 
-# 5. Phase 2.2 (issue #359) — slot freshness check on `git push` to a
-#    feature branch. The slot is the dev-kit plugin.json version the
-#    branch was built against; pushing with a stale slot collides with
-#    parallel-PR merge order (see worktree-guard's _compute_version_slot
-#    block for the slot formula). Slot source: origin/main's
-#    plugin.json version (the correct slot when no parallel PR is
-#    racing us). The LCS substrate (#463) used to expose a per-branch
-#    `slot_version` field here, but the CLI was net-negative on push
-#    latency and was dropped — direct shell on origin/main's
-#    plugin.json is the only path.
+# 5. Slot freshness check on `git push` to a feature branch.
+#    Slot = origin/main's plugin.json version. For parallel PRs, add
+#    PR_index; the parallel-PR variant lives in worktree-guard.sh.
 _verify_slot() {
   local branch_name="" expected="" actual=""
   branch_name="$(git -C "$GIT_CWD" symbolic-ref --short HEAD 2>/dev/null)" || return 0
   [ -n "$branch_name" ] || return 0
-  # Slot source: origin/main's plugin.json version (correct when no
-  # parallel PR is racing). For a true slot with parallel PRs, add
-  # PR_index; the parallel-PR variant lives in worktree-guard.sh.
-  #
-  # Earlier this hook also called the LCS CLI to read a per-branch
-  # `slot_version` field. The Python startup tax (~250 ms) outweighed
-  # the ~30 ms savings from skipping one `git rev-parse` fork by
-  # ~220 ms per push, so the LCS path was removed (PR #462). The LCS
-  # substrate itself was then dropped entirely (#463). Direct shell on
-  # origin/main's plugin.json is the only remaining path.
   expected="$(git show origin/main:.claude-plugin/plugin.json 2>/dev/null \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null)" || return 0
   [ -n "${expected:-}" ] || return 0
@@ -232,15 +215,7 @@ _verify_slot() {
     deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi
 }
-# Fire on ANY `git push` that the main-push block above did NOT
-# already deny. The earlier block matches the main/master ref
-# variants and the force-push flag; this block fires for everything
-# else — plain `git push` (tracking-branch push), `-u`, `--set-upstream`,
-# any origin+ref form, etc. Tag pushes (`git push origin tag v1`)
-# are intentionally NOT filtered out: they still consume a branch's
-# ref namespace and the slot check applies to the user's current
-# branch state, which is the meaningful invariant. The earlier
-# push-to-main block has already filtered out the main/master cases.
+# Fire on any `git push` the main-push block above did not deny.
 if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+push'; then
   _verify_slot
 fi

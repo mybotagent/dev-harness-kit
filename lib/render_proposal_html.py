@@ -558,24 +558,11 @@ def render(
     back_to_href: Optional[str] = None,
     back_to_label: Optional[str] = None,
 ) -> str:
-    """Render a `Proposal` value object to a self-contained HTML document.
+    """Render a `Proposal` to a self-contained HTML document.
 
-    Pure function: no I/O, deterministic given the same input and the
-    optional kwargs. (The optional nav kwargs are kept optional so
-    `render(p)` and `render(p, now=...)` keep their existing call
-    sites and determinism contract.)
-
-    Args:
-        p: the proposal value object.
-        now: ISO-format date string for the footer. If `None` (default),
-            uses today's date in KST. Pass a fixed string for deterministic
-            tests / batch regeneration.
-        back_to_href: optional href for a "← ..." nav bar at the top of
-            the page (e.g. `"00-index.html"`). When set, a small
-            `.back-link` nav element is emitted before the `<h1>`.
-            Default: no nav bar.
-        back_to_label: optional label for the back link. Default: the
-            href's filename (e.g. `00-index.html` -> `00-index`).
+    Pure function (no I/O). `now` defaults to today's date in KST;
+    pass a fixed string for deterministic tests. `back_to_href` /
+    `back_to_label` optionally emit a `.back-link` nav bar before `<h1>`.
     """
     sections_html: List[str] = []
     for i, sec in enumerate(p.sections):

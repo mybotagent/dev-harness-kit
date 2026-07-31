@@ -80,7 +80,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
       agent_ran: ${{ steps.extract_verdict.outputs.agent_ran }}
@@ -365,7 +365,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
       agent_ran: ${{ steps.extract_verdict.outputs.agent_ran }}
