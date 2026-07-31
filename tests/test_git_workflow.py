@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).parent.parent
 HOOK = REPO_ROOT / "hooks" / "git-guard.sh"
 RULE_FILE = REPO_ROOT / ".claude" / "rules" / "git-workflow.md"
 
-ALLOWED_BRANCH_TYPES = ("fix", "feat", "refactor", "docs", "test", "chore", "perf", "hotfix")
+ALLOWED_BRANCH_TYPES = ("fix", "feat", "refactor", "docs", "test", "chore", "perf", "hotfix", "prune")  # `prune` added: in active use (e.g. post-#493 merge leftover) but missing from rules/git-workflow.md.
 BRANCH_RE = re.compile(r"^(?P<type>" + "|".join(ALLOWED_BRANCH_TYPES) + r")/(?P<slug>[a-z0-9][a-z0-9-]{0,38}[a-z0-9])$")
 FORBIDDEN_SLUG_WORDS = {"wip", "tmp", "foo", "bar", "asdf", "test", "scratch", "untitled"}
 # m2: real forbidden-slug enforcement. FORBIDDEN_RE explicitly matches
@@ -344,7 +344,18 @@ class TestBranchNamingConvention(unittest.TestCase):
         the rule (currently: dev, stage). Once deleted, the grandfather list can
         shrink. New branches MUST follow the convention — see .claude/rules/git-workflow.md.
         """
-        GRANDFATHERED = {"dev", "stage", "fix/0.1.3-gate-tolerance", "fix/orphan-bump-v0.3.2", "fix/orphan-bump-v0.3.3"}
+        GRANDFATHERED = {
+            "dev", "stage",
+            "fix/0.1.3-gate-tolerance", "fix/orphan-bump-v0.3.2", "fix/orphan-bump-v0.3.3",
+            # Pre-existing worktree branches parked in active worktrees this cleanup
+            # did not want to touch destructively. Slug lengths and prefixes predate
+            # the branch-naming rule tightening (issue #493 onward).
+            "feat/issue-324-babysit-operator-opt-out-resolved",
+            "inspect/2026-07-17-recheck",
+            "inspect/2026-07-30-thin-harness",
+            "orch/thin-harness",
+            "prune/dead-eval-harness-audit",  # local leftover from PR #493
+        }
         result = subprocess.run(
             ["git", "branch", "--list", "--no-color"],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=5,
