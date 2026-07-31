@@ -120,6 +120,12 @@ verification requirements to a spawned subagent.
 2. **`hooks/worktree-guard.sh`** (PreToolUse, Write|Edit|MultiEdit matcher) — HARD BLOCK on edits in the main checkout. Discriminator: `git rev-parse --git-dir == --git-common-dir` evaluated from the repo toplevel (canonicalized via `realpath`). Any Edit/Write/MultiEdit attempted while the session cwd is the main checkout is denied with an actionable message naming the worktree command. **Fails closed** (deny) when `jq` is missing.
 3. **`hooks/session-start-check.sh`** (SessionStart) — GENTLE NUDGE at session start. If the session begins in the main checkout (not a worktree), emits an `additionalContext` reminder. Never blocks. **Fails open with a stderr warning** when `jq` is missing.
 4. **`hooks/lib/worktree-detect.sh`** — shared `worktree_detect()` helper. Both rule-hooks source this so the `--git-dir`/`--git-common-dir` discriminator doesn't drift across files.
+5. **GitHub branch protection on `main`** (server-side, enforced via repo Settings / `gh api PUT /branches/main/protection`) — **rejects direct push to `main` at the server**. Combined with the client-side hooks (`.githooks/pre-push` opt-in, `worktree-guard`, `git-guard`), this is defense-in-depth: client-side catches Claude Code sessions, server-side catches everyone else (raw git, other tools, bypass attempts). Configuration:
+   - `required_status_checks.strict = true` with contexts `["test (python 3.12)", "lint (ruff)", "validate"]`
+   - `required_pull_request_reviews.required_approving_review_count = 1`, `dismiss_stale_reviews = true`
+   - `required_linear_history = true` (no merge commits)
+   - `enforce_admins = true` (no emergency bypass — even admins must use a PR)
+   The previous `.github/workflows/ci.yml::branch-policy` job (warn-only, ran only on direct `push` to `main`) was removed in #506-followup because branch protection makes it dead code: with `enforce_admins = true`, direct push is rejected before any workflow runs.
 6. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
    - All non-main branches match `<type>/<slug>` format
    - No `TODO` / `wip` / `tmp` slugs in the last 30 commits' branch names
@@ -133,7 +139,7 @@ verification requirements to a spawned subagent.
 ## Out of scope (intentionally not enforced)
 
 - Branch deletion hygiene (handled by `git worktree remove` discipline).
-- Merge queue / protected-branch GitHub settings (operational concern, lives in repo Settings — see ADR-0021 if added later).
+- Merge queue (handled at the repo Settings level if/when added — not part of the rule set).
 - Issue template enforcement (handled by `.github/ISSUE_TEMPLATE/`).
 
 ## Exceptions
