@@ -28,7 +28,19 @@ from pathlib import Path
 from typing import Optional
 
 STORE_PATH_DEFAULT = ".dev-kit/ci-triage-log.json"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+# A workflow's stale trigger-registration is the canonical
+# harness/state-contamination signature: GitHub's server-side cache of
+# "which `on:` events fire this workflow" predates the file's last
+# commit, so push (or other) events keep queuing phantom runs against a
+# trigger the file no longer declares. The fix is a toggle
+# disable→enable to force the cache to re-read the current file. The
+# proposal field on a judged case is the canonical place this pattern
+# is recorded (e.g. "gh api -X PUT .../actions/workflows/<id>/disable
+# && gh api -X PUT .../actions/workflows/<id>/enable"), so we match on
+# it rather than guessing from the cause pair alone.
+_API_TOGGLE_RE = re.compile(r"actions/workflows/(\d+)/(disable|enable)")
 
 # Failure taxonomy (primary cause -> allowed secondary causes). A case's
 # classification is the *first* structured field a reader needs — model
@@ -301,6 +313,294 @@ def record_judgment(
     return case
 
 
+# ---------------------------------------------------------------------------
+# Auto-resolution: `process` subcommand.
+#
+# Closes the loop from "case is judged" to "case is processed" without
+# requiring a human to remember to flip the status. The model judges the
+# failure once (via `record`); `process` then (a) applies the proposal
+# when it matches a known auto-fixable pattern, (b) re-scans a verify
+# window to confirm the failure no longer reproduces, and (c) flips
+# `open` -> `processed` with a full forensic record of *how* it was
+# resolved (which commands ran, the pre/post `updated_at`, the related
+# commit + PR if the fix was a code change). A case with fresh
+# occurrences after the verify scan is left at `open` with a
+# `last_process_attempt` note so the next run can pick it up.
+# ---------------------------------------------------------------------------
+
+def _workflow_id_from_proposal(proposal: str) -> Optional[int]:
+    """Extract the GitHub workflow ID when `proposal` describes the
+    canonical api-toggle fix (disable + enable). Returns None when the
+    proposal isn't a recognized auto-fixable pattern — those cases still
+    get a verify scan, they just won't have commands auto-run."""
+    matches = _API_TOGGLE_RE.findall(proposal or "")
+    ids = {wid for wid, _op in matches}
+    if len(ids) == 1:
+        return int(next(iter(ids)))
+    return None
+
+
+def _gh_workflow_state(workflow_id: int) -> dict:
+    """Fetch {state, updated_at} for a workflow — the pre/post
+    `updated_at` comparison is the canonical signal that a toggle
+    actually refreshed GitHub's trigger cache."""
+    out = _run([
+        "gh", "api", f"repos/:owner/:repo/actions/workflows/{workflow_id}",
+    ])
+    data = json.loads(out)
+    return {"state": data.get("state"), "updated_at": data.get("updated_at")}
+
+
+def _apply_api_toggle(workflow_id: int) -> dict:
+    """Run disable -> enable and capture {commands_run, verify_pre,
+    verify_post, fix_applied_at}. Caller passes the case's proposal
+    field; this function just records what was actually executed so
+    the log can be audited later. `fix_applied_at` is the moment the
+    toggle completed — the verify scan uses it as the "since" cutoff
+    so historical failures (which were real at the time but predate
+    the fix) don't keep a freshly-resolved case at `open`."""
+    pre = _gh_workflow_state(workflow_id)
+    cmds = [
+        ["gh", "api", "-X", "PUT", f"repos/:owner/:repo/actions/workflows/{workflow_id}/disable"],
+        ["gh", "api", "-X", "PUT", f"repos/:owner/:repo/actions/workflows/{workflow_id}/enable"],
+    ]
+    for c in cmds:
+        _run(c)
+    post = _gh_workflow_state(workflow_id)
+    return {
+        "method": "api-toggle",
+        "commands_run": [" ".join(c) for c in cmds],
+        "verify_pre": pre,
+        "verify_post": post,
+        "fix_applied_at": _now(),
+    }
+
+
+def _commit_for_fix(workflow_path: str, since_iso: str) -> Optional[dict]:
+    """For code-fix resolutions: find the most recent commit on
+    `workflow_path` after `since_iso` (case.first_seen.date). Returns
+    {sha, subject, pr_number, pr_url} or None when no commit landed.
+
+    The PR lookup uses `gh api repos/:owner/:repo/commits/{sha}/pulls`
+    — the only GitHub API that maps a commit to its PR(s) reliably.
+    `gh pr list --search <sha>` does NOT search by commit SHA (it
+    searches titles/bodies/branches) and silently returns [] for any
+    PR whose title doesn't literally contain the SHA, which would
+    leave every code-fix audit record with `pr_number: None` —
+    breaking the whole "what failed → what fixed it" forensic link.
+    The response shape is `[{number, html_url, title}, ...]`; we
+    rename `html_url` to `pr_url` to match the rest of the schema."""
+    raw = _run([
+        "git", "log", f"--since={since_iso}", "--format=%H%x1f%s", "-n", "1", "--", workflow_path,
+    ]).strip()
+    if not raw:
+        return None
+    sha, subject = raw.split("\x1f", 1)
+    pr_raw = _run([
+        "gh", "api", f"repos/:owner/:repo/commits/{sha}/pulls",
+        "--jq", ".[0] | {number, html_url, title} // empty",
+    ])
+    pr = json.loads(pr_raw) if pr_raw.strip() else {}
+    return {
+        "sha": sha,
+        "subject": subject,
+        "pr_number": pr.get("number"),
+        "pr_url": pr.get("html_url"),
+    }
+
+
+def _signature_present_in_recent_runs(workflow_name: str, since_iso: Optional[str], verify_window: int) -> dict:
+    """Light-weight verification: look at recent runs of `workflow_name`
+    since `since_iso` (or last `verify_window` runs when since_iso is
+    None) and return {ran_at, fresh_failures, last_conclusion,
+    last_run_id, last_run_url}.
+
+    The `since_iso` comparison normalizes both sides to second
+    precision — GitHub's `createdAt` carries fractional seconds
+    (`...38.500Z`), but `_now()` returns `...38Z`. Lexicographically
+    `.` < `Z`, so a fractional-second post-fix run would be filtered
+    OUT of `fresh_failures` if compared raw. Strip the `.NNN`
+    segment from both sides so the cutoff stays on a stable axis."""
+    args = [
+        "gh", "run", "list", "--workflow", workflow_name,
+        "--limit", str(verify_window * 5),
+        "--json", "databaseId,conclusion,createdAt,url",
+    ]
+    raw = _run(args)
+    runs = json.loads(raw)
+    # Normalize both sides to second precision with no fractional or
+    # trailing Z so lex comparison stays on the right axis. GitHub's
+    # `createdAt` looks like `2026-07-31T11:16:38.500Z`; `_now()`
+    # returns `2026-07-31T11:16:38Z`. Strip the fractional segment
+    # AND the trailing Z so both sides reduce to `2026-07-31T11:16:38`.
+    cutoff = since_iso.replace("Z", "").split(".")[0] if since_iso else None
+    fresh_failures = 0
+    last = None
+    for r in runs:
+        created = (r.get("createdAt") or "").replace("Z", "").split(".")[0]
+        if cutoff and created < cutoff:
+            continue
+        if last is None:
+            last = r
+        if r.get("conclusion") not in OK_CONCLUSIONS:
+            fresh_failures += 1
+    return {
+        "ran_at": _now(),
+        "window_runs": len(runs),
+        "fresh_failures": fresh_failures,
+        "last_conclusion": (last or {}).get("conclusion"),
+        "last_run_id": (last or {}).get("databaseId"),
+        "last_run_url": (last or {}).get("url"),
+    }
+
+
+def _resolution_record(case: dict) -> dict:
+    """Build the `resolution` block for a case based on its cause +
+    proposal. Three methods, derived directly from the proposal text
+    (single source of truth — no caller hint required):
+
+    - `api-toggle`: proposal names a `gh api .../actions/workflows/<id>/
+      disable` + `enable` pattern. Apply the toggle and record
+      commands_run + verify_pre/post.
+    - `code-fix`: a commit landed on the workflow file since
+      first_seen.date. Look up the linked PR via
+      `gh api .../commits/{sha}/pulls`.
+    - `manual`: nothing matched. Recorded for forensic completeness
+      but the case stays at `open` — a manual case awaiting real
+      resolution must not auto-close when the workflow goes quiet
+      (empty `gh run list` would otherwise yield fresh_failures == 0
+      and the case would flip to `processed` despite no human
+      having flagged it resolved)."""
+    proposal = case.get("proposal") or ""
+    workflow_name = case["workflow"]
+    workflow_id = _workflow_id_from_proposal(proposal)
+
+    if workflow_id is not None:
+        applied = _apply_api_toggle(workflow_id)
+        applied["notes"] = "auto-applied stale workflow registration toggle"
+        return applied
+
+    # Code-fix path: look for a commit on the workflow file since the
+    # case was first seen.
+    first_seen = case.get("first_seen") or {}
+    since_iso = first_seen.get("date")
+    commit = _commit_for_fix(workflow_name, since_iso) if since_iso else None
+    if commit is None:
+        return {
+            "method": "manual",
+            "commands_run": [],
+            "notes": "no auto-fix pattern matched and no code-fix commit on the workflow file since first_seen; awaiting manual resolution",
+        }
+    return {
+        "method": "code-fix",
+        "commands_run": [],
+        "commit": commit,
+        "fix_applied_at": _now(),
+        "notes": f"code fix landed on {workflow_name} after first_seen={since_iso}",
+    }
+
+
+def process(*, auto_fix: bool, verify_window: int, store_path: Path) -> dict:
+    """Auto-resolve `open` cases:
+
+    1. Build a `resolution` block via `_resolution_record(case)` —
+       single source of truth derived from the proposal.
+    2. If `method == manual`, the case awaits human resolution;
+       leave it at `open` and record `last_process_attempt`. A quiet
+       workflow is not the same as a resolved one.
+    3. For `api-toggle` / `code-fix`, re-scan recent runs and check
+       whether the signature still reproduces after `fix_applied_at`.
+    4. `fresh_failures == 0` → flip `open` → `processed` with the
+       full resolution record and a `post_fix_scan` summary. Else
+       leave at `open` with a `last_process_attempt` note.
+
+    Idempotent: already-processed cases are skipped (their existing
+    `processed_at` and `resolution` are preserved verbatim, no
+    commands are re-run). The save is intentionally once at the end
+    of the loop; per-case save is a follow-up if the case count
+    grows large enough to make a partial-failure interruption worth
+    guarding against.
+    """
+    store = load_store(store_path)
+    summary = {"processed": [], "still_open": [], "skipped_already_processed": []}
+
+    for case in store["cases"]:
+        if case["status"] != "open":
+            if case["status"] == "processed":
+                summary["skipped_already_processed"].append(case["id"])
+            continue
+
+        if auto_fix:
+            try:
+                case["resolution"] = _resolution_record(case)
+            except GitError as e:
+                case["last_process_attempt"] = {
+                    "at": _now(),
+                    "error": f"auto-fix failed: {e}",
+                    "fresh_failures": None,
+                    "last_run_url": None,
+                }
+                summary["still_open"].append({
+                    "id": case["id"], "reason": "auto-fix failed",
+                    "fresh_failures": None, "last_run_url": None,
+                })
+                continue
+        else:
+            case["resolution"] = {
+                "method": "manual",
+                "commands_run": [],
+                "notes": "auto_fix disabled; case awaits manual resolution",
+            }
+
+        # Manual cases await human resolution. A quiet workflow
+        # shouldn't auto-close them.
+        if case["resolution"]["method"] == "manual":
+            case["last_process_attempt"] = {
+                "at": _now(),
+                "fresh_failures": None,
+                "last_run_url": None,
+                "note": "awaiting manual resolution",
+            }
+            summary["still_open"].append({
+                "id": case["id"], "reason": "awaiting manual resolution",
+                "fresh_failures": None, "last_run_url": None,
+            })
+            continue
+
+        verify = _signature_present_in_recent_runs(
+            case["workflow"],
+            since_iso=case["resolution"].get("fix_applied_at"),
+            verify_window=verify_window,
+        )
+        case["post_fix_scan"] = {
+            **verify,
+            "result": "clean" if verify["fresh_failures"] == 0 else "still-failing",
+        }
+
+        if verify["fresh_failures"] == 0:
+            case["status"] = "processed"
+            case["processed_at"] = _now()
+            summary["processed"].append({
+                "id": case["id"],
+                "method": case["resolution"]["method"],
+            })
+        else:
+            case["last_process_attempt"] = {
+                "at": _now(),
+                "fresh_failures": verify["fresh_failures"],
+                "last_run_url": verify["last_run_url"],
+            }
+            summary["still_open"].append({
+                "id": case["id"],
+                "reason": f"{verify['fresh_failures']} fresh failure(s) in last {verify['window_runs']} runs after fix_applied_at={case['resolution'].get('fix_applied_at')}",
+                "fresh_failures": verify["fresh_failures"],
+                "last_run_url": verify["last_run_url"],
+            })
+
+    save_store(store_path, store)
+    return summary
+
+
 def scan(*, commits: Optional[list[str]], count: Optional[int], store_path: Path) -> dict:
     """Resolve commits, walk their runs, dedupe against the store.
 
@@ -364,7 +664,15 @@ def scan(*, commits: Optional[list[str]], count: Optional[int], store_path: Path
 
 def render_report(store: dict) -> str:
     lines = ["## CI failure triage — case store", ""]
-    cases = sorted(store["cases"], key=lambda c: (c["status"] != "unjudged", -len(c["occurrences"])))
+    # Sort: open > unjudged > processed (closed work is reference, not action),
+    # ties broken by occurrence count desc.
+    cases = sorted(
+        store["cases"],
+        key=lambda c: (
+            {"open": 0, "unjudged": 1, "processed": 2}.get(c["status"], 9),
+            -len(c["occurrences"]),
+        ),
+    )
     if not cases:
         return "\n".join(lines + ["No failure cases recorded yet."])
     for c in cases:
@@ -372,7 +680,7 @@ def render_report(store: dict) -> str:
         lines.append(f"### [{c['status']}] {c['workflow']} — {c['id']} ({n} occurrence{'s' if n != 1 else ''})")
         if c["status"] == "unjudged":
             lines.append("_not yet judged — run scan output through the model, then `record`_")
-        else:
+        elif c["status"] == "open":
             lines.append(f"- **cause**: {c['primary_cause']} / {c['secondary_cause']}")
             lines.append(f"- **evidence**: {c['evidence']}")
             lines.append(f"- **repro**: {c['repro']}")
@@ -380,6 +688,43 @@ def render_report(store: dict) -> str:
             lines.append(f"- **proposal**: {c['proposal']}")
             if c.get("hook_proposal"):
                 lines.append(f"- **hook proposal**: {c['hook_proposal']}")
+            if c.get("last_process_attempt"):
+                # Multi-line shape so the dict's audit fields are
+                # readable, matching the processed branch's layout
+                # for the resolution block. A raw `repr()` would
+                # bury them inside Python syntax.
+                lpa = c["last_process_attempt"]
+                lines.append("- **last_process_attempt**:")
+                for k, v in lpa.items():
+                    lines.append(f"  - {k}: {v}")
+        elif c["status"] == "processed":
+            lines.append(f"- **cause**: {c['primary_cause']} / {c['secondary_cause']}")
+            res = c.get("resolution") or {}
+            lines.append(f"- **processed_at**: {c.get('processed_at')}")
+            lines.append(f"- **resolution.method**: {res.get('method')}")
+            if res.get("commands_run"):
+                lines.append("- **resolution.commands_run**:")
+                for cmd in res["commands_run"]:
+                    lines.append(f"  - `{cmd}`")
+            if res.get("verify_pre") or res.get("verify_post"):
+                lines.append(
+                    f"- **resolution.verify**: "
+                    f"pre={res.get('verify_pre')} → post={res.get('verify_post')}"
+                )
+            commit = res.get("commit") or {}
+            if commit.get("sha"):
+                lines.append(f"- **resolution.commit**: {commit.get('sha')} {commit.get('subject')}")
+                if commit.get("pr_number"):
+                    lines.append(f"- **resolution.pr**: #{commit.get('pr_number')} {commit.get('pr_url')}")
+            if res.get("notes"):
+                lines.append(f"- **resolution.notes**: {res['notes']}")
+            pfs = c.get("post_fix_scan") or {}
+            if pfs:
+                lines.append(
+                    f"- **post_fix_scan**: result={pfs.get('result')} "
+                    f"fresh_failures={pfs.get('fresh_failures')} "
+                    f"last_run={pfs.get('last_run_url')}"
+                )
         lines.append("")
     return "\n".join(lines)
 
@@ -400,6 +745,29 @@ def _cli() -> int:
                      "regression_test, proposal, hook_proposal?}")
 
     sub.add_parser("report")
+
+    pp = sub.add_parser("process", help="auto-resolve open cases: "
+                        "apply known-pattern fixes, verify via a fresh scan, "
+                        "transition open -> processed with a full resolution "
+                        "record (commands_run, verify_pre/post, commit + PR info).")
+    pp.add_argument("--auto-fix", action="store_true",
+                    help="apply the proposal when it matches a known auto-fixable pattern")
+
+    def _clamped_verify_window(raw: str) -> int:
+        """argparse `type=` for --verify-window. Clamps to [1, 1000]
+        so `--verify-window 0` can't silently produce an empty
+        `gh run list` (which would make every case look clean), and
+        `--verify-window -1` can't produce a negative --limit that
+        makes `gh run list` error."""
+        n = int(raw)
+        if n < 1 or n > 1000:
+            raise argparse.ArgumentTypeError(
+                f"--verify-window must be in [1, 1000], got {n}"
+            )
+        return n
+
+    pp.add_argument("--verify-window", type=_clamped_verify_window, default=10,
+                    help="number of recent workflow runs to scan for post-fix verification (default: 10, range: 1-1000)")
 
     args = p.parse_args()
     store_path = Path(args.store)
@@ -426,6 +794,14 @@ def _cli() -> int:
     if args.cmd == "report":
         store = load_store(store_path)
         print(render_report(store))
+        return 0
+
+    if args.cmd == "process":
+        summary = process(
+            auto_fix=args.auto_fix, verify_window=args.verify_window,
+            store_path=store_path,
+        )
+        print(json.dumps(summary, indent=2))
         return 0
 
     return 1
