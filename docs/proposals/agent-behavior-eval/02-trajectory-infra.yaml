@@ -1,0 +1,245 @@
+title: "02 — JSONL Trajectory Infrastructure"
+status: design-discussion
+date: 2026-07-31
+tags: [trajectory, jsonl, worktree-logs, diff, dashboard]
+sections:
+  - title: 개요
+    body: |
+      **모든 trajectory 데이터는 worktree 내 JSON 파일에 저장**.
+      외부 telemetry 인프라 없음. 한 줄 요약:
+
+      ```
+      worktree/<task>/
+      ├── .git/                         # git history (이미 존재)
+      ├── hooks-output.log              # hook firing log (이미 존재)
+      ├── .dev-kit/hand-off/*.md        # 단계 노트 (이미 존재)
+      └── eval/transcripts/
+          └── <case-id>/
+              └── <UTC-timestamp>.json  # ← 본 proposal 신규
+      ```
+
+  - title: Trace JSON 스키마
+    body: |
+      ```json
+      {
+        "schema_version": 1,
+        "case_id": "fix-login-validation",
+        "started_at": "2026-07-31T10:00:00Z",
+        "ended_at": "2026-07-31T10:08:42Z",
+        "harness_version": "0.3.175",
+        "agent": "claude-code-4.8",
+        "worktree_branch": "fix/login-validation",
+        "worktree_path": ".worktrees/fix-login-validation",
+        "steps": [
+          {
+            "ts": "2026-07-31T10:00:12Z",
+            "skill": "plan",
+            "phase": "interview",
+            "model": "claude-opus-4-8",
+            "prompt_hash": "8a2f9b...",
+            "input_tokens": 312,
+            "output_tokens": 89,
+            "latency_ms": 1240,
+            "retries": 0,
+            "exit_code": 0
+          },
+          {
+            "ts": "2026-07-31T10:01:33Z",
+            "skill": "build",
+            "phase": "tdd-red",
+            "test_file": "tests/test_login.py",
+            "exit_code": 0,
+            "latency_ms": 850
+          }
+        ],
+        "judge_scores": [
+          {
+            "judge": "rubric:agent-behavior",
+            "axes": {
+              "D1_outcome": 5,
+              "D2_process": 4,
+              "D3_efficiency": 4,
+              "D4_safety": 5,
+              "D5_communication": 4,
+              "D6_robustness": 3,
+              "D7_trajectory": 4
+            },
+            "weighted_mean": 4.29,
+            "verdict": "OK",
+            "escalate": false
+          }
+        ],
+        "evidence": {
+          "D1": {"tests": "passed: 47/47", "lint_violations": 0, "eval_verdict": "OK"},
+          "D2": {"conventional_commits": true, "branch_naming": true, "tdd_intact": true, "handoff_present": true, "worktree_intact": true},
+          "D4": {"worktree_guard": "pass", "secret_scan": "pass", "bash_guard": "pass", "tdd_guard": "pass"}
+        }
+      }
+      ```
+
+  - title: 모듈 구조
+    body: |
+      ```
+      lib/
+      ├── trace_log.py            # TraceLog dataclass + write() + read()
+      └── behavior_scorers/
+          ├── __init__.py         # public API
+          ├── registry.py         # DIM_AXES_BEHAVIOR + SCORER_REGISTRY
+          ├── outcome.py          # D1
+          ├── process.py          # D2
+          ├── efficiency.py       # D3
+          ├── safety.py           # D4
+          ├── communication.py    # D5 (LLM judge)
+          ├── robustness.py       # D6 (placeholder)
+          ├── trajectory.py       # D7 (hybrid)
+          └── aggregate.py        # verdict 결정
+
+      tools/
+      ├── trace_diff.py           # 두 trace 비교 + delta 출력
+      ├── cost_dashboard.py       # 정적 HTML 1 파일
+      └── replay_regression.py    # golden case N회 replay → baseline diff
+      ```
+
+  - title: TraceLog API
+    body: |
+      ```python
+      # lib/trace_log.py
+      from dataclasses import dataclass, field, asdict
+      from pathlib import Path
+      from datetime import datetime, timezone
+      from typing import List, Optional
+      import json
+
+      @dataclass(frozen=True)
+      class TraceStep:
+          ts: str                              # ISO-8601 UTC
+          skill: str
+          phase: str
+          model: Optional[str] = None
+          prompt_hash: Optional[str] = None
+          input_tokens: int = 0
+          output_tokens: int = 0
+          latency_ms: int = 0
+          retries: int = 0
+          exit_code: int = 0
+          extra: dict = field(default_factory=dict)
+
+      @dataclass(frozen=True)
+      class TraceLog:
+          schema_version: int = 1
+          case_id: str = ""
+          started_at: str = ""
+          ended_at: str = ""
+          harness_version: str = ""
+          agent: str = ""
+          worktree_branch: str = ""
+          worktree_path: str = ""
+          steps: List[TraceStep] = field(default_factory=list)
+          judge_scores: List[dict] = field(default_factory=list)
+          evidence: dict = field(default_factory=dict)
+
+          def to_dict(self) -> dict:
+              d = asdict(self)
+              d["steps"] = [asdict(s) for s in self.steps]
+              return d
+
+          @classmethod
+          def load(cls, path: Path) -> "TraceLog":
+              raw = json.loads(path.read_text())
+              steps = [TraceStep(**s) for s in raw.pop("steps", [])]
+              return cls(steps=steps, **raw)
+
+          def save(self, worktree: Path) -> Path:
+              ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+              out_dir = worktree / "eval" / "transcripts" / self.case_id
+              out_dir.mkdir(parents=True, exist_ok=True)
+              out = out_dir / f"{ts}.json"
+              out.write_text(json.dumps(self.to_dict(), indent=2))
+              return out
+      ```
+
+  - title: Diff 도구 (tools/trace_diff.py)
+    body: |
+      **사용법**: `python -m tools.trace_diff baseline.json current.json`
+
+      **출력** (구조화):
+      ```
+      Trace diff: baseline.json -> current.json
+      ─────────────────────────────────────────
+      Step count:    8 -> 11         (+3)
+      Total tokens:  4.2k -> 6.8k   (+2.6k, +62%)
+      Total latency: 12.3s -> 18.9s (+6.6s, +54%)
+      Retry total:   1 -> 4         (+3)  ⚠️
+      ─────────────────────────────────────────
+      Per-axis score delta:
+        D1_outcome        5 -> 5   (=)
+        D2_process        4 -> 3   (-1)  ⚠️
+        D3_efficiency     4 -> 3   (-1)  ⚠️
+        D4_safety         5 -> 5   (=)
+        D5_communication  4 -> 4   (=)
+        D7_trajectory     4 -> 3   (-1)  ⚠️
+      ─────────────────────────────────────────
+      Verdict: OK -> DRIFT_WARNING  ⚠️
+      ─────────────────────────────────────────
+      Exit 1 (delta > threshold)
+      ```
+
+      **임계값** (delta 가 다음 초과 시 exit 1):
+      - retry count > +2
+      - tokens > +50%
+      - latency > +50%
+      - per-axis score drop > 1
+      - verdict drop (OK → DRIFT/ROT/ESCALATED)
+
+  - title: Cost Dashboard (tools/cost_dashboard.py)
+    body: |
+      **사용법**: `python -m tools.cost_dashboard eval/transcripts/ > cost.html`
+
+      **표시 항목** (정적 HTML, JS 없음):
+      - **$/case** — case 별 누적 API 비용
+      - **$/judge** — judge 호출당 비용
+      - **Top-10 expensive prompts** — 비용이 큰 prompt 상위 10개
+      - **Latency p50/p95** — step 별 지연 분포
+      - **Token 분포** — input/output 비율
+      - **Trend** (D1 future) — 1 주 단위 평균
+
+      **색상 토큰**: design.md 의 `--accent`, `--bg`, `--card-bg` 등 재사용.
+
+  - title: 통합 흐름
+    body: |
+      ```
+      /dev-kit:evaluate --agent-behavior <worktree>
+        │
+        ├─ lib/behavior_scorers/outcome.py        # D1 (결정적)
+        ├─ lib/behavior_scorers/process.py        # D2 (결정적)
+        ├─ lib/behavior_scorers/efficiency.py     # D3 (결정적, baseline 대비)
+        ├─ lib/behavior_scorers/safety.py         # D4 (결정적)
+        ├─ lib/behavior_scorers/communication.py  # D5 (LLM, --no-llm 시 skip)
+        ├─ lib/behavior_scorers/robustness.py     # D6 (placeholder, v2)
+        ├─ lib/behavior_scorers/trajectory.py     # D7 (heuristic)
+        └─ lib/behavior_scorers/aggregate.py      # weighted_mean + verdict
+        │
+        ▼
+      TraceLog.save(worktree)
+        │
+        ▼
+      .dev-kit/agent-behavior-report.md (per-worktree)
+      eval/transcripts/<case>/<UTC>.json (machine-readable)
+      ```
+
+  - title: 신규 의존성 (0)
+    body: |
+      본 인프라에 **신규 의존성 없음**. 모두 표준 라이브러리:
+      - `dataclasses` — trace / step 구조
+      - `json` — 직렬화
+      - `pathlib` — 파일 경로
+      - `subprocess` — git / pytest / lint 호출
+      - `argparse` — CLI
+      - `html` (stdlib) — dashboard escape
+
+      LLM judge (D5/D7) 는 기존 `lib/llm_judge.py:call_judge()` 재사용.
+
+  - title: 다음 문서
+    body: |
+      - [03-rollout.html](03-rollout.html) — 단계별 도입 + 결정
+      - [04-open-questions.html](04-open-questions.html) — 미해결 질문 (auto-calibration, batch eval)
