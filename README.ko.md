@@ -700,6 +700,45 @@ stdlib 전용; `--days 0`은 시간 창을 비활성화; `--cwd <prefix>`는 한
 정리 리뷰가 필요한지 판단하는 데 유용하다; 캡처된 사용량이 0이라고
 해서 그 스킬이 쓸모없다는 증거로 여기지 않는다.
 
+### 프로젝트 로컬 커스텀 서브에이전트 (`.claude/agents/*.md`, `.codex/agents/*.toml`)
+
+`.claude/agents/*.md`와 `.codex/agents/*.toml`은 Claude Code와 Codex의
+메인 세션이 디스패치할 수 있는
+**프로젝트 로컬 서브에이전트의 일차 확장 지점**이다. 이 디렉터리는
+전역 에이전트 페르소나(`~/.claude/agents/`의 내장
+`backend-architect`, `frontend-developer` 등)와 다르다 — 한 레포의
+도구 모음에 범위가 한정되며 레포와 함께 배포되므로 모든 기여자가 같은
+감사 봇을 받는다.
+
+함께 배포되는 첫 번째 예시는 **`worktree-janitor`**다. `.worktrees/*`
+위에서 동작하는 읽기 전용 감사로서, 모든 워크트리 디렉토리를
+`live` / `merged` / `gone` / `fresh` / `unknown` 중 하나로 분류하고
+(`tools/token_efficiency_analyzer.py:classify_all_worktrees()` 사용),
+`live`/`unknown` 항목에 대해서만 제거 후보를 리포트한다. 직접
+`git worktree remove`를 실행하지는 않는다 — 오케스트레이터가 리포트를
+읽고 사람이 제거 명령을 실행한다. 새 프로젝트 로컬 서브에이전트를
+추가하려면:
+
+1. Claude Code에는 표준 프런트매터(`name:`, `description:`, `model:`, 선택 사항인
+   `tools:` 허용 목록)와 함께 `.claude/agents/<name>.md`를 둔다. Codex에는
+   `name`, `description`, `developer_instructions`를 갖춘
+   `.codex/agents/<name>.toml`을 둔다. 감사 에이전트는
+   `sandbox_mode = "read-only"`를 사용한다.
+2. 린트 게이트 `tests/test_agent_governance.py`가 파일명 == 프런트매터
+   `name:`, kebab-case, 비어 있지 않은 description(인라인 또는
+   블록 스칼라)와 Codex TOML 필드를 강제한다.
+3. 기존 하네스를 재사용 — `classify_all_worktrees`,
+   `probe_working_tree_clean`, `classify_worktree_dir`는 이미 서브에이전트
+   소비용으로 export되어 있으므로 에이전트 파일에서 재구현하지 않는다.
+
+`worktree-janitor`(오케스트레이터가 배치를 핸드오프할 때 읽는) 제안서 +
+디스패치된 컨텍스트 컨트랙트는
+[`docs/proposals/agent-architecture/multi-agent-design.md`](docs/proposals/agent-architecture/multi-agent-design.md)에
+있다. 두 개의 봉투(dispatch + report)로 구성된 Agent-tool 핸드오프
+컨트랙트는
+[`docs/architecture/multi-agent-orchestration-research.md`](docs/architecture/multi-agent-orchestration-research.md)에
+문서화되어 있다.
+
 ---
 
 ## 소비자 CI 설치

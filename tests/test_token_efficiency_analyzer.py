@@ -1852,6 +1852,214 @@ class TestWorktreeStaleness(unittest.TestCase):
             # is_listed returns false (empty porcelain) so state="gone".
             self.assertEqual(meta["state"], "gone")
 
+    def test_classify_worktree_dir_per_block_branch_name_lookup(self):
+        """Issue #494 reviewer finding (🟠 major #2):
+
+        ``classify_worktree_dir`` previously scanned all of
+        ``git worktree list --porcelain`` for the first ``branch``
+        line — always returning the main checkout's branch for every
+        worktree. The fix walks block-by-block and returns the branch
+        of the block whose ``worktree <path>`` line matches the target.
+        This test pins that contract: the second worktree block must
+        yield ``feat/y``, not ``main``.
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import classify_worktree_dir
+
+        with tempfile.TemporaryDirectory(prefix="wt-perblock-") as td:
+            root = Path(td)
+            wt_main = root / "main-checkout"
+            wt_x = root / ".worktrees" / "feat-y"
+            wt_main.mkdir(parents=True)
+            wt_x.mkdir(parents=True)
+
+            porcelain = (
+                f"worktree {wt_main}\n"
+                f"HEAD 0000000000000000000000000000000000000000\n"
+                f"branch refs/heads/main\n"
+                f"\n"
+                f"worktree {wt_x}\n"
+                f"HEAD 1111111111111111111111111111111111111111\n"
+                f"branch refs/heads/feat/y\n"
+                f"\n"
+            )
+
+            def fake_run(args, **_kwargs):
+                cmd = " ".join(str(a) for a in args)
+                if "worktree list --porcelain" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+                if "rev-parse --short HEAD" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout="abcdef0", stderr="")
+                if "rev-parse HEAD" in cmd and str(wt_x) in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout="feedfacefeedfacefeedfacefeedfacefeedface",
+                        stderr="",
+                    )
+                if "rev-parse HEAD" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout="0000000000000000000000000000000000000000",
+                        stderr="",
+                    )
+                if "rev-parse origin/main" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout="0000000000000000000000000000000000000000",
+                        stderr="",
+                    )
+                if "log origin/main..HEAD" in cmd:
+                    # non-empty for wt_x → live; empty for main
+                    if str(wt_x) in cmd:
+                        return subprocess.CompletedProcess(
+                            args, 0,
+                            stdout="feedface wip commit on feat/y\n",
+                            stderr="",
+                        )
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+            meta_x = classify_worktree_dir(wt_x, root, git_runner=fake_run)
+            self.assertEqual(meta_x["branch_name"], "feat/y",
+                "Per-block porcelain walk must return THIS block's branch, "
+                "not the main checkout's. (PR #494 review 🟠 major #2.)")
+
+            # And the main checkout's worktree path must still return its own.
+            meta_main = classify_worktree_dir(wt_main, root, git_runner=fake_run)
+            self.assertEqual(meta_main["branch_name"], "main")
+
+    def test_probe_working_tree_clean_paths(self):
+        """Pin the new helper's three observable paths:
+        clean (porcelain empty), dirty (M-/A-/etc. plus untracked),
+        and error (subprocess failure) → ``working_tree_clean=None``.
+
+        Key name is ``working_tree_clean`` (PR #494 review M-1), NOT
+        ``clean``, so the orchestrator can ``context.update(probe_result)``
+        without a remap step.
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import probe_working_tree_clean
+
+        # 1. Clean working tree → working_tree_clean=True, both counts zero.
+        def clean_runner(args, **_kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory(prefix="wt-clean-") as td:
+            wt = Path(td) / "wt"
+            wt.mkdir()
+            r = probe_working_tree_clean(wt, git_runner=clean_runner)
+        self.assertTrue(r["working_tree_clean"])
+        self.assertEqual(r["uncommitted_count"], 0)
+        self.assertEqual(r["untracked_count"], 0)
+
+        # 2. Dirty: one modified file + one untracked file.
+        porcelain = (
+            " M src/foo.py\n"
+            "?? scratch.txt\n"
+        )
+        def dirty_runner(args, **_kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+        with tempfile.TemporaryDirectory(prefix="wt-dirty-") as td:
+            wt = Path(td) / "wt"
+            wt.mkdir()
+            r = probe_working_tree_clean(wt, git_runner=dirty_runner)
+        self.assertFalse(r["working_tree_clean"])
+        self.assertEqual(r["uncommitted_count"], 1)
+        self.assertEqual(r["untracked_count"], 1)
+        self.assertIn("M src/foo.py", r["porcelain"])
+
+        # 3. Error → working_tree_clean=None, counts zero (never raises).
+        def error_runner(args, **_kwargs):
+            return subprocess.CompletedProcess(args, 128, stdout="", stderr="fatal: bad")
+        with tempfile.TemporaryDirectory(prefix="wt-err-") as td:
+            wt = Path(td) / "wt"
+            wt.mkdir()
+            r = probe_working_tree_clean(wt, git_runner=error_runner)
+        self.assertIsNone(r["working_tree_clean"])
+        self.assertEqual(r["uncommitted_count"], 0)
+
+    def test_dispatch_envelope_shape_matches_agent_spec(self):
+        """PR #494 review M-1: prove that an orchestrator doing a
+        naive ``context.update(probe_working_tree_clean(...))``
+        produces a payload the worktree-janitor agent spec can read
+        directly. Pin the full key set the agent's dispatch envelope
+        contract reads (``working_tree_clean``, ``uncommitted_count``,
+        ``untracked_count``, ``state``, ``branch_name``, ``branch_tip``,
+        ``is_fresh``, ``worktree_listed``, ``branch_merged_into_main``).
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import (
+            classify_worktree_dir,
+            probe_working_tree_clean,
+        )
+
+        def fake_git_run_factory(worktree_porcelain: str, status: str,
+                                   head_full: str, main_full: str,
+                                   log: str):
+            def fake_run(args, **_kwargs):
+                cmd = " ".join(str(a) for a in args)
+                if "worktree list --porcelain" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout=worktree_porcelain, stderr="")
+                if "rev-parse --short HEAD" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout="abc1234", stderr="")
+                if "rev-parse HEAD" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout=head_full, stderr="")
+                if "rev-parse origin/main" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout=main_full, stderr="")
+                if "log origin/main..HEAD" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout=log, stderr="")
+                if "status --porcelain" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout=status, stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return fake_run
+
+        with tempfile.TemporaryDirectory(prefix="wt-dispatch-") as td:
+            root = Path(td)
+            wt = root / ".worktrees" / "feat-d"
+            wt.mkdir(parents=True)
+            porcelain = (
+                f"worktree {wt}\n"
+                f"HEAD deadbeef\n"
+                f"branch refs/heads/feat/d\n"
+            )
+            git_runner = fake_git_run_factory(
+                worktree_porcelain=porcelain,
+                status=" M scratch.txt\n",
+                head_full="deadbeef" * 8,
+                main_full="feedface" * 8,
+                log="deadbeef wip\n",
+            )
+            meta = classify_worktree_dir(wt, root, git_runner=git_runner)
+            probe = probe_working_tree_clean(wt, git_runner=git_runner)
+
+        # The contract the agent spec reads from context. Naive merge.
+        context = dict(meta)
+        context.update(probe)
+
+        # M-1 was: this read would KeyError. With both keys using
+        # ``working_tree_clean``, it now resolves.
+        self.assertIs(
+            context["working_tree_clean"], False,
+            "PR #494 review M-1: dispatch envelope must yield "
+            "working_tree_clean=False for a dirty worktree",
+        )
+        self.assertEqual(context["uncommitted_count"], 1)
+        # Pin every key the agent's dispatch envelope table reads.
+        for k in (
+            "state", "branch_name", "branch_tip", "is_fresh",
+            "worktree_listed", "branch_merged_into_main",
+            "working_tree_clean", "uncommitted_count", "untracked_count",
+        ):
+            self.assertIn(k, context, f"dispatch envelope missing key {k!r}")
+
     def test_cost_by_worktree_panel_renders_state_column(self):
         from collections import Counter
 

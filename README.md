@@ -260,6 +260,7 @@ table — HTML / MD / 한국어 sibling / what each doc gives you — lives in
 | Recover from a broken flow | [`docs/workflow/WORKFLOW-SCENARIOS.md`](docs/workflow/WORKFLOW-SCENARIOS.md) |
 | Audit cost or back a factual claim | [`docs/observability/token-efficiency.md`](docs/observability/token-efficiency.md) |
 | Pick up a session from a new shell | [`docs/observability/session-monitor.md`](docs/observability/session-monitor.md) |
+| See what custom subagents this repo ships | [`docs/proposals/agent-architecture/multi-agent-design.md`](docs/proposals/agent-architecture/multi-agent-design.md) |
 
 Everything else — HTML siblings, Korean docs, deep reference — is in
 [`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md). If you have five minutes,
@@ -526,6 +527,40 @@ python3 tools/skill_usage.py --cwd /path --days 7   # one workspace, fresh windo
 
 `--top 0` lists even unused skills — useful for a complete inventory. Don't read
 zero captured usage as proof a skill is obsolete.
+
+### Custom subagents (project-local)
+
+`.claude/agents/*.md` and `.codex/agents/*.toml` are the repo's **first-class
+extension points** for project-local subagents that Claude Code and Codex can
+dispatch. These differ from the
+global agent personas in `~/.claude/agents/` (built-in `backend-architect`,
+`frontend-developer`, …) — they're scoped to one repo's tooling and ship
+with the repo so every contributor gets the same auditing bot.
+
+The shipped example is **`worktree-janitor`** — a read-only auditor over
+`.worktrees/*` that classifies every worktree dir as
+`live` / `merged` / `gone` / `fresh` / `unknown` (via
+`tools/token_efficiency_analyzer.py:classify_all_worktrees()`) and reports
+removal candidates for `live`/`unknown` only. It never runs
+`git worktree remove` itself — the orchestrator reads its report and the
+human runs the removal command. Adding a new project-local subagent:
+
+1. For Claude Code, drop `.claude/agents/<name>.md` with the standard frontmatter
+   (`name:`, `description:`, `model:`, optional `tools:` allowlist).
+   For Codex, add `.codex/agents/<name>.toml` with `name`, `description`, and
+   `developer_instructions`; use `sandbox_mode = "read-only"` for auditors.
+2. The lint gate `tests/test_agent_governance.py` enforces filename ==
+   frontmatter `name:`, kebab-case, and a non-empty description
+   (inline or block-scalar), plus the required Codex TOML fields.
+3. Reuse the existing harness — `classify_all_worktrees`,
+   `probe_working_tree_clean`, `classify_worktree_dir` are already exported
+   for subagent consumption; do not re-implement in the agent file.
+
+Proposal + dispatched-context contract for `worktree-janitor` (read by the
+orchestrator that hands off batches to it) lives at
+[`docs/proposals/agent-architecture/multi-agent-design.md`](docs/proposals/agent-architecture/multi-agent-design.md).
+The Agent-tool hand-off contract (two envelopes — dispatch + report) is
+documented in [`docs/architecture/multi-agent-orchestration-research.md`](docs/architecture/multi-agent-orchestration-research.md).
 
 ---
 
