@@ -45,6 +45,14 @@ user-invocable: true
    - `hook_proposal` (optional) — when the fix is something a hook could enforce so the failure structurally can't recur, describe it here. Do not create the hook file itself; propose it only (see `## Rules`). `regression_test` and `hook_proposal` are complementary, not substitutes: a test catches it in CI, a hook prevents it from happening at all.
 5. **Record**: write the judgment to a temp JSON file `{id, primary_cause, secondary_cause, evidence, repro, regression_test, proposal, hook_proposal}` and run `python3 lib/ci_triage.py record --from-json <path>`. `record_judgment` rejects an unknown cause pair and an empty `repro`/`regression_test` before it flips the case to `status: open`.
 6. **Report**: `python3 lib/ci_triage.py report` prints every case grouped by status. Present this to the user as the final output — new cases in full, already-known cases as a one-line "N new occurrences, see case <id>".
+7. **Process (auto-resolve)**: `python3 lib/ci_triage.py --store .dev-kit/ci-triage-log.json process --auto-fix --verify-window 10`. Closes the loop from "judged" to "processed" without a human having to remember the flip. The engine:
+   - Walks every `open` case.
+   - When `--auto-fix` is set AND the case's `proposal` matches a known auto-fixable pattern (currently: `actions/workflows/<id>/disable` + `enable` — the canonical stale-trigger-registration fix), the engine runs the exact `gh api` commands and records them, plus the pre/post `{state, updated_at}` pair, into the case's `resolution` block.
+   - When the proposal doesn't match a known pattern OR no commit landed on the workflow file since `first_seen.date`, the case still receives a `resolution` block (`method: manual` / `method: code-fix`) for forensic completeness — the auto-fix path is opt-in, the audit trail is not.
+   - Re-scans the workflow's recent runs and counts failures newer than `resolution.fix_applied_at` (the cutoff prevents a long history of pre-fix failures from keeping a freshly-fixed case at `open`).
+   - `fresh_failures == 0` → flips `status: open` → `status: processed` with `processed_at`, the full `resolution` record (commands_run, verify_pre/post, commit.sha/subject, pr.number/url when applicable), and a `post_fix_scan` summary. `fresh_failures > 0` → leaves the case at `open` with a `last_process_attempt` note so the next run picks it up. Already-processed cases are skipped (idempotent — the existing `processed_at` is preserved, no commands are re-run).
+
+   This is the loop the user asked for: the same store that records the failure also records its resolution, with the commands that fixed it and the related PR/commit when the fix was a code change. No separate "mark as fixed" step, no chance of a case being judged but never closed.
 
 ## Example (grounded in this repo, 2026-07-30)
 
@@ -67,22 +75,49 @@ Judged as:
 
 That's one case, 5 occurrences, not 5 cases — this is exactly the dedup this skill exists to enforce.
 
+After `process --auto-fix` runs, the same case ends up as:
+
+```json
+{
+  "id": "1b71f09a5926",
+  "status": "processed",
+  "primary_cause": "harness",
+  "secondary_cause": "state-contamination",
+  "processed_at": "2026-07-31T11:16:38Z",
+  "resolution": {
+    "method": "api-toggle",
+    "commands_run": [
+      "gh api -X PUT repos/:owner/:repo/actions/workflows/312869658/disable",
+      "gh api -X PUT repos/:owner/:repo/actions/workflows/312869658/enable"
+    ],
+    "verify_pre":  {"state": "active", "updated_at": "2026-07-31T20:15:12.000+09:00"},
+    "verify_post": {"state": "active", "updated_at": "2026-07-31T20:16:35.000+09:00"},
+    "fix_applied_at": "2026-07-31T11:16:35Z",
+    "notes": "auto-applied stale workflow registration toggle"
+  },
+  "post_fix_scan": {"result": "clean", "fresh_failures": 0, "last_run_url": null}
+}
+```
+
+The forensic trail stays in `.dev-kit/ci-triage-log.json`: which commands ran, the pre/post `updated_at` (proves the toggle actually refreshed the cache), and — for code-fix cases — the related commit SHA + PR URL so a later reader can jump from "what failed" to "what fixed it" without leaving the store.
+
 ## Rules
 
-- **Read-only except its own store.** The store lives at `.dev-kit/ci-triage-log.json` (gitignored, like `.dev-kit/ci-config.json`). This skill never edits workflow files, never applies the `hook_proposal`, never pushes. `Edit` is disallowed in frontmatter for this reason — the store is written via `Write`/the CLI's own JSON write path, not by editing repo files.
+- **Read-only except its own store.** The store lives at `.dev-kit/ci-triage-log.json` (gitignored, like `.dev-kit/ci-config.json`). This skill never edits workflow files, never applies the `hook_proposal`, never pushes. `Edit` is disallowed in frontmatter for this reason — the store is written via `Write`/the CLI's own JSON write path, not by editing repo files. `process --auto-fix` is the one exception: it executes `gh api` calls (disable/enable) to apply a known-pattern fix, but only when the case's own `proposal` field names those exact commands — the engine never invents a fix that wasn't already judged by the model.
 - **Full SHA only.** Any code path that calls `gh run list --commit` must resolve to the full 40-char SHA first. A short SHA does not error — it silently returns an empty run list, which looks identical to "no CI ran for this commit."
-- **Dedup by signature, not by commit.** The store's unit of record is a failure signature; commits/runs are occurrences under it. Never write a fresh case for a signature that's already `open` or `fixed`.
+- **Dedup by signature, not by commit.** The store's unit of record is a failure signature; commits/runs are occurrences under it. Never write a fresh case for a signature that's already `open` or `processed`.
 - **Reproduction-shaped, not analysis-shaped.** A case is not "done" because it has a good write-up. `repro` must be something a reader can re-run later to confirm the failure is (or isn't) still present; `regression_test` must name an actual executable test, or explicitly justify why none applies. `record_judgment` enforces both as required fields plus a `primary_cause`/`secondary_cause` pair validated against `CAUSE_TAXONOMY` — free-text classification is rejected.
 - **No fabricated root cause.** `evidence` must cite the specific log line, API field, or timestamp comparison that supports the classification. If the evidence is inconclusive, say so — don't guess a cause to fill the field.
+- **`process` is idempotent.** Already-processed cases are skipped without re-running their fix commands — the existing `processed_at` and `resolution` block are preserved verbatim. Running `process` repeatedly is safe and cheap.
 
 ## Files installed
 
 | Path | Purpose |
 |---|---|
 | `skills/ci-triage/SKILL.md` | This file |
-| `lib/ci_triage.py` | Deterministic engine: commit resolution, full-SHA run matching, failure-detail fetch, signature dedup, `CAUSE_TAXONOMY` validation, store I/O. Never generates the judgment content itself — `record_judgment` only validates and persists what the model supplies. |
-| `tests/test_ci_triage.py` | Signature stability, store round-trip, unjudged→open lifecycle, taxonomy/repro/regression-test validation, short-SHA guard, and a mocked end-to-end scan proving two commits with the same failure collapse into one case. |
+| `lib/ci_triage.py` | Deterministic engine: commit resolution, full-SHA run matching, failure-detail fetch, signature dedup, `CAUSE_TAXONOMY` validation, store I/O, and the `process` auto-resolve loop. Never generates the judgment content itself — `record_judgment` only validates and persists what the model supplies; `process` only applies fixes that match a known pattern named in the case's own `proposal` field. |
+| `tests/test_ci_triage.py` | Signature stability, store round-trip, unjudged→open lifecycle, taxonomy/repro/regression-test validation, short-SHA guard, mocked end-to-end scan (two commits → one case), multi-job signal disambiguation, `##[error]`-preferred log extraction, the `process` lifecycle (auto-fix + clean verify → processed; fresh failure → still open; auto-fix disabled → manual method; already-processed → skipped), historical-failures-before-fix-don't-block-processed regression, and the processed-state report rendering. 35 tests, all passing. |
 
 ## Next step
 
-For cases with a `hook_proposal`, hand off to the user for confirmation before creating the hook — this skill only proposes it. Once approved, the hook lives under `hooks/` per this repo's existing hook conventions (see `active-hooks.json` / `CLAUDE.md` §4).
+For cases with a `hook_proposal`, hand off to the user for confirmation before creating the hook — this skill only proposes it. Once approved, the hook lives under `hooks/` per this repo's existing hook conventions (see `active-hooks.json` / `CLAUDE.md` §4). For already-processed cases, no next step is needed — the resolution record in `.dev-kit/ci-triage-log.json` is the closure.
