@@ -58,13 +58,16 @@ def _git_output(worktree: Path, *args: str) -> str:
 def _conventional_commits_ratio(worktree: Path) -> float:
     """Fraction of commits in the branch that match Conventional Commits.
 
-    Compares against `origin/main` (or just counts all commits if no
-    upstream). Empty repo / no upstream → 1.0 (no false positives).
+    Only considers commits ahead of `origin/main` (the actual changes
+    on this branch). A worktree with no upstream tracking returns 1.0
+    (vacuously true) rather than guessing — the previous fallback to
+    `log -20` silently counted unrelated history and inflated the
+    ratio. Fixes the "misleading fallback" flagged by maintenance gate.
     """
     raw = _git_output(worktree, "log", "--pretty=%s", "origin/main..HEAD")
     if not raw:
-        raw = _git_output(worktree, "log", "--pretty=%s", "-20")
-    if not raw:
+        # No upstream or no commits ahead of origin/main: vacuously
+        # compliant (nothing on this branch to be non-conventional).
         return 1.0
     subjects = [line for line in raw.splitlines() if line.strip()]
     if not subjects:
@@ -81,19 +84,26 @@ def _branch_naming_ok(worktree: Path) -> bool:
 def _worktree_intact(worktree: Path) -> bool:
     """True when the worktree is detached from main checkout.
 
-    Cheap proxy: check that `.worktrees/` exists in the parent and
-    `main` has not been touched since the worktree cut. We treat
-    'no upstream tracking' as intact (the worktree was just cut).
+    Returns True when the worktree cannot be verified (no upstream
+    tracking, bare fixture). Returns False when the worktree IS on
+    main (an L1 violation: the agent edited main directly instead of
+    cutting a worktree). The previous version returned True
+    unconditionally, which was flagged as dead code by the
+    maintenance gate.
     """
     parent = worktree.parent
     if not (parent / ".worktrees").is_dir():
-        # No .worktrees dir — may be a bare worktree fixture; treat OK.
+        # Bare fixture (no .worktrees dir) — cannot verify, treat OK.
         return True
     main_tip = _git_output(worktree, "rev-parse", "origin/main")
     head = _git_output(worktree, "rev-parse", "HEAD")
     if not main_tip or not head:
         return True
-    return True  # if both reachable, structure is intact by definition
+    branch = _git_output(worktree, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch == "main":
+        # Agent edited main directly; L1 violation.
+        return False
+    return True
 
 
 def _tdd_intact(worktree: Path) -> bool:
