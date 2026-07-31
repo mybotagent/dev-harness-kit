@@ -357,5 +357,332 @@ class TestRenderReport(unittest.TestCase):
         self.assertIn("tests/test_ci_doctor.py::test_x", out)
 
 
+class TestWorkflowIdFromProposal(unittest.TestCase):
+    """The auto-fix path matches a proposal against the canonical
+    api-toggle pattern (`actions/workflows/<id>/disable` + `enable`).
+    One workflow id only — a proposal with two distinct IDs is treated
+    as ambiguous and returns None so we don't accidentally toggle the
+    wrong workflow."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        from ci_triage import _workflow_id_from_proposal
+        self.extract = _workflow_id_from_proposal
+
+    def test_canonical_disable_enable_pattern_returns_id(self):
+        self.assertEqual(
+            self.extract("gh api -X PUT repos/x/y/actions/workflows/312869658/disable && "
+                         "gh api -X PUT repos/x/y/actions/workflows/312869658/enable"),
+            312869658,
+        )
+
+    def test_proposal_without_toggle_pattern_returns_none(self):
+        self.assertIsNone(self.extract("manually re-create the workflow file"))
+
+    def test_two_distinct_workflow_ids_in_proposal_is_ambiguous(self):
+        self.assertIsNone(self.extract(
+            "gh api .../actions/workflows/111/disable && gh api .../actions/workflows/222/enable"
+        ))
+
+
+class TestApplyApiToggle(unittest.TestCase):
+    """`_apply_api_toggle` runs disable -> enable and records both
+    commands + the pre/post {state, updated_at} pair so the case log
+    carries an audit trail of *exactly* what was executed."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def test_records_commands_and_pre_post_state(self):
+        # Pre-GET happens BEFORE disable, so verify_pre.state is whatever
+        # the workflow is right now ("active"). The toggle disable→enable
+        # runs, then post-GET verifies it's "active" again with a fresh
+        # `updated_at` (the cache-refresh signal). The audit value is
+        # `updated_at` changing, not state.
+        def fake_run(cmd):
+            if cmd[:2] == ["gh", "api"] and "/actions/workflows/312869658" in cmd[-1]:
+                if "/disable" in cmd[-1] or "/enable" in cmd[-1]:
+                    return ""
+                # Pre vs post distinguished by the toggled updated_at —
+                # the audit value of the whole exercise is "did the
+                # server-side updated_at change after disable→enable".
+                if not hasattr(fake_run, "_calls"):
+                    fake_run._calls = 0  # type: ignore[attr-defined]
+                fake_run._calls += 1  # type: ignore[attr-defined]
+                if fake_run._calls == 1:  # type: ignore[attr-defined]
+                    return json.dumps({"state": "active", "updated_at": "2026-07-14T18:11:40.000+09:00"})
+                return json.dumps({"state": "active", "updated_at": "2026-07-31T20:10:31.000+09:00"})
+            raise AssertionError(f"unexpected cmd: {cmd}")
+
+        with patch.object(self.mod, "_run", side_effect=fake_run):
+            result = self.mod._apply_api_toggle(312869658)
+
+        self.assertEqual(result["method"], "api-toggle")
+        self.assertEqual(len(result["commands_run"]), 2)
+        self.assertIn("/disable", result["commands_run"][0])
+        self.assertIn("/enable", result["commands_run"][1])
+        self.assertEqual(result["verify_pre"]["state"], "active")
+        self.assertEqual(result["verify_post"]["state"], "active")
+        self.assertNotEqual(result["verify_pre"]["updated_at"], result["verify_post"]["updated_at"])
+
+
+class TestCommitForFix(unittest.TestCase):
+    """For code-fix resolutions, find the most recent commit on the
+    workflow file after first_seen.date and look up its PR. When no
+    commit exists, return None — the case is treated as manual."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def test_finds_commit_and_linked_pr(self):
+        def fake_run(cmd):
+            if cmd[:2] == ["git", "log"]:
+                return "abc123def456\x1ffix: register pull_request trigger only\n"
+            if cmd[:3] == ["gh", "pr", "list"]:
+                return json.dumps([{
+                    "number": 203, "url": "https://github.com/x/y/pull/203",
+                    "title": "fix: register pull_request trigger only",
+                }])
+            raise AssertionError(f"unexpected cmd: {cmd}")
+
+        with patch.object(self.mod, "_run", side_effect=fake_run):
+            result = self.mod._commit_for_fix(".github/workflows/cost-flag.yml", "2026-07-14T00:00:00Z")
+
+        self.assertEqual(result["sha"], "abc123def456")
+        self.assertEqual(result["subject"], "fix: register pull_request trigger only")
+        self.assertEqual(result["pr_number"], 203)
+        self.assertEqual(result["pr_url"], "https://github.com/x/y/pull/203")
+
+    def test_no_commit_since_first_seen_returns_none(self):
+        def fake_run(cmd):
+            if cmd[:2] == ["git", "log"]:
+                return ""
+            raise AssertionError(f"unexpected cmd: {cmd}")
+
+        with patch.object(self.mod, "_run", side_effect=fake_run):
+            result = self.mod._commit_for_fix(".github/workflows/x.yml", "2026-07-14T00:00:00Z")
+        self.assertIsNone(result)
+
+
+class TestProcess(unittest.TestCase):
+    """End-to-end `process()` lifecycle:
+    - open + api-toggle proposal + auto_fix + clean verify -> processed
+      with full resolution record (commands_run, verify_pre/post).
+    - open + api-toggle proposal + auto_fix + fresh failures -> stays
+      open with `last_process_attempt` note.
+    - open + clean verify but auto_fix disabled -> processed with
+      method=manual (resolution still recorded for audit).
+    - already-processed -> skipped, never re-toggled.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+        self.case_id = "abc123def456"
+        self.case = {
+            "id": self.case_id, "signature": self.case_id,
+            "workflow": ".github/workflows/cost-flag.yml", "status": "open",
+            "primary_cause": "harness", "secondary_cause": "state-contamination",
+            "evidence": "registration predates file",
+            "repro": "gh api .../actions/workflows | jq .updated_at",
+            "regression_test": "N/A: server-side cache not observable in repo",
+            "proposal": "gh api -X PUT repos/x/y/actions/workflows/312869658/disable && "
+                        "gh api -X PUT repos/x/y/actions/workflows/312869658/enable",
+            "first_seen": {"date": "2026-07-14T00:00:00Z", "run_id": 1, "commit": "a" * 40, "url": ""},
+            "occurrences": [{"commit": "a" * 40, "run_id": 1, "date": "2026-07-14T00:00:00Z", "url": ""}],
+        }
+
+    def _gh_run_list(self):
+        # Default: no recent failures -> clean verify
+        return json.dumps([])
+
+    def _workflow_get(self):
+        return json.dumps({"state": "active", "updated_at": "2026-07-31T20:10:31.000+09:00"})
+
+    def _fake_run_clean(self, cmd):
+        if cmd[:2] == ["gh", "api"] and "/actions/workflows/312869658" in cmd[-1]:
+            if "/disable" in cmd[-1] or "/enable" in cmd[-1]:
+                return ""
+            return self._workflow_get()
+        if cmd[:3] == ["gh", "run", "list"]:
+            return self._gh_run_list()
+        if cmd[:2] == ["git", "log"]:
+            return ""
+        raise AssertionError(f"unexpected cmd: {cmd}")
+
+    def _seeded_store(self, tmp: Path) -> Path:
+        store_path = tmp / "store.json"
+        store = {"schema_version": 3, "cases": [dict(self.case)]}
+        self.mod.save_store(store_path, store)
+        return store_path
+
+    def test_auto_fix_plus_clean_verify_marks_processed_with_full_resolution_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            store_path = self._seeded_store(Path(d))
+            with patch.object(self.mod, "_run", side_effect=self._fake_run_clean):
+                summary = self.mod.process(
+                    auto_fix=True, verify_window=10, store_path=store_path,
+                )
+
+            self.assertEqual(len(summary["processed"]), 1)
+            self.assertEqual(summary["processed"][0]["id"], self.case_id)
+            self.assertEqual(summary["processed"][0]["method"], "api-toggle")
+
+            case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
+            self.assertEqual(case["status"], "processed")
+            self.assertIn("processed_at", case)
+            res = case["resolution"]
+            self.assertEqual(res["method"], "api-toggle")
+            self.assertEqual(len(res["commands_run"]), 2)
+            self.assertIn("/disable", res["commands_run"][0])
+            self.assertEqual(res["verify_post"]["state"], "active")
+            self.assertEqual(case["post_fix_scan"]["result"], "clean")
+            self.assertEqual(case["post_fix_scan"]["fresh_failures"], 0)
+
+    def test_fresh_failure_after_fix_keeps_case_open_with_attempt_note(self):
+        def fake_run_with_fresh_failures(cmd):
+            if cmd[:3] == ["gh", "run", "list"]:
+                return json.dumps([{
+                    "databaseId": 999, "conclusion": "failure",
+                    "createdAt": "2026-07-31T20:30:00Z",
+                    "url": "https://example/999",
+                }])
+            return self._fake_run_clean(cmd)
+
+        with tempfile.TemporaryDirectory() as d:
+            store_path = self._seeded_store(Path(d))
+            with patch.object(self.mod, "_run", side_effect=fake_run_with_fresh_failures):
+                summary = self.mod.process(
+                    auto_fix=True, verify_window=10, store_path=store_path,
+                )
+
+            self.assertEqual(summary["processed"], [])
+            self.assertEqual(len(summary["still_open"]), 1)
+            self.assertEqual(summary["still_open"][0]["id"], self.case_id)
+
+            case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
+            self.assertEqual(case["status"], "open")
+            self.assertEqual(case["post_fix_scan"]["result"], "still-failing")
+            self.assertEqual(case["post_fix_scan"]["fresh_failures"], 1)
+            self.assertEqual(case["last_process_attempt"]["fresh_failures"], 1)
+            self.assertEqual(case["last_process_attempt"]["last_run_url"], "https://example/999")
+
+    def test_auto_fix_disabled_still_marks_processed_with_manual_method(self):
+        with tempfile.TemporaryDirectory() as d:
+            store_path = self._seeded_store(Path(d))
+            with patch.object(self.mod, "_run", side_effect=self._fake_run_clean):
+                summary = self.mod.process(
+                    auto_fix=False, verify_window=10, store_path=store_path,
+                )
+
+            self.assertEqual(summary["processed"][0]["method"], "manual")
+            case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
+            self.assertEqual(case["status"], "processed")
+            self.assertEqual(case["resolution"]["method"], "manual")
+            self.assertEqual(case["resolution"]["commands_run"], [])
+
+    def test_already_processed_case_is_skipped_and_not_re_toggled(self):
+        with tempfile.TemporaryDirectory() as d:
+            store_path = self._seeded_store(Path(d))
+            # Mark as already processed with a fake resolution record.
+            store = self.mod.load_store(store_path)
+            store["cases"][0]["status"] = "processed"
+            store["cases"][0]["processed_at"] = "2026-07-30T00:00:00Z"
+            store["cases"][0]["resolution"] = {"method": "api-toggle", "commands_run": ["old"]}
+            self.mod.save_store(store_path, store)
+
+            call_count = {"count": 0}
+            def counting_run(cmd):
+                call_count["count"] += 1
+                return self._fake_run_clean(cmd)
+
+            with patch.object(self.mod, "_run", side_effect=counting_run):
+                summary = self.mod.process(
+                    auto_fix=True, verify_window=10, store_path=store_path,
+                )
+
+            self.assertEqual(summary["processed"], [])
+            self.assertEqual(summary["skipped_already_processed"], [self.case_id])
+            case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
+            self.assertEqual(case["processed_at"], "2026-07-30T00:00:00Z")  # unchanged
+            self.assertEqual(case["resolution"]["commands_run"], ["old"])
+
+    def test_render_report_includes_processed_resolution_record(self):
+        store = {"schema_version": 3, "cases": [{
+            "id": "x", "workflow": ".github/workflows/cost-flag.yml", "status": "processed",
+            "primary_cause": "harness", "secondary_cause": "state-contamination",
+            "processed_at": "2026-07-31T20:11:00Z",
+            "resolution": {
+                "method": "api-toggle",
+                "commands_run": [
+                    "gh api -X PUT .../312869658/disable",
+                    "gh api -X PUT .../312869658/enable",
+                ],
+                "verify_pre": {"state": "active", "updated_at": "2026-07-14T18:11:40+09:00"},
+                "verify_post": {"state": "active", "updated_at": "2026-07-31T20:10:31+09:00"},
+            },
+            "post_fix_scan": {"result": "clean", "fresh_failures": 0,
+                              "last_run_url": "https://example/1"},
+            "occurrences": [{"commit": "a"}],
+        }]}
+        out = self.mod.render_report(store)
+        self.assertIn("[processed]", out)
+        self.assertIn("api-toggle", out)
+        self.assertIn("/disable", out)
+        self.assertIn("/enable", out)
+        self.assertIn("result=clean", out)
+
+    def test_historical_failures_before_fix_do_not_block_processed_transition(self):
+        """Regression for the live case 1b71f09a5926: a workflow with
+        a long history of failure runs (all 0-job 'phantom trigger'
+        entries from before the toggle) must transition to `processed`
+        once a fresh post-fix scan shows zero NEW failures. The verify
+        scan's `since_iso` is the fix_applied_at timestamp recorded in
+        the resolution block."""
+        def fake_run_with_history(cmd):
+            if cmd[:2] == ["gh", "api"] and "/actions/workflows/312869658" in cmd[-1]:
+                if "/disable" in cmd[-1] or "/enable" in cmd[-1]:
+                    return ""
+                return self._workflow_get()
+            if cmd[:3] == ["gh", "run", "list"]:
+                # Five historical failures (createdAt way before now),
+                # zero failures after the fix.
+                return json.dumps([
+                    {"databaseId": 1, "conclusion": "failure",
+                     "createdAt": "2026-07-31T08:00:00Z", "url": "https://example/1"},
+                    {"databaseId": 2, "conclusion": "failure",
+                     "createdAt": "2026-07-31T08:01:00Z", "url": "https://example/2"},
+                    {"databaseId": 3, "conclusion": "failure",
+                     "createdAt": "2026-07-31T08:02:00Z", "url": "https://example/3"},
+                    {"databaseId": 4, "conclusion": "failure",
+                     "createdAt": "2026-07-31T08:03:00Z", "url": "https://example/4"},
+                    {"databaseId": 5, "conclusion": "failure",
+                     "createdAt": "2026-07-31T08:04:00Z", "url": "https://example/5"},
+                ])
+            if cmd[:2] == ["git", "log"]:
+                return ""
+            raise AssertionError(f"unexpected cmd: {cmd}")
+
+        with tempfile.TemporaryDirectory() as d:
+            store_path = self._seeded_store(Path(d))
+            with patch.object(self.mod, "_run", side_effect=fake_run_with_history):
+                summary = self.mod.process(
+                    auto_fix=True, verify_window=10, store_path=store_path,
+                )
+
+            self.assertEqual(len(summary["processed"]), 1)
+            self.assertEqual(summary["still_open"], [])
+            case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
+            self.assertEqual(case["status"], "processed")
+            # fresh_failures is 0 (all 5 historical failures predate fix_applied_at).
+            self.assertEqual(case["post_fix_scan"]["fresh_failures"], 0)
+            self.assertEqual(case["post_fix_scan"]["result"], "clean")
+
+
 if __name__ == "__main__":
     unittest.main()
