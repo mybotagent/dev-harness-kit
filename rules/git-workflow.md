@@ -125,8 +125,8 @@ verification requirements to a spawned subagent.
    - `required_pull_request_reviews.required_approving_review_count = 1`, `dismiss_stale_reviews = true`
    - `required_linear_history = true` (no merge commits)
    - `enforce_admins = true` (no emergency bypass — even admins must use a PR)
-   The previous `.github/workflows/ci.yml::branch-policy` job (warn-only, ran only on direct `push` to `main`) was removed in #506-followup because branch protection makes it dead code: with `enforce_admins = true`, direct push is rejected before any workflow runs.
-6. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
+6. **`.github/workflows/ci.yml::branch-policy`** (CI job, `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`) — **defense-in-depth audit signal**, NOT a hard gate. With branch protection on, direct push to `main` is rejected at the server before this job runs, so it normally never fires. But if branch protection is ever weakened (admin API toggle, repo transfer, manual emergency bypass), this job records the bypass attempt as a `::warning::` in the Actions history so the violation is visible to anyone watching the log. Warn-only by design — the hard block lives in branch protection (item 5); this job's job is to leave an audit trail if that ever fails.
+7. **`tests/test_worktree_guard.py`** + **`tests/test_git_workflow.py`** (regression) — on every CI run, asserts:
    - All non-main branches match `<type>/<slug>` format
    - No `TODO` / `wip` / `tmp` slugs in the last 30 commits' branch names
    - Recent merged PR titles follow Conventional Commits
@@ -134,7 +134,7 @@ verification requirements to a spawned subagent.
    - `task-detector.sh` was removed (PR-1) — early-warning advisory duplicated the worktree rule that worktree-guard.sh enforces as a hard block
    - `session-start-check.sh` nudges when started in the main checkout, stays silent in worktrees, stays silent on missing `cwd`
    - `hooks.json` wires the remaining hooks into the correct event matchers
-7. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
+8. **PreToolUse `stop-verify`** (existing) — at session end, runs the regression test to catch any rule violations before allowing the session to stop.
 
 ## Out of scope (intentionally not enforced)
 
