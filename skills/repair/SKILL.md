@@ -19,7 +19,7 @@ disable-model-invocation: false
 ## 8 steps
 
 1. Read golden_set
-2. LLM as Judge (4-axis score)
+2. LLM as Judge (per-dim rubric — see `lib.eval_runner.DIM_AXES`; not a single 4-axis score)
 3. Score failures + root cause
 4. Invoke Specialized Fixer (9 categories)
 5. Fix candidate → re-evaluate (loop max 3)

@@ -259,6 +259,33 @@ class TestRunEval(unittest.TestCase):
         with self.assertRaises(ValueError):
             eval_runner.run_eval(self.root, dry_run=True, dim="bogus")
 
+    def test_no_fixtures_dim_returns_no_fixtures_verdict(self):
+        # P3b: --dim naming a dim with zero `eval/cases/<dim>/` fixtures
+        # must NOT render as a clean "0 cases" pass; must instead return
+        # a single NO_FIXTURES result.
+        report = eval_runner.run_eval(self.root, dry_run=True, dim="harness")
+        self.assertEqual(report["summary"]["NO_FIXTURES"], 1)
+        self.assertEqual(report["summary"]["OK"], 0)
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["results"][0]["verdict"], "NO_FIXTURES")
+        self.assertEqual(report["results"][0]["dim"], "harness")
+
+    def test_no_fixtures_with_empty_case_dir(self):
+        (self.root / "eval" / "cases" / "os").mkdir(parents=True)
+        # No *.json inside, just the dir.
+        report = eval_runner.run_eval(self.root, dry_run=True, dim="os")
+        self.assertEqual(report["summary"]["NO_FIXTURES"], 1)
+
+    def test_no_dim_filter_never_triggers_no_fixtures(self):
+        # Default (no --dim) run must NOT substitute NO_FIXTURES for dims
+        # with no fixtures — those dims are simply absent from results,
+        # exactly as before.
+        _seed_case(self.root, "review", "review-01", "x", {"verdict": "OK"})
+        _seed_transcript(self.root, "review", "review-01", {"verdict": "Approve"})
+        report = eval_runner.run_eval(self.root, dry_run=True)
+        self.assertEqual(report["summary"]["NO_FIXTURES"], 0)
+        self.assertGreater(len(report["results"]), 0)
+
     def test_missing_transcript_marked_skipped(self):
         _seed_case(self.root, "review", "review-01", "x", {"verdict": "OK"})
         # No transcript seeded.
@@ -336,6 +363,104 @@ class TestRenderPerCase(unittest.TestCase):
         self.assertIn("`case-1`", out)
         self.assertIn("dim=review", out)
         self.assertIn("precision=9.0", out)
+
+    def test_error_field_surfaced_when_present(self):
+        # P4: judge-infra failure must read differently from a genuine
+        # behavior regression — both are ROT with score=0, but only the
+        # infra one carries an `error` field.
+        results = [
+            {"verdict": "ROT", "case_id": "case-2", "dim": "review",
+             "score": 0.0, "scores": {}, "error": "connection refused"},
+        ]
+        out = eval_runner._render_per_case(results)
+        self.assertIn("error=connection refused", out)
+
+    def test_no_error_suffix_when_error_absent(self):
+        results = [
+            {"verdict": "OK", "case_id": "case-3", "dim": "review",
+             "score": 9.0, "scores": {}},
+        ]
+        out = eval_runner._render_per_case(results)
+        self.assertNotIn("error=", out)
+
+
+class TestInfraFailureBanner(unittest.TestCase):
+    """P4 (eval-loop runtime hardening): a run whose cases are mostly
+    ROT-with-error is far more likely to be a judge-infra failure than
+    a real behavior regression. The banner prevents misdiagnosing the run.
+    """
+
+    def _rot_with_error(self, n: int) -> list:
+        return [
+            {"verdict": "ROT", "case_id": f"c-{i}", "dim": "review",
+             "score": 0.0, "scores": {}, "error": "boom"}
+            for i in range(n)
+        ]
+
+    def test_banner_emitted_when_all_cases_rot_with_error(self):
+        results = self._rot_with_error(12)
+        banner = eval_runner._infra_failure_banner(results)
+        self.assertIn("INFRA_FAILURE", banner)
+        self.assertIn("12/12", banner)
+
+    def test_no_banner_when_ratio_under_threshold(self):
+        results = self._rot_with_error(2) + [
+            {"verdict": "OK", "case_id": "ok-1", "dim": "review",
+             "score": 9.0, "scores": {}},
+            {"verdict": "OK", "case_id": "ok-2", "dim": "review",
+             "score": 9.0, "scores": {}},
+        ]
+        self.assertEqual(eval_runner._infra_failure_banner(results), "")
+
+    def test_no_banner_when_rot_has_no_error(self):
+        results = [
+            {"verdict": "ROT", "case_id": f"c-{i}", "dim": "review",
+             "score": 0.0, "scores": {}}
+            for i in range(12)
+        ]
+        self.assertEqual(eval_runner._infra_failure_banner(results), "")
+
+    def test_no_banner_on_empty_results(self):
+        self.assertEqual(eval_runner._infra_failure_banner([]), "")
+
+    def test_write_report_includes_banner_section(self):
+        results = self._rot_with_error(5)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = eval_runner.write_report(root, results, {"provider": "minimax"})
+            body = path.read_text(encoding="utf-8")
+            self.assertIn("INFRA_FAILURE", body)
+
+    def test_write_report_omits_banner_when_clean(self):
+        results = [
+            {"verdict": "OK", "case_id": "ok-1", "dim": "review",
+             "score": 9.0, "scores": {}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = eval_runner.write_report(root, results, {"provider": "minimax"})
+            body = path.read_text(encoding="utf-8")
+            self.assertNotIn("INFRA_FAILURE", body)
+
+
+class TestDimHasCases(unittest.TestCase):
+    """P3(b): cheap existence check used by `run_eval` to short-circuit."""
+
+    def test_false_when_dim_dir_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(eval_runner._dim_has_cases(Path(tmp), "harness"))
+
+    def test_false_when_dim_dir_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "eval" / "cases" / "os").mkdir(parents=True)
+            self.assertFalse(eval_runner._dim_has_cases(Path(tmp), "os"))
+
+    def test_true_when_at_least_one_case_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "eval" / "cases" / "review").mkdir(parents=True)
+            (root / "eval" / "cases" / "review" / "01.json").write_text("{}")
+            self.assertTrue(eval_runner._dim_has_cases(root, "review"))
 
 
 class TestWriteReportDispatcher(unittest.TestCase):
@@ -553,7 +678,7 @@ class TestReportDictsPreserved(unittest.TestCase):
                          {"results", "config", "summary"})
         self.assertEqual(
             set(report["summary"].keys()),
-            {"OK", "DRIFT_WARNING", "ROT", "SKIPPED"},
+            {"OK", "DRIFT_WARNING", "ROT", "SKIPPED", "NO_FIXTURES"},
         )
 
     def test_run_session_dim_keys_locked(self):
