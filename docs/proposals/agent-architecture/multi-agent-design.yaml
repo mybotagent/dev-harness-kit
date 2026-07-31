@@ -1,0 +1,212 @@
+title: Which subagent(s) dev-harness-kit needs, and the orchestration contract
+status: draft
+date: 2026-07-30
+tags: [agents, orchestration, multi-agent, worktree]
+sections:
+  - title: Problem
+    body: |
+      The `.claude/agents/` and `.codex/agents/` directories now hold the
+      repo's project-specific subagent definitions.
+      Every custom agent available in this repo today —
+      `backend-architect`, `frontend-developer`, `database-admin`,
+      `devops-troubleshooter`, `knowledge-manager` — is a **global**
+      persona for web-app domains, none of which match what this repo
+      actually does (author skills, hooks, and CLAUDE.md for a Claude
+      Code / Codex harness).
+
+      This proposal answers three questions in order: (1) what test
+      decides whether a task deserves a dedicated subagent at all,
+      (2) which candidates survive that test against real evidence from
+      this repo's own session logs, and (3) what the hand-off contract
+      between the orchestrator and any subagent should look like.
+
+  - title: Decision gate
+    body: |
+      A candidate only earns a project agent file if it clears
+      all three checks below, in order. The first two encode "don't
+      build a subagent when a skill or a single Task call already
+      solves it" — the same discipline Anthropic states directly:
+      "optimizing single LLM calls... is usually enough," and agentic
+      complexity is justified only when the simpler approach
+      demonstrably underperforms
+      [src:https://www.anthropic.com/engineering/building-effective-agents;ts:2026-07-30;type:primary].
+
+      ```
+      1. Is this solvable by a skill or a deterministic script?
+           yes -> reject, use the skill
+      2. Does it need judgment applied to N independent targets,
+         in parallel, not just one?
+           N = 1 -> reject, a plain Task call is enough
+      3. Is there corpus evidence from logs/claude-code/*.jsonl,
+         not just a plausible-sounding argument?
+           no evidence -> reject until evidenced
+      all three pass -> build it
+      ```
+
+      Anthropic's own bar for when orchestrator-workers beats a single
+      pass — "subtasks cannot be pre-defined," i.e. the decomposition
+      itself needs judgment
+      [src:https://www.anthropic.com/engineering/building-effective-agents;ts:2026-07-30;type:primary]
+      — is check 2 above, restated for this repo.
+
+  - title: Candidates run through the gate
+    body: |
+      Evidence source: a `log-pattern-miner`-style corpus scan across
+      167 unique sessions (deduped by `sessionId`) in
+      `logs/claude-code/*.jsonl`, using `tools/token_efficiency_analyzer.py`
+      plus targeted `jq`/Python scans.
+
+      | Candidate | Verdict | Evidence |
+      |---|---|---|
+      | `skill-auditor` | Rejected | Premise assumed parallel `.claude/skills` vs `.codex/skills` trees per skill; that structure does not exist in this repo (`find . -iname ".codex/skills"` returns nothing). Only 1 of 167 sessions ever touched anything matching the assumed pattern. |
+      | `session-cost-reviewer` | Rejected | The exact warning it would pre-empt, `MODEL_OVERSPEC`, fired 0 times across all 167 scored sessions. No target to pre-empt. |
+      | `worktree-janitor` | Confirmed | 38/160 sessions (24%) manually ran `git worktree remove` or `git worktree prune` via Bash. The analyzer's own classifier already computes 56/234 worktrees (24%) as stale (`merged` + `gone`) but nothing acts on the classification — it only reports. `.worktrees/` currently holds 177+ live entries. No existing skill name matches "worktree" (`grep -rli worktree .claude/skills` → empty). |
+      | `log-pattern-miner` | Self-evidenced, not independently stress-tested | This is the exact tool that produced the row above — its own output is the proof of concept, but it has not yet been run against its own necessity claim the way it validated the other three rows. |
+
+  - title: Recommended build — worktree-janitor
+    body: |
+      ```yaml
+      name: worktree-janitor
+      description: |
+        PROACTIVELY audits .worktrees/* against merged/closed branches and
+        uncommitted state. Reports removal candidates — never deletes.
+      tools: Read, Grep, Bash   # git/gh read-only; no Write/Edit
+      model: sonnet
+      ```
+
+      **Dispatch envelope** (composed per batch of worktrees, fanned out
+      in parallel — one dispatch per batch, not per worktree, to keep
+      the (N+1)x Supervisor-pattern cost bounded):
+
+      | Field | Value |
+      |---|---|
+      | `goal` | Classify these worktrees as safe-to-remove / needs-human-check, with a one-line reason each |
+      | `scope` | the assigned worktree paths only; read-only — no `git worktree remove` |
+      | `context` | orchestrator already knows: N tracked worktrees total, and which ones the analyzer pre-classified `merged`/`gone` |
+      | `budget` | max 3 tool-calls per worktree (status check + branch-merge check + optional log tail) |
+      | `mode` | read-only |
+
+      **Report envelope**: `status` (success/partial/failed), `evidence`
+      (quoted `git`/`gh` output, capped near 1,000-2,000 tokens per the
+      isolation mechanism Anthropic measured —
+      a subagent explores extensively internally but returns only a
+      condensed summary
+      [src:https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents;ts:2026-07-30;type:primary]),
+      `changed` (always `[]` — read-only), and `next_actions` — a
+      **list**, one entry per worktree in the batch (plural so a
+      mixed-batch result is representable in one report — PR #494
+      review R1). Each entry is either the exact `git worktree remove
+      <path>` command for a human to run, or `"needs check: <reason>"`.
+
+  - title: Orchestration flow
+    body: |
+      Star topology only — orchestrator to each subagent, never
+      subagent to subagent. This is the Supervisor + Fan-Out shape from
+      the 2026 pattern survey, chosen specifically because it has "the
+      widest native framework support... and the best-understood
+      failure modes"
+      [src:https://www.digitalapplied.com/blog/multi-agent-orchestration-5-patterns-that-work;ts:2026-07-30;type:secondary],
+      and because the star shape structurally avoids the loop-style
+      failures (arbitration loops, coordination thrashing) that Debate
+      and Swarm patterns need explicit guards against.
+
+      ```
+      1. Orchestrator partitions the worktree set into K batches.
+      2. All K dispatch envelopes are issued in ONE message
+         (true parallelism — sequential Agent calls would serialize).
+      3. Orchestrator's turn ends / continues other work. No polling.
+      4. Each worktree-janitor instance runs its own tool calls,
+         isolated context, and emits a report envelope on stop.
+      5. The harness fires one task-notification event per stop.
+         When several land close together, batch them chronologically.
+      6. Orchestrator merges the K reports into one removal-candidate
+         list and presents it to the human.
+      7. The agent never runs `git worktree remove` itself — every
+         report's `next_actions` entries are commands for a human to run.
+      ```
+
+  - title: Explicitly not building
+    body: |
+      - **Swarm** (peer agents, shared memory, dynamic spawning) — no
+        task in this repo needs agent-to-agent coordination rather than
+        orchestrator-to-agent; adopting it imports "coordination
+        thrashing" risk for zero measured benefit.
+      - **Debate** (same prompt to N agents, judge arbitrates) — useful
+        when ~2.5x cost buys multi-perspective validation; this repo's
+        `/dev-kit:review` fan-out (parallel per-dimension experts plus a
+        verifier pass) already covers that need without a generic Debate
+        primitive.
+      - **Phase-based personas** (a generic ASK / BUILD / REFINE roster)
+        — considered and rejected: this repo's `Plan -> Build -> Review
+        -> Ship` skill pipeline, backed by hooks (`tdd-guard`,
+        `stop-verify`), already deterministically enforces that same
+        three-stage discipline. A phase-based subagent roster would
+        duplicate it while losing the domain judgment
+        (`skill-authoring.md`'s L6/L7 gate, worktree merge heuristics)
+        that made `worktree-janitor` pass the decision gate above.
+      - **`skill-auditor`, `session-cost-reviewer`** — rejected per the
+        candidates table; recorded here so they are not re-proposed
+        without new corpus evidence.
+      - **Memory-management / audit-management subagent** — proposed
+        during design discussion as "a subagent to manage context
+        effectively." Fails check 2 structurally, not for lack of a
+        real pain point: managing context within one ongoing session
+        is a single-target task (there is only one conversation to
+        compact), so there is nothing to fan out across, and a
+        subagent's entire value proposition here — parallel, isolated,
+        async hand-off — does not apply. The closest real evidence,
+        `HEAVY_CONTEXT` firing on 127/167 sessions, points at the
+        orchestrator not following `session-hygiene.md` rule 2
+        ("cartography, not re-reads") closely enough — a process fix,
+        not something a spawned agent can parallelize its way out of.
+        Reframed as a *batch* audit across many past sessions it would
+        clear check 2, but then fails check 1: `/dev-kit:token-analyzer`
+        already is that skill.
+
+  - title: Follow-up idea — context hygiene as a hook, not a subagent
+    body: |
+      If the underlying concern (127/167 sessions hitting
+      `HEAVY_CONTEXT`) is worth acting on proactively rather than only
+      in `/dev-kit:token-analyzer`'s after-the-fact report, the shape
+      that fits this repo's existing conventions is a **hook**, not an
+      agent — `session-hygiene.md` rule 4 already prescribes "spawn a
+      sub-agent for noisy exploration," but the detection itself is
+      deterministic (the same rule token_efficiency_analyzer.py already
+      encodes), which is exactly what a hook should own instead of an
+      LLM judgment call.
+
+      Sketch, mirroring the existing `session-start-check.sh` gentle-nudge
+      pattern (never blocks, only informs):
+
+      - **Trigger**: a turn-count / tool-call-count threshold, or a
+        `PreCompact` hook, firing the same `HEAVY_CONTEXT` check
+        `tools/token_efficiency_analyzer.py` already runs post-hoc.
+      - **Action**: emit an `additionalContext` nudge pointing at the
+        specific large-file re-read or repeated-message pattern
+        detected — not a generic "context is large" warning.
+      - **Why a hook, not a subagent**: no N to parallelize across;
+        the check is deterministic; this is check 1 of the decision
+        gate (skill/script-solvable) failing the same way
+        `skill-auditor` did, just for a different reason.
+
+      Status: idea only. Needs its own scoping pass (exact threshold,
+      false-positive rate against real sessions) before it earns a
+      place in `hooks/` — not bundled into this proposal's "Next
+      steps" so `worktree-janitor` isn't blocked on it.
+
+  - title: Next steps
+    body: |
+      1. Author the Claude Code definition at
+         `.claude/agents/worktree-janitor.md` and the Codex definition at
+         `.codex/agents/worktree-janitor.toml` from the spec in
+         "Recommended build" above.
+      2. Run a first audit pass against the current `.worktrees/`
+         directory and confirm the report envelope's `evidence` field
+         stays within the ~1,000-2,000 token target.
+      3. Only after that pass produces a clean, human-actionable
+         removal list should `log-pattern-miner` be promoted from
+         "self-evidenced" to "confirmed" — by running the same corpus
+         methodology against its own necessity claim.
+
+      Hand-off: `/dev-kit:plan` -> `/dev-kit:build` once this proposal's
+      `status:` moves to `accepted`.

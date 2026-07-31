@@ -554,6 +554,107 @@ def worktree_from_path(path: Path | str | None) -> str:
     return "(main)"
 
 
+def _branch_name_for_porcelain_path(porcelain: str, target: Path) -> str:
+    """Return the ``refs/heads/<name>`` of the worktree whose
+    ``worktree <path>`` line matches ``target``.
+
+    ``git worktree list --porcelain`` emits one blank-line-separated
+    record per worktree; each record begins with ``worktree <abs path>``
+    and contains either ``branch refs/heads/<name>`` or ``detached``.
+    Scanning the whole output for the first ``branch `` line returns
+    the main checkout's branch for every entry (Issue #494, PR review).
+    Walk block-by-block and return only the branch of the block whose
+    ``worktree`` line matches ``target``.
+    """
+    target_str = str(target)
+    current_path: str | None = None
+    current_branch: str | None = None
+    for line in (porcelain or "").splitlines():
+        if not line:
+            # Block boundary — flush whatever we accumulated for the
+            # current block before advancing.
+            if current_path == target_str and current_branch:
+                return current_branch
+            current_path = None
+            current_branch = None
+            continue
+        if line.startswith("worktree "):
+            current_path = line.removeprefix("worktree ").strip()
+        elif line.startswith("branch "):
+            current_branch = line.removeprefix("branch refs/heads/").strip()
+    # Final block (porcelain may omit the trailing blank line).
+    if current_path == target_str and current_branch:
+        return current_branch
+    return ""
+
+
+def probe_working_tree_clean(
+    wt_path: Path,
+    *,
+    git_runner=subprocess.run,
+    timeout: int = 5,
+) -> dict:
+    """Inspect the worktree's working tree for the
+    uncommitted-change safety check.
+
+    Reviewer finding on PR #494 (🟠 major): ``classify_worktree_dir``
+    never inspects working-tree status, so a ``merged``/``fresh``
+    worktree with active local edits is misclassified relative to the
+    agent's hard "uncommitted work is always needs-human-check" rule.
+    This helper is opt-in — callers (e.g. worktree-janitor's
+    orchestrator) pre-flight each batch before dispatch so the agent's
+    hard constraint has the data it needs.
+
+    Returns:
+      - ``working_tree_clean`` (bool | None): True iff
+        ``git status --porcelain`` is empty; None when the probe
+        failed (worktree gone, no HEAD, timeout).
+      - ``uncommitted_count`` (int): number of porcelain-status lines
+        (excluding untracked ``?? `` entries).
+      - ``untracked_count`` (int): number of ``?? `` porcelain lines.
+      - ``porcelain`` (str): raw output capped at 4000 chars to bound
+        the response if a hostile tree suddenly has tens of thousands
+        of untracked files.
+
+    Key name is ``working_tree_clean`` (NOT just ``clean``) so the
+    orchestrator that hands this dict to the ``worktree-janitor``
+    subagent can merge ``classify_worktree_dir(...)`` output and
+    this helper's output into one ``context`` payload without a
+    remap step. PR #494 review M-1 (major): the agent spec reads
+    ``context.working_tree_clean`` and would ``KeyError`` on a
+    naive merge.
+
+    Never raises — every git call is wrapped and falls back to
+    ``{working_tree_clean: None}`` on error.
+    """
+    empty = {
+        "working_tree_clean": None,
+        "uncommitted_count": 0,
+        "untracked_count": 0,
+        "porcelain": "",
+    }
+    try:
+        proc = git_runner(
+            ["git", "-C", str(wt_path), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except Exception:
+        return dict(empty)
+    if proc.returncode != 0:
+        return dict(empty)
+    raw = proc.stdout or ""
+    porcelain = raw[:4000]
+    lines = [ln for ln in raw.splitlines() if ln]
+    untracked = sum(1 for ln in lines if ln.startswith("?? "))
+    uncommitted = len(lines) - untracked
+    return {
+        "working_tree_clean": uncommitted == 0 and untracked == 0,
+        "uncommitted_count": uncommitted,
+        "untracked_count": untracked,
+        "porcelain": porcelain,
+    }
+
+
 def classify_worktree_dir(
     wt_path: Path,
     repo_root: Path,
@@ -655,12 +756,11 @@ def classify_worktree_dir(
 
     # Derive branch_name from the worktree list porcelain (the
     # ``branch refs/heads/<name>`` line). Empty when the dir is gone.
-    branch_name = ""
-    if is_listed and porcelain_proc.stdout:
-        for line in porcelain_proc.stdout.splitlines():
-            if line.startswith("branch "):
-                branch_name = line.removeprefix("branch refs/heads/").strip()
-                break
+    # Issue #494 (PR review): the previous global scan always returned
+    # the main checkout's branch — a per-block lookup is required.
+    branch_name = _branch_name_for_porcelain_path(
+        porcelain_proc.stdout if is_listed else "", wt_path,
+    )
 
     # Compute state from the probes. ``unknown`` only when HEAD could
     # not be read at all (everything else is a valid classification).

@@ -467,9 +467,42 @@ def render_body(body: str) -> str:
         if re.match(r"^[-*]\s+", stripped):
             j = i
             items: List[str] = []
-            while j < n and re.match(r"^[-*]\s+", lines[j].strip()):
-                items.append(re.sub(r"^[-*]\s+", "", lines[j].strip()))
+            current: List[str] | None = None
+
+            def _flush_current() -> None:
+                nonlocal current
+                if current is not None:
+                    items.append(" ".join(current).strip())
+                    current = None
+
+            while j < n:
+                line_j = lines[j]
+                stripped_j = line_j.strip()
+                if not stripped_j:
+                    # A blank line ENDS this list — start the new list
+                    # or paragraph collector from the next iteration.
+                    # (Markdown allows lazy continuation across one
+                    # blank line, but that requires a paragraph block
+                    # detector inside the indented context; the bug
+                    # this fixes was specifically when the YAML block
+                    # scalar wraps bullets without intervening blanks,
+                    # so "blank = end" is enough.)
+                    break
+                if re.match(r"^[-*]\s+", stripped_j):
+                    _flush_current()
+                    current = [re.sub(r"^[-*]\s+", "", stripped_j)]
+                elif line_j.startswith((" ", "\t")):
+                    # Indented continuation of the previous item. Append
+                    # the stripped text so the bullet's text becomes
+                    # `<first line> <continuation>` (PR #494 review 🟡 #5).
+                    if current is None:
+                        break  # defensive
+                    current.append(stripped_j)
+                else:
+                    # Non-bullet, non-indented line: end of this list.
+                    break
                 j += 1
+            _flush_current()
             out.append(_render_list(items, ordered=False))
             i = j
             continue
@@ -477,10 +510,31 @@ def render_body(body: str) -> str:
         # Ordered list
         if re.match(r"^\d+\.\s+", stripped):
             j = i
-            items = []
-            while j < n and re.match(r"^\d+\.\s+", lines[j].strip()):
-                items.append(re.sub(r"^\d+\.\s+", "", lines[j].strip()))
+            items: List[str] = []
+            current: List[str] | None = None
+
+            def _flush_current_ordered() -> None:
+                nonlocal current
+                if current is not None:
+                    items.append(" ".join(current).strip())
+                    current = None
+
+            while j < n:
+                line_j = lines[j]
+                stripped_j = line_j.strip()
+                if not stripped_j:
+                    break
+                if re.match(r"^\d+\.\s+", stripped_j):
+                    _flush_current_ordered()
+                    current = [re.sub(r"^\d+\.\s+", "", stripped_j)]
+                elif line_j.startswith((" ", "\t")):
+                    if current is None:
+                        break
+                    current.append(stripped_j)
+                else:
+                    break
                 j += 1
+            _flush_current_ordered()
             out.append(_render_list(items, ordered=True))
             i = j
             continue
