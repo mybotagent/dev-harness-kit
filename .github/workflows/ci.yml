@@ -12,6 +12,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  # branch-policy is intentionally KEPT as a defense-in-depth audit signal
+  # on top of GitHub branch protection. With `enforce_admins = true` on
+  # main, this job should normally NEVER fire — direct push is rejected
+  # at the server before any workflow runs. But if branch protection is
+  # ever weakened (admin API toggle, repo transfer, emergency bypass),
+  # this ::warning:: step records the bypass attempt in the workflow log
+  # so it's visible in the Actions history. Warn-only by design: it logs
+  # the violation, never hard-fails.
   branch-policy:
     name: branch-policy
     runs-on: ubuntu-latest
@@ -32,7 +40,8 @@ jobs:
           echo "    3. Push:    git push -u origin feat/<name>"
           echo "    4. PR:      gh pr create --base main"
           echo ""
-          echo "  This is logged but does NOT hard-fail (emergency bypass allowed)."
+          echo "  This is logged but does NOT hard-fail (audit signal only;"
+          echo "  the real hard block lives in GitHub branch protection)."
 
   test:
     name: test (python 3.12)
