@@ -63,7 +63,7 @@ class TestRealCasesExist(unittest.TestCase):
         if not cases_dir.exists():
             self.skipTest("cases dir not generated")
         dims = {p.parent.name for p in cases_dir.rglob("*.json")}
-        self.assertEqual(dims, {"review", "security", "plan"})
+        self.assertEqual(dims, {"review", "security", "plan", "agent-behavior"})
 
     def test_real_transcripts_exist(self):
         root = Path(__file__).parent.parent
@@ -84,6 +84,12 @@ class TestRealCasesExist(unittest.TestCase):
             self.skipTest("cases or transcripts dir missing")
         for case_path in cases_dir.rglob("*.json"):
             case = json.loads(case_path.read_text())
+            # Worktree-based cases (agent-behavior) carry their fixture
+            # under worktree_path, not transcripts. Skip them here; the
+            # worktree-path contract is checked in
+            # tests/test_meta_eval.py::test_run_meta_eval_*.
+            if "worktree_path" in case and "input_inline" not in case:
+                continue
             t_path = t_dir / case["dim"] / f"{case['case_id']}.json"
             self.assertTrue(
                 t_path.exists(),
