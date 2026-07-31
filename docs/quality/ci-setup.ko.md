@@ -13,14 +13,18 @@ validate/test/auto-fix, 심각도 게이트 리뷰라는 같은 CI 형태를
 `/dev-kit:ci-setup`이 `.dev-kit/ci-config.json`을 쓴 후, 다음을 순서대로
 수행한다:
 
-1. **GitHub 시크릿 추가.** 리뷰 + 보안 워크플로는 LLM 자격 증명이
-   필요하다. 로컬 터미널에서 `gh secret set`을 사용한다:
+1. **GitHub 시크릿과 프로바이더 변수를 추가한다.** 리뷰 + 보안
+   워크플로는 LLM 자격 증명 *그리고* 프로바이더 선택자가 필요하다.
+   로컬 터미널에서:
    ```bash
-   gh secret set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions    # sh-ai-x/dev-harness-kit로 범위 지정된 PAT
-   gh secret set MINIMAX_API_KEY --repo <owner>/<repo>                        # (또는 ANTHROPIC_API_KEY)
+   gh secret   set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions   # sh-ai-x/dev-harness-kit로 범위 지정된 PAT
+   gh secret   set MINIMAX_API_KEY       --repo <owner>/<repo>                # 또는 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+   gh variable set CI_REVIEW_PROVIDER    --repo <owner>/<repo> --body minimax
    ```
-   첫 번째 시크릿은 `sh-ai-x/dev-harness-kit`가 비공개일 때만
-   필요하다.
+   `DEV_KIT_GITHUB_TOKEN`은 `sh-ai-x/dev-harness-kit`가 비공개일 때만
+   필요하다. 프로바이더 시크릿 + `CI_REVIEW_PROVIDER` 짝 맞추기는 아래
+   [GitHub 변수 — 프로바이더 선택](#github-변수--프로바이더-선택) 절에서
+   다룬다.
 2. **Ruff를 설치하고 Git 훅을 활성화**해서 스테이징된 Python 파일이
    린트되고 `main`으로의 직접 푸시가 클라이언트 측에서 차단되게
    한다:
@@ -38,6 +42,47 @@ validate/test/auto-fix, 심각도 게이트 리뷰라는 같은 CI 형태를
 이 체크리스트는 `print_checklist=True` kwarg와 함께 호출되면
 `lib/ci_setup.py:POST_INSTALL_CHECKLIST`를 통해 스킬이 자동으로
 출력한다; Phase 4의 단계별 설치기는 설치가 성공한 후 이를 출력한다.
+
+## GitHub 변수 — 프로바이더 선택
+
+리뷰 + 보안 워크플로는 `vars.CI_REVIEW_PROVIDER`를 읽어 호출할 LLM
+프로바이더를 선택한다. 변수 값은 반드시 대응하는 `*_API_KEY` 시크릿과
+짝이 맞아야 한다 — 불일치하면 `review.yml`이 `Error: provider secret
+missing`으로 1을 반환하며 실패한다.
+
+`/dev-kit:ci-setup` 직후 설정한다:
+
+```bash
+gh variable set CI_REVIEW_PROVIDER --repo <owner>/<repo> --body minimax    # 또는 anthropic | deepseek
+```
+
+| `CI_REVIEW_PROVIDER` | 워크플로가 읽는 시크릿 | 선택 시점 |
+|---|---|---|
+| `minimax` (킷 기본) | `${{ secrets.MINIMAX_API_KEY }}` | 킷 개발과 플릿 롤아웃의 기본값 |
+| `anthropic` | `${{ secrets.ANTHROPIC_API_KEY }}` | 리뷰어가 Claude(Opus / Sonnet)여야 할 때 |
+| `deepseek` | `${{ secrets.DEEPSEEK_API_KEY }}` | 큰 diff의 저비용 리뷰 |
+
+허용 목록(`minimax`, `anthropic`, `deepseek`)은
+`review.yml -> workflow_dispatch.inputs.provider.options`와
+`bin/set-provider.sh`에서 강제한다. 그 외 값은
+`Error: unsupported provider`로 워크플로를 실패시킨다.
+
+두 값 모두 검증:
+
+```bash
+gh variable list --repo <owner>/<repo> | grep CI_REVIEW_PROVIDER
+gh secret   list --repo <owner>/<repo> | grep -E '(MINIMAX|ANTHROPIC|DEEPSEEK)_API_KEY'
+```
+
+짝이 맞는 로컬 선택자는 `.env:CI_REVIEW_PROVIDER`다
+(`bin/set-provider.sh <provider>`로 관리). 로컬 측은 `.gitignore` 처리되어
+사용자별이며, GitHub 변수는 저장소별이다. `provider-divergence-check.sh`
+SessionStart 훅이 두 값이 어긋날 때 알린다.
+
+> `/dev-kit:ci-setup`의 `--setup-secrets` 플래그는 `CI_REVIEW_PROVIDER`를
+> 읽고, `required_secrets_for_provider()`로 필요한 시크릿을 열거한 뒤,
+> `gh secret set`을 호출하기 전에 각각 입력받는다. 시크릿 설정이
+> 실패해도 설치 자체는 성공한다(경고, 오류 아님).
 
 ## 언제 사용하는가
 

@@ -8,12 +8,13 @@ The `/dev-kit:ci-setup` skill installs dev-kit's reusable CI workflow templates,
 
 After `/dev-kit:ci-setup` writes `.dev-kit/ci-config.json`, do these IN ORDER:
 
-1. **Add GitHub secrets.** The review + security workflows need LLM credentials. Use `gh secret set` from your local terminal:
+1. **Add GitHub secrets + the provider variable.** The review + security workflows need LLM credentials AND a provider selector. From a local terminal:
    ```bash
-   gh secret set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions    # PAT scoped to sh-ai-x/dev-harness-kit
-   gh secret set MINIMAX_API_KEY --repo <owner>/<repo>                        # (or ANTHROPIC_API_KEY)
+   gh secret   set DEV_KIT_GITHUB_TOKEN --repo <owner>/<repo> --app actions   # PAT scoped to sh-ai-x/dev-harness-kit
+   gh secret   set MINIMAX_API_KEY       --repo <owner>/<repo>                # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+   gh variable set CI_REVIEW_PROVIDER    --repo <owner>/<repo> --body minimax
    ```
-   The first secret is required only if `sh-ai-x/dev-harness-kit` is private.
+   `DEV_KIT_GITHUB_TOKEN` is required only if `sh-ai-x/dev-harness-kit` is private. The provider secret + `CI_REVIEW_PROVIDER` pairing is covered in [GitHub variables — provider selection](#github-variables--provider-selection) below.
 2. **Install Ruff and enable the Git hooks** so staged Python files are linted and direct pushes to `main` are blocked client-side:
    ```bash
    brew install ruff                              # macOS
@@ -24,6 +25,35 @@ After `/dev-kit:ci-setup` writes `.dev-kit/ci-config.json`, do these IN ORDER:
 4. **The first PR that ADDS `review.yml`** cannot have the action validated by the severity gate until `review.yml` lands on the default branch. Merge that bootstrap PR first; the gate works on every PR after.
 
 The skill prints this checklist automatically (via `lib/ci_setup.py:POST_INSTALL_CHECKLIST`) when invoked with the `print_checklist=True` kwarg; the staged installer in Phase 4 surfaces it after a successful install.
+
+## GitHub variables — provider selection
+
+The review + security workflows read `vars.CI_REVIEW_PROVIDER` to choose which LLM provider to call. The variable's value MUST match an existing `*_API_KEY` secret — a mismatch makes `review.yml` exit 1 with `Error: provider secret missing`.
+
+Set it after `/dev-kit:ci-setup`:
+
+```bash
+gh variable set CI_REVIEW_PROVIDER --repo <owner>/<repo> --body minimax    # or: anthropic | deepseek
+```
+
+| `CI_REVIEW_PROVIDER` | Secret read by workflow | When to pick |
+|---|---|---|
+| `minimax` (kit default) | `${{ secrets.MINIMAX_API_KEY }}` | Default for kit development and fleet rollouts |
+| `anthropic` | `${{ secrets.ANTHROPIC_API_KEY }}` | Pick when the reviewer must be Claude (Opus / Sonnet) |
+| `deepseek` | `${{ secrets.DEEPSEEK_API_KEY }}` | Pick for low-cost review on large diffs |
+
+The allowlist (`minimax`, `anthropic`, `deepseek`) is enforced by `review.yml -> workflow_dispatch.inputs.provider.options` and by `bin/set-provider.sh`. Any other value fails the workflow with `Error: unsupported provider`.
+
+Verify both halves:
+
+```bash
+gh variable list --repo <owner>/<repo> | grep CI_REVIEW_PROVIDER
+gh secret   list --repo <owner>/<repo> | grep -E '(MINIMAX|ANTHROPIC|DEEPSEEK)_API_KEY'
+```
+
+The matching local selector is `.env:CI_REVIEW_PROVIDER` (managed via `bin/set-provider.sh <provider>`); the local half is gitignored and per-user, while the GitHub variable is per-repo. The `provider-divergence-check.sh` SessionStart hook nudges when the two disagree.
+
+> The `--setup-secrets` flag of `/dev-kit:ci-setup` reads `CI_REVIEW_PROVIDER`, enumerates the required secret via `required_secrets_for_provider()`, and prompts for each before calling `gh secret set`. Install still succeeds on secret-set failure (warning, not error).
 
 ## When to use it
 
