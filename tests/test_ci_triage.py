@@ -442,11 +442,15 @@ class TestCommitForFix(unittest.TestCase):
         def fake_run(cmd):
             if cmd[:2] == ["git", "log"]:
                 return "abc123def456\x1ffix: register pull_request trigger only\n"
-            if cmd[:3] == ["gh", "pr", "list"]:
-                return json.dumps([{
-                    "number": 203, "url": "https://github.com/x/y/pull/203",
+            if cmd[:2] == ["gh", "api"] and any("/commits/" in a and a.endswith("/pulls") for a in cmd):
+                # Production-shaped response: `gh api .../commits/{sha}/pulls`
+                # returns a list of {number, html_url, title}; we then jq
+                # the first element. The mocked return is what `jq` would
+                # produce AFTER the filter — a single object.
+                return json.dumps({
+                    "number": 203, "html_url": "https://github.com/x/y/pull/203",
                     "title": "fix: register pull_request trigger only",
-                }])
+                })
             raise AssertionError(f"unexpected cmd: {cmd}")
 
         with patch.object(self.mod, "_run", side_effect=fake_run):
@@ -572,7 +576,13 @@ class TestProcess(unittest.TestCase):
             self.assertEqual(case["last_process_attempt"]["fresh_failures"], 1)
             self.assertEqual(case["last_process_attempt"]["last_run_url"], "https://example/999")
 
-    def test_auto_fix_disabled_still_marks_processed_with_manual_method(self):
+    def test_auto_fix_disabled_leaves_case_open_with_manual_method(self):
+        # A manual case awaiting real resolution must NOT auto-close
+        # even when the workflow is quiet — an empty `gh run list`
+        # would otherwise yield fresh_failures == 0 and flip the
+        # case to processed despite no human having flagged it
+        # resolved. The case stays at `open` with a `last_process_attempt`
+        # note tagged "awaiting manual resolution".
         with tempfile.TemporaryDirectory() as d:
             store_path = self._seeded_store(Path(d))
             with patch.object(self.mod, "_run", side_effect=self._fake_run_clean):
@@ -580,11 +590,19 @@ class TestProcess(unittest.TestCase):
                     auto_fix=False, verify_window=10, store_path=store_path,
                 )
 
-            self.assertEqual(summary["processed"][0]["method"], "manual")
+            self.assertEqual(summary["processed"], [])
+            self.assertEqual(len(summary["still_open"]), 1)
+            self.assertEqual(summary["still_open"][0]["id"], self.case_id)
+            self.assertEqual(summary["still_open"][0]["reason"], "awaiting manual resolution")
             case = self.mod.find_case(self.mod.load_store(store_path), self.case_id)
-            self.assertEqual(case["status"], "processed")
+            self.assertEqual(case["status"], "open")
             self.assertEqual(case["resolution"]["method"], "manual")
             self.assertEqual(case["resolution"]["commands_run"], [])
+            self.assertEqual(case["last_process_attempt"]["note"], "awaiting manual resolution")
+            # Manual cases don't carry a fix_applied_at or post_fix_scan —
+            # those are reserved for cases whose fix was actually applied.
+            self.assertNotIn("fix_applied_at", case["resolution"])
+            self.assertNotIn("post_fix_scan", case)
 
     def test_already_processed_case_is_skipped_and_not_re_toggled(self):
         with tempfile.TemporaryDirectory() as d:
@@ -682,6 +700,133 @@ class TestProcess(unittest.TestCase):
             # fresh_failures is 0 (all 5 historical failures predate fix_applied_at).
             self.assertEqual(case["post_fix_scan"]["fresh_failures"], 0)
             self.assertEqual(case["post_fix_scan"]["result"], "clean")
+
+
+class TestFractionalSecondCutoff(unittest.TestCase):
+    """`_signature_present_in_recent_runs` normalizes both sides of
+    the cutoff to second precision. GitHub's `createdAt` carries
+    fractional seconds (`...38.500Z`), but `_now()` returns
+    `...38Z`. Lexicographically `.` < `Z`, so a fractional-second
+    post-fix run would be filtered OUT of `fresh_failures` if
+    compared raw."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def test_fractional_second_created_at_is_not_filtered_out(self):
+        def fake_run(cmd):
+            if cmd[:3] == ["gh", "run", "list"]:
+                return json.dumps([{
+                    "databaseId": 1, "conclusion": "failure",
+                    # Same second as fix_applied_at, but with .500
+                    "createdAt": "2026-07-31T11:16:38.500Z",
+                    "url": "https://example/1",
+                }])
+            raise AssertionError(f"unexpected cmd: {cmd}")
+
+        with patch.object(self.mod, "_run", side_effect=fake_run):
+            result = self.mod._signature_present_in_recent_runs(
+                "x.yml", since_iso="2026-07-31T11:16:38Z", verify_window=10,
+            )
+
+        self.assertEqual(result["fresh_failures"], 1,
+                         "fractional-second createdAt must not be filtered out by the second-precision cutoff")
+
+
+class TestVerifyWindowArgparseClamp(unittest.TestCase):
+    """`--verify-window` is clamped to [1, 1000]. `0` would silently
+    produce an empty `gh run list` (making every case look clean),
+    and negatives would produce a negative --limit that errors."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def _clamp(self, raw: str) -> int:
+        # _clamped_verify_window is defined inside _cli() to close over
+        # argparse; the clamp logic itself is what we test here.
+        # Use the script's CLI via subprocess to exercise the real
+        # argparse parse path.
+        import subprocess
+        proc = subprocess.run(
+            ["python3", str(LIB / "ci_triage.py"),
+             "--store", "/tmp/__nonexistent_ci_triage_store__.json",
+             "process", "--verify-window", raw],
+            capture_output=True, text=True,
+        )
+        # argparse error exits 2 with a usage line on stderr.
+        self.assertEqual(proc.returncode, 2,
+                         f"verify-window={raw!r} should be rejected at argparse, "
+                         f"got exit {proc.returncode}, stderr: {proc.stderr}")
+        self.assertIn("--verify-window", proc.stderr)
+
+    def test_zero_rejected(self):
+        self._clamp("0")
+
+    def test_negative_rejected(self):
+        self._clamp("-1")
+
+    def test_above_max_rejected(self):
+        self._clamp("1001")
+
+    def test_within_range_accepted(self):
+        # 1 and 1000 should parse cleanly. The subprocess will then
+        # proceed to process() — which fails on the missing store —
+        # but the exit code is non-2 (specifically: 1 from process()
+        # raising on the missing store, OR 0 if we mocked the run).
+        # We only care that argparse accepted the value, so we test
+        # the subprocess exit is NOT 2.
+        import subprocess
+        for raw in ("1", "1000"):
+            proc = subprocess.run(
+                ["python3", str(LIB / "ci_triage.py"),
+                 "--store", "/tmp/__nonexistent_ci_triage_store__.json",
+                 "process", "--verify-window", raw],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(proc.returncode, 2,
+                                f"verify-window={raw!r} should be accepted, got stderr: {proc.stderr}")
+
+
+class TestDeadCodeRemoved(unittest.TestCase):
+    """`_verify_scan` (dead) and `_workflow_path` (no-op) were
+    removed after review. Their absence is part of the contract —
+    a future refactor that re-adds them is going off-script."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def test_no_verify_scan_helper(self):
+        self.assertFalse(hasattr(self.mod, "_verify_scan"),
+                         "_verify_scan was dead code; process() never called it")
+
+    def test_no_workflow_path_helper(self):
+        self.assertFalse(hasattr(self.mod, "_workflow_path"),
+                         "_workflow_path was a no-op pass-through; inlined at call site")
+
+
+class TestResolutionRecordMethodHint(unittest.TestCase):
+    """The `method_hint` parameter was redundant — `_resolution_record`
+    re-derived it from the proposal via `_workflow_id_from_proposal`
+    internally. Caller passed a value that was never trusted."""
+
+    def setUp(self):
+        sys.path.insert(0, str(LIB))
+        import ci_triage
+        self.mod = ci_triage
+
+    def test_resolution_record_takes_no_method_hint_kwarg(self):
+        import inspect
+        sig = inspect.signature(self.mod._resolution_record)
+        self.assertEqual(len(sig.parameters), 1,  # self not counted in py3.13, but here it's module-level func
+                         "_resolution_record now takes only `case` — no method_hint")
+        # The single parameter should be `case`
+        self.assertIn("case", sig.parameters)
 
 
 if __name__ == "__main__":
