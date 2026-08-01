@@ -203,10 +203,11 @@ def test_communication_stub_returns_three_when_no_llm(golden_worktree: Path) -> 
 
 
 def test_robustness_stub_returns_three(golden_worktree: Path) -> None:
-    """D6 stub returns 3 with `phase=0` evidence (Phase 0 contract)."""
+    """D6 returns 3 when no_scenarios=True (Phase 1 contract)."""
     from lib.behavior_scorers.robustness import score
 
-    ds = score(golden_worktree, Context(no_llm=True))
+    ds = score(golden_worktree, Context(no_llm=True, no_scenarios=True))
     assert ds.dim == "D6_robustness"
     assert ds.value == 3
-    assert ds.evidence["phase"] == 0
+    assert ds.evidence["phase"] == 1
+    assert ds.evidence["skipped"] is True

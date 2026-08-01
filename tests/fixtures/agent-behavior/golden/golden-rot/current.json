@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "case_id": "golden-rot",
+  "started_at": "2026-07-31T11:00:00Z",
+  "ended_at": "2026-07-31T11:05:00Z",
+  "harness_version": "0.3.175",
+  "agent": "claude-code-4.8",
+  "worktree_branch": "feat/login-validation",
+  "worktree_path": ".worktrees/golden-rot",
+  "steps": [
+    {"ts": "2026-07-31T11:00:00Z", "skill": "plan", "phase": "interview", "input_tokens": 300, "output_tokens": 150, "latency_ms": 1000, "retries": 0, "exit_code": 0},
+    {"ts": "2026-07-31T11:00:30Z", "skill": "build", "phase": "tdd-red", "input_tokens": 240, "output_tokens": 120, "latency_ms": 800, "retries": 1, "exit_code": 1},
+    {"ts": "2026-07-31T11:01:00Z", "skill": "build", "phase": "tdd-red", "input_tokens": 240, "output_tokens": 120, "latency_ms": 800, "retries": 1, "exit_code": 1},
+    {"ts": "2026-07-31T11:01:30Z", "skill": "build", "phase": "tdd-green", "input_tokens": 360, "output_tokens": 180, "latency_ms": 1200, "retries": 1, "exit_code": 0},
+    {"ts": "2026-07-31T11:02:00Z", "skill": "build", "phase": "verify", "input_tokens": 150, "output_tokens": 90, "latency_ms": 500, "retries": 1, "exit_code": 0},
+    {"ts": "2026-07-31T11:02:30Z", "skill": "build", "phase": "fix", "input_tokens": 80, "output_tokens": 40, "latency_ms": 600, "retries": 1, "exit_code": 0}
+  ],
+  "judge_scores": [{"rubric": "agent-behavior", "verdict": "ROT", "axes": {"D1_outcome": 3, "D2_process": 3, "D3_efficiency": 2, "D4_safety": 5, "D5_communication": 4, "D6_robustness": 4, "D7_trajectory": 4}}],
+  "evidence": {}
+}

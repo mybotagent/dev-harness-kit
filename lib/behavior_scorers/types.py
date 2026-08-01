@@ -16,15 +16,18 @@ from typing import Any, Callable, Dict, Optional, Tuple
 class Context:
     """Optional dependencies passed to each scorer.
 
-    Phase 0 only uses `baseline_path` (for D3 efficiency comparison).
-    Phase 1 will add `llm_judge` (callable for LLM-based scorers).
-    Phase 2 will add `history_path` (for trend tracking).
+    Phase 0 uses `baseline_path` (for D3 efficiency comparison).
+    Phase 1 (issue #511) adds `llm_judge` (callable for LLM-based
+    scorers), `no_scenarios` (skip D6 subprocess runs), and
+    `scenario_runner` (custom D6 runner seam for tests).
     """
 
     baseline_path: Optional[Path] = None
     llm_judge: Optional[Callable[..., Dict[str, Any]]] = None
     history_path: Optional[Path] = None
     no_llm: bool = False
+    no_scenarios: bool = False
+    scenario_runner: Optional[Callable[..., Tuple[int, str]]] = None
 
     def is_deterministic_only(self) -> bool:
         """True when LLM judges should be skipped (CI gate path)."""
