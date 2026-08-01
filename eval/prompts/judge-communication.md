@@ -9,13 +9,13 @@ return a JSON object with the 5 axes below, each rated 1-5.
 
 ```
 hand_off_notes:
-{hand_off}
+${hand_off}
 
 pr_description:
-{pr_description}
+${pr_description}
 
 commit_messages:
-{commit_messages}
+${commit_messages}
 ```
 
 ## Output contract
