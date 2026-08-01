@@ -1,0 +1,99 @@
+schema_version: 1
+anchor_set: communication
+anchors:
+  - id: gold-01
+    tier: gold
+    hand_off: |
+      Implemented the D5 communication scorer in lib/behavior_scorers/communication.py and
+      added tests/test_communication.py. The scorer reads .dev-kit/hand-off/*.md, sends the
+      combined note to ctx.llm_judge with five named axes, and clamps the returned mean to
+      the 1-5 dimension range. Missing notes and judge errors return the documented neutral
+      result rather than failing the complete seven-dimension report.
+
+      Verification: python -m pytest tests/test_communication.py -q (12 passed); the full
+      suite is green. No external dependencies were added. The remaining follow-up is to
+      connect the scorer to the production eval CLI after the rubric fixture is approved.
+    rationale: "Names the files, behavior, failure handling, verification, and bounded follow-up."
+  - id: gold-02
+    tier: gold
+    hand_off: |
+      Added the worktree janitor integration to lib/worktree_janitor.py and wired it through
+      the existing maintenance command. It is report-only: merged or closed branches with
+      clean worktrees are listed as candidates, but no directory is removed automatically.
+      Uncommitted changes and active branches are explicitly excluded.
+
+      Tests cover merged, closed, active, dirty, and malformed worktree records. Run
+      python -m pytest tests/test_worktree_janitor.py tests/test_maintenance_gate.py -q to
+      reproduce the 18 passing tests. The branch is ready for review; there are no generated
+      files or configuration changes outside the requested integration.
+    rationale: "Clearly separates shipped behavior from safety exclusions and gives reproducible evidence."
+  - id: gold-03
+    tier: gold
+    hand_off: |
+      Fixed NO_FIXTURES handling in lib/eval_runner.py. A case with no fixture now emits a
+      NO_FIXTURES verdict and preserves the judge error in evidence when the judge cannot be
+      called. Existing OK, DRIFT_WARNING, ROT, and ESCALATED paths are unchanged.
+
+      I added regression coverage for an empty fixture directory and a judge exception, then
+      ran python -m pytest tests/test_eval_runner.py tests/test_eval_runner_rot_propagation.py
+      -q: 27 passed. This is intentionally limited to verdict propagation; fixture discovery
+      policy and prompt construction were not changed.
+    rationale: "States the exact defect, preserved behavior, regression tests, and scope boundary."
+  - id: silver-01
+    tier: silver
+    hand_off: |
+      Added a score aggregation helper under lib/behavior_scorers/aggregate.py and updated
+      the report renderer. It computes the weighted mean and a deterministic mean, then maps
+      the result to the usual verdicts. The behavior scorer tests pass locally.
+
+      I did not change the individual dimension scorers. Please review whether the markdown
+      table is the right presentation before wiring it into the CLI.
+    rationale: "Explains the main change and scope, but leaves some integration detail for review."
+  - id: silver-02
+    tier: silver
+    hand_off: |
+      Updated the CI setup flow to write its marker after all templates are installed. A
+      failed copy no longer leaves a marker behind. The setup tests pass, and rerunning the
+      command remains idempotent.
+
+      The change touches lib/ci_setup.py and its tests only. I did not run the complete suite
+      or inspect the generated workflow files individually.
+    rationale: "Provides useful behavior and file context, with only partial verification evidence."
+  - id: silver-03
+    tier: silver
+    hand_off: |
+      Implemented the token pricing refresh helper using the vendor pricing pages and kept
+      the existing JSON shape. The refresh test uses a mocked response and passes. Empty
+      pricing data is ignored rather than overwriting the current file.
+
+      The provider list is unchanged. A full network refresh should be done separately before
+      release because this branch was tested without network access.
+    rationale: "Communicates implementation and a caveat, but omits exact command and result count."
+  - id: silver-04
+    tier: silver
+    hand_off: |
+      Added parsing for the new review verdict format in lib/review_gate.py. Old verdicts are
+      still accepted and malformed input returns a failure result. I added parser tests and
+      ran the relevant test module successfully.
+
+      The workflow caller was not changed, so the new format still needs to be exercised in
+      CI before merge.
+    rationale: "Covers compatibility and known follow-up while remaining less specific about evidence."
+  - id: bronze-01
+    tier: bronze
+    hand_off: |
+      Changed some eval stuff and updated the tests. It should work now. There may be an issue
+      with the judge but I did not have time to check everything.
+    rationale: "Has no precise files, behavior, evidence, or actionable next step."
+  - id: bronze-02
+    tier: bronze
+    hand_off: |
+      Fixed the hook problem from earlier. I think the branch is good. Please run the usual
+      checks and merge if they pass.
+    rationale: "Uses vague references and delegates all verification without identifying the change."
+  - id: bronze-03
+    tier: bronze
+    hand_off: |
+      Added the requested feature and made a few cleanup changes along the way. Tests were
+      mostly okay locally, although one command failed for an unrelated reason.
+    rationale: "Mixes unspecified scope with ambiguous test status and no way to reproduce it."
