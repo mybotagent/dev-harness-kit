@@ -40,6 +40,7 @@ Once a case is judged, `python3 lib/ci_triage.py process [--auto-fix] [--verify-
 - **Dedup by signature, not by commit.** The store's unit of record is a failure signature; commits/runs are occurrences under it. Never write a fresh case for a signature that's already `open` or `processed`.
 - **No fabricated root cause.** `evidence` must cite the specific log line, API field, or timestamp comparison that supports the classification. If the evidence is inconclusive, say so — don't guess a cause to fill the field.
 - **Full SHA only.** Any code path that calls `gh run list --commit` must resolve to the full 40-char SHA first. A short SHA does not error — it silently returns an empty run list, which looks identical to "no CI ran for this commit."
+- **Idempotent re-runs.** `process()` preserves a prior `case["resolution"]` if present rather than unconditionally re-applying the fix. The verify scan uses the recorded `fix_applied_at` as its cutoff, so a failure that appears *after* the original fix is correctly classified as fresh and the case stays `open` with a `last_process_attempt` note. Re-running `process()` on a partially-processed case does not silently flip it to `processed` just because the wall clock advanced.
 
 ## Files
 

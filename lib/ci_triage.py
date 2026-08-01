@@ -532,7 +532,17 @@ def process(*, auto_fix: bool, verify_window: int, store_path: Path) -> dict:
 
         if auto_fix:
             try:
-                case["resolution"] = _resolution_record(case)
+                # Reuse a prior `resolution` block (with its `fix_applied_at`)
+                # if the case was previously processed. This makes `process()`
+                # idempotent on re-runs against an already-fixed case: the
+                # verify scan uses the ORIGINAL fix timestamp so a failure
+                # that appeared AFTER that fix can be detected as fresh.
+                # Without this, every `process()` call overwrites the
+                # resolution and the verify cutoff becomes `now`, which
+                # filters every historical failure as "pre-fix" and lets
+                # a still-broken case flip to `processed`.
+                if not case.get("resolution"):
+                    case["resolution"] = _resolution_record(case)
             except GitError as e:
                 case["last_process_attempt"] = {
                     "at": _now(),
