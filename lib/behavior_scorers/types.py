@@ -70,6 +70,9 @@ class BehaviorReport:
 
 # Canonical source of truth for which dims are deterministic (no LLM).
 # Kept in lockstep with the WEIGHTS dict in `__init__.py`.
+# R2 (#513): D8_reversibility + D9_side_effects are pure deterministic
+# heuristics, so they join the deterministic floor.
 DETERMINISTIC_DIMS: Tuple[str, ...] = (
     "D1_outcome", "D2_process", "D3_efficiency", "D4_safety",
+    "D8_reversibility", "D9_side_effects",
 )
