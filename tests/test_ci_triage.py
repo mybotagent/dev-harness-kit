@@ -558,8 +558,35 @@ class TestProcess(unittest.TestCase):
                 }])
             return self._fake_run_clean(cmd)
 
+        # Simulate the scenario the test is meant to exercise: a previous
+        # `process()` run already applied a fix (toggle) and recorded its
+        # `fix_applied_at`. The current run should NOT re-apply the fix
+        # (the code preserves an existing resolution); the verify scan
+        # uses the recorded `fix_applied_at` as the cutoff so the failure
+        # at 2026-07-31T20:30:00Z (after the recorded fix) is detected
+        # as a fresh failure and the case stays open.
+        prior_resolution = {
+            "method": "api-toggle",
+            "commands_run": [
+                "gh api -X PUT repos/:owner/:repo/actions/workflows/312869658/disable",
+                "gh api -X PUT repos/:owner/:repo/actions/workflows/312869658/enable",
+            ],
+            "verify_pre": {"state": "active", "updated_at": "2026-07-31T20:10:31.000+09:00"},
+            "verify_post": {"state": "active", "updated_at": "2026-07-31T20:25:00.000+09:00"},
+            "fix_applied_at": "2026-07-31T20:25:00Z",
+            "notes": "auto-applied stale workflow registration toggle",
+        }
+
         with tempfile.TemporaryDirectory() as d:
             store_path = self._seeded_store(Path(d))
+            # Pre-populate the prior resolution so the verify scan uses
+            # the recorded `fix_applied_at` rather than `_now()` from a
+            # fresh `_resolution_record()` call (which would set the
+            # cutoff to wall-clock time and filter the mock failure as
+            # historical).
+            store = self.mod.load_store(store_path)
+            store["cases"][0]["resolution"] = prior_resolution
+            self.mod.save_store(store_path, store)
             with patch.object(self.mod, "_run", side_effect=fake_run_with_fresh_failures):
                 summary = self.mod.process(
                     auto_fix=True, verify_window=10, store_path=store_path,
