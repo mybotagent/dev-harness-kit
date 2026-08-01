@@ -72,19 +72,18 @@ def _init_git(worktree: Path) -> None:
     )
 
 
-def test_dim_axes_behavior_is_nine() -> None:
+def test_dim_axes_behavior_is_seven() -> None:
     assert DIM_AXES_BEHAVIOR == (
         "D1_outcome", "D2_process", "D3_efficiency", "D4_safety",
         "D5_communication", "D6_robustness", "D7_trajectory",
-        "D8_reversibility", "D9_side_effects",
     )
 
 
-def test_score_all_returns_report_with_nine_dims(golden_worktree: Path) -> None:
+def test_score_all_returns_report_with_seven_dims(golden_worktree: Path) -> None:
     _init_git(golden_worktree)
     report = score_all(golden_worktree, case_id="test-case", ctx=Context(no_llm=True))
     assert isinstance(report, BehaviorReport)
-    assert len(report.dimension_scores) == 9
+    assert len(report.dimension_scores) == 7
     dims = {s.dim for s in report.dimension_scores}
     assert dims == set(DIM_AXES_BEHAVIOR)
 
@@ -115,10 +114,13 @@ def test_aggregate_compute_weights_sum_to_one() -> None:
 def test_aggregate_compute_deterministic_floor_forces_escalated() -> None:
     """deterministic_mean < 3.5 forces ESCALATED regardless of weighted_mean.
 
-    With D1..D4 set to (1, 1, 1, 5), D8/D9 missing → treated as 1 each.
-    The deterministic mean is (1+1+1+5+1+1)/6 = 10/6 ≈ 1.67, well
-    below the 3.5 floor — ESCALATED must be forced even though the
-    weighted mean would otherwise be DRIFT_WARNING.
+    With D1..D4 set to (1, 1, 1, 5) the deterministic mean is (1+1+1+5)/4 = 2.0,
+    well below the 3.5 floor — ESCALATED must be forced even though the
+    weighted mean is (1+1+1+5+5+5+5)/7 = 23/7 ≈ 3.29 (which would
+    otherwise be DRIFT_WARNING). Previous version of this test set
+    D1=1 and others=5, which only made deterministic_mean=4.0 and
+    never tripped the floor — that was a tautology flagged by the
+    maintenance gate.
     """
     scores = (
         DimensionScore(dim="D1_outcome", value=1, evidence={}),
@@ -129,10 +131,10 @@ def test_aggregate_compute_deterministic_floor_forces_escalated() -> None:
         DimensionScore(dim="D6_robustness", value=5, evidence={}),
         DimensionScore(dim="D7_trajectory", value=5, evidence={}),
     )
-    weights = {dim: 1 / 9 for dim in DIM_AXES_BEHAVIOR}
+    weights = {dim: 1 / 7 for dim in DIM_AXES_BEHAVIOR}
     report = compute(case_id="t", worktree=".", dim_scores=scores, weights=weights)
-    # deterministic_mean = (1+1+1+5+1+1)/6 = 1.667 < 3.5 → ESCALATED
-    assert report.deterministic_mean == round((1 + 1 + 1 + 5 + 1 + 1) / 6, 4)
+    # deterministic_mean = (1+1+1+5)/4 = 2.0 < 3.5 → ESCALATED, not DRIFT
+    assert report.deterministic_mean == 2.0
     assert report.verdict == "ESCALATED"
 
 
@@ -147,7 +149,7 @@ def test_aggregate_compute_escalated_when_all_deterministic_fail() -> None:
         DimensionScore(dim="D6_robustness", value=5, evidence={}),
         DimensionScore(dim="D7_trajectory", value=5, evidence={}),
     )
-    weights = {dim: 1 / 9 for dim in DIM_AXES_BEHAVIOR}
+    weights = {dim: 1 / 7 for dim in DIM_AXES_BEHAVIOR}
     report = compute(case_id="t", worktree=".", dim_scores=scores, weights=weights)
     assert report.verdict == "ESCALATED"
     assert report.deterministic_mean == 1.0

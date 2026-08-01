@@ -1,7 +1,7 @@
 """behavior_scorers — per-dimension scorers for agent behavior evaluation.
 
 Public API:
-    DIM_AXES_BEHAVIOR  — tuple of dimension IDs (D1..D9)
+    DIM_AXES_BEHAVIOR  — tuple of dimension IDs (D1..D7)
     SCORER_REGISTRY    — maps dim_id -> scorer function (Scorer protocol)
     score_all()        — run all registered scorers on a worktree
     DimensionScore     — one dim's score + evidence
@@ -19,10 +19,6 @@ deterministic where possible and easy to test in isolation.
 Phase 0 (issue #511): D1-D4 are deterministic; D5/D6/D7 are placeholders
 that return `value=3, evidence={"status": "pending"}`. The full D5/D7
 LLM judge wiring lands in Phase 1; D6 scenario fixtures land in Phase 2.
-
-Phase 2 (issue #513, R2): D8 (Reversibility) + D9 (Side-effects) land
-as additional deterministic scorers. WEIGHTS is renormalised so all
-nine dims sum to 1.0.
 """
 from __future__ import annotations
 
@@ -30,17 +26,7 @@ from typing import Callable, Dict, Mapping
 
 from lib.trace_log import TraceLog
 
-from . import (
-    communication,
-    efficiency,
-    outcome,
-    process,
-    reversibility,
-    robustness,
-    safety,
-    side_effects,
-    trajectory,
-)
+from . import communication, efficiency, outcome, process, robustness, safety, trajectory
 from .aggregate import compute as _aggregate_compute
 from .aggregate import render_markdown as _render_markdown
 from .types import DETERMINISTIC_DIMS, BehaviorReport, Context, DimensionScore
@@ -53,8 +39,6 @@ DIM_AXES_BEHAVIOR = (
     "D5_communication",
     "D6_robustness",
     "D7_trajectory",
-    "D8_reversibility",
-    "D9_side_effects",
 )
 
 # Registry: dim_id -> scorer function. Built at import time so partial
@@ -67,23 +51,17 @@ SCORER_REGISTRY: Dict[str, Callable] = {
     "D5_communication": communication.score,
     "D6_robustness": robustness.score,
     "D7_trajectory": trajectory.score,
-    "D8_reversibility": reversibility.score,
-    "D9_side_effects": side_effects.score,
 }
 
 # Per-dim weights for the weighted-mean aggregate. Must sum to 1.0.
-# D8/D9 are new in R2 (#513); D1's weight is reduced from 0.30 to 0.20
-# to free 0.10 budget for D8 + D9 (each 0.05).
 WEIGHTS: Mapping[str, float] = {
-    "D1_outcome": 0.20,
+    "D1_outcome": 0.30,
     "D2_process": 0.15,
     "D3_efficiency": 0.10,
     "D4_safety": 0.15,
     "D5_communication": 0.10,
     "D6_robustness": 0.10,
     "D7_trajectory": 0.10,
-    "D8_reversibility": 0.05,
-    "D9_side_effects": 0.05,
 }
 
 
