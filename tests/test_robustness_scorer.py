@@ -133,6 +133,100 @@ def test_parse_yaml_round_trip(tmp_path: Path) -> None:
     assert data["scoring"]["graceful_recovery"] == "GR"
 
 
+def test_parse_yaml_handles_folded_scalar(tmp_path: Path) -> None:
+    """`>-` (folded, strip) joins continuation lines with single spaces."""
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "key: >-\n"
+        "  line1\n"
+        "  line2\n",
+        encoding="utf-8",
+    )
+    data = _parse_yaml(p)
+    assert data["key"] == "line1 line2"
+
+
+def test_parse_yaml_handles_literal_scalar(tmp_path: Path) -> None:
+    """`|` (literal) preserves newlines between continuation lines."""
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "key: |\n"
+        "  line1\n"
+        "  line2\n",
+        encoding="utf-8",
+    )
+    data = _parse_yaml(p)
+    assert data["key"] == "line1\nline2"
+
+
+def test_parse_yaml_handles_folded_scalar_with_paragraph_break(tmp_path: Path) -> None:
+    """Blank lines inside a folded scalar become paragraph separators."""
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "key: >-\n"
+        "  para1 line1\n"
+        "  para1 line2\n"
+        "\n"
+        "  para2 line1\n"
+        "  para2 line2\n",
+        encoding="utf-8",
+    )
+    data = _parse_yaml(p)
+    assert data["key"] == "para1 line1 para1 line2\n\npara2 line1 para2 line2"
+
+
+def test_parse_yaml_handles_literal_scalar_with_strip(tmp_path: Path) -> None:
+    """`|-` (literal, strip) preserves internal newlines but trims trailing."""
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "key: |-\n"
+        "  line1\n"
+        "  line2\n",
+        encoding="utf-8",
+    )
+    data = _parse_yaml(p)
+    assert data["key"] == "line1\nline2"
+    assert not data["key"].endswith("\n")
+
+
+def test_parse_yaml_multiline_marker_does_not_leak_into_next_key(tmp_path: Path) -> None:
+    """A multiline block ends at the next top-level key (same indent)."""
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "first: >-\n"
+        "  alpha\n"
+        "  beta\n"
+        "second: gamma\n",
+        encoding="utf-8",
+    )
+    data = _parse_yaml(p)
+    assert data["first"] == "alpha beta"
+    assert data["second"] == "gamma"
+
+
+def test_parse_yaml_handles_multiline_scenario_fixture() -> None:
+    """All 5 D6 fixtures: description/setup/agent_invocation must be real content."""
+    expected = {
+        "compile-error.yaml",
+        "flaky-test.yaml",
+        "missing-dep.yaml",
+        "conflicting-instructions.yaml",
+        "resource-exhaustion.yaml",
+    }
+    for name in expected:
+        path = FIXTURES / name
+        if not path.exists():
+            pytest.skip(f"fixture not found: {path}")
+        data = _parse_yaml(path)
+        for key in ("description", "setup", "agent_invocation"):
+            assert key in data, f"{name}: missing {key}"
+            val = data[key]
+            assert isinstance(val, str), f"{name}.{key} not str: {type(val).__name__}"
+            # The bug returned the literal string ">-" for these fields.
+            assert val != ">-", f"{name}.{key} still parsed as folded marker '>-'"
+            assert val.strip(), f"{name}.{key} is empty after fix"
+
+
 def test_validate_scenario_missing_keys() -> None:
     """Missing keys → (False, [...])."""
     ok, missing = _validate_scenario({})

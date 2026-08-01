@@ -79,17 +79,28 @@ def _parse_yaml(path: Path) -> Dict[str, Any]:
 
     Stdlib only — no PyYAML dependency. Supports the subset the
     fixtures use: top-level string/scalar keys, mapping under
-    ``scoring`` whose values are plain strings. Anything more
-    elaborate (sequences, anchors, multi-line scalars) raises
-    ``ValueError`` and the scenario is recorded as malformed.
+    ``scoring`` whose values are plain strings, and folded/literal
+    multi-line scalars (``>``, ``>-``, ``>``, ``|``, ``|-``, ``|+``)
+    on top-level keys. The continuation block is captured line-by-line
+    until a dedent to the key's column. Folded scalars join lines with
+    single spaces (blank lines become paragraph breaks); literal
+    scalars preserve newlines. Chomping indicator ``-`` strips trailing
+    newlines; the default clips a single trailing newline. Anything
+    more elaborate (sequences, anchors, multi-line scalars nested under
+    a section) raises ``ValueError`` and the scenario is recorded as
+    malformed.
     """
     text = path.read_text(encoding="utf-8")
     lines = [ln.rstrip() for ln in text.splitlines()]
     out: Dict[str, Any] = {}
     current_section: Optional[str] = None
     section_map: Dict[str, Any] = {}
-    for raw in lines:
+    multiline_markers = ("|", "|-", "|+", ">", ">-", ">+")
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
         if not raw.strip() or raw.lstrip().startswith("#"):
+            i += 1
             continue
         # Top-level key: "key: value" (no leading whitespace).
         if not raw.startswith((" ", "\t")) and ":" in raw:
@@ -104,14 +115,71 @@ def _parse_yaml(path: Path) -> Dict[str, Any]:
                 # Start of a nested section.
                 current_section = key
                 section_map = {}
-            else:
-                out[key] = value
+                i += 1
+                continue
+            if value in multiline_markers:
+                # Folded (>) or literal (|) multi-line scalar.
+                key_indent = len(raw) - len(raw.lstrip(" "))
+                folded = value.startswith(">")
+                chomp = value[1:] if len(value) > 1 else ""
+                captured: List[str] = []
+                j = i + 1
+                while j < len(lines):
+                    nl = lines[j]
+                    if not nl.strip():
+                        # Blank line within the block: paragraph separator.
+                        captured.append("")
+                        j += 1
+                        continue
+                    nl_indent = len(nl) - len(nl.lstrip(" "))
+                    if nl_indent <= key_indent:
+                        break
+                    captured.append(nl.lstrip(" "))
+                    j += 1
+                # Trim trailing blank lines (always — they only mark end).
+                while captured and captured[-1] == "":
+                    captured.pop()
+                if folded:
+                    # Folded: lines within a paragraph join with spaces;
+                    # blank lines (already stripped from trailing) become
+                    # paragraph breaks.
+                    paragraphs: List[str] = []
+                    current: List[str] = []
+                    for piece in captured:
+                        if piece == "":
+                            if current:
+                                paragraphs.append(" ".join(current))
+                                current = []
+                        else:
+                            current.append(piece)
+                    if current:
+                        paragraphs.append(" ".join(current))
+                    text_val = "\n\n".join(paragraphs)
+                else:
+                    text_val = "\n".join(captured)
+                if chomp == "-":
+                    text_val = text_val.rstrip("\n")
+                elif chomp == "":
+                    # Default: clip a single trailing newline (the
+                    # trailing-blank strip above already removed it).
+                    text_val = text_val.rstrip("\n")
+                # "+" keeps all trailing newlines — we do not preserve
+                # the original count, so this currently matches the
+                # strip variants. No fixture uses "+" today.
+                out[key] = text_val
+                i = j
+                continue
+            out[key] = value
+            i += 1
         elif current_section is not None:
             # Nested key under current_section: "  key: value".
             if ":" in raw:
                 k, _, v = raw.strip().partition(":")
                 section_map[k.strip()] = v.strip()
-        # Otherwise: malformed; ignore.
+            i += 1
+        else:
+            # Malformed; ignore.
+            i += 1
     if current_section is not None:
         out[current_section] = section_map
     return out
