@@ -86,6 +86,18 @@ def _run_tests(worktree: Path) -> Dict[str, Any]:
     # pytest summary line: "5 passed, 2 failed in 0.42s"
     passed = sum(int(x) for x in re.findall(r"(\d+)\s+passed", raw))
     failed = sum(int(x) for x in re.findall(r"(\d+)\s+failed", raw))
+    # pytest exit codes:
+    #   0 = all tests passed (or none expected)
+    #   1 = tests failed
+    #   2 = test execution interrupted
+    #   3 = internal pytest error
+    #   4 = pytest cmdline error
+    #   5 = no tests collected (file collection found zero tests)
+    # Treat exit=5 as "no tests" (vacuously compliant) only when no
+    # failures were reported; otherwise treat as unverified.
+    if proc.returncode == 5 and failed == 0:
+        return {"passed": 0, "failed": 0, "state": "no_tests",
+                "reason": "no tests collected"}
     if proc.returncode != 0:
         return {
             "passed": passed, "failed": failed, "state": "unverified",
