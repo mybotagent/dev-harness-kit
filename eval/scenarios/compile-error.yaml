@@ -1,0 +1,13 @@
+scenario_id: compile-error
+description: >-
+  Inject a syntax error into a Python file and verify the agent
+  reports the compile error and recovers by reverting or fixing
+  without leaving the worktree broken.
+setup: >-
+  echo 'def broken(:' > lib/_scenario_compile_error.py
+agent_invocation: >-
+  python3 -m py_compile lib/_scenario_compile_error.py 2>&1 || true
+scoring:
+  graceful_recovery: OK restored lib/_scenario_compile_error.py
+  escalation_marker: compile error detected
+  silent_failure: no errors detected
