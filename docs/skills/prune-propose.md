@@ -26,7 +26,7 @@ The skill runs a strict 3-step workflow:
 
 **Step 1 — dump.** `python3 tools/skill_usage.py --days 30 --propose-delete --dry-run` filters to skills with **0 turns AND 0 invocations** within the window and pipes the surviving skill list to `scripts/dump_usage.py`. With `--dry-run`, the proposal step is suppressed and only the candidate table prints — use this first to sanity-check the filter.
 
-**Step 2 — propose.** `scripts/dump_usage.py` reads the candidate list, prints a chat-rendered table, then loops one `AskUserQuestion` per candidate. The user picks **Delete** or **Keep** for each — there is no batch approval; each deletion requires an explicit user click. The skill never deletes on its own; it emits the approved set to stdout for downstream automation (`/dev-kit:feat-remove`).
+**Step 2 — propose.** `scripts/dump_usage.py` reads the candidate list, prints a chat-rendered table, then loops one `AskUserQuestion` per candidate. The user picks **Delete** or **Keep** for each — there is no batch approval; each deletion requires an explicit user click. The skill never deletes on its own; it emits the approved set to stdout for downstream automation (`/dev-kit:prune --target <feature>`).
 
 **Step 3 — report.** The final report lists the approved-for-deletion set, the kept set, and the no-decision set, with aggregate counts and the window used quoted so the user has a reproducible record.
 
@@ -47,11 +47,11 @@ A three-part terminal report: the Step 1 candidate table (skill list with 0 usag
 - MUST-L1: no deletion without the candidate table (Step 1) **and** a per-skill user click (Step 2) — both gates must precede any delete.
 - MUST-L3: each phase ends with a quoted exit code + count.
 - MUST-L4: no auto-delete, no batch approve, no `--yes` flag.
-- L6: this skill is `state` because it owns the prune-proposal state machine; the deletion itself is delegated to `/dev-kit:feat-remove <skill>`.
+- L6: this skill is `state` because it owns the prune-proposal state machine; the deletion itself is delegated to `/dev-kit:prune --target <skill>`.
 
 ## Related
 
-- `/dev-kit:feat-remove <skill-name>` — the actual deletion step for each user-approved skill.
+- `/dev-kit:prune --target <skill-name>` — the actual deletion step for each user-approved skill.
 - `/dev-kit:prune` — for a whole-codebase slop/dead-code prune instead of a skill-inventory prune.
 - `tools/skill_usage.py`, `scripts/dump_usage.py` — telemetry dump and per-skill AskUserQuestion driver.
 

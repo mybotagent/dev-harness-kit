@@ -7,10 +7,10 @@ Locks in the 4-phase prune contract. Asserts:
 - body has 4 phase headings ([1/4], [2/4], [3/4], [4/4])
 - body has an Iron Law with MUST-L1 / MUST-L2 / MUST-L3 / MUST-L4 references
 - body disambiguates from /dev-kit:refactor (delete != refactor)
-- body declares `--target <feat>` flag (coexists with /dev-kit:feat-remove)
+- body declares `--target <feat>` flag for single-feature deletion
 - body declares Phase 4 VERIFY runs the full suite (not just the changed path)
 - body declares Edit in disallowed-tools (orchestrator only)
-- body never claims to call `rm` itself (mirrors feat-remove discipline)
+- body never claims to call `rm` itself
 - frontmatter name matches directory name (covered by test_naming.py
   but pinned here for fast failure if the new file regresses)
 - Phase 2 routes to `python3 -m lib.analysis_core --delete --target <feat>`
@@ -99,18 +99,11 @@ class TestPruneSchema(unittest.TestCase):
             "prune must mention /dev-kit:refactor as the refactor counterpart",
         )
 
-    def test_target_flag_absorbs_feat_remove(self):
-        # The --target <feat> flag adds a single-feature mode alongside the
-        # existing /dev-kit:feat-remove slash. The body must surface both
-        # paths so users can choose the intended deletion flow.
+    def test_target_flag_documented(self):
+        # --target is the canonical single-feature deletion flow.
         self.assertIn(
             "--target", self.text,
             "prune must declare the --target flag for single-feature deletion",
-        )
-        self.assertIn(
-            "feat-remove", self.text,
-            "prune must reference the deprecated feat-remove skill so the "
-            "skill body surfaces the migration path",
         )
 
     def test_phase4_runs_full_suite(self):
@@ -133,7 +126,7 @@ class TestPruneSchema(unittest.TestCase):
         )
 
     def test_never_calls_rm_directly(self):
-        # Mirrors feat-remove discipline: the skill emits commands;
+        # The skill emits commands;
         # the user runs them. A "skill should `rm` for me" statement
         # would be a violation.
         self.assertIn(

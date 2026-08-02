@@ -32,7 +32,7 @@ install → bootstrap → plan → build → review → ship
 | 티어 | 시작 시점 | 스킬 |
 |---|---|---|
 | Tier 1 — 배포 루프 | 일반 작업을 시작·구현·리뷰·배포할 때 | `bootstrap`, `bootstrap-full`, `plan`, `build`, `review`, `security`, `babysit-pr`, `ship`, `ci-doctor`, `ci-setup`, `log`, `codex-cache-update`, `skill-usage` |
-| Tier 2 — 집중 엔지니어링 | 타깃 진단, 리팩터링, 제거, 설정, 비용 점검이 필요할 때 | `feat-remove`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
+| Tier 2 — 집중 엔지니어링 | 타깃 진단, 리팩터링, 제거, 설정, 비용 점검이 필요할 때 | `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
 | Tier 3 — 전문/비정기 | 동작을 평가하거나 자산을 복구하거나 리포트를 발행하거나 하네스를 유지보수할 때 | `eval`, `evaluate`, `valuate`, `research`, `interview`, `repair`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose`, `harness-audit` |
 
 Tier 1이 일반적인 경우를 다루며, Tier 2와 Tier 3은 전문 확장 집합이다.
@@ -400,7 +400,6 @@ git push -u origin main
 | `/dev-kit:plan` | PRD + phases (Plan + Design 통합) |
 | `/dev-kit:build` | 스텝별 서브에이전트 실행 |
 | `/dev-kit:adapt` | 빌드 중 plan/spec 수정 |
-| `/dev-kit:feat-remove` | 기능 제거 (콜그래프 스윕 + 삭제 리포트) |
 
 **Review → Ship**
 

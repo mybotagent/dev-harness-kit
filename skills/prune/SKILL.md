@@ -24,7 +24,7 @@ named feature end-to-end. `prune` deletes; `/dev-kit:refactor` rewrites.
 ## 4 phases (separate calls)
 
 0-arg: whole project. `<path>` narrows. `--target <feat>` switches to single-
-feature deletion (replaces the old `/dev-kit:feat-remove <feat>`). No version-
+feature deletion. No version-
 gated preconditions (self-referential). Suite must run < 10 min. `--phase N`
 re-runs one phase. `--dry-run` defaults ON for first pass.
 
@@ -103,7 +103,7 @@ deletion is final until the suite is green post-deletion.
 ## `--target <feat>` flag
 
 Narrows the sweep to a single named feature. Replaces the old
-`/dev-kit:feat-remove <feature>` slash. Resolution rules:
+single-feature deletion flow. Resolution rules:
 
 - `<feat>` MUST resolve to a phase name, a directory under `skills/`, or a
   Python module under `lib/`. Unresolvable names fail with exit 2.
