@@ -24,6 +24,13 @@ user-invocable: false
 ## Iron Law
 **No cleanup without regression test.** Pass 1 = dead code removal — confirm all affected tests pass before next pass.
 
+## Optional Linear preflight
+
+At the start of a new refactor task, invoke `/dev-kit:linear` once when Linear
+is enabled or available. Continue normally on `LINEAR_SKIP` or an implicit
+`LINEAR_ERROR`; do not invoke it per cleanup pass. See
+`skills/linear/SKILL.md` for the reconciliation contract.
+
 ## 4 Passes (separate calls)
 
 ```

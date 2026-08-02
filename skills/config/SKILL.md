@@ -15,8 +15,12 @@ disable-model-invocation: false
 
 multiSelect 4 questions:
 1. Skills — which to enable/disable (default: all ON)
-2. MCP — which to enable (default: all OFF)
+2. MCP — which to enable (default: all OFF), including optional Linear tracking
 3. Hook matrix — per-stage hook activation (default: matrix)
 4. Methodology — TDD/SDD/DDD/BDD/FDD (default: TDD)
 
 Result → `.dev-kit/.enabled.json` + `.dev-kit/methodology.json` updated.
+
+For Linear, choose `off` to never call it implicitly, or `auto` to use it when
+the connector is available. An explicit `/dev-kit:linear` call remains
+available and reports setup problems without blocking other skills.

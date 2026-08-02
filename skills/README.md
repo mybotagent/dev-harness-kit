@@ -40,11 +40,12 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`prune`](prune/SKILL.md) | `analysis` | 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring). |
 | [`refactor`](refactor/SKILL.md) | `analysis` | 0-arg cleanup chain. One slash wraps inspect -> build-refactor -> review. 3 gated phases with quoted exit codes between each. |
 
-### `config` (1)
+### `config` (2)
 
 | Skill | α | Description |
 |---|---|---|
 | [`config`](config/SKILL.md) | `state` | skill + MCP + hook + methodology picker (multiSelect). |
+| [`linear`](linear/SKILL.md) | `state` | Optional public Linear task tracker; can also be called by workflow skills. |
 
 ### `design` (4)
 
@@ -129,9 +130,10 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 16 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
 | 17 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
 | 18 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
-| 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
-| 21 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
-| 22 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
+| 19 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
+| 20 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
+| 21 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
+| 22 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
 | 23 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
 | 24 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
 | 25 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
@@ -140,10 +142,10 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 28 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
 | 29 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
 | 30 | [`repair`](repair/SKILL.md) | `repair` | `state` | human |
-| 32 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
-| 33 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
-| 34 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
-| 35 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
-| 36 | [`status`](status/SKILL.md) | `status` | `state` | human |
-| 37 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
+| 31 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
+| 32 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
+| 33 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
+| 34 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
+| 35 | [`status`](status/SKILL.md) | `status` | `state` | human |
+| 36 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
 | 38 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |

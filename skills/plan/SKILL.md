@@ -73,6 +73,13 @@ Planning artifacts only. No code, build, or deploy. Take a 1-line idea → run 5
 gates in one Ralph loop → emit `PRD.md` + `phases/<name>/{index.json, step<N>.md}`
 + `.dev-kit/hand-off/plan→build.md`.
 
+## Optional Linear preflight
+
+At the start of a new plan task, invoke `/dev-kit:linear` once when Linear is
+enabled or available. Continue normally on `LINEAR_SKIP` or an implicit
+`LINEAR_ERROR`; do not invoke it inside the gates or ambiguity loop. See
+`skills/linear/SKILL.md` for the reconciliation contract.
+
 ## Inputs / outputs
 
 - **Input**: 1-line idea (from user prompt) + 1-5 AC + 1-3 non-goals.
