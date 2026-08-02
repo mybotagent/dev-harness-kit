@@ -7,12 +7,12 @@ honor: the judge receives the step sequence and rates the trajectory.
 ## Inputs
 
 ```
-case_id: ${case_id}
+case_id: {case_id}
 steps:
-${steps_json}
+{steps_json}
 
 heuristic_evidence:
-${heuristic_json}
+{heuristic_json}
 ```
 
 ## Output contract
