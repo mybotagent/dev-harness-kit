@@ -5,10 +5,12 @@
 #   --strict : set DEV_KIT_STRICT=1 in plugin.json env (hard-block hooks)
 #
 # Source layout (this script lives at lib/install.sh):
-#   ../.claude-plugin/{marketplace,plugin/{plugin,hooks}}.json
+#   ../.claude-plugin/{marketplace,plugin}.json
+#   ../hooks/hooks.json                         (Claude hook manifest)
 #   ../hooks/*.sh                              (actual hook scripts)
 #   ./*.py                                     (lib modules)
-#   ../skills/<name>/SKILL.md                  (skills)
+#   ../agents/*                                (project agents)
+#   ../skills/<name>/                          (skills and skill assets)
 #   ../../tests/*.py                           (regression tests)
 
 set -eo pipefail
@@ -40,8 +42,8 @@ copy() {
 
 # Plugin manifests
 copy "$SRC_REPO/.claude-plugin/marketplace.json" "$TARGET/.claude-plugin/"
-copy "$SRC_REPO/.claude-plugin/plugin/plugin.json" "$TARGET/.claude-plugin/plugin/.claude-plugin/"
-copy "$SRC_REPO/.claude-plugin/plugin/hooks/hooks.json" "$TARGET/.claude-plugin/plugin/hooks/"
+copy "$SRC_REPO/.claude-plugin/plugin.json" "$TARGET/.claude-plugin/plugin/.claude-plugin/"
+copy "$SRC_REPO/hooks/hooks.json" "$TARGET/.claude-plugin/plugin/hooks/"
 
 # Hook scripts (real location: <repo>/hooks/)
 for sh in "$SRC_REPO"/hooks/*.sh; do
@@ -53,13 +55,23 @@ for py in "$SRC_LIB"/*.py; do
   copy "$py" "$TARGET/lib/"
 done
 
-# Skills (flat: skills/<skill-name>/SKILL.md)
+# Project agents and skills stay at the target root as the shared SSOT.
+if [ -d "$SRC_REPO/agents" ]; then
+  mkdir -p "$TARGET/agents"
+  for agent_file in "$SRC_REPO"/agents/*; do
+    [ -f "$agent_file" ] || continue
+    copy "$agent_file" "$TARGET/agents/"
+  done
+fi
+
+# Skills (flat: skills/<skill-name>/SKILL.md). Copy the full skill directory
+# so scripts and fixtures remain available to both provider runtimes.
 if [ -d "$SRC_REPO/skills" ]; then
   for skill_dir in "$SRC_REPO/skills"/*/; do
     [ -d "$skill_dir" ] || continue
     skill_name=$(basename "$skill_dir")
-    mkdir -p "$TARGET/.claude/skills/$skill_name"
-    copy "$skill_dir/SKILL.md" "$TARGET/.claude/skills/$skill_name/"
+    mkdir -p "$TARGET/skills/$skill_name"
+    cp -R "$skill_dir". "$TARGET/skills/$skill_name/"
   done
 fi
 

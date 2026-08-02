@@ -530,7 +530,7 @@ zero captured usage as proof a skill is obsolete.
 
 ### Custom subagents (project-local)
 
-`.claude/agents/*.md` and `.codex/agents/*.toml` are the repo's **first-class
+`agents/*.md` and `agents/*.toml` are the repo's **first-class
 extension points** for project-local subagents that Claude Code and Codex can
 dispatch. These differ from the
 global agent personas in `~/.claude/agents/` (built-in `backend-architect`,
@@ -545,9 +545,9 @@ removal candidates for `live`/`unknown` only. It never runs
 `git worktree remove` itself — the orchestrator reads its report and the
 human runs the removal command. Adding a new project-local subagent:
 
-1. For Claude Code, drop `.claude/agents/<name>.md` with the standard frontmatter
+1. For Claude Code, add `agents/<name>.md` with the standard frontmatter
    (`name:`, `description:`, `model:`, optional `tools:` allowlist).
-   For Codex, add `.codex/agents/<name>.toml` with `name`, `description`, and
+   For Codex, add `agents/<name>.toml` with `name`, `description`, and
    `developer_instructions`; use `sandbox_mode = "read-only"` for auditors.
 2. The lint gate `tests/test_agent_governance.py` enforces filename ==
    frontmatter `name:`, kebab-case, and a non-empty description

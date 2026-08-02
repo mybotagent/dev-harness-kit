@@ -25,6 +25,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 ALLOWED_ALPHAS = frozenset({"state", "enforcement", "analysis"})
+PRIVATE_SKILL_DIRS = frozenset({"_acp"})
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
@@ -104,7 +105,10 @@ def local_skill_dirs() -> set[str]:
     skills_root = PROJECT_ROOT / "skills"
     if not skills_root.exists():
         return set()
-    return {p.name for p in skills_root.iterdir() if p.is_dir()}
+    return {
+        p.name for p in skills_root.iterdir()
+        if p.is_dir() and p.name not in PRIVATE_SKILL_DIRS
+    }
 
 
 def extract_alpha(text: str) -> tuple[str | None, bool]:
