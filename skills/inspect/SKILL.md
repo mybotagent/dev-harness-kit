@@ -18,13 +18,11 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 
 ## Scope
 
-1. No positional arg -> whole project. `<path>` -> that subtree.
-2. `--html` -> after writing the markdown artifact, run
-   `python3 bin/dev-kit-report.py --project-root .` to render
-   `.dev-kit/report.html` from the latest eval and inspect reports.
-3. `--dim <name>` -> one of `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-4. Empty source set -> tell user, stop. >~40 files -> narrow with positional arg.
-5. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, generated `.pb.go`/`.min.js`/`.min.css`.
+1. No positional arg -> whole project; `<path>` -> that subtree.
+2. `--html` -> after the markdown artifact, run
+   `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
+3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
+4. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
 
 ## Fan-out + verify
 
