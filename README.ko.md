@@ -33,7 +33,7 @@ install → bootstrap → plan → build → review → ship
 |---|---|---|
 | Tier 1 — 배포 루프 | 일반 작업을 시작·구현·리뷰·배포할 때 | `bootstrap`, `bootstrap-full`, `plan`, `build`, `review`, `security`, `babysit-pr`, `ship`, `ci-doctor`, `ci-setup`, `log`, `codex-cache-update`, `skill-usage` |
 | Tier 2 — 집중 엔지니어링 | 타깃 진단, 리팩터링, 제거, 설정, 비용 점검이 필요할 때 | `feat-remove`, `inspect`, `audit`, `refactor`, `prune`, `config`, `bump`, `cost-gate`, `status`, `token-analyzer` |
-| Tier 3 — 전문/비정기 | 동작을 평가하거나 자산을 복구하거나 리포트를 발행하거나 하네스를 유지보수할 때 | `eval`, `evaluate`, `valuate`, `research`, `interview`, `repair`, `report`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose`, `harness-audit` |
+| Tier 3 — 전문/비정기 | 동작을 평가하거나 자산을 복구하거나 리포트를 발행하거나 하네스를 유지보수할 때 | `eval`, `evaluate`, `valuate`, `research`, `interview`, `repair`, `proposal`, `docs-maintenance`, `llm-refresh`, `prune-propose`, `harness-audit` |
 
 Tier 1이 일반적인 경우를 다루며, Tier 2와 Tier 3은 전문 확장 집합이다.
 모델이 호출하는 서브스킬(`build-tdd`, `build-debug`, `build-verify`,
@@ -422,7 +422,6 @@ git push -u origin main
 |---|---|
 | `/dev-kit:evaluate` | 에이전트 행동 평가 (review/security/plan + code-sanity, harness/os-quality 포함) |
 | `/dev-kit:repair approve\|reject\|defer <asset>` | Eval-Repair 사람 검토 |
-| `/dev-kit:report` | eval + inspect 리포트용 HTML 뷰어 |
 | `/dev-kit:token-analyzer` | 세션 로그 기반 토큰 효율 대시보드 |
 | `/dev-kit:cost-gate` | 실시간 비용 게이트 (지출 + 임계값 + 커밋 푸터) |
 | `/dev-kit:status` | HOTL 시각화: 루프 진행 + 사이클 + 핸드오프 체인 |

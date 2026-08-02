@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Added skills/ci-triage/SKILL.md (37 -> 38).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 39
+SKILL_COUNT = 38
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
