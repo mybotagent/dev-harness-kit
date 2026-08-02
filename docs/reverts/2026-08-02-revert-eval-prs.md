@@ -15,10 +15,10 @@ After all 4 reverts land, `main` returns to its state before the 4 erroneous mer
 
 ## Production paths changed
 
-This revert chain modifies `lib/` and `tools/` (the same paths the original 4 PRs modified). No new docs paths are touched. The `docs-not-required:` marker in each revert PR body justifies this — the docs reference is the pre-existing `docs/proposals/agent-behavior-eval/` proposal files that already document the eval framework.
+This revert chain modifies `lib/` and `tools/` (the same paths the original 4 PRs modified). The `docs-not-required:` marker in each revert PR body covers this — the docs reference is the pre-existing `docs/proposals/agent-behavior-eval/` proposal files that already document the eval framework.
 
-## Next steps
+## Follow-up
 
-- TODO next: regenerate `docs/CODEBASE-MAP.md` (it was updated by #519's merge and now needs reverting)
-- TODO next: review the version-bump workflow (#522) — it was a workaround for #507's server-side branch protection and may now be obsolete
-- TODO next: re-merge the 4 PRs in the proper order (after explicit human approval per project policy)
+- Regenerate `docs/CODEBASE-MAP.md` (it was updated by #519's merge and now needs reverting). Tracked as a post-merge step.
+- Review the version-bump workflow (#522) — it was a workaround for #507's server-side branch protection and may be obsolete after this revert chain lands.
+- Re-merge the 4 PRs in the proper order after explicit human approval per project policy.
