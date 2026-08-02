@@ -86,3 +86,11 @@ A single `python3 << 'PY' ... PY` heredoc embedded in `SKILL.md` (no `bin/`, `to
 After `[code-viz] validation: 0 syntax-error / E/E svgs / modal click OK`, open `file:///tmp/code-viz.html`. Each diagram card has a `cursor: zoom-in` + `click to expand` hint; clicking shows the diagram at its natural `viewBox` size (the modal scrolls vertically if the diagram is taller than the viewport). Press `Escape` or click outside the card to close. Use the sticky top-nav to jump between levels.
 
 For README inclusion: pass `--screenshots docs/diagrams` and the skill writes one PNG per diagram (`diagram-00.png` … `diagram-NN.png`) — reference those with `![](docs/diagrams/diagram-NN.png)`. The pillar tiles in the header show at a glance which domain pillars the target spans.
+
+
+
+## Update history
+
+- **v3 (current)** — Strategy F (domain-content extraction): parses `## Categories` / `## Dimensions` / `## Audit areas` / `## Checks` sections with bolded-bullet items. Captures security's OWASP A01–A10, inspect's 8 dims, etc. Skills with no extractable workflow are listed as text chips in a "no explicit workflow" section, not visualized.
+- **v2** — Generic multi-level + pillar map (6 abstraction levels + 1 cross-cutting).
+- **v1** — Directory visualizer (file counts + extension tables).

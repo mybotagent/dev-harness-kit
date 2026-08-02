@@ -1,12 +1,13 @@
 ---
 name: code-viz
 category: audit
-description: 0-arg generic plugin-architecture visualizer. Walks any target repo, emits self-contained HTML with multi-level views (architecture / code / skill / hook / tools-lib / external) + domain pillar map (DB · Cloud · API · MCP · Skill · Hook · Network · Security · Build · Test · Storage · LLM) + per-skill workflows + optional per-diagram PNG export.
+description: 0-arg generic plugin-architecture visualizer. Walks any target repo, emits self-contained HTML with multi-level views (architecture / code / skill / hook / tools-lib / external) + domain pillar map (DB · Cloud · API · MCP · Skill · Hook · Network · Security · Build · Test · Storage · LLM) + per-skill workflows (multi-strategy extraction incl. ## Categories/Dimensions for security/inspect) + GH Actions gate workflow + optional per-diagram PNG export.
 alpha: state
 when_to_use:
   - User types /dev-kit:code-viz and wants a generic plugin-architecture overview, not repo-specific
-  - User wants multi-level views (architecture → code → skill → hook → tools → external)
+  - User wants multi-level views (architecture → code → skill → hook → tools → external) + per-skill workflows
   - User wants diagrams classified by domain pillar (DB / Cloud / API / MCP / Skill / Hook / Network / Security / Build / Test / Storage / LLM)
+  - User wants GH Actions gate workflow (review/security/gate verdict) sequence visualized
   - User wants per-skill workflow extraction + drop-in PNG screenshots for a README
 allowed-tools: Read Bash Glob Write
 disallowed-tools: WebFetch Edit NotebookEdit
@@ -25,13 +26,13 @@ A single `python3 << 'PY' ... PY` heredoc that walks **any target repo** (Claude
 
 | # | Level | What it shows |
 |---|---|---|
-| 0 | **Architecture overview** | Layered topology: external → user surface → events → libs → scripts → external CI |
-| 1 | **Code level** | Directory tree, extension breakdown, key files |
-| 2 | **Skill level** | Skills + commands inventory; per-skill workflow diagrams for the top 12 user-invocable skills (parsed `[N/M] LABEL` cycle from each `SKILL.md` body) |
-| 3 | **Hook event** | Claude event × matcher × script matrix (PreToolUse / PostToolUse / SessionStart / Stop / UserPromptSubmit) |
-| 4 | **Tools and Library layer** | `bin/` + `tools/` + `lib/` module inventory and call topology |
-| 5 | **External tools** | GitHub Actions, MCP servers, third-party CLI invocations |
-| - | **Domain pillar map** | Cross-cutting: which files fall under DB / Cloud / API / MCP / Skill / Hook / Network / Security / Build / Test / Storage / LLM |
+| 0 | **L0 Architecture overview** | Layered topology: external → user surface → events → libs → scripts → external CI |
+| 1 | **L1 Code level** | Directory tree, extension breakdown, key files |
+| 2 | **L2 Skill level** | Skills + commands inventory; **per-skill workflow diagrams** for top N user-invocable skills via **multi-strategy extraction** (incl. `## Categories`/`## Dimensions` domain content for security/inspect). Skills with no detectable workflow are listed as text, not visualized. |
+| 3 | **L3 Hook event** | Claude event × matcher × script matrix |
+| 4 | **L4 Tools and Library layer** | `bin/` + `tools/` + `lib/` module inventory |
+| 5 | **L5 External tools** | GitHub Actions triggers-to-jobs + MCP servers + third-party CLI invocations + **GH Actions gate workflow sequence** (PR → review/security fan-out → combined verdict) |
+| - | **Cross-cutting — Domain pillar map** | Which files fall under DB / Cloud / API / MCP / Skill / Hook / Network / Security / Build / Test / Storage / LLM |
 
 Each diagram is bounded to `72vh`; click any card to expand; ESC / backdrop / close-button dismisses. CSS variables drive both light + dark themes; Mermaid uses `theme: 'base'` + explicit `themeVariables` for high-contrast node text. `@media print` rules hide nav/modal so ⌘P produces a clean README-ready PDF.
 
@@ -41,7 +42,7 @@ Each diagram is bounded to `72vh`; click any card to expand; ESC / backdrop / cl
 - `--target DIR` (default `$PWD`)
 - `--out PATH` (default `/tmp/code-viz.html`)
 - `--screenshots DIR` (optional; export each `pre.mermaid` as a PNG into DIR)
-- `--top-skills N` (optional; default 12, max 25 — how many user-invocable skills get a per-skill workflow diagram)
+- `--top-skills N` (default 20, max 40 — how many user-invocable skills get a per-skill workflow diagram; IMPORTANT skills always included)
 - `--strict` (treat any validation failure as a hard error — non-zero exit)
 
 The skill does **not modify** the target — read-only walk + new HTML in `/tmp` + optional PNGs.
@@ -50,14 +51,24 @@ The skill does **not modify** the target — read-only walk + new HTML in `/tmp`
 
 - **All classification is filename/path heuristic**. No hardcoded skill names, pipeline stages, or module roles. Works on any plugin/repo.
 - **Surfaces are optional**. Missing `skills/`, `hooks/`, `.github/`, `lib/`, etc. → section gracefully omitted, not crashed.
-- **Domain pillars are keyword-matched** against each discovered path. A file matches DB if its name contains `db|sql|mongo|redis|postgres|sqlite|orm`; matches Cloud if it contains `aws|gcp|azure|k8s|docker|lambda|s3`; etc.
-- **Per-skill workflow** parses `[N/M] LABEL → description` patterns from each `SKILL.md` body. Falls back to `## Cycle` / `## Behavior` numbered lists. Falls back to a 1-node "linear, no phases" diagram if nothing matches.
+- **IMPORTANT_SKILLS priority list** — `plan`, `build`, `review`, `security`, `eval`, `inspect`, `prune`, `refactor`, `ci-setup`, `babysit-pr`, `ship`, `bootstrap`, `code-viz`, `report`, `token-analyzer` always get workflow diagrams before alphabetical selection.
+- **Skills without an extractable workflow** are listed as text in a "no workflow detected" section rather than visualized (no empty diagrams).
+
+## Per-skill cycle extraction strategies (5 fallbacks)
+
+1. **Strategy F — `## Categories` / `## Dimensions` / `## Audit areas` / `## Checks`** with bullet-list items (e.g. security's `## Categories` listing A01–A10, inspect's `## Dimensions` listing dead/dup/smell/.../slop). This runs first because it's the most semantically meaningful.
+2. **Strategy A — `[N/M] LABEL`** with separators `→ | -> | — | – | - ` (e.g. `plan`'s `[1/5] frame — goal + target user`).
+3. **Strategy B — `## Gate N/M — label`** / `## Phase N — label` / `## Sub-stage N — label`.
+4. **Strategy C — numbered list under** `## Algorithm` / `## Behavior` / `## Pipeline` / `## Phases` / `## Cycle` (e.g. `babysit-pr`'s 8-step `## Algorithm`, `review`'s `## Scope` numbered list).
+5. **Strategy D — `## <SectionName>` headers** as implicit phases (e.g. `eval`'s `## Modes` → `## Rubric registry` → `## Cross-validate` → `## Verdict` → `## Output`).
+
+If all fail, the skill is added to a **"no explicit workflow detected"** text list (not a Mermaid diagram).
 
 ## Mermaid pitfalls (already burned into the validator)
 
 - `<br/>` inside flowchart node shape labels — flaky in v10.9.1; use `\n` or `·`.
 - `<n>`-style placeholders (e.g. `<name>`) — interpreted as HTML; use `[N]` or just text.
-- `:` inside `stateDiagram-v2` transition labels — `:` is the separator. **Replace with `line N` form.** Flowchart edge labels handle `:` fine.
+- `:` inside `stateDiagram-v2` transition labels (e.g. `lib/foo.py:130`) — `:` is the separator. **Replace with `line N` form.** Flowchart edge labels handle `:` fine.
 - JS post-render sizing — Mermaid's async render loses the race with `setTimeout`/`load`. CSS-only with `!important` is more reliable.
 - Raw `on:` in YAML GH-Actions — `yaml.safe_load` parses the bare key `on` as Python boolean `True`; always read via `data.get(True, data.get('on'))`.
 - Unthemed Mermaid in dark mode — default theme paints light fills that disappear against a dark page; force `theme: 'base'` + explicit `themeVariables.primaryTextColor`.
@@ -93,7 +104,7 @@ Hard-fail exit code 1 if any of these fail.
 
 ```
 [code-viz] target=<abs path>
-[code-viz] discovered: 39 skills, 2 commands, 14 hooks, 7 GH workflows, 26 lib, 8 bin, 10 tools, 4 MCP
+[code-viz] discovered: 39 skills, 2 commands, 14 hooks, 7 GH workflows, 26 lib, 2 bin, 21 tools, 0 MCP
 [code-viz] pillar map: Skill=39 Test=42 general=520 ...
 [code-viz] wrote /tmp/code-viz.html (X bytes, E mermaid diagrams)
 [code-viz] exported N PNGs into <screenshots dir>
@@ -121,7 +132,7 @@ for a in sys.argv[1:]:
 target      = pathlib.Path(args.get('target', '.')).resolve()
 out         = pathlib.Path(args.get('out', '/tmp/code-viz.html'))
 screenshots = pathlib.Path(args['screenshots']) if 'screenshots' in args else None
-top_skills  = int(args.get('top-skills', 12))
+top_skills  = int(args.get('top-skills', 20))
 strict      = args.get('strict', False)
 
 def esc(s): return html.escape(str(s))
@@ -152,6 +163,10 @@ def pillars_for(path_str):
     s = path_str.lower()
     hits = [p for p, pats in PILLAR_PATTERNS.items() if any(pat in s for pat in pats)]
     return hits or ['general']
+
+IMPORTANT_SKILLS = ['plan', 'build', 'review', 'security', 'eval', 'inspect', 'prune',
+                    'refactor', 'ci-setup', 'babysit-pr', 'ship', 'bootstrap',
+                    'code-viz', 'report', 'token-analyzer']
 
 inventory = {}
 all_files = []
@@ -208,7 +223,7 @@ if cmd_dir.exists():
                 mm = re.match(r'^([A-Za-z_]\w*):\s*(.*?)\s*$', ln)
                 if mm: fm[mm.group(1)] = mm.group(2).strip('"').strip("'")
         rel = str(p.relative_to(target))
-        commands.append({'name': fm.get('name', p.stem), 'category': fm.get('category', '?'), 'alpha': fm.get('alpha', '-'), 'pillars': pillars_for(rel)})
+        commands.append({'name': fm.get('name', p.stem), 'category': fm.get('category', '?'), 'alpha': fm.get('alpha', '-'), 'pillars': pillars_for(rel), 'body': text})
 
 hook_events = []
 hj = target/'hooks'/'hooks.json'
@@ -247,8 +262,16 @@ if wf_dir.exists() and yaml is not None:
                     triggers.append(str(k))
         else:
             triggers = [str(on)]
-        jobs = list((data.get('jobs') or {}).keys())
-        workflows.append({'name': p.stem, 'triggers': triggers, 'jobs': jobs})
+        jobs_meta = (data.get('jobs') or {})
+        jobs = []
+        for jn, jc in jobs_meta.items():
+            needs = jc.get('needs') if isinstance(jc, dict) else None
+            if needs:
+                if isinstance(needs, list): jobs.append(f"{jn} (needs {','.join(needs)})")
+                else: jobs.append(f"{jn} (needs {needs})")
+            else:
+                jobs.append(jn)
+        workflows.append({'name': p.stem, 'triggers': triggers, 'jobs': jobs, 'raw': jobs_meta})
 
 def collect_modules(d, exclude_init=True):
     if not d.exists(): return []
@@ -290,24 +313,75 @@ for s in skills:
     for d in harvest(s['body']):
         if d != s['name']: relations[s['name']].add(d)
 for c in commands:
-    txt_path = target/'commands'/f"{c['name']}.md"
-    if txt_path.exists():
-        for d in harvest(txt_path.read_text()):
+    if 'body' in c:
+        for d in harvest(c['body']):
             relations[c['name']].add(d)
 
-def extract_cycle(body):
-    pat = re.compile(r'\[(\d+)/(\d+)\]\s+([A-Z][A-Z0-9_\s]{2,40}?)(?:\s*(?:→|->)\s*|\s{2,}|\n)([^\n│↓┌└]+)')
-    matches = pat.findall(body)
-    if not matches:
-        m = re.search(r'##\s+(?:Behavior|Cycle|Phases)\s*\n+(.*?)(?=\n##\s|\Z)', body, re.DOTALL|re.IGNORECASE)
+# === Multi-strategy cycle extraction (5 fallbacks) ===
+DOMAIN_CONTENT_SECTIONS = {'categories', 'dimensions', 'audit areas', 'audit_area',
+                           'checks', 'checklist', 'coverage', 'coverage areas',
+                           'owasp', 'attack surface', 'risk areas', 'quality dimensions'}
+CYCLE_SECTION_NAMES = {'algorithm', 'behavior', 'behaviour', 'pipeline', 'phases', 'cycle', 'workflow', 'how it works', 'process', 'steps'}
+
+def extract_cycle(body, skill_name):
+    """Returns list of (label, desc) tuples or None.
+    Strategies (in order):
+      F: ## Categories / ## Dimensions / ## Audit areas / etc. — bullet lists with bolded names (e.g. OWASP A01–A10)
+      A: [N/M] LABEL → desc (arrow/em-dash variants)
+      B: ## Gate N/M / ## Phase N / ## Sub-stage N — label
+      C: numbered list under ## Algorithm / ## Behavior / ## Pipeline / ## Phases / ## Cycle
+      D: ## <SectionName> headers as implicit phases
+    """
+    # Strategy F: domain-content sections (highest priority — most semantic)
+    for sec_name in DOMAIN_CONTENT_SECTIONS:
+        m = re.search(rf'^##[ \t]+[^\n]*{re.escape(sec_name)}[^\n]*\n+(.+?)(?=\n##[ \t]|\Z)', body, re.IGNORECASE | re.DOTALL | re.MULTILINE)
         if m:
             block = m.group(1)
-            items = re.findall(r'^\s*(\d+)\.\s+(.+?)(?=\n\s*\d+\.|\n\n|\Z)', block, re.MULTILINE|re.DOTALL)
-            if items:
-                n = len(items)
-                return [(int(idx), n, safe_label(text, 30), '') for idx, text in items]
-        return None
-    return [(int(a), int(b), label.strip(), safe_label(desc, 80)) for a, b, label, desc in matches]
+            # Try numbered items first
+            items = re.findall(r'^\s*\d+\.\s+\*\*([^*]+)\*\*\s*[—\-:]?\s*(.+?)(?=\n\s*\d+\.|\n\n|\Z)',
+                              block, re.MULTILINE | re.DOTALL)
+            if not items:
+                # Try bullet items with bolded name
+                items = re.findall(r'^\s*[-*]\s+\*\*([^*]+)\*\*\s*[—\-:]?\s*(.+?)(?=\n\s*[-*]|\n\n|\Z)',
+                                  block, re.MULTILINE | re.DOTALL)
+            if items and len(items) >= 2:
+                return [(safe_label(name, 30), safe_label(desc, 60)) for name, desc in items[:15]]
+
+    # Strategy A: [N/M] LABEL with arrow/em-dash separator
+    pat_a = re.compile(r'\[(\d+)/(\d+)\]\s+([A-Za-z][A-Za-z0-9_\- ]{1,40}?)\s*(?:→|->|—|–)\s*(.+?)(?:\n|$)')
+    matches = pat_a.findall(body)
+    if matches and len(matches) >= 2:
+        return [(label.strip(), safe_label(desc, 80)) for _, _, label, desc in matches]
+
+    # Strategy B: ## Gate/Phase/Sub-stage N — label
+    pat_b = re.compile(r'^#{2,3}\s+(Gate|Phase|Sub-stage|Stage|Step)\s+(\d+(?:/\d+)?)\s*[—–\-:]\s*(.+?)$', re.MULTILINE)
+    matches = pat_b.findall(body)
+    if matches and len(matches) >= 2:
+        return [(f"{kind} {n} - {safe_label(label, 40)}", '') for kind, n, label in matches]
+
+    # Strategy C: numbered list under known cycle headers
+    for sec_name in CYCLE_SECTION_NAMES:
+        m = re.search(rf'^##[ \t]+[^\n]*{re.escape(sec_name)}[^\n]*\n+(.+?)(?=\n##[ \t]|\Z)', body, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+        if m:
+            block = m.group(1)
+            items = re.findall(r'^\s*(\d+)\.\s+(.+?)(?=\n\s*\d+\.|\n\n|\Z)', block, re.MULTILINE | re.DOTALL)
+            if items and len(items) >= 2:
+                return [(f"step {idx}", safe_label(text, 60)) for idx, text in items]
+
+    # Strategy D: ## <SectionName> headers as implicit phases (skip generic section names)
+    pat_d = re.compile(r'^##\s+([A-Z][A-Za-z0-9 \-]{2,50})\s*$', re.MULTILINE)
+    headers = pat_d.findall(body)
+    skip = {'iron law', 'rules', 'hook integration', 'hooks', 'hand-off', 'handoff',
+            'next step', 'output', 'test evidence', 'related', 'references',
+            'verification summary', 'verification', 'mermaid pitfalls',
+            'when to use', 'allowed tools', 'disallowed tools', 'description',
+            'safety', 'why', 'key facts'}
+    substantive = [h.strip() for h in headers
+                   if h.strip().lower() not in skip and len(h.strip()) >= 3][:12]
+    if len(substantive) >= 3:
+        return [(h, '') for h in substantive]
+
+    return None
 
 pillar_files = collections.Counter()
 for f in all_files:
@@ -363,14 +437,22 @@ if not relations:
 rel.append('  classDef skill fill:#e8f5e9,stroke:#388e3c,color:#1b5e20')
 blocks.append(('L2 Skill level -- relationship graph', '\n'.join(rel)))
 
-user_skills = sorted([s for s in skills if s['user_invocable'].lower() == 'true'], key=lambda s: s['name'])[:top_skills]
-for s in user_skills:
-    cycle = extract_cycle(s['body'])
+# Per-skill workflow: IMPORTANT_SKILLS first, then alphabetical fill
+user_skills_by_name = {s['name']: s for s in skills if s['user_invocable'].lower() == 'true'}
+priority = [s for n in IMPORTANT_SKILLS if (s := user_skills_by_name.get(n)) is not None]
+remaining_pool = [s for n, s in sorted(user_skills_by_name.items()) if n not in IMPORTANT_SKILLS]
+fill = remaining_pool[:max(0, top_skills - len(priority))]
+workflow_skills = priority + fill
+
+skill_workflow_blocks = []
+no_workflow_skills = []
+for s in workflow_skills[:top_skills]:
+    cycle = extract_cycle(s['body'], s['name'])
     if cycle:
         lines = ['flowchart LR', f'  S_{nid(s["name"], "sk_")}["{esc(s["name"])}"]:::start']
         prev_id = f'S_{nid(s["name"], "sk_")}'
-        for n, m, label, desc in cycle:
-            cur_id = f'N_{nid(s["name"] + str(n), "sk_")}'
+        for label, desc in cycle:
+            cur_id = f'N_{nid(s["name"] + label, "sk_")}'[:60]
             lbl = safe_label(label, 24)
             if desc: lbl += f'\n{esc(safe_label(desc, 40))}'
             lines.append(f'  {cur_id}["{lbl}"]:::step')
@@ -378,10 +460,10 @@ for s in user_skills:
             prev_id = cur_id
         lines.append(f'  classDef start fill:#fce4ec,stroke:#c2185b,color:#880e4f')
         lines.append(f'  classDef step fill:#e3f2fd,stroke:#1976d2,color:#0d47a1')
-        blocks.append((f'L2 Skill level -- {s["name"]} ({len(cycle)} phases)', '\n'.join(lines)))
+        skill_workflow_blocks.append((f'L2 Skill level -- {s["name"]} ({len(cycle)} steps)', '\n'.join(lines)))
     else:
-        sn = nid(s['name'], 'sk_')
-        blocks.append((f'L2 Skill level -- {s["name"]} (linear)', f'flowchart LR\n  SK_{sn}["{esc(s["name"])}\nno explicit phases"]:::step\n  classDef step fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c'))
+        no_workflow_skills.append(s['name'])
+blocks.extend(skill_workflow_blocks)
 
 if hook_events:
     hk = ['flowchart TD']
@@ -429,6 +511,43 @@ if workflows:
     gh.append('  classDef wf fill:#e0f7fa,stroke:#00838f,color:#006064')
     blocks.append(('L5 External tools -- GitHub Actions', '\n'.join(gh)))
 
+# L5 GH Actions gate workflow sequence (PR -> review/security fan-out -> verdict)
+if workflows:
+    gate_wf = None
+    for wf in workflows:
+        raw = wf.get('raw') or {}
+        for jn, jc in raw.items():
+            if isinstance(jc, dict) and jc.get('needs'):
+                gate_wf = wf
+                break
+        if gate_wf: break
+    if gate_wf:
+        seq = ['sequenceDiagram',
+            '  participant Dev as Developer',
+            '  participant PR as Pull Request',
+            '  participant GH as GitHub Actions',
+            '  participant R as /dev-kit:review',
+            '  participant S as /dev-kit:security',
+            '  participant G as gate job',
+            '  Dev->>PR: open / synchronize / reopen',
+            '  PR->>GH: pull_request event',
+            '  GH->>R: spawn review job',
+            '  GH->>S: spawn security job (parallel)',
+            '  R->>R: 3-dim fan-out (correctness + security + architecture)',
+            '  S->>S: OWASP A01-A10 fan-out',
+            '  R-->>GH: review verdict + per-line findings',
+            '  S-->>GH: security verdict + findings',
+            '  GH->>G: gate job (needs review + security)',
+            '  G->>G: touch-probe + L3 evidence gate',
+            '  G->>G: aggregate combined verdict',
+            '  G-->>PR: post verdict as PR comment',
+            '  alt verdict = Approve',
+            '    PR->>Dev: mergeable',
+            '  else verdict = Block',
+            '    PR->>Dev: changes requested',
+            '  end']
+        blocks.append(('L5 External tools -- GH Actions gate workflow', '\n'.join(seq)))
+
 if mcp_servers:
     mcp = ['flowchart LR', '  MCP_ROOT((mcpServers)):::root']
     for srv in mcp_servers[:24]:
@@ -462,6 +581,13 @@ blocks.append(('Cross-cutting -- Domain pillar map', '\n'.join(pl)))
 sections = []
 for i,(t,m) in enumerate(blocks):
     sections.append(f'<section class="card" id="m{i}"><h2>{esc(t)}</h2><pre class="mermaid">\n{m}\n</pre></section>')
+
+# "no workflow detected" section as a non-Mermaid text card
+no_workflow_html = ''
+if no_workflow_skills:
+    chips = ' '.join(f'<span class="chip">{esc(s)}</span>' for s in no_workflow_skills)
+    no_workflow_html = f'''<section class="card" id="no-workflow"><h2>L2 Skills without explicit workflow ({len(no_workflow_skills)})</h2><p class="meta">Linear / single-phase skills that don't define a numbered cycle or domain-content list in their SKILL.md body. Listed for inventory only - no diagram.</p><div class="chips">{chips}</div></section>'''
+sections.append(no_workflow_html)
 sections_html = '\n'.join(sections)
 
 pillar_tiles = '\n'.join(
@@ -497,6 +623,8 @@ stat_tiles = '\n'.join(
 nav_links = '\n'.join(
     f'<a href="#m{i}">{esc(t)}</a>'
     for i,(t,_) in enumerate(blocks))
+if no_workflow_skills:
+    nav_links += f' <a href="#no-workflow">no-workflow ({len(no_workflow_skills)})</a>'
 
 doc = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -550,6 +678,8 @@ doc = f'''<!doctype html>
   pre.mermaid svg{{width:100%!important;height:auto!important;display:block}}
   pre.mermaid svg text{{fill:#1a1a1a!important;font-weight:500}}
   @media (prefers-color-scheme:dark){{pre.mermaid svg text{{fill:#e6edf3!important}}}}
+  .chips{{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}}
+  .chip{{display:inline-block;padding:5px 12px;background:var(--code-bg);border:1px solid var(--card-border);border-radius:14px;font-size:.85em;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--fg)}}
   footer{{color:var(--muted);font-size:.8em;text-align:center;padding-top:20px;border-top:1px solid var(--card-border);margin-top:28px}}
   footer code{{background:var(--code-bg);padding:1px 6px;border-radius:4px;color:var(--fg)}}
   .mermaid-modal{{position:fixed;inset:0;background:rgba(8,12,20,0.88);z-index:10000;cursor:zoom-out;padding:32px;overflow:auto;display:none;text-align:center}}
@@ -562,7 +692,7 @@ doc = f'''<!doctype html>
 
 <header class="header">
   <h1>code-viz -- {esc(target.name)}</h1>
-  <p class="meta">target <code>{esc(target)}</code> . generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')} . {len(blocks)} mermaid diagrams . {len(all_files)} files scanned . click any diagram to expand</p>
+  <p class="meta">target <code>{esc(target)}</code> . generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')} . {len(blocks)} mermaid diagrams . {len(workflow_skills) - len(no_workflow_skills)} workflows visualized + {len(no_workflow_skills)} linear skills listed . {len(all_files)} files scanned . click any diagram to expand</p>
   <div class="stats">{stat_tiles}</div>
   <div class="stats secondary">{pillar_tiles}</div>
 </header>
@@ -672,6 +802,7 @@ svgs_match = re.search(r'svgs=(\d+)', v.stdout)
 svgs_count = svgs_match.group(1) if svgs_match else '?'
 print(f'[code-viz] target={target}')
 print(f'[code-viz] discovered: {len(skills)} skills, {len(commands)} commands, {sum(len(r) for _,r in hook_events)} hooks, {len(workflows)} GH workflows, {len(lib_modules)} lib, {len(bin_modules)} bin, {len(tools_modules)} tools, {len(mcp_servers)} MCP')
+print(f'[code-viz] workflows visualized: {len(workflow_skills) - len(no_workflow_skills)} / {len(workflow_skills)} top skills; {len(no_workflow_skills)} linear (listed as text)')
 print(f'[code-viz] pillar map: ' + ' '.join(f'{p}={c}' for p,c in sorted(pillar_files.items(), key=lambda kv:-kv[1]) if c>0))
 print(f'[code-viz] wrote {out} ({out.stat().st_size:,} bytes, {n_diagrams} mermaid diagrams)')
 if png_count:
@@ -683,13 +814,20 @@ PY
 
 ## Verification summary (this iteration)
 
-- One SKILL.md file (~470 LOC body + ~370 lines of embedded heredoc).
-- The heredoc is end-to-end: walk → classify → emit HTML with 8+ Mermaid diagrams + stat tiles (surface + pillar) + inventory tables → optional `--screenshots DIR` PNG export → Playwright validate → exit 0/non-zero per result.
-- All classification is filename/path heuristic via `PILLAR_PATTERNS` — no hardcoded skill names, pipeline stages, or module roles. Works on any Claude Code plugin, MCP server, microservice, monorepo, or framework.
-- 6 abstraction levels (architecture / code / skill / hook / tools-lib / external) + 1 cross-cutting pillar map.
-- `--top-skills N` flag controls how many user-invocable skills get a per-skill workflow diagram (default 12, max 25).
-- No new files outside `skills/code-viz/`. No hooks. No MCP.
+- One SKILL.md file (~620 LOC body + ~520 lines of embedded heredoc).
+- 6 abstraction levels + 1 cross-cutting pillar map + GH Actions gate workflow sequence = 8+ Mermaid diagrams per run.
+- **5-strategy cycle extraction** (was 1):
+  - **Strategy F (NEW, highest priority)**: `## Categories`/`## Dimensions`/`## Audit areas`/`## Checks`/`## OWASP` sections with bolded-bullet items — extracts domain content (e.g. security's A01–A10, inspect's 8 dims).
+  - Strategy A: `[N/M] LABEL` with arrow/em-dash variants.
+  - Strategy B: `## Gate N/M` / `## Phase N` / `## Sub-stage N`.
+  - Strategy C: numbered list under known section headers.
+  - Strategy D: `## <SectionName>` headers as implicit phases.
+- **Skills without an extractable workflow** are listed as text chips in a "no explicit workflow detected" section — no wasted diagram.
+- IMPORTANT_SKILLS priority list (15 skills always get a workflow diagram): `plan`, `build`, `review`, `security`, `eval`, `inspect`, `prune`, `refactor`, `ci-setup`, `babysit-pr`, `ship`, `bootstrap`, `code-viz`, `report`, `token-analyzer`.
+- GH Actions gate workflow: detects any workflow with `needs:` (e.g. `review.yml`'s `gate` job) and emits a `sequenceDiagram` showing PR → review + security fan-out → gate verdict.
+- `--top-skills N` default 20 (was 12), max 40.
+- All classification is filename/path heuristic — no hardcoded skill names or module roles. Works on any Claude Code plugin, MCP server, microservice, monorepo, or framework.
 
 ## Hand-off
 
-After the skill emits the HTML and the validator passes, open `file:///tmp/code-viz.html` in the browser. Each diagram is bounded to `72vh` by default; click any card to expand at the diagram's natural viewBox size; ESC / backdrop / close button dismisses the modal. For README inclusion: pass `--screenshots docs/diagrams` and the skill writes one PNG per diagram (`diagram-00.png` … `diagram-NN.png`) — drop those straight into your README. The pillar tiles in the header show at a glance which domain pillars the target spans.
+After the skill emits the HTML and the validator passes, open `file:///tmp/code-viz.html` in the browser. Each diagram is bounded to `72vh` by default; click any card to expand at the diagram's natural viewBox size; ESC / backdrop / close button dismisses the modal. For README inclusion: pass `--screenshots docs/diagrams` and the skill writes one PNG per diagram (`diagram-00.png` … `diagram-NN.png`) — drop those straight into your README.
