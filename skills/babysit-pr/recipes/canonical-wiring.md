@@ -15,7 +15,7 @@ isolation; this recipe is the only place the slash-arguments-reach-the-helper
 contract lives.
 
 ```python
-import sys, os
+import sys, os, json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
@@ -60,9 +60,20 @@ collaborator_proc = subprocess.run(
     capture_output=True, text=True)
 collaborator_lookup_ok = (collaborator_proc.returncode == 0)
 collaborators = (collaborator_proc.stdout.splitlines() or [])
-pr_number = int(subprocess.run(
-    ["gh", "pr", "view", "--json", "number", "-q", ".number"],
-    capture_output=True, text=True).stdout.strip())
+pr_arg = bpc.parse_babysit_args(argv).pr
+pr_view_target = str(pr_arg) if pr_arg is not None else ""
+pr_view = subprocess.run(
+    ["gh", "pr", "view", *(([pr_view_target]) if pr_view_target else []),
+     "--json", "number,state", "-q", "."],
+    capture_output=True, text=True)
+if pr_view.returncode != 0:
+    print("No open PR resolved. Pass --pr N or run from a PR worktree.", file=sys.stderr)
+    sys.exit(1)
+pr_snapshot = json.loads(pr_view.stdout)
+pr_number = int(pr_snapshot["number"])
+if pr_snapshot.get("state") != "OPEN":
+    print(f"PR #{pr_number} is {pr_snapshot.get('state')}; pass an open --pr N.", file=sys.stderr)
+    sys.exit(1)
 
 rc = bpc.run_babysit_once(
     argv=argv,

@@ -120,25 +120,6 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "docs_coverage_score",
         "scope_discipline_score",
     ),
-    # Phase 1 (issue #511): D5 Communication Quality (per
-    # eval/prompts/judge-communication.md). Five 1-5 axes the judge
-    # returns; the scorer's dim value is the rounded mean.
-    "communication": (
-        "clarity",
-        "completeness",
-        "actionability",
-        "verifiability",
-        "conciseness",
-    ),
-    # Phase 1 (issue #511): D7 Trajectory Quality LLM half (per
-    # eval/prompts/judge-trajectory.md). Four 1-5 axes combined with
-    # the heuristic value via round(heuristic*0.7 + llm*0.3).
-    "trajectory": (
-        "tool_selection",
-        "sequence_logic",
-        "branching_minimal",
-        "convergence",
-    ),
 }
 
 # Per-dim score range. Most dims are 0-10 (higher = better, with the
@@ -149,12 +130,6 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
 # Default: 0-10 for unknown dims.
 DIM_SCORE_RANGE: Dict[str, Tuple[float, float]] = {
     "plan_value": (0.0, 5.0),
-    # Phase 1 (issue #511): D5 + D7 judges emit 1-5 scores, not 0-10.
-    # The system prompt in call_judge() reads score_range_for_dim() and
-    # tells the model the expected range so it does not emit 6-10 and
-    # trip the 0-10 validator in parse_scores_json().
-    "communication": (1.0, 5.0),
-    "trajectory": (1.0, 5.0),
 }
 
 

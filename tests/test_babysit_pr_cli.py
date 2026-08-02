@@ -101,6 +101,10 @@ class TestParseBabysitArgs(unittest.TestCase):
             "single-operator merge of trivial docs fix",
         )
 
+    def test_explicit_pr_target(self) -> None:
+        ns = bpc.parse_babysit_args(["--pr", "522"])
+        self.assertEqual(ns.pr, 522)
+
     def test_unknown_flag_exits(self) -> None:
         with self.assertRaises(SystemExit):
             bpc.parse_babysit_args(["--no-such-flag"])
