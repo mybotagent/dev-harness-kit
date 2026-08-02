@@ -140,6 +140,44 @@ def nid(s, prefix='n_'):
     n = re.sub(r'[^A-Za-z0-9_]', '_', s)
     if not n or not n[0].isalpha(): n = prefix + n
     return n
+def chunk_rows(items, chunk_size=5, root_id=None, root_label=None, extra_css='', link_to_root=True):
+    """Build a Mermaid block where items > chunk_size are split into rows.
+    Each row becomes a subgraph with direction LR. Last item of row N chains to first of row N+1.
+    Returns a multi-line Mermaid string starting with 'flowchart TD'.
+    items: list of (id, label) tuples, OR list of labels.
+    """
+    if items and isinstance(items[0], str):
+        items = [(nid(s, 'n_'), s) for s in items]
+    chunks = [items[i:i+chunk_size] for i in range(0, len(items), chunk_size)]
+    lines = ['flowchart TD']
+    if root_id and root_label:
+        lines.append(f'  {root_id}(({root_label})):::root')
+    prev_last_id = None
+    for ci, chunk in enumerate(chunks):
+        sub_id = f'r{ci}_' + ''.join(c[0][:3] for c in chunk[:3])
+        sub_label = f'row {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'items'
+        lines.append(f'  subgraph {sub_id}["{sub_label}"]')
+        lines.append('    direction LR')
+        prev_in_chunk = None
+        chunk_first_id = None
+        for iid, lbl in chunk:
+            lines.append(f'    {iid}["{lbl}"]')
+            if chunk_first_id is None:
+                chunk_first_id = iid
+            if prev_in_chunk:
+                lines.append(f'    {prev_in_chunk} --> {iid}')
+            prev_in_chunk = iid
+        chunk_last_id = prev_in_chunk
+        lines.append('  end')
+        if ci == 0 and root_id and link_to_root:
+            lines.append(f'  {root_id} --> {chunk_first_id}')
+        if prev_last_id:
+            lines.append(f'  {prev_last_id} --> {chunk_first_id}')
+        prev_last_id = chunk_last_id
+    if extra_css:
+        lines.append(extra_css)
+    return '\n'.join(lines)
+
 def safe_label(s, maxlen=60):
     s = re.sub(r'[`"<>]', '', str(s))
     s = s.replace('→', '->').replace('\n', ' · ')
@@ -405,37 +443,29 @@ arch = ['flowchart TB',
     '  classDef layer fill:#e3f2fd,stroke:#1976d2,color:#0d47a1']
 blocks.append(('L0 Architecture overview', '\n'.join(arch)))
 
-tree_lines = ['flowchart LR', '  ROOT((target))']
-for d in sorted(inventory.keys())[:12]:
-    d_id = nid(d, 'd_')
-    tree_lines.append(f'  {d_id}["{esc(d)} ({inventory[d]:,} files)"]')
-    tree_lines.append(f'  ROOT --> {d_id}')
-blocks.append(('L1 Code level -- directory tree', '\n'.join(tree_lines)))
+tree_items = [(nid(d, 'd_'), f'{esc(d)} ({inventory[d]:,} files)') for d in sorted(inventory.keys())[:24]]
+blocks.append(('L1 Code level -- directory tree',
+    chunk_rows(tree_items, chunk_size=5, root_id='ROOT', root_label='target',
+        extra_css='  classDef root fill:#e3f2fd,stroke:#1976d2,color:#0d47a1\n  classDef n_ fill:#f5f5f5,stroke:#616161,color:#212121')))
 
-cat_lines = ['flowchart LR', '  SRC((source files))']
-for ext, n in sorted(ext_count.items(), key=lambda kv: -kv[1])[:6]:
-    if n >= 1:
-        e_id = nid(ext, 'e_')
-        cat_lines.append(f'  {e_id}["{esc(ext)} ({n})"]')
-        cat_lines.append(f'  SRC --> {e_id}')
-blocks.append(('L1 Code level -- extension breakdown', '\n'.join(cat_lines)))
+cat_items = [(nid(ext, 'e_'), f'{esc(ext)} ({n})') for ext, n in sorted(ext_count.items(), key=lambda kv: -kv[1])[:12] if n >= 1]
+blocks.append(('L1 Code level -- extension breakdown',
+    chunk_rows(cat_items, chunk_size=5, root_id='SRC', root_label='source files',
+        extra_css='  classDef root fill:#e3f2fd,stroke:#1976d2,color:#0d47a1\n  classDef e_ fill:#f5f5f5,stroke:#616161,color:#212121')))
 
-rel = ['flowchart LR']
-emitted_nodes = set()
+rel_nodes = sorted({nid(n, 's_') for n in {*relations.keys(), *[d for ds in relations.values() for d in ds]}})
+rel_lines = ['flowchart LR']
+for nid_x, lbl in [(n, n) for n in rel_nodes]:
+    rel_lines.append(f'  {nid_x}["{esc(lbl)}"]:::skill')
 for src in sorted(relations.keys()):
     src_id = nid(src, 's_')
-    rel.append(f'  {src_id}["{esc(src)}"]:::skill')
-    emitted_nodes.add(src_id)
     for dst in sorted(relations[src]):
         dst_id = nid(dst, 's_')
-        if dst_id not in emitted_nodes:
-            rel.append(f'  {dst_id}["{esc(dst)}"]:::skill')
-            emitted_nodes.add(dst_id)
-        rel.append(f'  {src_id} --> {dst_id}')
+        rel_lines.append(f'  {src_id} --> {dst_id}')
 if not relations:
-    rel.append('  NOCONN["no /skill: refs found"]:::skill')
-rel.append('  classDef skill fill:#e8f5e9,stroke:#388e3c,color:#1b5e20')
-blocks.append(('L2 Skill level -- relationship graph', '\n'.join(rel)))
+    rel_lines.append('  NOCONN["no /skill: refs found"]:::skill')
+rel_lines.append('  classDef skill fill:#e8f5e9,stroke:#388e3c,color:#1b5e20')
+blocks.append(('L2 Skill level -- relationship graph', '\n'.join(rel_lines)))
 
 # Per-skill workflow: IMPORTANT_SKILLS first, then alphabetical fill
 user_skills_by_name = {s['name']: s for s in skills if s['user_invocable'].lower() == 'true'}
@@ -470,24 +500,67 @@ if hook_events:
     for evt, rows in hook_events:
         ev_id = nid(evt, 'ev_')
         hk.append(f'  {ev_id}[/{evt}/]:::event')
-        for matcher, script in rows:
-            s_id = nid(script, 'h_')
-            lbl = f'{script}\nmatcher={matcher}' if matcher != '*' else script
-            hk.append(f'  {s_id}["{esc(lbl)}"]:::hook')
-            hk.append(f'  {ev_id} --> {s_id}')
+        chunks = [rows[i:i+5] for i in range(0, len(rows), 5)]
+        prev_last_id = None
+        for ci, chunk in enumerate(chunks):
+            sub_id = f'sg_{nid(evt, "ev_")}_{ci}'
+            sub_label = f'{evt} hooks' if len(chunks) == 1 else f'{evt} batch {ci+1}/{len(chunks)}'
+            hk.append(f'  subgraph {sub_id}["{sub_label}"]')
+            hk.append('    direction LR')
+            prev_in_chunk = None
+            chunk_first_id = None
+            chunk_last_id = None
+            for matcher, script in chunk:
+                s_id = nid(f'{evt}_{script}', 'h_')
+                lbl = f'{script}\nmatcher={matcher}' if matcher != '*' else script
+                hk.append(f'    {s_id}["{esc(lbl)}"]:::hook')
+                if chunk_first_id is None:
+                    chunk_first_id = s_id
+                if prev_in_chunk:
+                    hk.append(f'    {prev_in_chunk} --> {s_id}')
+                prev_in_chunk = s_id
+                chunk_last_id = s_id
+            hk.append('  end')
+            if ci == 0:
+                hk.append(f'  {ev_id} --> {chunk_first_id}')
+            if prev_last_id:
+                hk.append(f'  {prev_last_id} --> {chunk_first_id}')
+            prev_last_id = chunk_last_id
     hk.append('  classDef event fill:#fce4ec,stroke:#c2185b,color:#880e4f')
     hk.append('  classDef hook fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c')
     blocks.append(('L3 Hook event matrix', '\n'.join(hk)))
 
 def module_diagram(title, modules, root_label, css):
-    lines = [f'flowchart LR', f'  ROOT(({root_label})):::root']
-    for m in modules[:24]:
-        m_id = nid(m, 'm_')
-        lines.append(f'  {m_id}["{esc(safe_label(m, 30))}"]:::mod')
-        lines.append(f'  ROOT --> {m_id}')
     if not modules:
-        lines.append(f'  NONE["(none detected)"]:::mod')
-        lines.append(f'  ROOT --> NONE')
+        lines = [f'flowchart TD', f'  ROOT(({root_label})):::root', f'  NONE["(none detected)"]:::mod', f'  ROOT --> NONE', css]
+        blocks.append((title, '\n'.join(lines)))
+        return
+    items = [(nid(m, 'm_'), esc(safe_label(m, 30))) for m in modules[:30]]
+    lines = ['flowchart TD', f'  ROOT(({root_label})):::root']
+    prev_last_id = None
+    chunks = [items[i:i+5] for i in range(0, len(items), 5)]
+    for ci, chunk in enumerate(chunks):
+        sub_id = f'r{ci}'
+        sub_label = f'row {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'modules'
+        lines.append(f'  subgraph {sub_id}["{sub_label}"]')
+        lines.append('    direction LR')
+        prev_in_chunk = None
+        chunk_first_id = None
+        chunk_last_id = None
+        for iid, lbl in chunk:
+            lines.append(f'    {iid}["{lbl}"]:::mod')
+            if chunk_first_id is None:
+                chunk_first_id = iid
+            if prev_in_chunk:
+                lines.append(f'    {prev_in_chunk} --> {iid}')
+            prev_in_chunk = iid
+            chunk_last_id = iid
+        lines.append('  end')
+        if ci == 0:
+            lines.append(f'  ROOT --> {chunk_first_id}')
+        if prev_last_id:
+            lines.append(f'  {prev_last_id} --> {chunk_first_id}')
+        prev_last_id = chunk_last_id
     lines.append(css)
     blocks.append((title, '\n'.join(lines)))
 
@@ -499,14 +572,31 @@ if lib_modules:
     module_diagram('L4 Tools and Library layer -- lib/', lib_modules, 'lib/', '  classDef root fill:#e8eaf6,stroke:#3949ab,color:#1a237e\n  classDef mod fill:#f5f5f5,stroke:#616161,color:#212121')
 
 if workflows:
-    gh = ['flowchart LR']
-    for wf in workflows:
-        wf_id = nid(wf['name'], 'gh_')
-        trig_str = ', '.join(wf['triggers'])
-        jobs_str = ', '.join(wf['jobs'])
-        gh.append(f'  TR_{wf_id}["{esc(wf["name"])}\non: {esc(trig_str)}"]:::trig')
-        gh.append(f'  WF_{wf_id}["{esc(wf["name"])}.yml\njobs: {esc(jobs_str)}"]:::wf')
-        gh.append(f'  TR_{wf_id} --> WF_{wf_id}')
+    gh = ['flowchart TD']
+    chunks = [workflows[i:i+5] for i in range(0, len(workflows), 5)]
+    prev_last_id = None
+    for ci, chunk in enumerate(chunks):
+        sub_id = f'r{ci}'
+        sub_label = f'workflows {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'workflows'
+        gh.append(f'  subgraph {sub_id}["{sub_label}"]')
+        gh.append('    direction LR')
+        prev_in_chunk = None
+        chunk_first_id = None
+        chunk_last_id = None
+        for wf in chunk:
+            wf_id = nid(wf['name'], 'gh_')
+            trig_str = ', '.join(wf['triggers'])
+            jobs_str = ', '.join(wf['jobs'])
+            gh.append(f'    TR_{wf_id}["{esc(wf["name"])}\non: {esc(trig_str)}"]:::trig')
+            gh.append(f'    WF_{wf_id}["{esc(wf["name"])}.yml\njobs: {esc(jobs_str)}"]:::wf')
+            gh.append(f'    TR_{wf_id} --> WF_{wf_id}')
+            if chunk_first_id is None:
+                chunk_first_id = wf_id
+            chunk_last_id = wf_id
+        gh.append('  end')
+        if prev_last_id:
+            gh.append(f'  {prev_last_id} --> {chunk_first_id}')
+        prev_last_id = chunk_last_id
     gh.append('  classDef trig fill:#fff8e1,stroke:#f57c00,color:#e65100')
     gh.append('  classDef wf fill:#e0f7fa,stroke:#00838f,color:#006064')
     blocks.append(('L5 External tools -- GitHub Actions', '\n'.join(gh)))
@@ -559,21 +649,62 @@ if mcp_servers:
     blocks.append(('L5 External tools -- MCP servers', '\n'.join(mcp)))
 
 if external_cli_refs:
-    cli = ['flowchart LR', '  CLI_ROOT((external CLI invocations)):::root']
-    for cli_name, cnt in external_cli_refs.most_common(15):
-        c_id = nid(cli_name, 'cli_')
-        cli.append(f'  {c_id}["{esc(cli_name)} ({cnt})"]:::mod')
-        cli.append(f'  CLI_ROOT --> {c_id}')
+    cli = ['flowchart TD', '  CLI_ROOT((external CLI invocations)):::root']
+    cli_items = [(nid(cli_name, 'cli_'), f'{esc(cli_name)} ({cnt})') for cli_name, cnt in external_cli_refs.most_common(30)]
+    chunks = [cli_items[i:i+5] for i in range(0, len(cli_items), 5)]
+    prev_last_id = None
+    for ci, chunk in enumerate(chunks):
+        sub_id = f'r{ci}'
+        sub_label = f'row {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'CLIs'
+        cli.append(f'  subgraph {sub_id}["{sub_label}"]')
+        cli.append('    direction LR')
+        prev_in_chunk = None
+        chunk_first_id = None
+        chunk_last_id = None
+        for iid, lbl in chunk:
+            cli.append(f'    {iid}["{lbl}"]:::mod')
+            if chunk_first_id is None:
+                chunk_first_id = iid
+            if prev_in_chunk:
+                cli.append(f'    {prev_in_chunk} --> {iid}')
+            prev_in_chunk = iid
+            chunk_last_id = iid
+        cli.append('  end')
+        if ci == 0:
+            cli.append(f'  CLI_ROOT --> {chunk_first_id}')
+        if prev_last_id:
+            cli.append(f'  {prev_last_id} --> {chunk_first_id}')
+        prev_last_id = chunk_last_id
     cli.append('  classDef root fill:#fff8e1,stroke:#f57c00,color:#e65100')
     cli.append('  classDef mod fill:#f5f5f5,stroke:#616161,color:#212121')
     blocks.append(('L5 External tools -- third-party CLIs', '\n'.join(cli)))
 
-pl = ['flowchart LR', '  PL_ROOT((all files)):::root']
-for pillar, cnt in sorted(pillar_files.items(), key=lambda kv: -kv[1])[:12]:
-    if cnt < 1: continue
-    p_id = nid(pillar, 'pl_')
-    pl.append(f'  {p_id}["{esc(pillar)}\n{cnt} files"]:::pillar')
-    pl.append(f'  PL_ROOT --> {p_id}')
+pl = ['flowchart TD', '  PL_ROOT((all files)):::root']
+pl_items = [(nid(p, 'pl_'), f'{esc(p)}\n{cnt} files') for p, cnt in sorted(pillar_files.items(), key=lambda kv: -kv[1])[:12] if cnt >= 1]
+chunks = [pl_items[i:i+5] for i in range(0, len(pl_items), 5)]
+prev_last_id = None
+for ci, chunk in enumerate(chunks):
+    sub_id = f'r{ci}'
+    sub_label = f'row {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'pillars'
+    pl.append(f'  subgraph {sub_id}["{sub_label}"]')
+    pl.append('    direction LR')
+    prev_in_chunk = None
+    chunk_first_id = None
+    chunk_last_id = None
+    for iid, lbl in chunk:
+        pl.append(f'    {iid}["{lbl}"]:::pillar')
+        if chunk_first_id is None:
+            chunk_first_id = iid
+        if prev_in_chunk:
+            pl.append(f'    {prev_in_chunk} --> {iid}')
+        prev_in_chunk = iid
+        chunk_last_id = iid
+    pl.append('  end')
+    if ci == 0:
+        pl.append(f'  PL_ROOT --> {chunk_first_id}')
+    if prev_last_id:
+        pl.append(f'  {prev_last_id} --> {chunk_first_id}')
+    prev_last_id = chunk_last_id
 pl.append('  classDef root fill:#e8eaf6,stroke:#3949ab,color:#1a237e')
 pl.append('  classDef pillar fill:#e0f7fa,stroke:#00838f,color:#006064')
 blocks.append(('Cross-cutting -- Domain pillar map', '\n'.join(pl)))
