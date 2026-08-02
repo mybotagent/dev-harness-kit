@@ -2,7 +2,7 @@ name: version-bump
 
 # Single source of truth for plugin-version advancement.
 #
-# Architecture (post-#439):
+# Architecture (post-#507):
 # - Feature PRs do NOT touch .claude-plugin/plugin.json or
 #   .codex-plugin/plugin.json. The PR branch keeps the version it was
 #   cut at, so parallel PRs never conflict on the `version` field.
@@ -10,15 +10,24 @@ name: version-bump
 #   but does NOT auto-bump. The previous auto-bump behavior was the
 #   root cause of the parallel-PR cascade (every push incremented,
 #   every merge conflicted).
-# - On push to main (i.e., after a PR lands), this workflow:
-#     1. Reads the current version from .claude-plugin/plugin.json
-#     2. Bumps PATCH (0.3.129 -> 0.3.130)
-#     3. Updates both manifests and commits + pushes the bump to main
-#     4. Tags the new commit (annotated, idempotent on tag-already-exists)
-# - ci.yml's validate-job "Version freshness" check (in
-#   tests/test_smoke.py or tests/test_pre_commit_lint.py) continues to
-#   require HEAD version > BASE version for PR merges; with this
-#   workflow owning the trunk bump, that contract is unchanged.
+# - PR #507 enabled server-side branch protection on main with
+#   enforce_admins=true. The previous direct-push pattern
+#   (git push origin HEAD:main) now fails with GH006 because the
+#   github-actions bot cannot bypass the protection rule.
+# - This workflow opens a PR `bump/vX.Y.Z` -> main. It does NOT auto-merge:
+#   a human (or a separately authorized workflow) must merge the PR.
+# - The generated PR uses GITHUB_TOKEN. GitHub suppresses downstream
+#   pull_request workflow events from that token, so required checks may need
+#   a human or separately authorized workflow to run before merging.
+# - The annotated tag is emitted on the bump branch's HEAD before the
+#   PR is opened. After squash-merge, main will have a different
+#   commit (the squash result), but tags are independent refs — the
+#   tag still points to the source commit which is the authoritative
+#   "this is the vX.Y.Z bump" commit.
+# - Idempotency: gate on the TRIGGERING commit. If the push to origin/main
+#   that fired this run is itself a bump merge (subject starts with
+#   "chore(release): bump dev-kit to v..."), the workflow would just create
+#   an infinite cascade of empty bumps -- skip. Otherwise proceed to bump.
 
 on:
   push:
@@ -26,6 +35,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: version-bump
@@ -52,7 +62,6 @@ jobs:
         # was queued, our local checkout is stale. Re-fetch + reset to
         # origin/main so the upcoming bump is computed against the
         # latest trunk version and the push is a guaranteed fast-forward.
-        # This is the fix for review finding #1 on #439.
         run: |
           set -euo pipefail
           git fetch origin main
@@ -78,53 +87,95 @@ jobs:
           NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
 
-      - name: Bump both manifests
+      - name: Skip if triggering commit is itself a bump
+        id: idempotency
+        # Gate every state-changing step on whether the latest commit on
+        # origin/main is a bump merge (subject starts with
+        # "chore(release): bump dev-kit to v..."). If so, this run was
+        # re-triggered by the prior bump's own merge -- skip to avoid an
+        # infinite cascade of empty bumps.
+        env:
+          GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          NEXT="${{ steps.next.outputs.version }}"
+          LATEST_SUBJECT="$(git log -1 --format=%s origin/main)"
+          if [[ "$LATEST_SUBJECT" =~ ^chore\(release\):\ bump\ dev-kit\ to\ v ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::origin/main HEAD is itself a bump commit ('$LATEST_SUBJECT'); skipping next bump."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "origin/main HEAD subject: '$LATEST_SUBJECT' (not a bump); proceeding."
+          fi
+
+      - name: Create bump branch
+        if: steps.idempotency.outputs.skip != 'true'
+        env:
+          NEXT: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="bump/v${NEXT}"
+          git checkout -b "$BRANCH"
+
+      - name: Bump both manifests
+        if: steps.idempotency.outputs.skip != 'true'
+        env:
+          NEXT: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
           for f in .claude-plugin/plugin.json .codex-plugin/plugin.json; do
             jq --arg v "$NEXT" '.version = $v' "$f" > "$f.tmp"
             mv "$f.tmp" "$f"
           done
 
-      - name: Commit + push version bump
+      - name: Commit + push bump branch
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
           set -euo pipefail
+          BRANCH="bump/v${NEXT}"
           git add .claude-plugin/plugin.json .codex-plugin/plugin.json
           git commit -m "chore(release): bump dev-kit to v${NEXT}"
-          # Push to origin/main. The pre-push hook on the runner side
-          # does not fire here (workflow runs git push directly), so
-          # no recursion.
-          git push origin HEAD:main
+          git push -u origin "$BRANCH"
 
-      - name: Emit annotated tag
+      - name: Emit annotated tag (pre-merge)
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.next.outputs.version }}
         run: |
           set -euo pipefail
           TAG="dev-kit--v${VERSION}"
-
-          # Idempotency: if the tag already exists in local refs
-          # (because fetch-depth: 0 fetched refs/tags/*), skip. Same
-          # rationale as before — local ref is authoritative; ls-remote
-          # is eventually consistent and would let near-simultaneous
-          # pushes slip through.
-          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
-            echo "tag ${TAG} already exists locally; skipping"
-            exit 0
-          fi
-
-          # Annotated (not lightweight) so downstream tooling gets the metadata
-          # tagger identity + creation date + message. Lightweight tags
-          # are just ref pointers; many release consumers (changelog
-          # generators, marketplace pin logic) expect the metadata.
-          # Target HEAD (the bump commit just pushed), not origin/main
-          # — by the time we reach this step, origin/main may have
-          # advanced if another workflow run slipped in between, and
-          # tagging origin/main would tag the wrong commit. This is
-          # the fix for review finding #2 on #439.
+          # Pre-merge: tag the bump commit (the source commit) before
+          # opening the PR. After squash-merge, main will have a
+          # different commit (the squash result), but the tag still
+          # points to the source commit which is the authoritative
+          # "this is the v${VERSION} bump" commit. Tags are
+          # independent refs and stay valid even when the branch is
+          # merged.
           git tag -a -m "dev-kit v${VERSION}" "$TAG" HEAD
           git push origin "$TAG"
           echo "tagged ${TAG} (annotated) at HEAD=${VERSION}"
+
+      - name: Open version bump PR (awaiting human merge)
+        if: steps.idempotency.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="bump/v${NEXT}"
+          BODY="Auto-generated version bump by the version-bump workflow.
+
+          - Bumps PATCH: v${NEXT}
+          - Awaiting human merge; this workflow does not auto-merge the PR.
+          - Tag \`dev-kit--v${NEXT}\` has been emitted on the bump commit.
+
+          Note: GitHub suppresses downstream pull_request workflow events from
+          GITHUB_TOKEN-created pull requests. A human or separately authorized
+          workflow may need to run the required checks before merging."
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(release): bump dev-kit to v${NEXT}" \
+            --body "$BODY"
+          # Bump commit + branch + PR created; awaiting human merge.
