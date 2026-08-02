@@ -14,18 +14,19 @@ name: version-bump
 #   enforce_admins=true. The previous direct-push pattern
 #   (git push origin HEAD:main) now fails with GH006 because the
 #   github-actions bot cannot bypass the protection rule.
-# - This workflow now opens a PR `bump/vX.Y.Z` -> main with auto-merge
-#   enabled. Branch protection's required_approving_review_count=0,
-#   so the 3 strict status checks (test, lint, validate) are the only
-#   gate. Once they pass, GitHub auto-merges the PR (squash).
+# - This workflow opens a PR `bump/vX.Y.Z` -> main. It does NOT auto-merge:
+#   a human (or a separately authorized workflow) must merge the PR.
+# - The generated PR uses GITHUB_TOKEN. GitHub suppresses downstream
+#   pull_request workflow events from that token, so required checks may need
+#   a human or separately authorized workflow to run before merging.
 # - The annotated tag is emitted on the bump branch's HEAD before the
 #   PR is opened. After squash-merge, main will have a different
 #   commit (the squash result), but tags are independent refs — the
 #   tag still points to the source commit which is the authoritative
 #   "this is the vX.Y.Z bump" commit.
-# - Idempotency: if the next-version tag already exists on origin,
-#   the workflow exits early (skip). This prevents infinite loops
-#   when the workflow re-fires on auto-merge push events to main.
+# - Idempotency: if the current-version tag already exists on origin,
+#   a previous run already bumped this version. The idempotency output gates
+#   every later step, so the workflow exits without creating another PR.
 
 on:
   push:
@@ -86,21 +87,24 @@ jobs:
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
 
       - name: Idempotency check (skip if already bumped)
-        # If the tag for NEXT already exists on origin, main has
-        # already been bumped to this version. Skip to avoid opening
-        # a no-op PR. Guards against the loop where the auto-merge
-        # push to main re-fires this workflow.
+        id: idempotency
+        # If the tag for the CURRENT version already exists on origin, a
+        # previous run already completed this bump. Expose the result so every
+        # state-changing step below can be skipped by a GitHub Actions `if:`.
         env:
-          NEXT: ${{ steps.next.outputs.version }}
+          VERSION: ${{ steps.read.outputs.version }}
         run: |
           set -euo pipefail
-          TAG="dev-kit--v${NEXT}"
+          TAG="dev-kit--v${VERSION}"
           if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}$"; then
             echo "tag ${TAG} already exists on origin; version already bumped — skipping"
-            exit 0
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create bump branch
+        if: steps.idempotency.outputs.exists != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -109,6 +113,7 @@ jobs:
           git checkout -b "$BRANCH"
 
       - name: Bump both manifests
+        if: steps.idempotency.outputs.exists != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -119,6 +124,7 @@ jobs:
           done
 
       - name: Commit + push bump branch
+        if: steps.idempotency.outputs.exists != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -129,6 +135,7 @@ jobs:
           git push -u origin "$BRANCH"
 
       - name: Emit annotated tag (pre-merge)
+        if: steps.idempotency.outputs.exists != 'true'
         env:
           VERSION: ${{ steps.next.outputs.version }}
         run: |
@@ -145,7 +152,8 @@ jobs:
           git push origin "$TAG"
           echo "tagged ${TAG} (annotated) at HEAD=${VERSION}"
 
-      - name: Open PR with auto-merge
+      - name: Open version bump PR (awaiting human merge)
+        if: steps.idempotency.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.next.outputs.version }}
@@ -155,11 +163,15 @@ jobs:
           BODY="Auto-generated version bump by the version-bump workflow.
 
           - Bumps PATCH: v${NEXT}
-          - Will be auto-merged once the 3 required status checks (test, lint, validate) pass.
-          - Tag \`dev-kit--v${NEXT}\` has been emitted on the bump commit."
+          - Awaiting human merge; this workflow does not auto-merge the PR.
+          - Tag \`dev-kit--v${NEXT}\` has been emitted on the bump commit.
+
+          Note: GitHub suppresses downstream pull_request workflow events from
+          GITHUB_TOKEN-created pull requests. A human or separately authorized
+          workflow may need to run the required checks before merging."
           gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "chore(release): bump dev-kit to v${NEXT}" \
             --body "$BODY"
-          gh pr merge --auto --squash --delete-branch "$BRANCH"
+          # Bump commit + branch + PR created; awaiting human merge.
