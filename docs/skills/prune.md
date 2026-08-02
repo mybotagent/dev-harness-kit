@@ -4,7 +4,7 @@
 
 **Category:** `build` · **Alpha:** `analysis` · **Invocation:** `/dev-kit:prune` (human-invoked)
 
-`prune` is the whole-pipeline **deletion** chain: one slash command wraps an `/dev-kit:inspect` baseline, a 3-pass delete sweep run via `lib.analysis_core.run_analysis(..., mode="delete", ...)`, and a final `/dev-kit:review`. It is project-wide by default, and `prune --target <feature>` narrows it to a single named feature deleted end to end (replacing the older `/dev-kit:feat-remove <feature>` slash). It exists as a distinct skill from `/dev-kit:refactor` because deletion and rewriting need different gates: `prune` deletes, `refactor` rewrites, and each phase here is a separate call gated on a quoted exit code plus test count before the next phase runs.
+`prune` is the whole-pipeline **deletion** chain: one slash command wraps an `/dev-kit:inspect` baseline, a 3-pass delete sweep run via `lib.analysis_core.run_analysis(..., mode="delete", ...)`, and a final `/dev-kit:review`. It is project-wide by default, and `prune --target <feature>` narrows it to a single named feature deleted end to end. It exists as a distinct skill from `/dev-kit:refactor` because deletion and rewriting need different gates: `prune` deletes, `refactor` rewrites, and each phase here is a separate call gated on a quoted exit code plus test count before the next phase runs.
 
 ## When to use it
 
@@ -43,7 +43,7 @@ Phase rules: MUST-L1 forbids Phase 2 without a Phase 1 report; MUST-L2 requires 
 |---|---|
 | (0-arg) | Sweeps the whole project. |
 | `<path>` | Narrows the sweep to a subpath. |
-| `--target <feat>` | Switches to single-feature deletion; replaces the old `/dev-kit:feat-remove <feat>` slash. Must resolve to a phase name, a `skills/` directory, or a `lib/` module, or it fails with exit 2. |
+| `--target <feat>` | Switches to single-feature deletion. Must resolve to a phase name, a `skills/` directory, or a `lib/` module, or it fails with exit 2. |
 | `--phase N` | Re-runs one phase only. |
 | `--dry-run` | Defaults ON for the first pass. |
 | `--no-block` | Skips the DEPENDENTS acknowledgment gate; use only when the user has already signed off (e.g. via `--force`). |
@@ -59,7 +59,6 @@ The full suite must run in under 10 minutes. There are no version-gated precondi
 
 - [refactor](refactor.md) — the rewrite counterpart; `prune` deletes, `refactor` rewrites.
 - [build-refactor](build-refactor.md) — sibling skill for the rewrite pipeline; explicitly contrasted as "prune deletes."
-- [feat-remove](feat-remove.md) — the older single-feature deletion slash, superseded by `prune --target <feature>`.
 - [build-debug](build-debug.md) — where a red Phase 4 verify routes for systematic reproduction.
 - `lib/analysis_core.runner.run_analysis` (`mode="delete"`) — the shared engine backing both Phase 1 and Phase 2.
 - `python3 -m lib.analysis_core --delete --target <feat>` — the Phase 2 dependents walker (CLI entry into `lib/analysis_core/__main__.py`).

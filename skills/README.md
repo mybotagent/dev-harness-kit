@@ -38,7 +38,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`build-refactor`](build-refactor/SKILL.md) 🔒 | `enforcement` | 4-pass cleanup (dead → dup → naming → coverage). No cleanup without regression test (MUST-L1 + L4). |
 | [`build-tdd`](build-tdd/SKILL.md) 🔒 | `enforcement` | Red-Green-Refactor cycle. Active when methodology=tdd (default). No production code without a failing test. tdd-guard hook enforces. |
 | [`build-verify`](build-verify/SKILL.md) 🔒 | `enforcement` | verification-before-completion. No "done" without quoted exit code + test count + build log (MUST-L3, hook stop-verify). |
-| [`feat-remove`](feat-remove/SKILL.md) | `state` | DEPRECATED. Use /dev-kit:prune --target <feature> instead. |
 | [`prune`](prune/SKILL.md) | `analysis` | 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring). |
 | [`refactor`](refactor/SKILL.md) | `analysis` | 0-arg cleanup chain. One slash wraps inspect -> build-refactor -> review. 3 gated phases with quoted exit codes between each. |
 
@@ -131,7 +130,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 16 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
 | 17 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
 | 18 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
-| 19 | [`feat-remove`](feat-remove/SKILL.md) | `build` | `state` | human |
 | 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
 | 21 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
 | 22 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
@@ -151,4 +149,3 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 36 | [`status`](status/SKILL.md) | `status` | `state` | human |
 | 37 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
 | 38 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
-

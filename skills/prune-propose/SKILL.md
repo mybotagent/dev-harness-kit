@@ -56,7 +56,7 @@ table, then loops one `AskUserQuestion` per candidate. The user picks
 **Delete** or **Keep** for each. No batch approval — each deletion
 requires an explicit user click. The skill never deletes on its own;
 it just emits the approved set to stdout for downstream automation
-(`/dev-kit:feat-remove`).
+(`/dev-kit:prune --target <feature>`).
 
 ## Step 3 — report
 
@@ -72,10 +72,10 @@ user has a reproducible record.
 - MUST-L4: no auto-delete, no batch approve, no `--yes` flag.
 - L6: this skill is `state` because it owns the prune-proposal state
   machine (dump -> propose -> report). The deletion itself is delegated
-  to `/dev-kit:feat-remove <skill>` per the existing discipline.
+  to `/dev-kit:prune --target <skill>` per the existing discipline.
 
 ## Next step
 
-After approval: `/dev-kit:feat-remove <skill-name>` per approved skill.
+After approval: `/dev-kit:prune --target <skill-name>` per approved skill.
 For a whole-codebase prune instead of skill inventory, use
 `/dev-kit:prune`.

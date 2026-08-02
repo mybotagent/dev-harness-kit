@@ -47,7 +47,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 |---|---|---|
 | [`plan`](plan.md) | `state` | Idea → `PRD.md` + `phases/<name>/` through a 5-gate loop. |
 | [`build`](build.md) | `state` | Per-step sub-agent delegation with an integrated TDD + auto-fix loop. |
-| [`feat-remove`](feat-remove.md) | `state` | Safely remove a feature: call-graph sweep, dependent flagging, deletion report. |
 
 ### Review → Ship
 
@@ -132,7 +131,6 @@ step inside their parent skill's flow; you never type them directly.
 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | human |
 | [`evaluate`](evaluate.md) | `eval` | `enforcement` | human |
-| [`feat-remove`](feat-remove.md) | `build` | `state` | human |
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
 | [`interview`](interview.md) | `design` | `enforcement` | human |

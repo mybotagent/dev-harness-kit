@@ -47,7 +47,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 |---|---|---|
 | [`plan`](plan.md) | `state` | 아이디어 → 5-게이트 루프를 거쳐 `PRD.md` + `phases/<name>/`. |
 | [`build`](build.md) | `state` | TDD + 자동 수정 루프가 통합된 스텝별 서브에이전트 위임. |
-| [`feat-remove`](feat-remove.md) | `state` | 기능을 안전하게 제거: 콜그래프 스윕, 의존 요소 플래깅, 삭제 리포트. |
 
 ### Review → Ship
 
@@ -135,7 +134,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | 사용자 |
 | [`eval`](eval.md) | `eval` | `analysis` | 사용자 |
 | [`evaluate`](evaluate.md) | `eval` | `enforcement` | 사용자 |
-| [`feat-remove`](feat-remove.md) | `build` | `state` | 사용자 |
 | [`harness-audit`](harness-audit.md) | `audit` | `analysis` | 사용자 |
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | 모델 |
 | [`inspect`](inspect.md) | `audit` | `analysis` | 사용자 |
