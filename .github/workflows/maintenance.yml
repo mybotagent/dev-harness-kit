@@ -114,6 +114,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
@@ -138,6 +139,7 @@ jobs:
         if: steps.provider.outputs.provider == 'anthropic'
         uses: anthropics/claude-code-action@v1
         with:
+          allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
@@ -161,6 +163,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash'
         uses: anthropics/claude-code-action@v1
         with:
+          allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
