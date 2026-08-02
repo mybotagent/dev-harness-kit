@@ -170,8 +170,10 @@ def chunk_rows(items, chunk_size=5, root_id=None, root_label=None, extra_css='',
     prev_sub_id = None
     for ci, chunk in enumerate(chunks):
         sub_id = f'r{ci}_' + ''.join(c[0][:3] for c in chunk[:3])
-        sub_label = f'row {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'items'
-        lines.append(f'  subgraph {sub_id}["{sub_label}"]')
+        # Bare space title + a borderless/fill-less style: the subgraph
+        # still forces row-wise layout grouping, but renders with no box
+        # or label -- purely a layout aid, not a visible container.
+        lines.append(f'  subgraph {sub_id}[" "]')
         lines.append('    direction LR')
         prev_in_chunk = None
         chunk_first_id = chunk[0][0]
@@ -182,6 +184,7 @@ def chunk_rows(items, chunk_size=5, root_id=None, root_label=None, extra_css='',
                 lines.append(f'    {prev_in_chunk} --> {iid}')
             prev_in_chunk = iid
         lines.append('  end')
+        lines.append(f'  style {sub_id} fill:none,stroke:none')
         if root_id:
             if sequential:
                 if ci == 0:
@@ -514,8 +517,7 @@ for s in workflow_skills[:top_skills]:
         prev_last_id = None
         for ci, chunk in enumerate(chunks):
             sub_id = f'r{ci}_{nid(s["name"], "sk_")}'
-            sub_label = f'{s["name"]} steps' if len(chunks) == 1 else f'{s["name"]} row {ci+1}/{len(chunks)}'
-            lines.append(f'  subgraph {sub_id}["{sub_label}"]')
+            lines.append(f'  subgraph {sub_id}[" "]')
             lines.append('    direction LR')
             prev_in_chunk = None
             chunk_first_id = None
@@ -529,6 +531,7 @@ for s in workflow_skills[:top_skills]:
                 prev_in_chunk = cur_id
                 chunk_last_id = cur_id
             lines.append('  end')
+            lines.append(f'  style {sub_id} fill:none,stroke:none')
             if ci == 0:
                 lines.append(f'  {start_id} --> {chunk_first_id}')
             if prev_last_id:
@@ -550,8 +553,7 @@ if hook_events:
         prev_last_id = None
         for ci, chunk in enumerate(chunks):
             sub_id = f'sg_{nid(evt, "ev_")}_{ci}'
-            sub_label = f'{evt} hooks' if len(chunks) == 1 else f'{evt} batch {ci+1}/{len(chunks)}'
-            hk.append(f'  subgraph {sub_id}["{sub_label}"]')
+            hk.append(f'  subgraph {sub_id}[" "]')
             hk.append('    direction LR')
             prev_in_chunk = None
             chunk_first_id = None
@@ -567,6 +569,7 @@ if hook_events:
                 prev_in_chunk = s_id
                 chunk_last_id = s_id
             hk.append('  end')
+            hk.append(f'  style {sub_id} fill:none,stroke:none')
             if ci == 0:
                 hk.append(f'  {ev_id} --> {chunk_first_id}')
             if prev_last_id:
@@ -606,8 +609,7 @@ if workflows:
     prev_sub_id = None
     for ci, chunk in enumerate(chunks):
         sub_id = f'r{ci}'
-        sub_label = f'workflows {ci+1}/{len(chunks)}' if len(chunks) > 1 else 'workflows'
-        gh.append(f'  subgraph {sub_id}["{sub_label}"]')
+        gh.append(f'  subgraph {sub_id}[" "]')
         gh.append('    direction LR')
         for wf in chunk:
             wf_id = nid(wf['name'], 'gh_')
@@ -617,6 +619,7 @@ if workflows:
             gh.append(f'    WF_{wf_id}["{esc(wf["name"])}.yml\njobs: {esc(jobs_str)}"]:::wf')
             gh.append(f'    TR_{wf_id} --> WF_{wf_id}')
         gh.append('  end')
+        gh.append(f'  style {sub_id} fill:none,stroke:none')
         if prev_sub_id:
             gh.append(f'  {prev_sub_id} ~~~ {sub_id}')
         prev_sub_id = sub_id
