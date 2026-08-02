@@ -19,6 +19,18 @@ name: version-bump
 #   tests/test_smoke.py or tests/test_pre_commit_lint.py) continues to
 #   require HEAD version > BASE version for PR merges; with this
 #   workflow owning the trunk bump, that contract is unchanged.
+#
+# Ruleset bypass (2026-08-02): `main` is protected by a repository
+# Ruleset (not classic branch protection) requiring a PR + 3 status
+# checks, with `bypass_actors: [{RepositoryRole: admin, always}]`.
+# The default `secrets.GITHUB_TOKEN` authenticates as the "github-actions"
+# Integration, which is NOT eligible for ruleset bypass on personal
+# (non-org) GitHub accounts — Integration bypass_actors require an
+# owner organization. `secrets.DEV_KIT_GITHUB_TOKEN` is a fine-grained
+# PAT owned by the repo's admin account, so pushes authenticated with
+# it inherit the admin RepositoryRole and bypass the ruleset. This is
+# the only way to keep this workflow's direct-push-to-main working
+# without installing a dedicated GitHub App.
 
 on:
   push:
@@ -40,7 +52,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.DEV_KIT_GITHUB_TOKEN }}
 
       - name: Configure git identity
         run: |
