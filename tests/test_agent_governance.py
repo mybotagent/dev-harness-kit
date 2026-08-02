@@ -25,7 +25,6 @@ from tests.test_naming import KEBAB_RE, extract_frontmatter_field
 
 PROJECT_ROOT = Path(__file__).parent.parent
 AGENTS_DIR = PROJECT_ROOT / "agents"
-CODEX_AGENTS_DIR = PROJECT_ROOT / "agents"
 
 # Inline description accepted form (one value on a single line):
 #   description: some non-empty text
@@ -145,10 +144,10 @@ class TestAgentGovernance(unittest.TestCase):
         self.assertEqual(violations, [], "Agent filenames must be kebab-case:\n" + "\n".join(violations))
 
     def test_codex_agents_have_required_fields(self):
-        if not CODEX_AGENTS_DIR.exists():
+        if not AGENTS_DIR.exists():
             self.skipTest("no agents dir yet")
         violations = []
-        for agent_file in sorted(CODEX_AGENTS_DIR.glob("*.toml")):
+        for agent_file in sorted(AGENTS_DIR.glob("*.toml")):
             try:
                 data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
             except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
@@ -167,10 +166,10 @@ class TestAgentGovernance(unittest.TestCase):
         self.assertEqual(violations, [], "Codex agent violations:\n" + "\n".join(violations))
 
     def test_codex_agents_are_read_only_when_declared(self):
-        if not CODEX_AGENTS_DIR.exists():
+        if not AGENTS_DIR.exists():
             self.skipTest("no agents dir yet")
         violations = []
-        for agent_file in sorted(CODEX_AGENTS_DIR.glob("*.toml")):
+        for agent_file in sorted(AGENTS_DIR.glob("*.toml")):
             data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
             if data.get("name") == "worktree-janitor" and data.get("sandbox_mode") != "read-only":
                 violations.append(f"{agent_file.name}: worktree-janitor must use sandbox_mode = 'read-only'")

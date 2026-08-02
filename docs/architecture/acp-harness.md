@@ -4,7 +4,6 @@ paths:
   - "bin/**"
   - "tests/**"
   - "skills/**"
-  - "skills/**"
   - "docs/architecture/acp-harness.md"
 ---
 
