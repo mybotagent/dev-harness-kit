@@ -16,7 +16,7 @@
 
 ### Inputs (resolved at runtime, not user args)
 
-`PR_NUMBER`, `PR_STATE`, `REVIEW_VERDICT` (`''`/`APPROVED`/`CHANGES_REQUESTED`/`REVIEW_REQUIRED`), `CHECKS`, and `BRANCH` are all read via `gh pr view` / `gh pr checks` / `git rev-parse`. `MAX_ITERS` defaults to `1000` (configurable via the `BABYSIT_MAX_ITERS` env var — the 3-consecutive-no-progress stuck-loop guard still fires earlier in practice). `OPERATOR_HANDLE` is `gh api /user -q .login`; `CODEOWNERS_PATH` is `.github/CODEOWNERS`; `COLLABORATORS` comes from the GitHub collaborators API. If `PR_NUMBER` is empty or `PR_STATE != OPEN`, the skill prints a one-line message and exits 0 — it never creates a PR implicitly.
+`PR_NUMBER`, `PR_STATE`, `REVIEW_VERDICT` (`''`/`APPROVED`/`CHANGES_REQUESTED`/`REVIEW_REQUIRED`), `CHECKS`, and `BRANCH` are all read via `gh pr view` / `gh pr checks` / `git rev-parse`. `MAX_ITERS` defaults to `1000` (configurable via the `BABYSIT_MAX_ITERS` env var — the 3-consecutive-no-progress stuck-loop guard still fires earlier in practice). `OPERATOR_HANDLE` is `gh api /user -q .login`; `CODEOWNERS_PATH` is `.github/CODEOWNERS`; `COLLABORATORS` comes from the GitHub collaborators API. If `PR_NUMBER` is empty (no `--pr N` and no current-branch PR), the skill prints a one-line message and exits 1 explaining that an explicit `--pr N` or current-branch PR is required. If the resolved `PR_STATE != OPEN`, the skill prints a one-line message and exits 1 rather than silently reporting success. It never creates a PR implicitly.
 
 ### Worktree-aware execution
 
@@ -70,12 +70,13 @@ Example invocation:
 ## Usage
 
 ```bash
-/dev-kit:babysit-pr [--operator-is-only-human] [--rationale "<text>"]
+/dev-kit:babysit-pr [--pr N] [--operator-is-only-human] [--rationale "<text>"]
 ```
 
 | Flag | Effect |
 |---|---|
 | *(no flag)* | Default: prints `REVIEW_REQUIRED -> human-gate` and exits 0 — the audit-safe default. |
+| `--pr N` | Babysit explicit PR `N`, overriding current-branch PR discovery. The target must be open; use this when the current branch's PR is closed or merged. |
 | `--operator-is-only-human` | Opt-out for single-operator repos. Refuses with exit 1 if CODEOWNERS or the collaborators list name anyone other than the operator. Requires `--rationale`. Posts the audit comment and hands off — never merges. |
 | `--rationale "<text>"` | Required with the opt-out flag; quoted verbatim into the audit comment. |
 
