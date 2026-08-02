@@ -700,9 +700,9 @@ stdlib 전용; `--days 0`은 시간 창을 비활성화; `--cwd <prefix>`는 한
 정리 리뷰가 필요한지 판단하는 데 유용하다; 캡처된 사용량이 0이라고
 해서 그 스킬이 쓸모없다는 증거로 여기지 않는다.
 
-### 프로젝트 로컬 커스텀 서브에이전트 (`.claude/agents/*.md`, `.codex/agents/*.toml`)
+### 프로젝트 로컬 커스텀 서브에이전트 (`agents/*.md`, `agents/*.toml`)
 
-`.claude/agents/*.md`와 `.codex/agents/*.toml`은 Claude Code와 Codex의
+`agents/*.md`와 `agents/*.toml`은 Claude Code와 Codex의
 메인 세션이 디스패치할 수 있는
 **프로젝트 로컬 서브에이전트의 일차 확장 지점**이다. 이 디렉터리는
 전역 에이전트 페르소나(`~/.claude/agents/`의 내장
@@ -720,9 +720,9 @@ stdlib 전용; `--days 0`은 시간 창을 비활성화; `--cwd <prefix>`는 한
 추가하려면:
 
 1. Claude Code에는 표준 프런트매터(`name:`, `description:`, `model:`, 선택 사항인
-   `tools:` 허용 목록)와 함께 `.claude/agents/<name>.md`를 둔다. Codex에는
+   `tools:` 허용 목록)와 함께 `agents/<name>.md`를 둔다. Codex에는
    `name`, `description`, `developer_instructions`를 갖춘
-   `.codex/agents/<name>.toml`을 둔다. 감사 에이전트는
+   `agents/<name>.toml`을 둔다. 감사 에이전트는
    `sandbox_mode = "read-only"`를 사용한다.
 2. 린트 게이트 `tests/test_agent_governance.py`가 파일명 == 프런트매터
    `name:`, kebab-case, 비어 있지 않은 description(인라인 또는

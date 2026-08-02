@@ -72,7 +72,7 @@ ACP는 오케스트레이터(M), 태스크 서브에이전트(T), 리프 서브�
 ### 3.1 정식 템플릿
 
 정식 서브에이전트 프롬프트 템플릿은
-`.claude/skills/_acp/sub-agent-prompt.md`에 있다. `_acp`의 선행
+`skills/_acp/sub-agent-prompt.md`에 있다. `_acp`의 선행
 언더스코어는 이것이 *private 템플릿 디렉터리*이지 검색 가능한
 스킬이 아님을 나타낸다(프로젝트 스킬 규칙: `rules/skill-authoring.md`).
 
@@ -96,7 +96,7 @@ ACP는 오케스트레이터(M), 태스크 서브에이전트(T), 리프 서브�
 
 `tests/test_acp_hand_off.py`가 시행하는 것:
 
-- 템플릿 파일이 `.claude/skills/_acp/sub-agent-prompt.md`에 존재.
+- 템플릿 파일이 `skills/_acp/sub-agent-prompt.md`에 존재.
 - 템플릿의 프런트매터(있다면)가 그것이 템플릿이지 스킬이 아님을
   선언(`skills/<name>/SKILL.md` 형태와 일치하는 `name:`/`category:`
   없음).
@@ -264,7 +264,7 @@ PR들 중 어느 것도 이 설계 이슈의 일부가 아니다.** 이 설계 �
 | AC 항목 (issue #274) | 향후 PR (각각 좁은 범위) | 건드리는 것 |
 |---|---|---|
 | `tests/test_skill_governance.py`의 Tier-cognition assertion(L6 시행) | `feat(acp-tier-assert): lint hook + governance test` | `hooks/acp-tier-assert.sh`, `hooks/hooks.json`, `tests/test_acp_tier_assert.py`, `tests/test_skill_governance.py` |
-| 핸드오프 템플릿 + 테스트 | `feat(acp-hand-off): canonical template + lint` | `.claude/skills/_acp/sub-agent-prompt.md`(템플릿 스캐폴드만 — 이 설계 이슈와 함께 배포), `tests/test_acp_hand_off.py` |
+| 핸드오프 템플릿 + 테스트 | `feat(acp-hand-off): canonical template + lint` | `skills/_acp/sub-agent-prompt.md`(템플릿 스캐폴드만 — 이 설계 이슈와 함께 배포), `tests/test_acp_hand_off.py` |
 | `bin/version-slot` 스크립트 + 테스트 | `feat(acp-version-slot): standalone allocator + pre-push gate` | `bin/version-slot`, `tests/test_version_slot.py`, `hooks/git-guard.sh`(짝을 이루는 pre-push 규칙) |
 | `hooks/acp-cwd-discipline.sh` + 테스트 | `feat(acp-cwd-discipline): bash-scoped worktree resolver` | `hooks/acp-cwd-discipline.sh`, `hooks/hooks.json`, `tests/test_acp_cwd.py` |
 | ACP 섹션이 추가된 `docs/deterministic-harness.md` | `docs(acp): merge into deterministic-harness.md` | `docs/deterministic-harness.md`(`docs/architecture/acp-harness.md`를 이름 변경; §1–§6을 상위 문서로 통합; force-push 안전성과 lock-isolation 섹션 추가) |
