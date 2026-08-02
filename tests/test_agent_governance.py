@@ -4,7 +4,8 @@ test_agent_governance.py — shape gates for Claude and Codex project agents.
 
 This repo has a deliberately minimal flat check for project subagents,
 proportionate for the small agent surface. Claude agents use Markdown
-frontmatter; Codex agents use standalone TOML files under .codex/agents.
+frontmatter; Codex agents use standalone TOML files. Both provider formats
+live in the root agents/ SSOT directory.
 Unlike skills/*/SKILL.md, which has rules/skill-authoring.md
 and an alpha-gate baseline-diff test). This is deliberately minimal: a flat
 check over the whole directory, proportionate for a single-agent dir. Do not
@@ -23,8 +24,8 @@ import tomllib
 from tests.test_naming import KEBAB_RE, extract_frontmatter_field
 
 PROJECT_ROOT = Path(__file__).parent.parent
-AGENTS_DIR = PROJECT_ROOT / ".claude" / "agents"
-CODEX_AGENTS_DIR = PROJECT_ROOT / ".codex" / "agents"
+AGENTS_DIR = PROJECT_ROOT / "agents"
+CODEX_AGENTS_DIR = PROJECT_ROOT / "agents"
 
 # Inline description accepted form (one value on a single line):
 #   description: some non-empty text
@@ -67,7 +68,7 @@ def _extract_description_body(text: str) -> str:
 class TestAgentGovernance(unittest.TestCase):
     def test_agent_filename_matches_name(self):
         if not AGENTS_DIR.exists():
-            self.skipTest("no .claude/agents dir yet")
+            self.skipTest("no agents dir yet")
         mismatches = []
         for agent_file in sorted(AGENTS_DIR.glob("*.md")):
             expected_name = agent_file.stem
@@ -81,7 +82,7 @@ class TestAgentGovernance(unittest.TestCase):
 
     def test_agent_has_nonempty_description(self):
         if not AGENTS_DIR.exists():
-            self.skipTest("no .claude/agents dir yet")
+            self.skipTest("no agents dir yet")
         violations = []
         for agent_file in sorted(AGENTS_DIR.glob("*.md")):
             text = agent_file.read_text(encoding="utf-8")
@@ -135,7 +136,7 @@ class TestAgentGovernance(unittest.TestCase):
 
     def test_agents_kebab_case(self):
         if not AGENTS_DIR.exists():
-            self.skipTest("no .claude/agents dir yet")
+            self.skipTest("no agents dir yet")
         violations = [
             agent_file.name
             for agent_file in sorted(AGENTS_DIR.glob("*.md"))
@@ -145,7 +146,7 @@ class TestAgentGovernance(unittest.TestCase):
 
     def test_codex_agents_have_required_fields(self):
         if not CODEX_AGENTS_DIR.exists():
-            self.skipTest("no .codex/agents dir yet")
+            self.skipTest("no agents dir yet")
         violations = []
         for agent_file in sorted(CODEX_AGENTS_DIR.glob("*.toml")):
             try:
@@ -167,7 +168,7 @@ class TestAgentGovernance(unittest.TestCase):
 
     def test_codex_agents_are_read_only_when_declared(self):
         if not CODEX_AGENTS_DIR.exists():
-            self.skipTest("no .codex/agents dir yet")
+            self.skipTest("no agents dir yet")
         violations = []
         for agent_file in sorted(CODEX_AGENTS_DIR.glob("*.toml")):
             data = tomllib.loads(agent_file.read_text(encoding="utf-8"))

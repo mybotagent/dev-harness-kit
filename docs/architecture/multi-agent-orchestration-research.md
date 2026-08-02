@@ -3,7 +3,7 @@
 Research question: when does an orchestrator + parallel-subagent
 architecture outperform a single agent, what orchestration pattern is
 most effective, and what does that mean for this repo's Claude
-`.claude/agents/*.md` and Codex `.codex/agents/*.toml` design?
+`agents/*.md` and Codex `agents/*.toml` design?
 
 ## Sources
 
