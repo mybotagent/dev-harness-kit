@@ -34,6 +34,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 SKILLS_ROOT = PROJECT_ROOT / "skills"
 ALLOWED_ALPHAS = frozenset({"state", "enforcement", "analysis"})
+PRIVATE_SKILL_DIRS = frozenset({"_acp"})
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.+?)\n---", re.DOTALL)
 _ALPHA_LINE_RE = re.compile(r"^alpha:\s*(\S+)\s*$", re.MULTILINE)
@@ -42,7 +43,10 @@ _ALPHA_LINE_RE = re.compile(r"^alpha:\s*(\S+)\s*$", re.MULTILINE)
 def _skill_dirs() -> list[Path]:
     if not SKILLS_ROOT.exists():
         return []
-    return sorted(p for p in SKILLS_ROOT.iterdir() if p.is_dir())
+    return sorted(
+        p for p in SKILLS_ROOT.iterdir()
+        if p.is_dir() and p.name not in PRIVATE_SKILL_DIRS
+    )
 
 
 def _parse_alpha(text: str) -> tuple[str | None, bool]:

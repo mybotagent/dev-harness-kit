@@ -23,8 +23,8 @@ This proposal answers three questions in order:
    calls are forbidden, summary caps per Anthropic's
    [effective-context-engineering guide](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents).
 
-The shipped artifacts are `.claude/agents/worktree-janitor.md` for Claude
-Code and `.codex/agents/worktree-janitor.toml` for Codex. Both define the
+The shipped artifacts are `agents/worktree-janitor.md` for Claude
+Code and `agents/worktree-janitor.toml` for Codex. Both define the
 same read-only auditor for `.worktrees/*`, which classifies every worktree
 via `tools/token_efficiency_analyzer.py:classify_all_worktrees()` and
 reports removal candidates. Neither runs `git worktree remove`; the

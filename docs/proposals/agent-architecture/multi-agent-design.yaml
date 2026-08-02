@@ -5,7 +5,7 @@ tags: [agents, orchestration, multi-agent, worktree]
 sections:
   - title: Problem
     body: |
-      The `.claude/agents/` and `.codex/agents/` directories now hold the
+      The root `agents/` directory now holds the
       repo's project-specific subagent definitions.
       Every custom agent available in this repo today —
       `backend-architect`, `frontend-developer`, `database-admin`,
@@ -197,8 +197,8 @@ sections:
   - title: Next steps
     body: |
       1. Author the Claude Code definition at
-         `.claude/agents/worktree-janitor.md` and the Codex definition at
-         `.codex/agents/worktree-janitor.toml` from the spec in
+         `agents/worktree-janitor.md` and the Codex definition at
+         `agents/worktree-janitor.toml` from the spec in
          "Recommended build" above.
       2. Run a first audit pass against the current `.worktrees/`
          directory and confirm the report envelope's `evidence` field
