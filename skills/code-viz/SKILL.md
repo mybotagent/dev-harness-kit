@@ -36,16 +36,33 @@ A single `python3 << 'PY' ... PY` heredoc that walks **any target repo** (Claude
 
 Each diagram is bounded to `72vh`; click any card to expand; ESC / backdrop / close-button dismisses. CSS variables drive both light + dark themes; Mermaid uses `theme: 'base'` + explicit `themeVariables` for high-contrast node text. `@media print` rules hide nav/modal so ⌘P produces a clean README-ready PDF.
 
+## Edges mean something (fan-out vs sequential)
+
+Every edge in every diagram represents a real relationship in the target repo — never a layout artifact:
+
+- **Sequential (chained arrows)** — used ONLY where a genuine before/after relationship exists: per-skill workflow phases (step 2 really does run after step 1), and hooks within one Claude event (they execute in the array order declared in `hooks.json`). Root connects to the first item; each subsequent item chains from the previous.
+- **Fan-out (no sibling edges)** — used for every pure inventory: `lib/`/`bin`/`tools/` modules, directory listing, extension breakdown, GitHub Actions workflows (each workflow's own `on:` trigger → its own `jobs:` is real; different workflow files have no relationship to each other), MCP servers, third-party CLI invocations, and the domain pillar map. Root fans out directly to every item — no fabricated ordering between siblings that don't actually depend on each other.
+
+**Row grouping is a layout aid, not a container.** When an inventory exceeds 5 items, rows are still grouped (5 per row) so the diagram doesn't render as one long horizontal line — but the grouping renders as invisible (`fill:none,stroke:none`, blank title): no visible box, no "row N/M" label. Consecutive rows are linked with Mermaid's invisible-link operator (`~~~`) purely to force vertical stacking, never implying an execution order between an unordered inventory's rows.
+
+## Loop-back detection (real retry/iteration engineering, not decoration)
+
+Skills whose SKILL.md documents an actual loop get a dotted, labeled back-edge on their per-skill workflow diagram — not just a straight top-to-bottom chain:
+
+1. **Explicit** — a step's own untruncated text contains `goto N` (e.g. babysit-pr's step 13 says "otherwise `goto 1`" verbatim) → the back-edge points to the exact referenced step, labeled `retry -> step N`.
+2. **Implicit fallback** — no explicit `goto`, but the skill body uses recognized loop language (`3-cycle self-fix`, `ambiguity loop`, `retry loop`, `repeat until`, `safety_valve` cap, etc.) → the last step loops back to the first step, since that is what "the process repeats" means absent a more specific target.
+
+`` ```python `` fenced code blocks are stripped before the implicit-keyword scan (bare/pseudocode ` ``` ` fences are not) — otherwise a skill's own embedded source code (including this skill analyzing itself) can match the detector's own pattern-string literals as if they were prose describing a real loop.
+
 ## Iron Law (no exceptions)
 
 **0-arg default OK. Hidden flags:**
 - `--target DIR` (default `$PWD`)
 - `--out PATH` (default `/tmp/code-viz.html`)
 - `--screenshots DIR` (optional; export each `pre.mermaid` as a PNG into DIR)
-- `--top-skills N` (default 20, max 40 — how many user-invocable skills get a per-skill workflow diagram; IMPORTANT skills always included)
-- `--strict` (treat any validation failure as a hard error — non-zero exit)
+- `--top-skills N` (default 20, clamped to [1, 40] — how many user-invocable skills get a per-skill workflow diagram; IMPORTANT skills always included)
 
-The skill does **not modify** the target — read-only walk + new HTML in `/tmp` + optional PNGs.
+The skill does **not modify** the target — read-only walk + new HTML in `/tmp` + optional PNGs. Validation failure is always a hard error (non-zero exit) — there is no lenient mode.
 
 ## Generic by design (not repo-specific)
 
@@ -59,7 +76,7 @@ The skill does **not modify** the target — read-only walk + new HTML in `/tmp`
 1. **Strategy F — `## Categories` / `## Dimensions` / `## Audit areas` / `## Checks`** with bullet-list items (e.g. security's `## Categories` listing A01–A10, inspect's `## Dimensions` listing dead/dup/smell/.../slop). This runs first because it's the most semantically meaningful.
 2. **Strategy A — `[N/M] LABEL`** with separators `→ | -> | — | – | - ` (e.g. `plan`'s `[1/5] frame — goal + target user`).
 3. **Strategy B — `## Gate N/M — label`** / `## Phase N — label` / `## Sub-stage N — label`.
-4. **Strategy C — numbered list under** `## Algorithm` / `## Behavior` / `## Pipeline` / `## Phases` / `## Cycle` (e.g. `babysit-pr`'s 8-step `## Algorithm`, `review`'s `## Scope` numbered list).
+4. **Strategy C — numbered list under** `## Algorithm` / `## Behavior` / `## Pipeline` / `## Phases` / `## Cycle` (e.g. `babysit-pr`'s 14-step `## Algorithm`, `review`'s `## Scope` numbered list).
 5. **Strategy D — `## <SectionName>` headers** as implicit phases (e.g. `eval`'s `## Modes` → `## Rubric registry` → `## Cross-validate` → `## Verdict` → `## Output`).
 
 If all fail, the skill is added to a **"no explicit workflow detected"** text list (not a Mermaid diagram).
@@ -132,8 +149,7 @@ for a in sys.argv[1:]:
 target      = pathlib.Path(args.get('target', '.')).resolve()
 out         = pathlib.Path(args.get('out', '/tmp/code-viz.html'))
 screenshots = pathlib.Path(args['screenshots']) if 'screenshots' in args else None
-top_skills  = int(args.get('top-skills', 20))
-strict      = args.get('strict', False)
+top_skills  = max(1, min(int(args.get('top-skills', 20)), 40))
 
 def esc(s): return html.escape(str(s))
 def nid(s, prefix='n_'):
@@ -540,16 +556,23 @@ if not relations:
 rel_lines.append('  classDef skill fill:#e8f5e9,stroke:#388e3c,color:#1b5e20')
 blocks.append(('L2 Skill level -- relationship graph', '\n'.join(rel_lines)))
 
-# Per-skill workflow: IMPORTANT_SKILLS first, then alphabetical fill
+# Per-skill workflow: IMPORTANT_SKILLS first, then alphabetical fill.
+# IMPORTANT_SKILLS itself is NOT pre-truncated by top_skills (a repo may
+# have more IMPORTANT_SKILLS present than the requested cap) -- the final
+# [:top_skills] slice below is the single source of truth for how many
+# skills actually get visualized. All downstream counts/stats MUST read
+# from `visualized_skills`, never from the untruncated `workflow_skills`,
+# or the printed "N / M" stat silently disagrees with the rendered HTML.
 user_skills_by_name = {s['name']: s for s in skills if s['user_invocable'].lower() == 'true'}
 priority = [s for n in IMPORTANT_SKILLS if (s := user_skills_by_name.get(n)) is not None]
 remaining_pool = [s for n, s in sorted(user_skills_by_name.items()) if n not in IMPORTANT_SKILLS]
 fill = remaining_pool[:max(0, top_skills - len(priority))]
 workflow_skills = priority + fill
+visualized_skills = workflow_skills[:top_skills]
 
 skill_workflow_blocks = []
 no_workflow_skills = []
-for s in workflow_skills[:top_skills]:
+for s in visualized_skills:
     cycle = extract_cycle(s['body'], s['name'])
     if cycle:
         start_id = f'S_{nid(s["name"], "sk_")}'
@@ -859,7 +882,7 @@ doc = f'''<!doctype html>
 
 <header class="header">
   <h1>code-viz -- {esc(target.name)}</h1>
-  <p class="meta">target <code>{esc(target)}</code> . generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')} . {len(blocks)} mermaid diagrams . {len(workflow_skills) - len(no_workflow_skills)} workflows visualized + {len(no_workflow_skills)} linear skills listed . {len(all_files)} files scanned . click any diagram to expand</p>
+  <p class="meta">target <code>{esc(target)}</code> . generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')} . {len(blocks)} mermaid diagrams . {len(visualized_skills) - len(no_workflow_skills)} workflows visualized + {len(no_workflow_skills)} linear skills listed . {len(all_files)} files scanned . click any diagram to expand</p>
   <div class="stats">{stat_tiles}</div>
   <div class="stats secondary">{pillar_tiles}</div>
 </header>
@@ -969,7 +992,7 @@ svgs_match = re.search(r'svgs=(\d+)', v.stdout)
 svgs_count = svgs_match.group(1) if svgs_match else '?'
 print(f'[code-viz] target={target}')
 print(f'[code-viz] discovered: {len(skills)} skills, {len(commands)} commands, {sum(len(r) for _,r in hook_events)} hooks, {len(workflows)} GH workflows, {len(lib_modules)} lib, {len(bin_modules)} bin, {len(tools_modules)} tools, {len(mcp_servers)} MCP')
-print(f'[code-viz] workflows visualized: {len(workflow_skills) - len(no_workflow_skills)} / {len(workflow_skills)} top skills; {len(no_workflow_skills)} linear (listed as text)')
+print(f'[code-viz] workflows visualized: {len(visualized_skills) - len(no_workflow_skills)} / {len(visualized_skills)} top skills; {len(no_workflow_skills)} linear (listed as text)')
 print(f'[code-viz] pillar map: ' + ' '.join(f'{p}={c}' for p,c in sorted(pillar_files.items(), key=lambda kv:-kv[1]) if c>0))
 print(f'[code-viz] wrote {out} ({out.stat().st_size:,} bytes, {n_diagrams} mermaid diagrams)')
 if png_count:
@@ -981,18 +1004,20 @@ PY
 
 ## Verification summary (this iteration)
 
-- One SKILL.md file (~620 LOC body + ~520 lines of embedded heredoc).
+- One SKILL.md file (~660 LOC body + ~560 lines of embedded heredoc).
 - 6 abstraction levels + 1 cross-cutting pillar map + GH Actions gate workflow sequence = 8+ Mermaid diagrams per run.
-- **5-strategy cycle extraction** (was 1):
-  - **Strategy F (NEW, highest priority)**: `## Categories`/`## Dimensions`/`## Audit areas`/`## Checks`/`## OWASP` sections with bolded-bullet items — extracts domain content (e.g. security's A01–A10, inspect's 8 dims).
+- **5-strategy cycle extraction**:
+  - **Strategy F (highest priority)**: `## Categories`/`## Dimensions`/`## Audit areas`/`## Checks`/`## OWASP` sections with bolded-bullet items — extracts domain content (e.g. security's A01–A10, inspect's 8 dims).
   - Strategy A: `[N/M] LABEL` with arrow/em-dash variants.
   - Strategy B: `## Gate N/M` / `## Phase N` / `## Sub-stage N`.
-  - Strategy C: numbered list under known section headers.
+  - Strategy C: numbered list under known section headers (e.g. babysit-pr's 14-step `## Algorithm`).
   - Strategy D: `## <SectionName>` headers as implicit phases.
+- **Loop-back detection**: explicit `goto N` in a step's untruncated text, or an implicit fallback (3-cycle self-fix, ambiguity loop, retry loop, repeat until, safety_valve cap) draws a dotted labeled back-edge on the per-skill workflow diagram. `python` code fences are stripped before the implicit scan to avoid a skill's own source code (including this skill analyzing itself) self-matching the detector's pattern strings.
+- **Fan-out vs sequential edges**: pure inventories (modules, directories, extensions, GH Actions, MCP servers, CLIs, pillar map) fan out from a root with NO sibling-to-sibling edges; only genuinely ordered things (skill workflow phases, hooks within one event) get chained arrows. Row-grouping beyond 5 items renders with no visible box/label (`fill:none,stroke:none`) — a pure layout aid, never implying a relationship.
 - **Skills without an extractable workflow** are listed as text chips in a "no explicit workflow detected" section — no wasted diagram.
 - IMPORTANT_SKILLS priority list (15 skills always get a workflow diagram): `plan`, `build`, `review`, `security`, `eval`, `inspect`, `prune`, `refactor`, `ci-setup`, `babysit-pr`, `ship`, `bootstrap`, `code-viz`, `report`, `token-analyzer`.
 - GH Actions gate workflow: detects any workflow with `needs:` (e.g. `review.yml`'s `gate` job) and emits a `sequenceDiagram` showing PR → review + security fan-out → gate verdict.
-- `--top-skills N` default 20 (was 12), max 40.
+- `--top-skills N` default 20, clamped to [1, 40] in code (matches documented range — no dead flags: the earlier `--strict` flag was removed since the validator already always hard-fails unconditionally).
 - All classification is filename/path heuristic — no hardcoded skill names or module roles. Works on any Claude Code plugin, MCP server, microservice, monorepo, or framework.
 
 ## Hand-off
