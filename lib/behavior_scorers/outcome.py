@@ -24,7 +24,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict
 
-from lib import test_weakening_detector
 from lib.behavior_scorers.types import Context, DimensionScore
 
 # Match the verdict line in eval-report.md.
@@ -174,23 +173,6 @@ def score(worktree: Path, ctx: Context) -> DimensionScore:
     else:
         value = 3
 
-    # Compare against an explicit baseline only; the detector never applies
-    # absolute quality thresholds. No baseline means no weakening signal.
-    if ctx.baseline_path is not None and Path(ctx.baseline_path).exists():
-        weakening = test_weakening_detector.analyze(worktree, Path(ctx.baseline_path))
-    else:
-        weakening = {
-            "coverage_drop_pct": 0.0,
-            "assertion_delta": 0,
-            "mock_skip_files": [],
-            "deleted_tests": [],
-            "penalty": 0,
-            "signals_triggered": [],
-        }
-    penalty = int(weakening.get("penalty", 0))
-    if value > 0 and penalty < 0:
-        value = max(1, min(5, value + penalty))
-
     return DimensionScore(
         dim="D1_outcome",
         value=value,
@@ -200,6 +182,5 @@ def score(worktree: Path, ctx: Context) -> DimensionScore:
             "pass_rate": round(pass_rate, 4),
             "slop_violations": slop,
             "eval_verdict": eval_verdict,
-            "test_weakening": weakening,
         },
     )

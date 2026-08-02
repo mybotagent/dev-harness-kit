@@ -34,7 +34,7 @@ writer/reader 계약을 가지며, 이를 섞어 쓰는 것이
 **위치**: `<orch_worktree>/.dev-kit/round-<descriptor>/dispatches/<branch>.md`.
 
 봉투는 디스패치 프롬프트 그 자체다 — 일곱 개 플레이스홀더가 모두
-해결된, `.claude/skills/_acp/sub-agent-prompt.md`의 정식 템플릿
+해결된, `skills/_acp/sub-agent-prompt.md`의 정식 템플릿
 사본이다:
 
 | 플레이스홀더 | 해결 출처 |
@@ -116,7 +116,7 @@ T가 실제로 asserted 했는지 확인하기 위해 사이드카 집합을 읽
 `ACPDispatcher`는 봉투 + cut + lock 패턴을 위한 단일 M-tier
 진입점이다. 소유하는 것:
 
-1. **정식 템플릿 읽기** — `.claude/skills/_acp/sub-agent-prompt.md`에서
+1. **정식 템플릿 읽기** — `skills/_acp/sub-agent-prompt.md`에서
    (`--template`으로 오버라이드 가능).
 2. **일곱 개 플레이스홀더를 입력 순서대로 채움** — 값이 하나라도
    없으면 `ValueError`를 발생시킨다. `tests/test_acp_hand_off.py`의
@@ -212,7 +212,7 @@ python3 lib/acp_dispatch.py \
 ## 8. 관련
 
 - `docs/architecture/acp-harness.md` — ACP 설계 SSOT (§1–§6).
-- `.claude/skills/_acp/sub-agent-prompt.md` — 정식 디스패치 템플릿.
+- `skills/_acp/sub-agent-prompt.md` — 정식 디스패치 템플릿.
 - `hooks/acp-tier-assert.sh` — tier-assertion 린트(이 PR).
 - `hooks/acp-cwd-discipline.sh` — cwd-discipline 훅(자매 PR).
 - `hooks/worktree-guard.sh` — 기존 워크트리 규칙; 그 위에 얹힘.
