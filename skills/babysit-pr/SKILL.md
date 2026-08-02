@@ -25,8 +25,9 @@ reaches `review verdict = Approve` and `all required checks = success`. Each
 iteration is **evidence-driven** (MUST-L3): the skill quotes exit codes, log
 snippets, and review verdicts before claiming a step is done.
 
-Operates **only** on the PR of the current working branch. If no PR exists for
-the branch, stop and tell the user to push + open one.
+By default, monitors the PR associated with the current working branch. Pass
+`--pr N` to target an explicit open PR; this is required when the current
+branch's PR is already closed or merged.
 
 ---
 
@@ -44,20 +45,23 @@ the branch, stop and tell the user to push + open one.
 | `CODEOWNERS_PATH`| `$REPO_ROOT/.github/CODEOWNERS` (parsed by `lib/babysit_pr_cli.py`)    |
 | `COLLABORATORS`  | `gh api /repos/{owner}/{repo}/collaborators?per_page=100 -q '.[].login'` |
 
-### CLI flags (issue #324)
+### CLI flags (issues #324, #527)
 
 ```
-/dev-kit:babysit-pr [--operator-is-only-human] [--rationale "<text>"]
+/dev-kit:babysit-pr [--pr N] [--operator-is-only-human] [--rationale "<text>"]
 ```
 
 | Flag                       | Effect |
 |----------------------------|--------|
 | *(no flag)*                | Default behavior: print `REVIEW_REQUIRED -> human-gate` and exit 0. The flag-absent path is the audit-safe default — operators never accidentally bypass review. |
+| `--pr N` | Babysit explicit PR `N`, overriding current-branch PR discovery. The target must be open; use this when the current branch's PR is closed or merged. |
 | `--operator-is-only-human` | Opt-out for single-operator repos. Refuses with exit 1 if `CODEOWNERS_PATH` OR `COLLABORATORS` list any handle other than `OPERATOR_HANDLE`. Requires `--rationale`. Posts the audit comment `/ownership-confirmed by operator=<handle> at <ISO-8601>; rationale=<text>` and hands off — it never merges the PR. Auto-merge into `main` is disabled by policy; the human operator runs `gh pr merge` themselves. |
 | `--rationale "<text>"`     | Required when `--operator-is-only-human` is set; quoted verbatim into the audit comment. The flag pair is the *only* canonical way to bypass the human-review gate. |
 
-If `PR_NUMBER` is empty OR `PR_STATE != OPEN` → print a one-line message and
-exit 0. Never create a PR implicitly (MUST: explicit user action).
+If `--pr N` is absent and `PR_NUMBER` is empty, print a one-line message and
+exit 1 explaining that an explicit `--pr N` or current-branch PR is required.
+If the resolved `PR_STATE != OPEN`, print a one-line message and exit 1; do
+not silently report success. Never create a PR implicitly.
 
 ---
 
