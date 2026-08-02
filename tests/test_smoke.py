@@ -32,9 +32,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # dependent skills; its checks duplicate tests/test_harness_audit.py +
 # tests/test_skill_governance.py, which stay) (39 -> 37).
 # Added skills/ci-triage/SKILL.md (37 -> 38).
+# Added skills/linear/SKILL.md (37 -> 38 on this branch's baseline).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 37
+SKILL_COUNT = 38
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",

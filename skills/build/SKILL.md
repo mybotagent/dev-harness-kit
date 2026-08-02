@@ -18,6 +18,13 @@ disable-model-invocation: false
 
 Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one `claude -p` sub-agent per step inside an isolated per-step git worktree, persisting real `step<N>-output.json` (subprocess exit code, stdout, stderr, measured duration), and emitting the 2-commit protocol on the per-step branch. Honors MUST-36 (one sub-agent per step), MUST-37 (3-cycle self-fix guard), MUST-38 (per-step worktree isolation).
 
+## Optional Linear preflight
+
+At the start of a new build task, invoke `/dev-kit:linear` once when Linear is
+enabled or available. Continue normally on `LINEAR_SKIP` or an implicit
+`LINEAR_ERROR`; do not invoke it per step, retry, or sub-agent. See
+`skills/linear/SKILL.md` for the reconciliation contract.
+
 ## Pre-flight gate
 
 Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. No version comparison — presence of the marker is the only precondition; dev-kit does not gate consumer builds on a plugin-version floor.

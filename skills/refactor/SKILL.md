@@ -21,6 +21,13 @@ Whole-pipeline refactor. `/dev-kit:inspect` baseline → `/dev-kit:build-refacto
 This skill does **not delete** features; for deletion use `/dev-kit:prune`.
 For one named feature end-to-end, use `prune --target <feature>`.
 
+## Optional Linear preflight
+
+At the start of a new refactor task, invoke `/dev-kit:linear` once when Linear
+is enabled or available. Continue normally on `LINEAR_SKIP` or an implicit
+`LINEAR_ERROR`; do not invoke it per phase. See `skills/linear/SKILL.md` for
+the reconciliation contract.
+
 ## 3 phases (separate calls)
 
 0-arg: whole project. `<path>` narrows. No version-gated preconditions

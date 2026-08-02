@@ -17,6 +17,13 @@ user-invocable: false
 ## Iron Law
 **No fix proposal before Phase 1 (reproduce) completes.**
 
+## Optional Linear preflight
+
+At the start of a new debugging task, invoke `/dev-kit:linear` once when
+Linear is enabled or available. Continue normally on `LINEAR_SKIP` or an
+implicit `LINEAR_ERROR`; do not invoke it between debugging phases. See
+`skills/linear/SKILL.md` for the reconciliation contract.
+
 ## 4 Phases (separate cycles)
 
 ```

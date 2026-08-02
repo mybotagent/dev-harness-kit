@@ -21,6 +21,11 @@ The skill asks 4 multiSelect questions in sequence:
 
 The result of the interview is written to `.dev-kit/.enabled.json` (skills + MCP + hook-matrix selections) and `.dev-kit/methodology.json` (the chosen methodology), updating whatever was previously stored.
 
+Linear is an optional MCP integration. Set it to `off` to skip implicit
+tracking, or `auto` to use it when the connector is available. The public
+`/dev-kit:linear` skill can still be invoked directly and reports setup
+problems without blocking other skills.
+
 ## Usage
 
 ```bash
