@@ -4,7 +4,7 @@
 
 **Category:** `ship` · **Alpha:** `state` · **Invocation:** `/dev-kit:babysit-pr` (human-invoked)
 
-`babysit-pr` monitors the PR associated with the **current branch** and iteratively resolves every blocker — failing CI checks and review change requests — until the PR reaches `review verdict = Approve` with `all required checks = success`. It operates only on the current branch's PR; if none exists, it stops and tells the user to open one. Every iteration is evidence-driven (MUST-L3): the skill quotes exit codes, log snippets, and review verdicts before claiming a step is done, and it never auto-merges — merging into `main` stays a human-only action even in the single-operator opt-out path.
+`babysit-pr` monitors the PR associated with the **current branch** by default; `--pr N` explicitly targets an open PR when the current branch's PR is closed or merged. Every iteration is evidence-driven (MUST-L3): the skill quotes exit codes, log snippets, and review verdicts before claiming a step is done, and it never auto-merges — merging into `main` stays a human-only action even in the single-operator opt-out path.
 
 ## When to use it
 
