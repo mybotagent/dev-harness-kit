@@ -4,7 +4,7 @@ category: audit
 description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
 alpha: analysis
 when_to_use:
-  - User types /dev-kit:inspect
+  - User types /dev-kit:inspect or /dev-kit:inspect --html
   - Pre-release hygiene sweep
   - Pre-step for /dev-kit:refactor or /dev-kit:prune (baseline report)
 allowed-tools: Read Grep Glob Bash Agent
@@ -19,9 +19,12 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 ## Scope
 
 1. No positional arg -> whole project. `<path>` -> that subtree.
-2. `--dim <name>` -> one of `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-3. Empty source set -> tell user, stop. >~40 files -> narrow with positional arg.
-4. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, generated `.pb.go`/`.min.js`/`.min.css`.
+2. `--html` -> after writing the markdown artifact, run
+   `python3 bin/dev-kit-report.py --project-root .` to render
+   `.dev-kit/report.html` from the latest eval and inspect reports.
+3. `--dim <name>` -> one of `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
+4. Empty source set -> tell user, stop. >~40 files -> narrow with positional arg.
+5. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, generated `.pb.go`/`.min.js`/`.min.css`.
 
 ## Fan-out + verify
 
@@ -42,7 +45,9 @@ The skill body owns the dedupe (on `file,line,theme`) + verifier + synthesize pi
 
 ## Render
 
-Append engine's markdown to `.dev-kit/inspect-report.md`. No PR comments, no source edits. Verdict: `Critical` (>=1 HIGH) | `Major drift` (>=3 MED) | `Minor drift` | `Healthy`.
+Append engine's markdown to `.dev-kit/inspect-report.md`. With `--html`, then
+run `python3 bin/dev-kit-report.py --project-root .` and quote its exit code
+and output path. No PR comments, no source edits. Verdict: `Critical` (>=1 HIGH) | `Major drift` (>=3 MED) | `Minor drift` | `Healthy`.
 
 ## Hand-off
 
