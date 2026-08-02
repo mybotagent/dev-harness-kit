@@ -388,7 +388,10 @@ DOMAIN_CONTENT_SECTIONS = {'categories', 'dimensions', 'audit areas', 'audit_are
 CYCLE_SECTION_NAMES = {'algorithm', 'behavior', 'behaviour', 'pipeline', 'phases', 'cycle', 'workflow', 'how it works', 'process', 'steps'}
 
 def extract_cycle(body, skill_name):
-    """Returns list of (label, desc) tuples or None.
+    """Returns list of (label, desc_display, desc_full) tuples or None.
+    desc_full is the UNTRUNCATED source text for that step -- kept so
+    find_loop_back() can regex for 'goto N' / loop keywords that a
+    safe_label() truncation would otherwise cut off.
     Strategies (in order):
       F: ## Categories / ## Dimensions / ## Audit areas / etc. — bullet lists with bolded names (e.g. OWASP A01–A10)
       A: [N/M] LABEL → desc (arrow/em-dash variants)
@@ -409,19 +412,19 @@ def extract_cycle(body, skill_name):
                 items = re.findall(r'^\s*[-*]\s+\*\*([^*]+)\*\*\s*[—\-:]?\s*(.+?)(?=\n\s*[-*]|\n\n|\Z)',
                                   block, re.MULTILINE | re.DOTALL)
             if items and len(items) >= 2:
-                return [(safe_label(name, 30), safe_label(desc, 60)) for name, desc in items[:15]]
+                return [(safe_label(name, 30), safe_label(desc, 60), desc) for name, desc in items[:15]]
 
     # Strategy A: [N/M] LABEL with arrow/em-dash separator
     pat_a = re.compile(r'\[(\d+)/(\d+)\]\s+([A-Za-z][A-Za-z0-9_\- ]{1,40}?)\s*(?:→|->|—|–)\s*(.+?)(?:\n|$)')
     matches = pat_a.findall(body)
     if matches and len(matches) >= 2:
-        return [(label.strip(), safe_label(desc, 80)) for _, _, label, desc in matches]
+        return [(label.strip(), safe_label(desc, 80), desc) for _, _, label, desc in matches]
 
     # Strategy B: ## Gate/Phase/Sub-stage N — label
     pat_b = re.compile(r'^#{2,3}\s+(Gate|Phase|Sub-stage|Stage|Step)\s+(\d+(?:/\d+)?)\s*[—–\-:]\s*(.+?)$', re.MULTILINE)
     matches = pat_b.findall(body)
     if matches and len(matches) >= 2:
-        return [(f"{kind} {n} - {safe_label(label, 40)}", '') for kind, n, label in matches]
+        return [(f"{kind} {n} - {safe_label(label, 40)}", '', label) for kind, n, label in matches]
 
     # Strategy C: numbered list under known cycle headers
     for sec_name in CYCLE_SECTION_NAMES:
@@ -430,7 +433,7 @@ def extract_cycle(body, skill_name):
             block = m.group(1)
             items = re.findall(r'^\s*(\d+)\.\s+(.+?)(?=\n\s*\d+\.|\n\n|\Z)', block, re.MULTILINE | re.DOTALL)
             if items and len(items) >= 2:
-                return [(f"step {idx}", safe_label(text, 60)) for idx, text in items]
+                return [(f"step {idx}", safe_label(text, 60), text) for idx, text in items]
 
     # Strategy D: ## <SectionName> headers as implicit phases (skip generic section names)
     pat_d = re.compile(r'^##\s+([A-Z][A-Za-z0-9 \-]{2,50})\s*$', re.MULTILINE)
@@ -443,8 +446,52 @@ def extract_cycle(body, skill_name):
     substantive = [h.strip() for h in headers
                    if h.strip().lower() not in skip and len(h.strip()) >= 3][:12]
     if len(substantive) >= 3:
-        return [(h, '') for h in substantive]
+        return [(h, '', h) for h in substantive]
 
+    return None
+
+LOOP_IMPLICIT_PATTERNS = [
+    (r'3-cycle self-fix', '3x self-fix retry'),
+    (r'ambiguity loop', 'ambiguity loop'),
+    (r'retry loop', 'retry'),
+    (r'repeat until', 'repeat until pass'),
+    (r'loop on the failing', 'loop on fail'),
+    (r'safety_valve\s*[:=]\s*\d+', 'capped retry'),
+    (r'self-fix\s+(?:guard|max|loop)', 'self-fix retry'),
+]
+
+def find_loop_back(cycle, body):
+    """Detect a genuine loop-back relationship in a skill's extracted cycle.
+    Returns (source_idx, target_idx, loop_label) using 0-based indices into
+    `cycle`, or None if no loop signal is found.
+
+    1. Explicit: a step's own full text contains 'goto N' (e.g. babysit-pr's
+       step 13 'otherwise goto 1') -- source is that step, target is the
+       referenced step number (1-indexed in source text, mapped to 0-based).
+    2. Implicit: no explicit goto, but the skill body uses recognized loop
+       language (3-cycle self-fix, ambiguity loop, retry loop, repeat until,
+       safety_valve cap, etc.) -- generic fallback: last step loops back to
+       first step, since that is what "repeat the process" means absent a
+       more specific target.
+    """
+    for i, (_, _, full) in enumerate(cycle):
+        m = re.search(r'goto\s+(\d+)', full, re.IGNORECASE)
+        if m:
+            target_step_num = int(m.group(1))
+            target_idx = max(0, min(len(cycle) - 1, target_step_num - 1))
+            if target_idx != i:
+                return (i, target_idx, f'retry -> step {target_step_num}')
+    if len(cycle) >= 2:
+        # Strip ```python fenced blocks before the implicit-keyword scan --
+        # source code (this skill's own heredoc, or another skill's example
+        # snippets) can contain these words as string literals or unrelated
+        # identifiers, not as prose describing an actual runtime loop.
+        # Bare ``` pseudocode fences (e.g. babysit-pr's Algorithm block) are
+        # deliberately NOT stripped, since that IS the loop description.
+        prose = re.sub(r'```python\n.*?```', '', body, flags=re.DOTALL)
+        for pat, label in LOOP_IMPLICIT_PATTERNS:
+            if re.search(pat, prose, re.IGNORECASE):
+                return (len(cycle) - 1, 0, label)
     return None
 
 pillar_files = collections.Counter()
@@ -507,11 +554,12 @@ for s in workflow_skills[:top_skills]:
     if cycle:
         start_id = f'S_{nid(s["name"], "sk_")}'
         step_items = []
-        for label, desc in cycle:
+        for label, desc, full in cycle:
             cur_id = f'N_{nid(s["name"] + label, "sk_")}'[:60]
             lbl = safe_label(label, 24)
             if desc: lbl += f'\n{esc(safe_label(desc, 40))}'
             step_items.append((cur_id, lbl))
+        loop_info = find_loop_back(cycle, s['body'])
         lines = ['flowchart TD', f'  {start_id}["{esc(s["name"])}"]:::start']
         chunks = [step_items[i:i+5] for i in range(0, len(step_items), 5)]
         prev_last_id = None
@@ -539,7 +587,16 @@ for s in workflow_skills[:top_skills]:
             prev_last_id = chunk_last_id
         lines.append(f'  classDef start fill:#fce4ec,stroke:#c2185b,color:#880e4f')
         lines.append(f'  classDef step fill:#e3f2fd,stroke:#1976d2,color:#0d47a1')
-        skill_workflow_blocks.append((f'L2 Skill level -- {s["name"]} ({len(cycle)} steps)', '\n'.join(lines)))
+        loop_suffix = ''
+        if loop_info:
+            src_i, tgt_i, loop_label = loop_info
+            src_id = step_items[src_i][0]
+            tgt_id = step_items[tgt_i][0]
+            # Dotted arrow with an inline label -- visually distinct from the
+            # solid top-down flow edges, showing the real retry/loop-back.
+            lines.append(f'  {src_id} -.->|{esc(safe_label(loop_label, 24))}| {tgt_id}')
+            loop_suffix = ' + loop'
+        skill_workflow_blocks.append((f'L2 Skill level -- {s["name"]} ({len(cycle)} steps{loop_suffix})', '\n'.join(lines)))
     else:
         no_workflow_skills.append(s['name'])
 blocks.extend(skill_workflow_blocks)
