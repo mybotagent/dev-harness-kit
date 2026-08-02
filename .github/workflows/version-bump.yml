@@ -24,9 +24,10 @@ name: version-bump
 #   commit (the squash result), but tags are independent refs — the
 #   tag still points to the source commit which is the authoritative
 #   "this is the vX.Y.Z bump" commit.
-# - Idempotency: if the current-version tag already exists on origin,
-#   a previous run already bumped this version. The idempotency output gates
-#   every later step, so the workflow exits without creating another PR.
+# - Idempotency: gate on the TRIGGERING commit. If the push to origin/main
+#   that fired this run is itself a bump merge (subject starts with
+#   "chore(release): bump dev-kit to v..."), the workflow would just create
+#   an infinite cascade of empty bumps -- skip. Otherwise proceed to bump.
 
 on:
   push:
@@ -86,25 +87,28 @@ jobs:
           NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"
 
-      - name: Idempotency check (skip if already bumped)
+      - name: Skip if triggering commit is itself a bump
         id: idempotency
-        # If the tag for the CURRENT version already exists on origin, a
-        # previous run already completed this bump. Expose the result so every
-        # state-changing step below can be skipped by a GitHub Actions `if:`.
+        # Gate every state-changing step on whether the latest commit on
+        # origin/main is a bump merge (subject starts with
+        # "chore(release): bump dev-kit to v..."). If so, this run was
+        # re-triggered by the prior bump's own merge -- skip to avoid an
+        # infinite cascade of empty bumps.
         env:
-          VERSION: ${{ steps.read.outputs.version }}
+          GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="dev-kit--v${VERSION}"
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}$"; then
-            echo "tag ${TAG} already exists on origin; version already bumped — skipping"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          LATEST_SUBJECT="$(git log -1 --format=%s origin/main)"
+          if [[ "$LATEST_SUBJECT" =~ ^chore\(release\):\ bump\ dev-kit\ to\ v ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::origin/main HEAD is itself a bump commit ('$LATEST_SUBJECT'); skipping next bump."
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "origin/main HEAD subject: '$LATEST_SUBJECT' (not a bump); proceeding."
           fi
 
       - name: Create bump branch
-        if: steps.idempotency.outputs.exists != 'true'
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -113,7 +117,7 @@ jobs:
           git checkout -b "$BRANCH"
 
       - name: Bump both manifests
-        if: steps.idempotency.outputs.exists != 'true'
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -124,7 +128,7 @@ jobs:
           done
 
       - name: Commit + push bump branch
-        if: steps.idempotency.outputs.exists != 'true'
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           NEXT: ${{ steps.next.outputs.version }}
         run: |
@@ -135,7 +139,7 @@ jobs:
           git push -u origin "$BRANCH"
 
       - name: Emit annotated tag (pre-merge)
-        if: steps.idempotency.outputs.exists != 'true'
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.next.outputs.version }}
         run: |
@@ -153,7 +157,7 @@ jobs:
           echo "tagged ${TAG} (annotated) at HEAD=${VERSION}"
 
       - name: Open version bump PR (awaiting human merge)
-        if: steps.idempotency.outputs.exists != 'true'
+        if: steps.idempotency.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.next.outputs.version }}
