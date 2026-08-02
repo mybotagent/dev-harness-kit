@@ -5,19 +5,17 @@ After the trunk-owns-the-version refactor (post-#439), this workflow:
   1. Reads the current version from .claude-plugin/plugin.json
   2. Bumps PATCH (0.3.129 -> 0.3.130)
   3. Updates both plugin manifests
-  4. Commits + pushes the bump branch
-  5. Emits the annotated tag (pre-merge, on the bump branch HEAD)
-  6. Opens a bump PR that awaits human merge
+  4. Commits + pushes the bump to main
+  5. Emits the annotated tag (idempotent on tag-already-exists)
 
 The full chain is:
   user edits skill on feature branch
     -> PR opens; branch's plugin.json:version equals origin/main's
        (no auto-bump on feature branches; parallel PRs never conflict)
-    -> ci.yml:version-freshness check gates the merge
+    -> ci.yml:version-freshness check (HEAD > BASE) gates the merge
     -> squash-merge lands the PR on main
-    -> version-bump.yml fires on push-to-main; if the triggering commit is
-       itself a bump merge, it skips (corrected idempotency, #522 v2).
-       Otherwise it bumps PATCH, commits, pushes, tags, and opens a PR.
+    -> version-bump.yml fires on push-to-main, bumps PATCH, commits,
+       pushes, then emits dev-kit--vX.Y.Z
 
 This test pins the structural contract the workflow must satisfy so the
 refactor cannot drift silently:
@@ -28,15 +26,10 @@ refactor cannot drift silently:
   T4: concurrency group is configured with `cancel-in-progress: false`
       (bump+tag must serialize; never drop in-flight pushes).
   T5: tag pattern `dev-kit--vX.Y.Z` is emitted by the workflow.
-  T6: idempotency gates on the TRIGGERING commit (origin/main HEAD subject
-      starts with `chore(release): bump dev-kit to v...`) and exposes a
-      `skip` output that gates all state-changing steps. Previous version
-      probed the current-version tag, which always existed post-bump and
-      made the workflow stop bumping after the first merge.
+  T6: tag emission is skipped if the tag already exists on origin.
   T7: workflow bumps BOTH plugin manifests (.claude-plugin and .codex-plugin).
   T8: workflow commits the bump with a chore(release): ... message.
   T9: pre-push hook does NOT auto-bump; it only enforces version freshness.
-  T10: generated PRs do not request auto-merge and explicitly await a human.
 """
 from __future__ import annotations
 
@@ -125,11 +118,11 @@ class TestBumpWorkflow(unittest.TestCase):
         doc = _yaml_doc()
         perms = doc.get("permissions", {})
         self.assertEqual(perms.get("contents"), "write",
-                         "workflow needs contents: write to push the bump "
-                         "commit and the tag")
-        self.assertEqual(perms.get("pull-requests"), "write",
-                         "workflow needs pull-requests: write to open the "
-                         "bump PR")
+                         "workflow needs contents: write to push the bump commit "
+                         "and the tag")
+        self.assertNotIn("pull-requests", perms,
+                         "pull-requests: write is unnecessary -- the workflow "
+                         "does not create or merge PRs")
 
     def test_05_concurrency_group_set(self):
         doc = _yaml_doc()
@@ -144,149 +137,18 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertRegex(text, r"dev-kit--v\$\{?\{?VERSION\}\}?",
                          "tag emission step must produce dev-kit--vX.Y.Z")
 
-    def test_07_idempotency_check_gates_on_triggering_commit(self):
-        """Idempotency must gate on the TRIGGERING commit, not the
-        current-version tag. Probing `dev-kit--v${VERSION}` was the
-        previous bug: after a bump PR merges, the tag exists for the
-        NEW version, every downstream step was skipped, and the
-        workflow never bumped again. The correct gate is `git log -1`
-        on origin/main -- if the latest commit is itself a bump
-        merge (subject starts with
-        "chore(release): bump dev-kit to v..."), skip; otherwise
-        proceed."""
+    def test_07_tag_skipped_if_already_exists(self):
+        """Tag emission must be a no-op when the tag already exists on
+        origin. Idempotent re-runs (e.g. workflow re-fire on a force-push
+        that didn't change the head version) must not fail."""
         doc = _yaml_doc()
-        idem_step = _find_step(doc, "Skip if triggering commit is itself a bump")
-        self.assertIsNotNone(idem_step,
-                             "expected a 'Skip if triggering commit is itself a "
-                             "bump' step")
-        self.assertEqual(idem_step.get("id"), "idempotency",
-                         "idempotency step must expose a stable step id")
-        run = idem_step.get("run", "")
-        self.assertIn("git log -1 --format=%s origin/main", run,
-                      "idempotency must read the latest subject on origin/main")
-        self.assertNotIn("git ls-remote --tags", run,
-                         "idempotency must NOT probe the current-version tag "
-                         "(the previous bug -- tag exists for every post-bump "
-                         "push and would always skip)")
-        self.assertNotIn("dev-kit--v${VERSION}", run,
-                         "idempotency must NOT construct a tag name from "
-                         "VERSION (the previous bug)")
-        self.assertIn("^chore\\(release\\):\\ bump\\ dev-kit\\ to\\ v", run,
-                      "idempotency must match a bump subject prefix")
-        self.assertIn('echo "skip=true" >> "$GITHUB_OUTPUT"', run,
-                      "idempotency must expose skip=true on the skip path")
-        self.assertIn('echo "skip=false" >> "$GITHUB_OUTPUT"', run,
-                      "idempotency must expose skip=false on the bump path")
-
-    def test_07a_idempotency_gates_all_subsequent_steps(self):
-        """A successful idempotency step must skip every state-changing step;
-        `exit 0` in one step cannot stop later steps in a GitHub Actions job.
-        Pin the `skip` output key (the corrected idempotency contract
-        gates on the triggering commit, not the current-version tag)."""
-        steps = _resolve_steps(_yaml_doc())
-        idem_index = next(i for i, step in enumerate(steps)
-                          if step.get("id") == "idempotency")
-        later_steps = steps[idem_index + 1:]
-        self.assertGreater(len(later_steps), 0,
-                           "idempotency check must precede the bump steps")
-        for step in later_steps:
-            self.assertEqual(
-                step.get("if"), "steps.idempotency.outputs.skip != 'true'",
-                f"step {step.get('name')} must be gated by idempotency output",
-            )
-
-    def test_idempotency_two_push_sequence(self):
-        """Behavioral regression for the corrected idempotency contract:
-        simulate the two-push sequence that previously broke the workflow
-        and assert the new gate produces skip=false on the first push
-        (a normal feature merge) and skip=true on the second push
-        (the auto-merge of the bump PR we just opened).
-
-        Uses subprocess to execute the YAML step's `run` block twice --
-        once with `LATEST_SUBJECT` mocked to a feature merge subject,
-        once with `LATEST_SUBJECT` mocked to a bump-merge subject.
-        This is the same pattern as
-        `test_freshness_step_accepts_equal_versions` -- a black-box
-        execute of the actual shell code, not just a string match.
-        """
-        doc = _yaml_doc()
-        idem_step = _find_step(doc, "Skip if triggering commit is itself a bump")
-        self.assertIsNotNone(idem_step,
-                             "expected a 'Skip if triggering commit is itself a "
-                             "bump' step")
-        run = idem_step.get("run", "")
-        # Build a runner that supplies the subject the step would read
-        # from `git log -1 --format=%s origin/main` and otherwise
-        # executes the step's own logic verbatim. The step reads
-        # LATEST_SUBJECT via $() substitution; we pre-populate it via
-        # an env-prefix stub that mirrors the step's read path.
-        #
-        # The step does:
-        #   LATEST_SUBJECT="$(git log -1 --format=%s origin/main)"
-        #   if [[ "$LATEST_SUBJECT" =~ ^chore\(release\):\ bump\ dev-kit\ to\ v ]]; then
-        #     echo "skip=true" >> "$GITHUB_OUTPUT"
-        #   else
-        #     echo "skip=false" >> "$GITHUB_OUTPUT"
-        #   fi
-        #
-        # We replace the `git log` call with a literal assignment so
-        # the runner does not need a real git repo / network.
-        import subprocess
-        runner_template = run.replace(
-            'LATEST_SUBJECT="$(git log -1 --format=%s origin/main)"',
-            'LATEST_SUBJECT="%(SUBJECT)s"',
-        )
-
-        def _execute(subject: str) -> subprocess.CompletedProcess:
-            runner = runner_template.replace("%(SUBJECT)s", subject)
-            # The step writes to $GITHUB_OUTPUT; provide a tmpfile the
-            # runner can append to. We assert on that file's contents.
-            import tempfile
-            with tempfile.NamedTemporaryFile("r", delete=False) as out:
-                out_path = out.name
-            env = {
-                "PATH": "/usr/bin:/bin",
-                "GITHUB_OUTPUT": out_path,
-            }
-            result = subprocess.run(
-                ["bash", "-c", runner],
-                capture_output=True, text=True, env=env,
-            )
-            contents = Path(out_path).read_text(encoding="utf-8")
-            Path(out_path).unlink(missing_ok=True)
-            return result, contents
-
-        # Push #1: a normal feature merge lands on main. The bumping
-        # workflow should proceed (skip=false).
-        r1, c1 = _execute("Merge pull request #507 from feature/x")
-        self.assertEqual(
-            r1.returncode, 0,
-            f"idempotency step must exit 0 on a non-bump subject; "
-            f"got exit {r1.returncode}: {r1.stderr}",
-        )
-        self.assertIn("skip=false", c1,
-                      "idempotency must set skip=false on a non-bump subject "
-                      "(so the workflow proceeds to bump)")
-        self.assertNotIn("skip=true", c1,
-                         "idempotency must NOT set skip=true on a "
-                         "non-bump subject")
-
-        # Push #2: the auto-merge of the bump PR we just opened fires
-        # the workflow again. The bumping workflow must skip (skip=true).
-        r2, c2 = _execute(
-            "chore(release): bump dev-kit to v0.3.183 (#522)",
-        )
-        self.assertEqual(
-            r2.returncode, 0,
-            f"idempotency step must exit 0 on a bump subject; "
-            f"got exit {r2.returncode}: {r2.stderr}",
-        )
-        self.assertIn("skip=true", c2,
-                      "idempotency must set skip=true when origin/main HEAD "
-                      "is itself a bump commit (the corrected contract)")
-        self.assertNotIn("skip=false", c2,
-                         "idempotency must NOT set skip=false on a "
-                         "bump subject (would re-fire the bump loop)")
+        tag_step = _find_step(doc, "tag") or _find_step(doc, "emit")
+        self.assertIsNotNone(tag_step, "expected a 'Tag' / 'Emit' step")
+        run = tag_step.get("run", "")
+        self.assertIn("already exists", run,
+                      "tag step must skip (with exit 0) when the tag is "
+                      "already on origin; otherwise re-runs will fail with "
+                      "'tag already exists' from git push")
 
     def test_07b_workflow_configures_git_identity(self):
         """`git tag -a` and the bump commit both require a configured
@@ -309,13 +171,8 @@ class TestBumpWorkflow(unittest.TestCase):
         .codex-plugin/plugin.json. The two surfaces publish the same
         version; only one plugin on the bump would desync releases."""
         doc = _yaml_doc()
-        # Use a specific step-name match. The post-#507 flow has multiple
-        # steps whose names contain 'bump' (Create bump branch, Commit +
-        # push bump branch, Idempotency check ... already bumped); the
-        # first match for the bare substring 'bump' is the wrong step.
-        bump_step = _find_step(doc, "Bump both manifests")
-        self.assertIsNotNone(bump_step,
-                             "expected a 'Bump both manifests' step")
+        bump_step = _find_step(doc, "bump") or _find_step(doc, "manifest")
+        self.assertIsNotNone(bump_step, "expected a 'Bump manifests' step")
         run = bump_step.get("run", "")
         self.assertIn(".claude-plugin/plugin.json", run,
                       "bump step must touch .claude-plugin/plugin.json")
@@ -324,30 +181,19 @@ class TestBumpWorkflow(unittest.TestCase):
 
     def test_09_workflow_commits_the_bump(self):
         """The workflow must `git commit` the bump with a chore(release)
-        message, then push the bump branch (NOT HEAD:main — branch
-        protection forbids direct push; the bump lands via the auto-merge
-        PR opened from this branch)."""
+        message, then push the bump back to main. This is the trunk
+        version advance that subsequent PRs will compare against."""
         doc = _yaml_doc()
-        # Match the specific post-#507 step name; the bare substring
-        # 'commit' would still land on the right step here but using the
-        # full name keeps the test robust if a future step is added.
-        commit_step = _find_step(doc, "Commit + push bump branch")
-        self.assertIsNotNone(commit_step,
-                             "expected a 'Commit + push bump branch' step")
+        commit_step = _find_step(doc, "commit") or _find_step(doc, "push version")
+        self.assertIsNotNone(commit_step, "expected a 'Commit + push version bump' step")
         run = commit_step.get("run", "")
         self.assertIn("git commit", run,
                       "commit step must call git commit (the bump itself)")
         self.assertIn("chore(release)", run,
                       "commit message must use chore(release): prefix so "
                       "changelog generators pick it up")
-        self.assertNotIn("git push origin HEAD:main", run,
-                         "workflow must NOT push to main directly — "
-                         "post-#507 branch protection rejects GH006; the "
-                         "bump lands via the auto-merge PR")
-        self.assertIn("git push -u origin \"$BRANCH\"", run,
-                      "commit step must push the bump branch with "
-                      "`git push -u origin \"$BRANCH\"` so the auto-merge "
-                      "PR has a base ref to merge")
+        self.assertIn("git push origin HEAD:main", run,
+                      "commit step must push the bump back to main")
 
     def test_10_bump_step_uses_patch_plus_plus(self):
         """The version advance is strictly PATCH++. Bumping MAJOR or MINOR
@@ -397,42 +243,18 @@ class TestBumpWorkflow(unittest.TestCase):
 
 
 class TestBumpWorkflowOmissions(unittest.TestCase):
-    """Pin the refactor's REMOVALS. The old bump-PR auto-merge path is gone:
-    the workflow opens the bump PR with GITHUB_TOKEN, which suppresses
-    pull_request workflow events. Required checks (test, lint, validate)
-    therefore cannot report on the generated PR, so `gh pr merge --auto`
-    would stall forever. A human (or a separately authorized workflow) must
-    merge the bump. These tests guard against re-introduction of auto-merge.
+    """Pin the refactor's REMOVALS. The old bump-PR creation path
+    (chore/bump-vX.Y.Z branches, gh pr create, peter-evans/enable-pull-
+    request-automerge) is gone. These tests guard against re-introduction.
     """
 
-    def test_opens_bump_pr_awaiting_human_merge(self):
-        """The workflow opens a PR for the bump branch; it MUST NOT request
-        auto-merge. Post-#507 branch protection forbids direct push to main,
-        so the bump lands via PR — but the PR is left for a human to merge
-        because GITHUB_TOKEN-created PRs cannot trigger required checks."""
+    def test_no_bump_branch_creation(self):
         text = _yaml_text()
-        self.assertIn("gh pr create", text,
-                      "workflow must open a PR (`gh pr create`) for the "
-                      "bump branch; direct push to main is blocked by "
-                      "post-#507 branch protection")
-        self.assertNotIn("gh pr merge --auto", text,
-                         "workflow must NOT enable auto-merge — GITHUB_TOKEN "
-                         "suppresses downstream pull_request events, so the "
-                         "required status checks never report and the auto-"
-                         "merge stalls forever")
-        self.assertNotIn("--squash", text,
-                         "workflow must not pass --squash to gh pr merge; "
-                         "the human who merges chooses the strategy")
-        # Regression guard: the old omission test forbade chore/bump-v*
-        # branches. The new contract uses bump/v* (slash, no 'chore/'
-        # prefix), so the old forbidden pattern must still be absent.
         self.assertNotIn("chore/bump-v", text,
                          "workflow must NOT cut chore/bump-v* branches; "
-                         "the new contract uses bump/v* (slash, no 'chore/' "
-                         "prefix) as the PR head branch")
-        self.assertIn("awaiting human merge", text.lower(),
-                     "workflow PR description must make it clear the PR "
-                     "awaits human merge")
+                         "the trunk owns the version bump post-merge")
+        self.assertNotIn("gh pr create", text,
+                         "workflow must NOT create PRs; only commit + tag")
 
     def test_no_peter_evans_automerge(self):
         text = _yaml_text()
