@@ -18,7 +18,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`hook-doctor`](hook-doctor/SKILL.md) 🔒 | `enforcement` | Diagnose failed Claude Code or Codex hooks, repair safe cache and registration drift, and report the exact restart step. |
 | [`inspect`](inspect/SKILL.md) | `analysis` | 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report. |
 | [`prune-propose`](prune-propose/SKILL.md) | `state` | 0-arg skill — usage telemetry dump + per-skill delete proposal. User approves each deletion explicitly. |
-| [`report`](report/SKILL.md) | `analysis` | 0-arg HTML renderer for the latest eval + inspect markdown reports. One self-contained .dev-kit/report.html. No options, no JS, no external assets. |
 | [`token-analyzer`](token-analyzer/SKILL.md) | `analysis` | 0-arg token-efficiency dashboard. Runs tools/token_efficiency_analyzer.py over logs/{claude-code,codex}/*.jsonl to produce an HTML report (+ lazy per-worktree transcript sidecars) -- 4-dim session scoring, 6 anti-patter… |
 
 ### `bootstrap` (3)
@@ -141,7 +140,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 28 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
 | 29 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
 | 30 | [`repair`](repair/SKILL.md) | `repair` | `state` | human |
-| 31 | [`report`](report/SKILL.md) | `audit` | `analysis` | human |
 | 32 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
 | 33 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
 | 34 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |

@@ -4,7 +4,7 @@ category: audit
 description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
 alpha: analysis
 when_to_use:
-  - User types /dev-kit:inspect
+  - User types /dev-kit:inspect or /dev-kit:inspect --html
   - Pre-release hygiene sweep
   - Pre-step for /dev-kit:refactor or /dev-kit:prune (baseline report)
 allowed-tools: Read Grep Glob Bash Agent
@@ -18,16 +18,16 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 
 ## Scope
 
-1. No positional arg -> whole project. `<path>` -> that subtree.
-2. `--dim <name>` -> one of `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-3. Empty source set -> tell user, stop. >~40 files -> narrow with positional arg.
-4. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, generated `.pb.go`/`.min.js`/`.min.css`.
-
+1. No positional arg -> whole project; `<path>` -> that subtree.
+2. `--html` -> after the markdown artifact, run
+   `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
+3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
+4. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
 ## Fan-out + verify
 
 Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, fix_hint`). Return a fenced `json` array. One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`; REJECTED are dropped.
 
-The skill body owns the dedupe (on `file,line,theme`) + verifier + synthesize pipeline inline — the Agent calls return raw findings inside one assistant message, and the body collapses duplicates, applies the verifier verdict, and synthesizes the markdown report.
+The skill body owns the dedupe (on `file,line,theme`) + verifier + synthesize pipeline inline — the body collapses duplicates, applies the verifier verdict, and synthesizes the markdown report.
 
 ## Dimensions (charters live in `lib/analysis_core/dimensions.py`)
 
@@ -39,13 +39,13 @@ The skill body owns the dedupe (on `file,line,theme`) + verifier + synthesize pi
 - **cleancode** — SRP/DRY/KISS/YAGNI with evidence; vague names; bare except: pass; magic numbers.
 - **tokenbudget** — file > 800 lines with low signal, dead-comment blocks, export/consumer skew.
 - **slop** — dead else branches, hallucinated API calls, over-defensive try/except, AI-tell phrasing.
-
 ## Render
 
-Append engine's markdown to `.dev-kit/inspect-report.md`. No PR comments, no source edits. Verdict: `Critical` (>=1 HIGH) | `Major drift` (>=3 MED) | `Minor drift` | `Healthy`.
+Append engine's markdown to `.dev-kit/inspect-report.md`. With `--html`, then
+run `python3 bin/dev-kit-report.py --project-root .` and quote its exit code
+and output path. No PR comments, no source edits. Verdict: `Critical` (>=1 HIGH) | `Major drift` (>=3 MED) | `Minor drift` | `Healthy`.
 
 ## Hand-off
-
 | Dim | Target | Pass |
 |---|---|---|
 | dead | build-refactor | [1/4] |

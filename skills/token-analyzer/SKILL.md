@@ -70,8 +70,8 @@ slash commands.
    binary-ish artifact best opened in a browser.
 
 The skill is read-only (`disallowed-tools: Write Edit`); the Python
-CLI writes the file directly, mirroring how `/dev-kit:report` keeps
-the skill body pure and lets the driver handle I/O.
+CLI writes the file directly, mirroring how `/dev-kit:inspect --html`
+keeps the skill body pure and lets the driver handle I/O.
 
 ## Flags
 

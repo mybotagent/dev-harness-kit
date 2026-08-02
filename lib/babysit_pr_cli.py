@@ -113,6 +113,13 @@ def parse_babysit_args(argv: Sequence[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pr",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Explicit PR number to babysit instead of current-branch discovery.",
+    )
+    parser.add_argument(
         "--operator-is-only-human",
         action="store_true",
         help=(
@@ -393,14 +400,15 @@ def run_babysit_once(
     # Single-operator ownership confirmed. Auto-merge into main is
     # disabled by policy -- post the audit comment recording the
     # confirmation and hand off; a human merges the PR themselves.
+    target_pr_number = args.pr if args.pr is not None else pr_number
     body = format_ownership_confirmed_comment(
         operator=operator_handle,
         rationale=args.rationale.strip(),
         now_iso=now_iso,
     )
-    _post_pr_comment(pr_number, body)
+    _post_pr_comment(target_pr_number, body)
     _write_stdout(
-        f"Single-operator ownership confirmed for PR #{pr_number}. "
+        f"Single-operator ownership confirmed for PR #{target_pr_number}. "
         f"Audit comment posted. Auto-merge is disabled by policy -- "
         f"merge this PR manually with `gh pr merge`."
     )

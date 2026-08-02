@@ -145,23 +145,6 @@
   summary table present.
 - **Active Skills**: `inspect`
 
-## Cross-cutting — Report (`/dev-kit:report`)
-
-- **Goal**: Render the latest `eval-report.md` + `inspect-report.md` as
-  one self-contained HTML file at `.dev-kit/report.html`. Distinct
-  human action ("view the report in a browser") with a distinct
-  artifact; not an option on `/dev-kit:eval` or `/dev-kit:inspect`.
-- **Must**: Self-contained HTML (no `<script>`, no external CSS/IMG,
-  inline styles only). Dark-mode aware. Defensive HTML escaping on
-  every interpolated value.
-- **Must-Not**: Read source files (only the two report artifacts). Make
-  network calls.
-- **AC**: `.dev-kit/report.html` exists. Either contains both report
-  sections (when both source artifacts are present) or a "not found"
-  banner (when one or both are missing). Open in a browser with no
-  console errors.
-- **Active Skills**: `report`
-
 ## Cross-cutting — Eval (`/dev-kit:eval`)
 
 - **Goal**: Asset freshness eval (CLAUDE.md / skill / hook / Iron Law).
