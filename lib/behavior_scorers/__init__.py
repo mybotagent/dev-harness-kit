@@ -86,10 +86,18 @@ def score_all(
         try:
             ds = scorer(Path(worktree), ctx)
         except Exception as exc:  # noqa: BLE001 — never let one dim break the run
+            # crashed=True so the aggregate can distinguish "this dim
+            # scored 1 because the scorer threw" from "this dim scored
+            # 1 because the worktree is genuinely bad" (inspect
+            # 2026-08-03 finding #3). `value=1` is preserved as a
+            # fallback for callers that read .value without checking
+            # .crashed, but the aggregate computes `crashed_dims` and
+            # routes any crashed deterministic dim to ESCALATED.
             ds = DimensionScore(
                 dim=dim,
                 value=1,
                 evidence={"error": f"{type(exc).__name__}: {exc}"},
+                crashed=True,
             )
         dim_scores.append(ds)
     return _aggregate_compute(
