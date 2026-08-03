@@ -28,13 +28,22 @@ import hashlib
 import json
 import logging
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 import llm_judge  # type: ignore
 from atomic import atomic_write_json, now_iso  # noqa: E402
+
+from lib.eval import (  # noqa: E402  -- single SSOT after PR-E extraction
+    RUBRIC_REGISTRY,  # noqa: F401  -- re-exported; tests reference eval_runner.RUBRIC_REGISTRY
+    CaseResult,
+    exception_rot,
+    mock_drift_warning,
+    mock_skipped,
+    real_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,120 +86,11 @@ SESSION_AXES: tuple = (
 # LLM judge prompt — it lets `skills/evaluate` (`alpha: enforcement`)
 # gate on a registered rubric before invoking the LLM, so a caller
 # cannot ask the judge to score an unknown rubric.
-
-class RubricRegistry:
-    """Class-level registry of named eval rubrics.
-
-    `register()` adds a (rubric_yaml_path, judge_prompt_path) pair
-    under a kebab-case name and bumps `version`. `lookup()` returns
-    the pair by name (raises KeyError on miss). `get_rubric()` is the
-    convenience accessor returning just the YAML path.
-
-    The registry is intentionally empty at import time — opt-in. The
-    `evaluate` skill calls `register()` for each rubric it ships with
-    (harness-quality, os-quality) so the public API is stable.
-    """
-
-    _entries: dict = {}
-    version: int = 0
-
-    @classmethod
-    def register(
-        cls,
-        name: str,
-        rubric_yaml_path: str,
-        judge_prompt_path: str,
-    ) -> None:
-        """Add or replace an entry under `name`. Bumps `version`."""
-        if not isinstance(name, str) or not name:
-            raise ValueError(f"rubric name must be a non-empty string, got {name!r}")
-        cls._entries[name] = {
-            "rubric_yaml_path": rubric_yaml_path,
-            "judge_prompt_path": judge_prompt_path,
-        }
-        cls.version += 1
-
-    @classmethod
-    def lookup(cls, name: str) -> dict:
-        """Return the entry dict for `name`. Raises KeyError on miss."""
-        if name not in cls._entries:
-            raise KeyError(
-                f"unknown rubric: {name!r}. Registered: {sorted(cls._entries)}"
-            )
-        return cls._entries[name]
-
-    @classmethod
-    def get_rubric(cls, name: str) -> str:
-        """Convenience: return just the rubric YAML path for `name`."""
-        return cls.lookup(name)["rubric_yaml_path"]
-
-    @classmethod
-    def clear(cls) -> None:
-        """Reset registry. Test-only helper."""
-        cls._entries = {}
-        cls.version = 0
-
-    @classmethod
-    def names(cls) -> tuple:
-        """Return all registered rubric names (sorted)."""
-        return tuple(sorted(cls._entries))
-
-
-# Convenience module-level instance — call sites use
-# `RUBRIC_REGISTRY.register(...)` / `.lookup(...)` directly.
-RUBRIC_REGISTRY = RubricRegistry
-
-
-@dataclass
-class CaseResult:
-    """One case outcome from run_eval.
-
-    Mutable because _judge_case populates fields incrementally before
-    returning; converted to dict at the API boundary via asdict().
-    """
-    case_id: str = ""
-    dim: str = ""
-    scores: Dict[str, float] = field(default_factory=dict)
-    tokens_in: int = 0
-    tokens_out: int = 0
-    raw: str = ""
-    verdict: str = ""
-    score: float = 0.0
-    error: Optional[str] = None
-
-
-def mock_skipped(case: Dict, axes: tuple) -> CaseResult:
-    return CaseResult(
-        case_id=case["case_id"], dim=case["dim"],
-        scores={ax: 0.0 for ax in axes},
-        raw="TRANSCRIPT_MISSING", verdict="SKIPPED", score=0.0,
-    )
-
-
-def mock_drift_warning(case: Dict, axes: tuple) -> CaseResult:
-    return CaseResult(
-        case_id=case["case_id"], dim=case["dim"],
-        scores={ax: 7.0 for ax in axes},
-        raw="DRY_RUN", verdict="DRIFT_WARNING", score=7.0,
-    )
-
-
-def real_result(case: Dict, *, scores: Dict[str, float],
-                tokens_in: int, tokens_out: int,
-                raw: str, verdict: str, score: float) -> CaseResult:
-    return CaseResult(
-        case_id=case["case_id"], dim=case["dim"],
-        scores=scores, tokens_in=tokens_in, tokens_out=tokens_out,
-        raw=raw, verdict=verdict, score=score,
-    )
-
-
-def exception_rot(case: Dict, axes: tuple, exc: Exception) -> CaseResult:
-    return CaseResult(
-        case_id=case["case_id"], dim=case["dim"],
-        scores={ax: 0.0 for ax in axes},
-        raw=str(exc), verdict="ROT", score=0.0, error=str(exc),
-    )
+#
+# SSOT: RubricRegistry, CaseResult, and the 4 mock/exception helpers
+# live in `lib.eval` (extracted in PR-E). The `from lib.eval import`
+# block above re-exports them under their historical names so the rest
+# of this file's call sites are unchanged.
 
 
 def no_fixtures_result(dim: str) -> CaseResult:
