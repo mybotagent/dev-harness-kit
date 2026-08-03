@@ -6,29 +6,28 @@
 
 set -eo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+require_jq "TDD GUARD"
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [ -z "$FILE" ] && exit 0
 case "$FILE" in
-  *.md|*.txt|*.json|*.yaml|*.yml|*.toml|*.cfg|*.ini|*.sh) exit 0 ;;
+  *.md|*.mdx|*.txt|*.rst|*.adoc|*.html|*.json|*.yaml|*.yml|*.toml|*.cfg|*.ini|*.sh) exit 0 ;;
+  */docs/*|*/tools/*|*/scripts/*|*/bin/*|*/hooks/*|*/fixtures/*|*/eval/*) exit 0 ;;
 esac
 
 # Enforce paths
 case "$FILE" in
-  */lib/*|*/app/api/*|*/src/lib/*|*/src/utils/*|*/src/services/*|*/src/domain/*|*/utils/*|*/services/*|*/domain/*)
-    BASENAME=$(basename "$FILE")
-    DIR=$(dirname "$FILE")
-    TEST_GLOB=("${DIR}/tests/test_${BASENAME%.*}.py" "${DIR}/test_${BASENAME%.*}.py" "${DIR}/${BASENAME%.*}.test.py" "${DIR}/${BASENAME%.*}.spec.py" "../tests/test_${BASENAME%.*}.py" "../../tests/test_${BASENAME%.*}.py")
-    for f in "${TEST_GLOB[@]}"; do
-      [ -e "$f" ] && exit 0
-    done
-    # Strict mode → hard block
-    if [ "${DEV_KIT_STRICT:-0}" = "1" ]; then
-      deny "TDD GUARD (strict)" "${FILE}에 대한 테스트 파일이 없습니다."
+  *)
+    DECISION=$(python3 -m lib.tdd_scope_policy "$FILE" 2>/dev/null || echo judge)
+    [ "$DECISION" = "exempt" ] && exit 0
+    if [ "$DECISION" = "judge" ] && [ -f "${DEV_KIT_TDD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.dev-kit/.tdd-scope.json" ] && jq -e '.tdd_required == false' "${DEV_KIT_TDD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.dev-kit/.tdd-scope.json" >/dev/null 2>&1; then exit 0; fi
+    ROOT="${DEV_KIT_TDD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+    STATE="${ROOT}/.dev-kit/.tdd-cycle.json"
+    if [ "$DECISION" = "required" ] || [ "$DECISION" = "judge" ]; then
+      if [ ! -f "$STATE" ] || ! jq -e '.phase == "red" and (.exit_code | numbers) != 0' "$STATE" >/dev/null 2>&1; then
+        deny "TDD GUARD" "RED evidence is required before this code edit. Run: python3 -m lib.tdd_cycle red -- <test command>"
+      fi
     fi
-    # Default: advisory stderr warning (MUST-12)
-    echo "[tdd-guard] ${FILE}: no adjacent test (advisory, write allowed). tip: write test first then code." >&2
     exit 0
-    ;;
 esac
 exit 0
