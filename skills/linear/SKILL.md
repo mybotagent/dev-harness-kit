@@ -119,6 +119,34 @@ Or, equivalently, through the skill:
 
 Each worktree represents a different task, branch, and Linear scope. Storing the config under `<worktree>/.dev-kit/` means parallel Claude Code sessions in different worktrees each get their own enabled flag, their own project-name override, and their own hand-off state under `.dev-kit/hand-off/linear/<slug>.json` — no cross-talk, no shared mutable state.
 
+### State priority (Linear API > hand-off file)
+
+The hand-off file is a *cache*, not a source of truth. The priority order is:
+
+1. **Linear API** — every sync round issues `_find_issue(projectId, scope)` which lists the project's open issues and matches by the `<!-- scope:<branch>::<prompt-head> -->` prefix. This is the only mechanism that decides "reuse vs. create."
+2. **Hand-off file** — `<worktree>/.dev-kit/hand-off/linear/<slug>.json` is consulted only to:
+   - carry the previous prompt across sessions when the hook fires on a brand-new task
+   - fall back to a human-readable identifier (`SHO-151`) when the API returns a bare uuid
+   - record the resolution timestamp and the action taken
+
+   The file ships with a `_meta` block declaring its priority and its source of truth:
+
+   ```json
+   {
+     "_meta": {
+       "priority": 2,
+       "kind": "cache",
+       "source_of_truth": "linear_api",
+       "written_by": "tools/linear_sync.py"
+     },
+     "issue": "SHO-151 (d81ee2dd-...)",
+     "project": "dev-harness-kit",
+     ...
+   }
+   ```
+
+A stale or wrong issue id in the hand-off file can never cause a duplicate or a wrong-target update — the next sync round always re-validates against the API and overwrites the file with the authoritative result.
+
 ## Reconciliation workflow
 
 1. Read the current repository, branch/worktree, task request, and any existing handoff as context.

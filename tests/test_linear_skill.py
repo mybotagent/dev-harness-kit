@@ -118,6 +118,15 @@ class TestLinearSkill(unittest.TestCase):
         # The body must reference the CLI as the source of truth.
         self.assertIn("python3 tools/linear_sync.py", text)
 
+    def test_skill_documents_priority_model(self):
+        """The skill must document that the Linear API is priority 1
+        and the hand-off file is priority 2 (cache)."""
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("Linear API > hand-off file", text)
+        self.assertIn("priority", text.lower())
+        self.assertIn("source of truth", text.lower())
+        self.assertIn("_meta", text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -183,6 +183,33 @@ class TestLinearSync(unittest.TestCase):
             self.assertEqual(handoff["action"], "created")
             self.assertIn("DEMO-9", handoff["issue"])
 
+    def test_handoff_carries_priority_meta(self):
+        """Every hand-off write stamps a `_meta` block declaring
+        priority 2 and the Linear API as the source of truth, so a
+        reader can tell at a glance that the file is a cache."""
+        with _fake_repo(linear_api_key="test-key",
+                        handoff={"prompt": "implement auto-sync"}) as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": []}}}
+                if "issueCreate" in q:
+                    return {"data": {"issueCreate": {"issue": {"id": "iss-1", "identifier": "DEMO-1"}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            payload = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("_meta", payload)
+            self.assertEqual(payload["_meta"]["priority"], 2)
+            self.assertEqual(payload["_meta"]["source_of_truth"], "linear_api")
+            self.assertEqual(payload["_meta"]["kind"], "cache")
+            self.assertEqual(payload["_meta"]["written_by"], "tools/linear_sync.py")
+
     def test_skips_read_only_prompts(self):
         """#539: 'Do not invoke Linear for read-only work such as
         inspect, review, security, or code-viz unless the user

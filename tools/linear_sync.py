@@ -250,10 +250,29 @@ def _read_handoff(repo: Path) -> dict[str, Any] | None:
 
 
 def _write_handoff(repo: Path, payload: dict[str, Any]) -> None:
+    """Write the per-worktree hand-off record.
+
+    Priority model: **Linear API is the source of truth** (priority 1).
+    This file is a *cache* (priority 2) — a resume hint to avoid
+    round-trips on every Edit|Write. The `_find_issue` query always
+    re-validates against the API before reusing an issue, so a stale
+    or wrong issue id in this file cannot cause a duplicate or a
+    wrong-target update. The next sync round will overwrite whatever
+    is here.
+    """
+    payload_with_meta = {
+        "_meta": {
+            "priority": 2,
+            "kind": "cache",
+            "source_of_truth": "linear_api",
+            "written_by": "tools/linear_sync.py",
+        },
+        **payload,
+    }
     path = _handoff_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(payload_with_meta, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -763,11 +782,18 @@ def sync() -> int:
     try:
         team_id = _team_id_override(repo) or None
         project_id = _find_or_create_project(repo, team_id)
+        # Priority 1: the Linear API is the source of truth. The
+        # handoff file (priority 2) is never used to pick the
+        # target issue — only the API search by `<!-- scope:... -->`
+        # marker determines reuse vs. create.
         existing = _find_issue(project_id, scope)
         summary = _summarize_prompt(prompt)
         body = _build_issue_body(prompt=prompt, branch=branch, repo=repo, scope=scope)
         if existing:
             _update_issue(existing, body)
+            # handoff.issue is a fallback for the (rare) case where
+            # the API returns a numeric id we cannot display. The
+            # API result is still authoritative for the next round.
             issue_ref = handoff.get("issue") or existing
             action = "updated"
         else:
