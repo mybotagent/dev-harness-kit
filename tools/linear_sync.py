@@ -619,6 +619,40 @@ def _commit_body(repo: Path) -> str:
     return out
 
 
+def _detect_pr(repo: Path) -> dict[str, str] | None:
+    """Auto-detect the GitHub PR for the current branch via `gh`.
+
+    Returns a dict with `url`, `number`, `title`, `state` when a PR
+    exists, or `None` when `gh` is missing, the user is not
+    authenticated, or there is no PR for the branch. The function
+    fails closed: any exception becomes a no-op so auto-sync never
+    blocks on a missing CLI.
+    """
+    try:
+        out = subprocess.check_output(
+            [
+                "gh", "pr", "view", "--json",
+                "url,number,title,state,isDraft",
+            ],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    if not data.get("url"):
+        return None
+    return {
+        "url": str(data.get("url", "")),
+        "number": str(data.get("number", "")),
+        "title": str(data.get("title", "")),
+        "state": str(data.get("state", "")),
+        "draft": "true" if data.get("isDraft") else "false",
+    }
+
+
 def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> str:
     """Build a structured Markdown body for the Linear issue.
 
@@ -630,6 +664,7 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
     commit = _last_commit_info(repo)
     files = _changed_files_since(repo)
     criteria = _extract_acceptance_criteria(_commit_body(repo), prompt)
+    pr = _detect_pr(repo)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     sections: list[str] = [f"<!-- scope:{scope} -->"]
@@ -672,6 +707,17 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
     sections.append("- Branch: `" + branch + "`")
     if commit["sha"]:
         sections.append(f"- Commit: `{commit['sha']}`")
+    if pr and pr.get("url"):
+        state_badge = ""
+        if pr["state"].lower() == "merged":
+            state_badge = " (merged)"
+        elif pr["state"].lower() == "closed":
+            state_badge = " (closed)"
+        elif pr["draft"] == "true":
+            state_badge = " (draft)"
+        elif pr["state"]:
+            state_badge = f" ({pr['state'].lower()})"
+        sections.append(f"- PR: [#{pr['number']}{state_badge}]({pr['url']}) — {pr['title']}")
 
     sections.append(f"_Last updated: {timestamp}_")
     return "\n\n".join(sections) + "\n"

@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -261,11 +262,40 @@ class TestLinearSync(unittest.TestCase):
             )
             self.assertNotIn("## Files changed", body)
             self.assertNotIn("**Last commit:**", body)
+            self.assertNotIn("- PR:", body)
             # Required sections still present.
             self.assertIn("## Summary", body)
             self.assertIn("## Context", body)
             self.assertIn("## Test plan", body)
             self.assertIn("## Related", body)
+
+    def test_issue_body_includes_pr_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            pr = {
+                "url": "https://github.com/owner/repo/pull/42",
+                "number": "42",
+                "title": "fix thing",
+                "state": "OPEN",
+                "draft": "false",
+            }
+            with mock.patch.object(linear_sync, "_detect_pr", return_value=pr):
+                body = linear_sync._build_issue_body(
+                    prompt="x", branch="fix/x", repo=repo, scope="fix/x::x",
+                )
+            self.assertIn("- PR: [#42 (open)](https://github.com/owner/repo/pull/42)", body)
+            self.assertIn("fix thing", body)
+
+    def test_detect_pr_returns_none_when_gh_missing(self):
+        with mock.patch("subprocess.check_output",
+                        side_effect=FileNotFoundError("gh not found")):
+            self.assertIsNone(linear_sync._detect_pr(Path("/tmp")))
+
+    def test_detect_pr_returns_none_on_gh_error(self):
+        err = subprocess.CalledProcessError(1, "gh", b"")
+        with mock.patch("subprocess.check_output", side_effect=err):
+            self.assertIsNone(linear_sync._detect_pr(Path("/tmp")))
 
     def test_issue_body_extracts_acceptance_criteria(self):
         with tempfile.TemporaryDirectory() as tmp:
