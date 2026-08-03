@@ -240,13 +240,32 @@ def _should_skip_prompt(prompt: str) -> bool:
 
 
 def _read_handoff(repo: Path) -> dict[str, Any] | None:
-    path = _handoff_path(repo)
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    """Read the per-worktree hand-off record, falling back to the
+    legacy single-file layout from #543.
+
+    Migration contract: existing installations have their last
+    reconciliation state in `.dev-kit/hand-off/linear.json` (the
+    pre-#544 single-file layout). The new layout is
+    `.dev-kit/hand-off/linear/<slug>.json` (per-worktree). The
+    new file wins when both exist; the legacy file is consulted
+    only as a fallback. The next sync round will write the new
+    file with the authoritative API result, so the legacy file
+    is implicitly migrated — no separate one-shot migration is
+    required.
+    """
+    new_path = _handoff_path(repo)
+    if new_path.is_file():
+        try:
+            return json.loads(new_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+    legacy_path = repo / ".dev-kit" / "hand-off" / "linear.json"
+    if legacy_path.is_file():
+        try:
+            return json.loads(legacy_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+    return None
 
 
 def _write_handoff(repo: Path, payload: dict[str, Any]) -> None:
@@ -391,21 +410,27 @@ def _latest_commit_subject(repo: Path) -> str:
 
 
 def _resolve_prompt(repo: Path) -> str:
-    """Return a non-empty task description for the current worktree.
+    """Return the current task description for the active worktree.
 
-    Sources, in priority order:
-      1. The active hand-off (``prompt`` field) — set by a prior
-         explicit ``/dev-kit:linear`` call or a previous auto-sync round.
-      2. The most recent commit subject on the current branch.
-      3. The branch name itself (e.g. ``fix/linear-autosync-prompt-source``).
+    Priority is deliberately the **opposite** of "handoff-first":
 
-    Without this fallback the script would silently bail on a fresh
-    session because nothing populates the hand-off before the first
-    Edit|Write fires.
+      1. The latest commit subject on the current branch — the most
+         recent signal of what the operator is actually working on.
+         A fresh task within the same worktree (new commit) updates
+         this immediately, so the script does not get stuck on the
+         previous task's prompt.
+      2. The branch name itself (e.g. ``fix/linear-autosync-prompt-source``)
+         — fallback when no commit has been made yet on this branch.
+      3. The active hand-off's ``prompt`` field is **not** used as
+         a source. The handoff is a cache for the issue reference,
+         not for the task description; trusting it would mean a stale
+         prompt from a previous task would keep shadowing the current
+         one forever (per the adversarial Codex review).
+
+    Without this ordering the script would either silently bail on a
+    fresh session (no commit, no hand-off) or, worse, keep updating
+    the previous task's issue after the operator has moved on.
     """
-    handoff_prompt = str((_read_handoff(repo) or {}).get("prompt", "")).strip()
-    if handoff_prompt:
-        return handoff_prompt
     commit_subject = _latest_commit_subject(repo)
     if commit_subject:
         return commit_subject
@@ -710,7 +735,11 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
 
     sections.append("## Context")
     sections.append(f"- **Branch:** `{branch}`")
-    sections.append(f"- **Worktree:** `{repo}`")
+    # Use the slug (e.g. `fix-linear-autosync-prompt-source`) rather
+    # than the absolute worktree path. The absolute path leaks the
+    # developer's home directory and filesystem layout to every
+    # Linear viewer — non-sensitive identifier is sufficient.
+    sections.append(f"- **Worktree slug:** `{_worktree_slug(repo)}`")
     if commit["short"]:
         sections.append(
             f"- **Last commit:** `{commit['short']}` — {commit['subject']}"

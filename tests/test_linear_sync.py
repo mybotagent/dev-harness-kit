@@ -108,7 +108,8 @@ class TestLinearSync(unittest.TestCase):
 
     def test_enabled_when_env_var_present(self):
         with _fake_repo(linear_api_key="test-key", enabled_json=None,
-                        handoff={"prompt": "implement auto-sync"}) as repo:
+                        handoff={"prompt": "implement auto-sync"},
+                        commit_subject="implement auto-sync") as repo:
             calls = []
 
             def handler(payload):
@@ -134,7 +135,8 @@ class TestLinearSync(unittest.TestCase):
 
     def test_reuses_existing_issue_in_same_scope(self):
         with _fake_repo(linear_api_key="test-key",
-                        handoff={"prompt": "implement auto-sync"}) as repo:
+                        handoff={"prompt": "implement auto-sync"},
+                        commit_subject="implement auto-sync") as repo:
             def handler(payload):
                 q = payload["query"]
                 if "projects(filter:" in q and "projectCreate" not in q:
@@ -161,7 +163,8 @@ class TestLinearSync(unittest.TestCase):
         sufficient evidence.' A different prompt = different scope =
         new issue, even if the handoff still points at one."""
         with _fake_repo(linear_api_key="test-key",
-                        handoff={"prompt": "implement old unrelated feature"}) as repo:
+                        handoff={"prompt": "implement old unrelated feature"},
+                        commit_subject="implement new unrelated feature") as repo:
             def handler(payload):
                 q = payload["query"]
                 if "projects(filter:" in q and "projectCreate" not in q:
@@ -188,7 +191,8 @@ class TestLinearSync(unittest.TestCase):
         priority 2 and the Linear API as the source of truth, so a
         reader can tell at a glance that the file is a cache."""
         with _fake_repo(linear_api_key="test-key",
-                        handoff={"prompt": "implement auto-sync"}) as repo:
+                        handoff={"prompt": "implement auto-sync"},
+                        commit_subject="implement auto-sync") as repo:
             def handler(payload):
                 q = payload["query"]
                 if "projects(filter:" in q and "projectCreate" not in q:
@@ -270,7 +274,7 @@ class TestLinearSync(unittest.TestCase):
             ):
                 self.assertIn(section, body, f"missing section: {section}")
             self.assertIn("**Branch:**", body)
-            self.assertIn("**Worktree:**", body)
+            self.assertIn("**Worktree slug:**", body)
             self.assertIn("**Auto-synced at:**", body)
             self.assertIn("`a.py`", body)
             self.assertIn("`abcdef0`", body)
@@ -394,6 +398,44 @@ class TestLinearSync(unittest.TestCase):
             )
             self.assertEqual(handoff["prompt"], "implement linear auto-sync")
             self.assertIn("DEMO-7", handoff["issue"])
+
+    def test_stale_handoff_prompt_does_not_shadow_new_commit(self):
+        """Adversarial review [high]: `_resolve_prompt` must NOT prefer
+        a stale `handoff.prompt` from a previous task. When the
+        operator moves to a new task in the same worktree (new
+        commit, same branch), the scope must follow the new commit,
+        not the cached prompt — otherwise the API lookup updates
+        the previous task's issue instead of creating/selecting a
+        new one.
+        """
+        with _fake_repo(
+            linear_api_key="test-key",
+            # Old task's prompt is still in the handoff.
+            handoff={"prompt": "implement OLD task", "issue": "OLD-1"},
+            # New task has a fresh commit subject.
+            commit_subject="implement NEW task",
+        ) as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    # No existing issue with the NEW scope.
+                    return {"data": {"issues": {"nodes": []}}}
+                if "issueCreate" in q:
+                    return {"data": {"issueCreate": {"issue": {"id": "iss-new", "identifier": "NEW-1"}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            # The new commit subject wins, the old prompt is shadowed.
+            self.assertEqual(handoff["prompt"], "implement NEW task")
+            self.assertEqual(handoff["action"], "created")
+            self.assertIn("NEW-1", handoff["issue"])
+            self.assertNotIn("OLD-1", handoff["issue"])
 
     def test_worktree_config_explicit_off_blocks_sync(self):
         """A worktree that has run `linear off` must not sync even

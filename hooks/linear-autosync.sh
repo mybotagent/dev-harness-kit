@@ -7,16 +7,18 @@
 # authoritative gate (config + non-blocking). This wrapper exists
 # to:
 #   1. Pull CLAUDE_PROJECT_DIR from the hook payload.
-#   2. Skip when Linear is not configured (no LINEAR_API_KEY, no
-#      `.dev-kit/.enabled.json: mcp.linear`).
+#   2. Skip when Linear is clearly not configured across ANY of
+#      the supported sources (env var, .env.linear, per-worktree
+#      linear-config.json, legacy .enabled.json).
 #   3. Always exit 0 (per #539: "Linear failures are non-blocking
 #      for implicit workflow calls.").
 #
-# The script self-throttles by checking `.dev-kit/hand-off/linear.json`
-# — repeated edits within the same task produce a single updated
-# issue, not a flood of new issues. A new task (branch change,
-# fresh prompt) replaces the handoff first, so auto-sync only ever
-# creates or updates one issue per scope.
+# The fast-path is a deliberate micro-optimization. It MUST mirror
+# every activation source the Python script supports; if the user
+# configured Linear only via `.dev-kit/.env.linear` (Option B in
+# the skill), the gate is wide open and we still need to fork
+# Python to read the key. Failing to check this is the single
+# most common way auto-sync silently stops working.
 
 set -uo pipefail
 
@@ -28,8 +30,12 @@ fi
 
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
-# Fast-path: bail before forking Python if the gate is clearly off.
-if [ -z "${LINEAR_API_KEY:-}" ] && [ ! -f "$PROJECT_DIR/.dev-kit/.enabled.json" ]; then
+# Fast-path: bail before forking Python only if NO activation
+# source is present. Mirrors `_enabled()` in tools/linear_sync.py.
+if [ -z "${LINEAR_API_KEY:-}" ] && \
+   [ ! -f "$PROJECT_DIR/.dev-kit/.env.linear" ] && \
+   [ ! -f "$PROJECT_DIR/.dev-kit/linear-config.json" ] && \
+   [ ! -f "$PROJECT_DIR/.dev-kit/.enabled.json" ]; then
   exit 0
 fi
 
