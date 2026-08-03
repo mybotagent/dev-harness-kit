@@ -192,8 +192,6 @@ jobs:
             | awk '{print $NF}' || true)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
-          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     name: maintenance gate (verdict + docs-updated)

@@ -357,8 +357,6 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=${verdict_source:-unknown}"
-          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
     # See review-job comment above; same fork-safety contract.
@@ -623,8 +621,6 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=${verdict_source:-unknown}"
-          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     # Severity gate: same fork-safety guard. Pull from job outputs --

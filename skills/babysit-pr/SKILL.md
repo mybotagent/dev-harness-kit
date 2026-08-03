@@ -25,10 +25,6 @@ reaches `review verdict = Approve` and `all required checks = success`. Each
 iteration is **evidence-driven** (MUST-L3): the skill quotes exit codes, log
 snippets, and review verdicts before claiming a step is done.
 
-This is the single user-facing repair entrypoint. GitHub's `auto-fix-pr` workflow
-is only an event adapter; it must use the same repair state and must never create
-a competing repair loop.
-
 By default, monitors the PR associated with the current working branch. Pass
 `--pr N` to target an explicit open PR; this is required when the current
 branch's PR is already closed or merged.
@@ -220,28 +216,6 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
   13. INCREMENT — `iter = iter + 1`; if `iter > MAX_ITERS`, fall through to
                   the cap-fallback below; otherwise `goto 1`.
 ```
-
-### Bounded repair PR policy
-
-The loop uses one shared coordinator state for local babysitting and GitHub
-review events:
-
-```text
-attempt 0: repair the original PR once
-no progress: create repair PR attempt 1
-no progress: create repair PR attempt 2
-no progress: emit human_exception evidence and stop creating PRs
-```
-
-"No progress" means the failure signature is unchanged, the finding count did
-not decrease, and the successful-check count did not increase. A changed
-failure with improving verification is progress and continues the loop.
-
-The durable state must include `parent_pr`, `current_pr`, `attempt`,
-`failure_signature`, `run_id`, and `commit_sha`. Before creating a repair PR,
-deduplicate on `(parent_pr, attempt, failure_signature)`. The user does not
-need to choose between `autofix` and `babysit`: `/dev-kit:babysit-pr` owns the
-repair lifecycle; the GitHub workflow only wakes the same coordinator.
 
 Step 0 is the **pre-loop opt-out check** the bypass requires. Without
 it, the flag reaches the §Algorithm pseudocode but never
