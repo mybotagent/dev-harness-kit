@@ -8,6 +8,7 @@ when_to_use: |
   - A workflow skill starts a new implementation, debugging, refactor, or plan task
   - The user asks to register, reconcile, or update work in Linear
   - Every Edit|Write|MultiEdit fires the auto-sync hook (when configured)
+  - User runs `python3 tools/linear_sync.py setup|on|off|project-name|status` to manage per-worktree config
 allowed-tools: Read Write
 model: sonnet
 disable-model-invocation: false
@@ -30,16 +31,54 @@ Resolve the current repository name and the user's Linear capability before maki
 
 ## Auto-sync trigger (every Edit|Write)
 
-When Linear is configured (`LINEAR_API_KEY` env var OR `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
+When Linear is configured (`LINEAR_API_KEY` env var OR per-worktree `.dev-kit/linear-config.json:enabled` OR legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
 
-1. Reads the current task's first user prompt from `.dev-kit/hand-off/linear.json` (or a fresh prompt surfaced through the same handoff).
+1. Resolves the task description in priority order: the active hand-off's `prompt` field → the latest commit subject on the current branch → the branch name. The hand-off is keyed by worktree slug, so two parallel sessions in two worktrees never share or overwrite each other's state.
 2. Skips read-only / non-task prompts (`/`, `#`, `!`, `ls `, `cat `, `grep `, `git status`, and prompts that lack a work verb).
-3. Finds or creates the project named exactly after the repository.
+3. Finds or creates the project named after the configured project-name (per-worktree override) or the repository basename.
 4. Searches for an open issue whose `description` starts with `<!-- scope:<branch>::<prompt-head> -->`.
 5. Updates the existing issue OR creates a new one with the same scope marker.
-6. Writes the updated handoff so the next edit reuses the same issue.
+6. Writes the updated handoff at `.dev-kit/hand-off/linear/<worktree-slug>.json` so the next edit reuses the same issue.
 
-The script always returns exit code 0. Transport errors, missing tokens, and GraphQL failures are logged to stderr and never block the edit (per #539: "Linear failures are non-blocking for implicit workflow calls."). Users without Linear configured are unaffected — the hook fast-paths on missing env var and `.enabled.json`.
+The script always returns exit code 0. Transport errors, missing tokens, and GraphQL failures are logged to stderr and never block the edit (per #539: "Linear failures are non-blocking for implicit workflow calls."). Users without Linear configured are unaffected — the hook fast-paths on missing env var and config. Set `LINEAR_DEBUG=1` to surface every skip reason on stderr.
+
+## Per-worktree CLI
+
+`tools/linear_sync.py` exposes a small CLI for managing Linear on a per-worktree basis. Config lives at `<worktree>/.dev-kit/linear-config.json` (untracked, never committed). The API key is **never** read from or written to disk; set it once in your shell environment.
+
+```bash
+python3 tools/linear_sync.py setup                              # print checklist + current state
+python3 tools/linear_sync.py on                                 # enable auto-sync in this worktree
+python3 tools/linear_sync.py off                                # disable auto-sync in this worktree
+python3 tools/linear_sync.py project-name "My Linear Project"   # override the auto-detected project name
+python3 tools/linear_sync.py project-name                       # print the resolved project name
+python3 tools/linear_sync.py status                             # JSON dump of resolved state
+python3 tools/linear_sync.py sync                               # run one auto-sync round (default)
+```
+
+### Setup (one-time, per machine)
+
+```bash
+export LINEAR_API_KEY=<your-linear-api-token>     # https://linear.app/settings/api
+cd .worktrees/<your-worktree>
+python3 tools/linear_sync.py on
+python3 tools/linear_sync.py project-name "<name>"    # optional
+```
+
+### Config file shape
+
+```json
+{
+  "enabled": true,
+  "project_name": "My Linear Project",
+  "team_id": "",
+  "set_at": "2026-08-03T00:54:03Z"
+}
+```
+
+### Why per-worktree?
+
+Each worktree represents a different task, branch, and Linear scope. Storing the config under `<worktree>/.dev-kit/` means parallel Claude Code sessions in different worktrees each get their own enabled flag, their own project-name override, and their own hand-off state under `.dev-kit/hand-off/linear/<slug>.json` — no cross-talk, no shared mutable state.
 
 ## Reconciliation workflow
 

@@ -34,6 +34,24 @@ a Linear issue under the project named after the repository; without it,
 the hook is a fast-path no-op. See `skills/linear/SKILL.md` for the
 reconciliation contract.
 
+### Per-worktree override
+
+The simplest and recommended way to manage Linear is the
+`tools/linear_sync.py` CLI, which writes a per-worktree
+`.dev-kit/linear-config.json`. This lets each worktree enable/disable
+Linear independently and override the auto-detected project name:
+
+```bash
+export LINEAR_API_KEY=<your-token>           # one-time, env-only
+python3 tools/linear_sync.py on              # enable for this worktree
+python3 tools/linear_sync.py project-name X  # override the project name
+python3 tools/linear_sync.py status          # show resolved state
+```
+
+The per-worktree config takes precedence over the global
+`.dev-kit/.enabled.json:mcp.linear` setting, so two parallel worktrees
+can have different Linear configurations without interfering.
+
 ## Usage
 
 ```bash
