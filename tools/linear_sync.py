@@ -66,8 +66,39 @@ from typing import Any
 _LINEAR_API_URL = "https://api.linear.app/graphql"
 _HANDOFF_DIR = Path(".dev-kit") / "hand-off" / "linear"
 _CONFIG_REL = Path(".dev-kit") / "linear-config.json"
+_ENV_FILE_REL = Path(".dev-kit") / ".env.linear"
 _ENABLED_REL = Path(".dev-kit") / ".enabled.json"
 _SKIP_MARKERS = ("/", "#", "!", "?", "ls ", "cat ", "grep ", "git status")
+
+
+def _load_env_file(repo: Path) -> None:
+    """Load `KEY=VALUE` pairs from `.dev-kit/.env.linear` into os.environ.
+
+    The file is untracked (`.dev-kit/` is in `.gitignore`) and is a
+    fallback for users who do not want `LINEAR_API_KEY` in their
+    shell rc-file. Existing env vars win — the file only fills in
+    missing values. Values may be quoted with single or double
+    quotes; trailing comments (`# ...`) are stripped.
+    """
+    path = repo / _ENV_FILE_REL
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        os.environ[key] = value
 
 
 def _repo_root() -> Path:
@@ -88,13 +119,15 @@ def _enabled() -> bool:
 
     Precedence:
       1. Per-worktree `.dev-kit/linear-config.json` (set by `linear on`).
-      2. Env var `LINEAR_API_KEY` (presence = enabled).
+      2. Env var `LINEAR_API_KEY` (presence = enabled). Falls back to
+         `.dev-kit/.env.linear` (untracked) if not in the shell env.
       3. Legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}.
 
     Returns True iff at least one of (1), (2), (3) is enabled AND
     the API key is reachable.
     """
     repo = _repo_root()
+    _load_env_file(repo)
     cfg = _read_worktree_config(repo)
     if cfg is not None:
         if not cfg.get("enabled", True):
@@ -478,12 +511,14 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     repo = _repo_root()
+    _load_env_file(repo)
     if not argv or argv[0] == "sync":
         return sync()
     cmd, rest = argv[0], argv[1:]
     if cmd == "status":
         cfg = _read_worktree_config(repo)
         env_key = bool(os.environ.get("LINEAR_API_KEY", "").strip())
+        env_file = (repo / _ENV_FILE_REL).is_file()
         project = _project_name_override(repo) or _repo_name(repo)
         team = _team_id_override(repo)
         print(json.dumps({
@@ -491,6 +526,7 @@ def main(argv: list[str] | None = None) -> int:
             "slug": _worktree_slug(repo),
             "config": cfg,
             "linear_api_key_set": env_key,
+            "env_file_present": env_file,
             "resolved_project": project,
             "resolved_team_id": team or None,
         }, indent=2, sort_keys=True))
@@ -534,12 +570,22 @@ def main(argv: list[str] | None = None) -> int:
         # Print the recommended setup steps. The script never reads or
         # writes the API key itself — that stays in the env.
         print("linear: setup checklist")
-        print("  1. export LINEAR_API_KEY=<your-token>   # required, env-only")
-        print(f"  2. cd {repo}")
-        print("  3. python3 tools/linear_sync.py on")
-        print("  4. python3 tools/linear_sync.py project-name <name>   # optional")
+        print("  Option A — shell env (recommended for shared machines):")
+        print("    1. export LINEAR_API_KEY=<your-token>   # required, env-only")
+        print(f"    2. cd {repo}")
+        print("    3. python3 tools/linear_sync.py on")
+        print("    4. python3 tools/linear_sync.py project-name <name>   # optional")
+        print()
+        print("  Option B — per-worktree env file (recommended for solo dev):")
+        print(f"    1. Add to {repo / _ENV_FILE_REL} (untracked, .gitignore'd):")
+        print("         LINEAR_API_KEY=<your-token>")
+        print("    2. python3 tools/linear_sync.py on")
+        print("    3. python3 tools/linear_sync.py project-name <name>   # optional")
         env_key = bool(os.environ.get("LINEAR_API_KEY", "").strip())
+        env_file = (repo / _ENV_FILE_REL).is_file()
+        print()
         print(f"  LINEAR_API_KEY set: {env_key}")
+        print(f"  .dev-kit/.env.linear present: {env_file}")
         cfg = _read_worktree_config(repo)
         print(f"  worktree config: {cfg or '(none — defaults to env-only)'}")
         return 0

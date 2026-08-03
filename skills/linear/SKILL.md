@@ -5,11 +5,11 @@ description: Optional Linear task tracker. Reconcile the current repository task
 alpha: state
 when_to_use: |
   - User types /dev-kit:linear
+  - User types /dev-kit:linear on | off | status | setup | project-name <name>
   - A workflow skill starts a new implementation, debugging, refactor, or plan task
   - The user asks to register, reconcile, or update work in Linear
   - Every Edit|Write|MultiEdit fires the auto-sync hook (when configured)
-  - User runs `python3 tools/linear_sync.py setup|on|off|project-name|status` to manage per-worktree config
-allowed-tools: Read Write
+allowed-tools: Read Write Bash Glob
 model: sonnet
 disable-model-invocation: false
 user-invocable: true
@@ -44,25 +44,64 @@ The script always returns exit code 0. Transport errors, missing tokens, and Gra
 
 ## Per-worktree CLI
 
-`tools/linear_sync.py` exposes a small CLI for managing Linear on a per-worktree basis. Config lives at `<worktree>/.dev-kit/linear-config.json` (untracked, never committed). The API key is **never** read from or written to disk; set it once in your shell environment.
+`/dev-kit:linear` accepts subcommands. Each one delegates to `tools/linear_sync.py`, which is the authoritative implementation. The skill exists so the user does not have to remember the script path; the script exists so the hook, the skill, and any future caller share one code path.
+
+| Subcommand | Effect |
+|---|---|
+| `/dev-kit:linear` (no args) | Run one auto-sync round (re-evaluates the current task and creates/updates the matching Linear issue). |
+| `/dev-kit:linear on` | Enable auto-sync in this worktree. Writes `enabled: true` to `<worktree>/.dev-kit/linear-config.json`. |
+| `/dev-kit:linear off` | Disable auto-sync in this worktree. Writes `enabled: false`. Project name and team id are preserved. |
+| `/dev-kit:linear setup` | Print the one-time setup checklist + the current state (whether `LINEAR_API_KEY` is set, what the resolved project name is, whether the worktree config exists). |
+| `/dev-kit:linear project-name <name>` | Override the auto-detected project name for this worktree. Without an argument, prints the resolved name. |
+| `/dev-kit:linear status` | Print a JSON snapshot of the resolved state (worktree path, slug, config, env-var presence, resolved project + team). |
+
+The skill must invoke the CLI rather than replicate its logic. The standard pattern for each subcommand is:
 
 ```bash
-python3 tools/linear_sync.py setup                              # print checklist + current state
-python3 tools/linear_sync.py on                                 # enable auto-sync in this worktree
-python3 tools/linear_sync.py off                                # disable auto-sync in this worktree
-python3 tools/linear_sync.py project-name "My Linear Project"   # override the auto-detected project name
-python3 tools/linear_sync.py project-name                       # print the resolved project name
-python3 tools/linear_sync.py status                             # JSON dump of resolved state
-python3 tools/linear_sync.py sync                               # run one auto-sync round (default)
+python3 tools/linear_sync.py <subcommand> [args...]
 ```
 
+The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The API key is **never** read from or written to disk; set it once in your shell environment (e.g. `export LINEAR_API_KEY=...` in `~/.zshrc`).
+
 ### Setup (one-time, per machine)
+
+Two equivalent ways to provide `LINEAR_API_KEY`. Pick one.
+
+**Option A — shell env (recommended for shared machines):**
 
 ```bash
 export LINEAR_API_KEY=<your-linear-api-token>     # https://linear.app/settings/api
 cd .worktrees/<your-worktree>
 python3 tools/linear_sync.py on
 python3 tools/linear_sync.py project-name "<name>"    # optional
+```
+
+**Option B — per-worktree env file (recommended for solo dev):**
+
+The script also reads `.dev-kit/.env.linear` (untracked, `.gitignore`'d) as a fallback when `LINEAR_API_KEY` is not in the shell env. Shell env always wins; the file only fills in missing values.
+
+```bash
+# .dev-kit/.env.linear (you create this yourself — never committed)
+LINEAR_API_KEY=<your-linear-api-token>
+# LINEAR_TEAM_ID=...    # optional
+# LINEAR_PROJECT_NAME=...   # optional override
+```
+
+Lines starting with `#` are comments. Values may be quoted (`"..."` or `'...'`); trailing `# comment` is stripped. Then:
+
+```bash
+cd .worktrees/<your-worktree>
+python3 tools/linear_sync.py on
+python3 tools/linear_sync.py project-name "<name>"    # optional
+```
+
+Run `python3 tools/linear_sync.py setup` to print both checklists and the current state.
+
+Or, equivalently, through the skill:
+
+```
+/dev-kit:linear on
+/dev-kit:linear project-name "My Project"
 ```
 
 ### Config file shape

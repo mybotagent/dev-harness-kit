@@ -253,6 +253,59 @@ class TestLinearSync(unittest.TestCase):
                     self.assertEqual(linear_sync.sync(), 0)
                     urlopen.assert_not_called()
 
+    def test_env_file_loads_linear_api_key(self):
+        """`.dev-kit/.env.linear` (untracked) is a fallback for
+        users who don't want the key in their shell rc-file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            (repo / ".dev-kit").mkdir()
+            (repo / ".dev-kit" / ".env.linear").write_text(
+                "# comment\n"
+                "LINEAR_API_KEY=file-token-xyz\n"
+                "OTHER_VAR=kept\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(repo)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "file-token-xyz")
+                self.assertEqual(os.environ.get("OTHER_VAR"), "kept")
+
+    def test_env_file_does_not_overwrite_existing_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            (repo / ".dev-kit").mkdir()
+            (repo / ".dev-kit" / ".env.linear").write_text(
+                "LINEAR_API_KEY=file-token\n", encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(repo),
+                   "LINEAR_API_KEY": "shell-token"}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                # Shell env wins.
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "shell-token")
+
+    def test_env_file_strips_quotes_and_comments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            (repo / ".dev-kit").mkdir()
+            (repo / ".dev-kit" / ".env.linear").write_text(
+                "LINEAR_API_KEY=\"abc123\"  # trailing comment\n"
+                "PLAIN=value # also a comment\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(repo)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "abc123")
+                self.assertEqual(os.environ.get("PLAIN"), "value")
+
     def test_worktree_config_project_name_overrides_repo_basename(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "wt"
