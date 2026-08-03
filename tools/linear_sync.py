@@ -525,6 +525,11 @@ def _parse_list_args(rest: list[str]) -> dict[str, Any]:
     Supported flags (all optional):
       --state=<name>     filter by issue state name (e.g. Backlog, Done)
       --team=<key>       filter by team key (e.g. SHO)
+      --project=<name>   filter by project name (defaults to the active repo's
+                         project = per-worktree override or repo basename;
+                         pass --all-projects to see every project in the team)
+      --all-projects     opt out of the default repo-scoping and list every
+                         project the team key can see
       --assignee=<id|me|none>  filter by assignee (default: me)
       --limit=<N>        max rows (default 25)
 
@@ -533,6 +538,8 @@ def _parse_list_args(rest: list[str]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "state": None,
         "team": None,
+        "project": None,  # resolved in `_cmd_list` to repo default if omitted
+        "all_projects": False,  # opt-out of the active-repo default scope
         "assignee": None,  # explicit --assignee=me|none|<id> required to filter
         "limit": 25,
     }
@@ -541,6 +548,10 @@ def _parse_list_args(rest: list[str]) -> dict[str, Any]:
             out["state"] = arg.split("=", 1)[1].strip() or None
         elif arg.startswith("--team="):
             out["team"] = arg.split("=", 1)[1].strip() or None
+        elif arg.startswith("--project="):
+            out["project"] = arg.split("=", 1)[1].strip() or None
+        elif arg == "--all-projects":
+            out["all_projects"] = True
         elif arg.startswith("--assignee="):
             v = arg.split("=", 1)[1].strip().lower()
             out["assignee"] = None if v in ("", "none", "unassigned") else v
@@ -570,6 +581,10 @@ def _list_query(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         clauses.append("team: { key: { eq: $teamKey } }")
         param_decls.append("$teamKey: String")
         variables["teamKey"] = filters["team"]
+    if filters.get("project") and not filters.get("all_projects"):
+        clauses.append("project: { name: { eq: $projectName } }")
+        param_decls.append("$projectName: String")
+        variables["projectName"] = filters["project"]
     if filters.get("assignee"):
         clauses.append("assignee: { id: { eq: $assigneeId } }")
         param_decls.append("$assigneeId: String")
@@ -578,7 +593,7 @@ def _list_query(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     query = (
         "query(" + ", ".join(param_decls) + ") {"
         "  issues(first: $first" + filter_str + ", orderBy: updatedAt) {"
-        "    nodes { identifier title state { name } priority updatedAt url }"
+        "    nodes { identifier title state { name } priority updatedAt url project { name } }"
         "  }"
         "}"
     )
@@ -596,6 +611,9 @@ def _format_issue_row(node: dict[str, Any]) -> str:
     prio_s = "-" if prio is None else str(prio)
     updated = str(node.get("updatedAt") or "")[:10]
     title = str(node.get("title") or "")
+    project = str(((node.get("project") or {}).get("name") or "")).strip()
+    if project:
+        return f"{ident:10} [{state:12}] pri={prio_s:<4} {updated}  [{project}] {title}"
     return f"{ident:10} [{state:12}] pri={prio_s:<4} {updated}  {title}"
 
 
@@ -616,6 +634,14 @@ def _cmd_list(rest: list[str]) -> int:
     so the command is safe to embed in shell pipelines and CI.
     """
     filters = _parse_list_args(rest)
+    if not filters.get("project") and not filters.get("all_projects"):
+        repo = _repo_root()
+        filters["project"] = _project_name_override(repo) or _repo_name(repo)
+        if filters.get("project"):
+            print(
+                f"linear: list: scoped to project '{filters['project']}' (pass --all-projects to disable)",
+                file=sys.stderr,
+            )
     try:
         if filters.get("assignee") == "me":
             me = _resolve_assignee_me()

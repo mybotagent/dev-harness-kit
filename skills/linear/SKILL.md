@@ -53,7 +53,7 @@ The script always returns exit code 0. Transport errors, missing tokens, and Gra
 | `/dev-kit:linear off` | Disable auto-sync in this worktree. Writes `enabled: false`. Project name and team id are preserved. |
 | `/dev-kit:linear setup` | Print the one-time setup checklist + the current state (whether `LINEAR_API_KEY` is set, what the resolved project name is, whether the worktree config exists). |
 | `/dev-kit:linear project-name <name>` | Override the auto-detected project name for this worktree. Without an argument, prints the resolved name. |
-| `/dev-kit:linear list` | Print recent Linear issues (default 25, newest first). Flags: `--state=<name>`, `--team=<key>`, `--assignee=me|none|<id>`, `--limit=<N>`. Non-blocking; never raises. |
+| `/dev-kit:linear list` | Print recent Linear issues (default 25, newest first). Flags: `--state=<name>`, `--team=<key>`, `--project=<name>`, `--all-projects`, `--assignee=me|none|<id>`, `--limit=<N>`. By default the list is scoped to the active repo project (per-worktree override or repo basename); pass `--all-projects` to see every project the team can see. Non-blocking; never raises. |
 | `/dev-kit:linear status` | Print a JSON snapshot of the resolved state (worktree path, slug, config, env-var presence, resolved project + team). |
 
 The skill must invoke the CLI rather than replicate its logic. The standard pattern for each subcommand is:
