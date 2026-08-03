@@ -122,7 +122,8 @@ jobs:
 
       - name: Run /dev-kit:review via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
-        # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
+        # MiniMax uses both the provider endpoint env and the explicit action
+        # credential. The action input is required for the SDK to start turns.
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -133,6 +134,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
@@ -286,6 +288,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
