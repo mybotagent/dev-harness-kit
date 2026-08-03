@@ -162,7 +162,7 @@ _INSPECT_HEALTH = {
             "unused exports, unreachable branches after a return, "
             "commented-out code blocks (>3 lines), orphan config keys "
             "(YAML/JSON keys no code reads), dead env vars (declared but "
-            "never referenced), TODO/FIXME > 90 days old with no tracking issue."
+            "never referenced). "
         ),
         contract_fields=(
             "file", "line", "severity", "confidence",
