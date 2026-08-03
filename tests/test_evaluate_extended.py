@@ -12,21 +12,21 @@ the legacy 4-axis JUDGE_AXES are unchanged.
 """
 from __future__ import annotations
 
-import importlib.util
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "lib"))
 
+import eval_runner  # noqa: E402
 import llm_judge  # noqa: E402
-from analysis_core.cross_validate import (  # noqa: E402
+
+from lib.analysis_core.cross_validate import (  # noqa: E402
     ESCALATE_VARIANCE_THRESHOLD,
     cross_validate_scores,
 )
-import eval_runner  # noqa: E402
 
 
 def _load_skill(path: Path) -> dict:
