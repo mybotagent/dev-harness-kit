@@ -70,7 +70,6 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
     env:
       MINIMAX_BASE_URL: https://api.minimax.io/anthropic
     steps:
@@ -119,6 +118,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
@@ -145,6 +145,7 @@ jobs:
         if: steps.provider.outputs.provider == 'anthropic'
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
@@ -169,6 +170,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash'
         uses: anthropics/claude-code-action@v1
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_bots: '*'
           track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
