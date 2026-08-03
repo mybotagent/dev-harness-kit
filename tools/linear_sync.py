@@ -533,6 +533,7 @@ def _parse_list_args(rest: list[str]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "state": None,
         "team": None,
+        "project": None,  # resolved in `_cmd_list` to repo default if omitted
         "assignee": None,  # explicit --assignee=me|none|<id> required to filter
         "limit": 25,
     }
@@ -541,6 +542,8 @@ def _parse_list_args(rest: list[str]) -> dict[str, Any]:
             out["state"] = arg.split("=", 1)[1].strip() or None
         elif arg.startswith("--team="):
             out["team"] = arg.split("=", 1)[1].strip() or None
+        elif arg.startswith("--project="):
+            out["project"] = arg.split("=", 1)[1].strip() or None
         elif arg.startswith("--assignee="):
             v = arg.split("=", 1)[1].strip().lower()
             out["assignee"] = None if v in ("", "none", "unassigned") else v
@@ -570,6 +573,10 @@ def _list_query(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         clauses.append("team: { key: { eq: $teamKey } }")
         param_decls.append("$teamKey: String")
         variables["teamKey"] = filters["team"]
+    if filters.get("project"):
+        clauses.append("project: { name: { eq: $projectName } }")
+        param_decls.append("$projectName: String")
+        variables["projectName"] = filters["project"]
     if filters.get("assignee"):
         clauses.append("assignee: { id: { eq: $assigneeId } }")
         param_decls.append("$assigneeId: String")
@@ -578,7 +585,7 @@ def _list_query(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     query = (
         "query(" + ", ".join(param_decls) + ") {"
         "  issues(first: $first" + filter_str + ", orderBy: updatedAt) {"
-        "    nodes { identifier title state { name } priority updatedAt url }"
+        "    nodes { identifier title state { name } priority updatedAt url project { name } }"
         "  }"
         "}"
     )
@@ -616,6 +623,9 @@ def _cmd_list(rest: list[str]) -> int:
     so the command is safe to embed in shell pipelines and CI.
     """
     filters = _parse_list_args(rest)
+    if not filters.get("project"):
+        repo = _repo_root()
+        filters["project"] = _project_name_override(repo) or _repo_name(repo)
     try:
         if filters.get("assignee") == "me":
             me = _resolve_assignee_me()
