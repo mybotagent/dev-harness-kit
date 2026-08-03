@@ -2,6 +2,29 @@
 
 **Language:** English · [한국어](RUNTIME-PORTABILITY.ko.md)
 
+# Runtime Portability
+
+**Language:** English · [한국어](RUNTIME-PORTABILITY.ko.md)
+
+> **Status: ARCHIVAL — substrate deleted in PR-G (commit `6a00288`).**
+>
+> `lib/runtime_adapters/`, `tests/test_portability.py`, and
+> `.github/workflows/test-portability.yml` no longer exist. The opening
+> sections below (TL;DR, Neutrality matrix, Common patterns) describe the
+> adapter package as if it were live. Treat them as **design history**,
+> not as a contract — there is no current cross-runtime adapter to
+> import from.
+>
+> **Today's portable-by-convention contract** (post-retraction):
+> runtime detection is `os.environ.get("CLAUDECODE")` /
+> `os.environ.get("CODEX_CLI")` (each runtime sets its own signal).
+> Any code that wants normalized token/session data must read the
+> runtime-native transcript directly (no shared dataclass). The CI
+> enforcement section ("CI enforcement (retracted in PR-G…)") further
+> down records what was removed.
+
+---
+
 This document is the canonical classification of every public API in
 `lib/runtime_adapters/` by **neutrality**: which parts of the contract
 are identical across Claude Code and Codex, and which parts require an
@@ -120,25 +143,25 @@ def emit(adapter, neutral_name: str) -> None:
 Portable — the neutral name is the API; the runtime-native name is
 the implementation.
 
-## CI enforcement
+## CI enforcement (retracted in PR-G, removed in current branch)
 
-`.github/workflows/test-portability.yml` runs
-`tests/test_portability.py` under both runtimes' env signals (matrix
-runtime = `[claude-code, codex]`). A regression in either adapter that
-breaks the cross-runtime equality guarantee fails CI on the lane that
-exercises it.
+PR-G (commit `6a00288`) deleted the entire Phase 0.9 portability
+substrate — `lib/runtime_adapters/` (had zero production callers) and
+`tests/test_portability.py`. With no adapter module left to test, the
+remaining env-signal check in `.github/workflows/test-portability.yml`
+only verified GitHub Actions platform behavior, so this branch deletes
+that workflow as well.
 
-See `tests/test_portability.py` for the 28-test contract suite and
-`lib/runtime_adapters/` for the implementations.
+The portability contract is now honored only by **convention** in
+downstream code: `os.environ.get("CLAUDECODE")` / `os.environ.get("CODEX_CLI")`
+for runtime detection, with no shared abstraction. Restore the deleted
+substrate (adapter package + 28-test contract suite + CI matrix) before
+any future cross-runtime guarantee can be re-asserted.
 
 ## Related
 
-- `lib/runtime_adapters/base.py` — `RuntimeAdapter` Protocol + data classes.
-- `lib/runtime_adapters/claude_code.py` — Claude Code adapter.
-- `lib/runtime_adapters/codex.py` — Codex adapter.
-- `tests/test_portability.py` — 28-test contract suite.
-- `.github/workflows/test-portability.yml` — CI matrix.
 - Issue #329 — Phase 0 parent.
-- Issue #343 — `__init__.py` exports.
-- Issue #344 — `tests/test_portability.py`.
+- Issue #343 — `__init__.py` exports (deleted with PR-G).
+- Issue #344 — `tests/test_portability.py` (deleted with PR-G).
 - Issue #345 — CI matrix + this doc.
+- Commit `6a00288` — the PR-G retraction.

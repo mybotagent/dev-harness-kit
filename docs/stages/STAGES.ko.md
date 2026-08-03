@@ -245,12 +245,3 @@
 - **AC**: ≥ 8 OK. < 5 ROT → CI 실패.
 - **활성 스킬**: `eval`(3개 차원: review, security, plan; 횡단
   에이전트 행동 루브릭)
-
-## 횡단 — Repair (`/dev-kit:repair`)
-
-- **목표**: Eval-Repair 8단계 루프. 마지막 단계 = 사용자 1회 승인.
-- **Must**: 7단계는 자동. 8단계 Human Review가 유일한 동기 STOP.
-- **Must-Not**: diff를 자동 커밋. review / design / build 상태 자체를
-  변경.
-- **AC**: 사람의 `approve|reject|defer`가 유일한 커밋.
-- **활성 스킬**: 9개 전문 수정기(카테고리당 하나).

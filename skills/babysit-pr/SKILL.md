@@ -525,8 +525,9 @@ All stdout/stderr messages in **English only**.
 
 When the loop terminates with `✅ PR approved`, recommend `/dev-kit:ship` to
 tag and release (the user still controls the actual merge + tag push). On
-abnormal exit, recommend `/dev-kit:repair` if the failure looks like a golden
-asset regression.
+abnormal exit, recommend `/dev-kit:evaluate` against the failing case + a
+manual patch via `/dev-kit:build` or `/dev-kit:refactor` (the historical asset-repair
+loop documented in `docs/adr/ADR-0021-eval-repair-loop.md` has no live runtime).
 
 ---
 

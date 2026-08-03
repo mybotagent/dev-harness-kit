@@ -68,7 +68,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | Skill | Alpha | Summary |
 |---|---|---|
 | [`evaluate`](evaluate.md) | `enforcement` | Agent-behavior eval across review/security/plan dimensions + a 20-checkbox code-sanity rubric, plus the `harness-quality` and `os-quality` dimensions on the same runner. |
-| [`repair`](repair.md) | `state` | 8-step Eval-Repair loop ending in a single Human Review approval. |
 | [`report`](report.md) | `analysis` | HTML viewer combining the latest eval + inspect reports. |
 | [`token-analyzer`](token-analyzer.md) | `analysis` | Token-efficiency dashboard rendered from session log transcripts. |
 | [`cost-gate`](cost-gate.md) | `enforcement` | Live, read-only cost ledger + PR cost-flag trailer. |
@@ -147,7 +146,6 @@ step inside their parent skill's flow; you never type them directly.
 | [`prune`](prune.md) | `build` | `analysis` | human |
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
 | [`refactor`](refactor.md) | `build` | `analysis` | human |
-| [`repair`](repair.md) | `repair` | `state` | human |
 | [`report`](report.md) | `audit` | `analysis` | human |
 | [`research`](research.md) | `design` | `enforcement` | human |
 | [`review`](review.md) | `review` | `analysis` | human |

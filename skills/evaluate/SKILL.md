@@ -115,5 +115,5 @@ A run that contains any `escalate: true` block is reported with verdict
 - After a passing harness-quality + os-quality run: hand off to
   `/dev-kit:ship` if this is a release branch, or `/dev-kit:status`
   to confirm the eval cycle is green.
-- After a failed run: `/dev-kit:repair` to route through the
-  Eval-Repair loop (golden -> judge -> root cause -> fix).
+- After a failed run: triage via `/dev-kit:babysit-pr` if the failure
+  is on a PR, or re-run `/dev-kit:evaluate` after fixing the failing case.
