@@ -192,6 +192,13 @@ jobs:
             --run-id "${{ github.run_id }}" \
             --commit-sha "$(git rev-parse HEAD)" || true
 
+      - name: Record repair adapter audit comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body "<!-- dev-kit-repair-audit --> run=${{ github.run_id }} job=repair-adapter status=${{ job.status }} event=review-${{ github.event.review.id }}"
+
       - name: Increment iteration label
         if: success()
         env:

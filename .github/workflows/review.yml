@@ -212,6 +212,8 @@ jobs:
             | awk '{print $NF}' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
     name: /dev-kit:security (10-dim OWASP)
@@ -356,6 +358,8 @@ jobs:
             | awk '{print $NF}' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     name: severity gate (review + security)
