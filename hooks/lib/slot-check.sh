@@ -10,10 +10,12 @@
 # `.codex-plugin/plugin.json` must be pinned to the version that
 # `origin/main` advertises. A Codex-only drift would let a Codex
 # sub-agent push a stale slot even after the Claude manifest is
-# re-pinned, so the predicate denies if EITHER manifest is non-empty
-# AND not equal to expected. An empty (missing-file) value for codex is
-# treated as "not yet authored" and does not by itself trigger deny,
-# matching the original guard's intent.
+# re-pinned, so the predicate denies if EITHER manifest is stale
+# relative to expected. The Claude manifest is checked unconditionally
+# (an empty value is itself a drift from `expected`). The Codex
+# manifest, by contrast, is checked only when non-empty — an empty
+# (missing-file) Codex value is treated as "not yet authored" and does
+# not by itself trigger deny, matching the original guard's intent.
 
 # slot_should_deny <actual_claude> <actual_codex> <expected>
 #   Returns 0 (deny) when either manifest is stale; 1 (allow) otherwise.

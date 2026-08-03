@@ -141,7 +141,7 @@ def render_markdown(report: BehaviorReport) -> str:
         "## Per-dimension scores",
         "",
         "| Dim | Score | Crashed | Evidence |",
-        "|-----|------:|---------|----------|",
+        "|-----|------:|--------:|----------|",
     ]
     for s in report.dimension_scores:
         ev = ", ".join(f"{k}={v}" for k, v in s.evidence.items()) or "—"

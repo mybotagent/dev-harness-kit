@@ -251,17 +251,21 @@ def test_crashed_scorer_is_distinguishable_from_real_low_score() -> None:
     # even though the other dims are healthy.
     assert report.verdict == "ESCALATED"
     # The crashed dim is excluded from the weighted-mean divisor: only
-    # 6 of 7 dims count, so the weighted mean is 27/6 = 4.5 (not
-    # 27/7 ≈ 3.86 which would happen if the crashed dim were counted).
+    # 6 of 7 dims count, so the weighted mean is 26/6 ≈ 4.3333 (not
+    # 27/7 ≈ 3.8571 which would happen if the crashed dim were counted).
     assert report.weighted_mean == round((1 + 5 + 5 + 5 + 5 + 5) / 6, 4)
     # And the markdown report surfaces the crash.
     md = render_markdown(report)
     assert "crashed_dims" in md
     assert "D2_process" in md
     assert "| Crashed |" in md
+    # The Crashed column separator must be right-aligned (trailing `:`),
+    # matching the Score column's `------:` so a `True` value is visually
+    # distinguished from `False` in the rendered table.
+    assert "|--------:|" in md
 
 
-def test_value1_without_crashed_is_not_escalated() -> None:
+def test_low_value_triggers_floor_escalation() -> None:
     """Counterpart: a dim that legitimately scored 1 (not crashed) must
     NOT trip the new ESCALATED-crash path. Only the deterministic
     floor (D-mean < 3.5) decides whether it escalates.
