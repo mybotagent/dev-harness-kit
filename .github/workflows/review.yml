@@ -1,8 +1,10 @@
 name: PR Review
 
 # Auto-run /dev-kit:review (3-dim) and /dev-kit:security (10-dim OWASP) on every
-# PR, in parallel. dev-kit plugin is installed from this checkout via a
-# local marketplace symlink so the namespaced skills resolve.
+# same-repository PR, in parallel. pull_request_target lets the action validate
+# the immutable base workflow even when a PR changes .github/workflows/*. The
+# workspace stays on the base checkout; prompts inspect the PR through `gh pr
+# diff` instead of executing PR-head code with secrets.
 #
 # Severity gate + auto-approve (per claude-review-plugins spec):
 #   Approve            (no critical, no major in BOTH review + security) → success + auto-approve
@@ -41,7 +43,7 @@ name: PR Review
 # tracked file itself was removed in this change.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -65,14 +67,15 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    # pull_request_target exposes base-repository secrets, so fork PRs are
+    # excluded. workflow_dispatch remains available for an explicit run.
+    if: |
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
-    # The bump content is version-bump.yml-generated and merged by a
-    # human (auto-merge is disabled by policy). Running /dev-kit:review
-    # on it would only confirm "plugin.json version bumped by 0.0.1" — no
-    # reviewable change. Replaces the previous `[skip ci]` literal that
-    # globally suppressed ALL workflows on the bump commit (which broke
-    # the round-trip — see version-bump.yml).
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    # The bump content is version-bump.yml-generated and merged by a human;
+    # running review on it would only confirm the version increment.
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -131,7 +134,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -156,7 +159,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -182,7 +185,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -223,8 +226,11 @@ jobs:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    # Skip on bump-PRs — same rationale as `review:` above.
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    # Skip fork and bump PRs — same rationale as `review:` above.
+    if: |
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -281,7 +287,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -305,7 +311,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -330,7 +336,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -381,6 +387,8 @@ jobs:
     # upstream failures for non-bump PRs.
     if: |
       always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     # No permissions: gate only needs `gh api` (read) for verdict extraction
     # and does NOT auto-approve. Actual PR approval is the human's job.

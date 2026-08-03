@@ -29,6 +29,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 LOCAL_REVIEW = (REPO_ROOT / ".github" / "workflows" / "review.yml").read_text()
+LOCAL_MAINTENANCE = (REPO_ROOT / ".github" / "workflows" / "maintenance.yml").read_text()
 # Source-of-truth: the consumer template SSOT (templates/ci/.github/workflows/review.yml).
 # The local .github/workflows/review.yml is kept in lockstep with the template, but the
 # template is what ships to consumers via /dev-kit:ci-setup, so it is the canonical source.
@@ -210,6 +211,13 @@ class TestVerdictExtractionContract(unittest.TestCase):
 
     def test_audit_comment_records_validation_state_for_each_job(self):
         self.assertEqual(LOCAL_REVIEW.count("verdict_valid=${verdict_valid}"), 2)
+
+    def test_review_uses_base_workflow_for_pr_review_action(self):
+        """Workflow edits must not disable Claude's review validation guard."""
+        self.assertIn("pull_request_target:", LOCAL_REVIEW)
+        self.assertNotIn("\n  pull_request:\n", LOCAL_REVIEW)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", LOCAL_REVIEW)
+        self.assertIn("pull_request_target", LOCAL_MAINTENANCE)
 
     # === Issue #212-C1-fix: agent skip detection ===
 

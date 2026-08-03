@@ -13,26 +13,10 @@ name: PR Review
 # ::warning:: in BOTH pull_request and workflow_dispatch modes. The
 # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what blocks merge.
 #
-# Why `pull_request` (not `pull_request_target`):
-#   `anthropics/claude-code-action@v1` does an OIDC token exchange by
-#   default. With `pull_request_target` the exchanged token is rejected
-#   with 401 Invalid OIDC token in any consumer repo that does not have
-#   OIDC trust configured at the org/repo level. `pull_request` issues
-#   a token the action's federation endpoint accepts, so the agent runs
-#   and posts a verdict.
-#
-#   Trade-off: on `pull_request`, the action's workflow-validation gate
-#   skips runs when the workflow file itself is modified on the PR head.
-#   The first PR that ADDS `.github/workflows/review.yml` is the obvious
-#   example; the verdict comes back empty, the severity gate defaults to
-#   Approve + ::warning::, and the human review state is what actually
-#   blocks merge. Normal PRs (not touching the workflow file) get a real
-#   agent review.
-#
-#   The dev-harness-kit repo's own review.yml has always used
-#   `pull_request` for this reason. The consumer template previously
-#   used `pull_request_target` to attempt reviews on workflow-modifying
-#   PRs, at the cost of breaking consumer repos without OIDC trust.
+# Why `pull_request_target`: the workflow is loaded from the base branch, so
+# Claude's workflow-validation guard can run even when a PR changes workflow
+# files. The job checks out only the base branch and asks Claude to inspect the
+# PR through `gh pr diff`; it never executes PR-head code with secrets.
 #
 # Fork safety: `pull_request` runs in PR-head context (untrusted code
 # from forks), but fork PRs still receive NO repo secrets (only
@@ -45,7 +29,7 @@ name: PR Review
 # rename (would break existing repo secret config).
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -67,7 +51,7 @@ on:
 # workflow_dispatch runs are independent and use a separate group.
 concurrency:
   group: review-pr-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   review:

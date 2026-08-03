@@ -30,7 +30,7 @@ name: PR Maintenance Gate
 # bypassing branch protection. The gate never auto-approves.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -54,11 +54,16 @@ jobs:
     name: /dev-kit:maintenance (code-sanity + docs)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Skip on bump-PRs: same rationale as review.yml. The bump content
-    # is version-bump.yml-generated and merged by a human; running the
-    # maintenance judge on it would only confirm "plugin.json version
-    # bumped by 0.0.1" with no reviewable surface change.
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    # pull_request_target exposes base-repository secrets, so fork PRs are
+    # excluded. The action reads the PR diff from the base checkout and never
+    # executes PR-head code.
+    if: |
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
+    # The bump content is version-bump.yml-generated and merged by a human;
+    # running the maintenance judge on it would only confirm the version
+    # increment with no reviewable surface change.
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -115,7 +120,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -141,7 +146,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -164,7 +169,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -205,6 +210,8 @@ jobs:
     needs: [maintenance_judge]
     if: |
       always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     permissions:
       contents: read
