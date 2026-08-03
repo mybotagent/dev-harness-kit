@@ -374,8 +374,15 @@ jobs:
     if: |
       always() &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
-    # No permissions: gate only needs `gh api` (read) for verdict extraction
-    # and does NOT auto-approve. Actual PR approval is the human's job.
+    # The auto-approve step casts `gh pr review --approve`, which
+    # writes to the PR. The default GITHUB_TOKEN is read-only on most
+    # operations; grant pull-requests: write so the auto-approve
+    # call has the permission it needs. Other GITHUB_TOKEN scopes
+    # stay at the workflow default; we don't widen the surface
+    # beyond what the auto-approve path actually requires.
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
@@ -483,6 +490,15 @@ jobs:
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
 
+          # Capture the raw (undefaulted) values so the auto-approve
+          # step can refuse to fire when either LLM judge returned no
+          # verdict. The combined gate below is allowed to default
+          # missing verdicts to Approve + ::warning:: for the human
+          # gate, but auto-approve is a stricter path: a missing LLM
+          # verdict must NOT silently synthesize an approval.
+          echo "raw_review=${R:-}" >> "$GITHUB_OUTPUT"
+          echo "raw_security=${S:-}" >> "$GITHUB_OUTPUT"
+
           # Tolerate missing verdicts in BOTH event modes. The previous
           # strict pull_request branch hard-failed on empty R or S, which
           # broke any PR whose agent skipped (workflow-validation skip on
@@ -536,26 +552,39 @@ jobs:
       - name: Auto-approve on clean verdict
         # Implements the header-documented "Approve → success + auto-approve"
         # contract that the code never actually wired up: when (a) the combined
-        # gate passed (verdict=Approve), (b) the L3 evidence gate was actually
-        # enforced (PR touches production code), and (c) the PR is open and
-        # not yet auto-approved, cast `gh pr review --approve` so GitHub's
-        # `reviewDecision` flips to APPROVED and the branch-protection gate
-        # unblocks merge.
+        # gate passed with verdict=Approve, (b) the L3 evidence gate was
+        # actually enforced (PR touches production code), and (c) the PR is
+        # open and not yet auto-approved, cast `gh pr review --approve` so
+        # GitHub's `reviewDecision` flips to APPROVED and the branch-
+        # protection gate unblocks merge.
         #
-        # Runs as github-actions[bot], which is NOT the PR author — so the
-        # GitHub "reviewer cannot approve own PR" rule does not block this
-        # (the author's machine would have been blocked, see the babysit
-        # incident of 2026-08-03 / PR #557).
+        # Fail-closed guards (the LLM maintenance judge flagged both of
+        # these in the 2026-08-03 babysit incident for PR #559; this
+        # commit addresses them):
+        #   1. The if: predicate requires BOTH the combined verdict to
+        #      be 'Approve' AND the raw (undefaulted) review + security
+        #      verdicts to be non-empty. The combined gate is allowed to
+        #      default missing verdicts to Approve + ::warning:: for the
+        #      human gate, but auto-approve is a stricter path: a missing
+        #      LLM verdict must NOT silently synthesize an approval.
+        #   2. The script uses `set -eEuo pipefail` (with -e) and
+        #      explicitly asserts that the gh API idempotency probe and
+        #      the gh pr review call both exited 0. A rate-limit or
+        #      network failure can no longer leave the step green while
+        #      the approval is unposted.
         #
-        # Documents-only PRs (touches_prod=false) keep the existing
-        # "human + verdict-gate owns approval" policy from the L3 step: no
-        # auto-approve, human reviewer still required.
+        # Runs as github-actions[bot], which is NOT the PR author — so
+        # the GitHub "reviewer cannot approve own PR" rule does not
+        # block this (the author's machine would have been blocked, see
+        # the babysit incident of 2026-08-03 / PR #557).
         if: |
           success() &&
           steps.combined_verdict.outputs.verdict == 'Approve' &&
-          steps.touch_probe.outputs.touches_prod == 'true'
+          steps.touch_probe.outputs.touches_prod == 'true' &&
+          steps.combined_verdict.outputs.raw_review != '' &&
+          steps.combined_verdict.outputs.raw_security != ''
         run: |
-          set -uo pipefail
+          set -eEuo pipefail
           # Idempotency: skip if the PR already has an APPROVED review
           # (re-runs of this job must not stack duplicate events).
           EXISTING=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
@@ -564,7 +593,7 @@ jobs:
             echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
             exit 0
           fi
-          echo "Casting auto-approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true)."
+          echo "Casting auto-approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true, both raw verdicts present)."
           gh pr review "$PR_NUMBER" --approve \
             --body "Auto-approved by review.yml on clean combined verdict (review + security both Approve, PR touches production code, L3 evidence gate passed). The operator still owns the final merge step."
           echo "Auto-approve posted."
