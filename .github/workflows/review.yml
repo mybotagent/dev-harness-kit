@@ -202,16 +202,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
-          # In track_progress mode the action updates ONE comment per job, so
-          # "most recent" = this job's comment.
-          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
-          echo "review_verdict=${verdict:-<none>}"
-          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          AGENT_OUTPUT="${{ runner.temp }}/claude-execution-output.json"
+          [ -f "$AGENT_OUTPUT" ] || AGENT_OUTPUT="/home/runner/work/_temp/claude-execution-output.json"
+          extractor="${{ github.workspace }}/templates/ci/scripts/extract-verdict.py"
+          file_verdict=""
+          [ -f "$AGENT_OUTPUT" ] && file_verdict="$(python3 "$extractor" "$AGENT_OUTPUT" 2>/dev/null || true)"
+          verdict="${file_verdict:-PARSE_FAILED}"
+          echo "review_verdict=$verdict"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
 
   security:
     name: /dev-kit:security (10-dim OWASP)
@@ -344,18 +342,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
-          # In track_progress mode the action updates ONE comment per job, so
-          # "most recent" = this job's comment (review job's older comments
-          # come before security's in chronological order, so we still want
-          # the latest = security's).
-          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
-          echo "security_verdict=${verdict:-<none>}"
-          echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          AGENT_OUTPUT="${{ runner.temp }}/claude-execution-output.json"
+          [ -f "$AGENT_OUTPUT" ] || AGENT_OUTPUT="/home/runner/work/_temp/claude-execution-output.json"
+          extractor="${{ github.workspace }}/templates/ci/scripts/extract-verdict.py"
+          file_verdict=""
+          [ -f "$AGENT_OUTPUT" ] && file_verdict="$(python3 "$extractor" "$AGENT_OUTPUT" 2>/dev/null || true)"
+          verdict="${file_verdict:-PARSE_FAILED}"
+          echo "security_verdict=$verdict"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
 
   gate:
     name: severity gate (review + security)
