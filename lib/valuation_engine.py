@@ -123,7 +123,14 @@ def decide(
     Pure function. Same input always yields same output. The decision is
     one of "proceed" | "revise" | "hold" | "kill". See module docstring
     for the threshold logic and the absolute risk-floor rule.
+
+    `plan` is reserved for a future round of plan-context integration
+    (per the docs/stages/STAGES.md contract: `decide(plan, rubric_scores)`).
+    The current implementation does not read it — the verdict is derived
+    from `rubric_scores` alone. Callers that don't have a plan payload
+    can pass `plan={}` (the CLI does).
     """
+    del plan  # intentionally unused; see docstring
     _validate(rubric_scores)
     avg = _weighted_average(rubric_scores)
     findings: List[str] = []
@@ -310,11 +317,6 @@ def cli_main(argv: Optional[List[str]] = None) -> int:
         print(f"rationale: {decision['rationale']}")
         for f in decision["blocking_findings"]:
             print(f"  - {f}")
-    if not args.dry_run and decision_is_canonical_envelope(decision):
-        # The build pre-flight reads the persisted envelope; the CLI
-        # itself does not write (kept pure so tests can use --dry-run
-        # without touching the on-disk cache).
-        pass
     return 0 if decision["decision"] == "proceed" else 1
 
 
