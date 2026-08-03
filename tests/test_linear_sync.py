@@ -642,6 +642,8 @@ class TestLinearSync(unittest.TestCase):
         out = _parse_list_args([])
         self.assertEqual(out["state"], None)
         self.assertEqual(out["team"], None)
+        self.assertIsNone(out["project"])
+        self.assertFalse(out["all_projects"])
         self.assertEqual(out["assignee"], None)
         self.assertEqual(out["limit"], 25)
 
@@ -650,13 +652,23 @@ class TestLinearSync(unittest.TestCase):
         out = _parse_list_args([
             "--state=Backlog",
             "--team=SHO",
+            "--project=dev-harness-kit",
+            "--all-projects",
             "--assignee=me",
             "--limit=10",
         ])
         self.assertEqual(out["state"], "Backlog")
         self.assertEqual(out["team"], "SHO")
+        self.assertEqual(out["project"], "dev-harness-kit")
+        self.assertTrue(out["all_projects"])
         self.assertEqual(out["assignee"], "me")
         self.assertEqual(out["limit"], 10)
+
+    def test_parse_list_args_all_projects_alone(self):
+        from linear_sync import _parse_list_args
+        out = _parse_list_args(["--all-projects"])
+        self.assertTrue(out["all_projects"])
+        self.assertIsNone(out["project"])
 
     def test_parse_list_args_clamps_limit(self):
         from linear_sync import _parse_list_args
@@ -691,6 +703,40 @@ class TestLinearSync(unittest.TestCase):
         self.assertEqual(v["assigneeId"], "u-123")
         self.assertNotIn("state", v)
 
+    def test_list_query_with_project_filter(self):
+        from linear_sync import _list_query
+        q, v = _list_query({
+            "state": None, "team": None, "project": "dev-harness-kit", "all_projects": False,
+            "assignee": None, "limit": 5,
+        })
+        self.assertIn("project: { name: { eq: $projectName } }", q)
+        self.assertIn("$projectName: String", q)
+        self.assertEqual(v["projectName"], "dev-harness-kit")
+        self.assertIn("project { name }", q)
+
+    def test_list_query_all_projects_drops_project_filter(self):
+        from linear_sync import _list_query
+        q, v = _list_query({
+            "state": None, "team": "SHO", "project": "dev-harness-kit", "all_projects": True,
+            "assignee": None, "limit": 5,
+        })
+        self.assertNotIn("project: {", q)
+        self.assertNotIn("$projectName", q)
+        self.assertNotIn("projectName", v)
+
+    def test_list_query_with_project_and_all_projects_ignored(self):
+        from linear_sync import _list_query
+        # --all-projects suppresses the project filter even when --project is
+        # also set: this is the documented opt-out. cmd_list never injects the
+        # project default when --all-projects is set, so passing both is a
+        # user-driven combination; the result is "no project filter".
+        q, v = _list_query({
+            "state": None, "team": None, "project": "hermes", "all_projects": True,
+            "assignee": None, "limit": 5,
+        })
+        self.assertNotIn("project: {", q)
+        self.assertNotIn("projectName", v)
+
     def test_format_issue_row_columns(self):
         from linear_sync import _format_issue_row
         row = _format_issue_row({
@@ -706,6 +752,31 @@ class TestLinearSync(unittest.TestCase):
         self.assertIn("2026-08-03", row)
         self.assertIn("Unify babysit-pr", row)
         self.assertIn("pri=2", row)
+
+    def test_format_issue_row_renders_project_when_present(self):
+        from linear_sync import _format_issue_row
+        row = _format_issue_row({
+            "identifier": "SHO-1",
+            "title": "x",
+            "state": {"name": "Backlog"},
+            "priority": 1,
+            "updatedAt": "2026-08-03T00:00:00Z",
+            "url": "u",
+            "project": {"name": "hermes"},
+        })
+        self.assertIn("[hermes]", row)
+
+    def test_format_issue_row_omits_project_when_missing(self):
+        from linear_sync import _format_issue_row
+        row = _format_issue_row({
+            "identifier": "SHO-1",
+            "title": "x",
+            "state": {"name": "Backlog"},
+            "priority": 1,
+            "updatedAt": "2026-08-03T00:00:00Z",
+            "url": "u",
+        })
+        self.assertNotIn("[", row.split("2026-08-03  ")[1].split(" x")[0])
 
     def test_format_issue_row_handles_missing_fields(self):
         from linear_sync import _format_issue_row
@@ -805,6 +876,77 @@ class TestLinearCLI(unittest.TestCase):
         _, code, out, _, _ = self._run_cli("bogus")
         self.assertEqual(code, 2)
         self.assertIn("unknown command", out)
+
+    def test_list_default_scopes_to_active_repo(self):
+        """`list` (no --project) auto-resolves the active repo's project
+        and surfaces a stderr hint. Verifies the default-scope branch
+        in `_cmd_list`."""
+        captured = {}
+
+        def fake_query(query, variables):
+            captured["query"] = query
+            captured["variables"] = variables
+            return {
+                "issues": {
+                    "nodes": [{
+                        "identifier": "SHO-1",
+                        "title": "x",
+                        "state": {"name": "Backlog"},
+                        "priority": 1,
+                        "updatedAt": "2026-08-03T00:00:00Z",
+                        "url": "u",
+                        "project": {"name": "dev-harness-kit"},
+                    }],
+                },
+            }
+
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k", "PATH": os.environ.get("PATH", "")}, clear=True), \
+             mock.patch.object(linear_sync, "_is_main_checkout", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp) / "wt"
+                repo.mkdir()
+                (repo / ".dev-kit").mkdir()
+                with mock.patch.object(linear_sync, "_repo_root", return_value=repo), \
+                     mock.patch.object(linear_sync, "_repo_name", return_value="wt"), \
+                     mock.patch.object(linear_sync, "_linear_query", side_effect=fake_query):
+                    import contextlib
+                    from io import StringIO
+                    buf_out, buf_err = StringIO(), StringIO()
+                    with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                        code = linear_sync.main(["list", "--limit=5"])
+        self.assertEqual(code, 0)
+        # The auto-resolved project name flows into the GraphQL filter
+        self.assertIn("projectName", captured["variables"])
+        self.assertEqual(captured["variables"]["projectName"], "wt")
+        # A stderr hint tells the user we scoped the list
+        self.assertIn("scoped to project", buf_err.getvalue())
+        # The row includes the project name from the node (the fake_query
+        # returns project.name="dev-harness-kit", so the row's [project]
+        # column reflects what Linear returned, while the GraphQL filter
+        # was scoped to the auto-resolved "wt").
+        self.assertIn("[dev-harness-kit]", buf_out.getvalue())
+
+    def test_list_all_projects_skips_default_scope(self):
+        captured = {}
+        def fake_query(query, variables):
+            captured["variables"] = variables
+            return {"issues": {"nodes": []}}
+
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k", "PATH": os.environ.get("PATH", "")}, clear=True),              mock.patch.object(linear_sync, "_is_main_checkout", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp) / "wt"
+                repo.mkdir()
+                (repo / ".dev-kit").mkdir()
+                with mock.patch.object(linear_sync, "_repo_root", return_value=repo),                      mock.patch.object(linear_sync, "_linear_query", side_effect=fake_query):
+                    import contextlib
+                    from io import StringIO
+                    buf_out, buf_err = StringIO(), StringIO()
+                    with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                        code = linear_sync.main(["list", "--all-projects", "--limit=5"])
+        self.assertEqual(code, 0)
+        # --all-projects: no projectName variable is sent
+        self.assertNotIn("projectName", captured["variables"])
+        self.assertNotIn("scoped to project", buf_err.getvalue())
 
 
 if __name__ == "__main__":
