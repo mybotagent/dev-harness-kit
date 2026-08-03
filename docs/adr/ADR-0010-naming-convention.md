@@ -15,7 +15,7 @@ All artifacts follow the convention in `docs/naming/NAMING.md`. Exception: ADRs.
 - audit: `audit-<subject>` (slop/secret)
 - shortcuts: `shortcut-<name>`
 - ship: (no skill, gate only)
-- config, eval, repair, status: standalone skills (post commands→skills merge)
+- config, eval, status: standalone skills (post commands→skills merge)
 
 ## Regression
-`tests/test_naming.py` — directory `name` = SKILL frontmatter `name`. `category` ∈ 13 allowed values (audit, bootstrap, build, config, design, eval, plan, repair, review, security, ship, shortcuts, status).
+`tests/test_naming.py` — directory `name` = SKILL frontmatter `name`. `category` ∈ 12 allowed values (audit, bootstrap, build, config, design, eval, plan, review, security, ship, shortcuts, status).

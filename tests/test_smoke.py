@@ -33,9 +33,12 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # tests/test_skill_governance.py, which stay) (39 -> 37).
 # Added skills/ci-triage/SKILL.md (37 -> 38).
 # Added skills/linear/SKILL.md (37 -> 38 on this branch's baseline).
+# Removed skills/repair/SKILL.md (asset-repair design stub — no runtime,
+# L4/L7 violations, F1/F2/F3/F6/F7/F8 in the multi-dim review; PR-repair
+# still owned by /dev-kit:babysit-pr + lib/repair_coordinator.py).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 38
+SKILL_COUNT = 37
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",

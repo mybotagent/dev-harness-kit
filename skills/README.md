@@ -2,7 +2,7 @@
 
 This index lists every skill shipped by the `dev-kit` plugin. Click into any skill to read its full `SKILL.md`; every `SKILL.md` has a back-link at the top to return here.
 
-**38 skills** across 13 categories (33 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
+**37 skills** across 12 categories (32 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
 
 ## By category
 
@@ -12,7 +12,8 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 |---|---|---|
 | [`audit`](audit/SKILL.md) | `state` | 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY. |
 | [`ci-doctor`](ci-doctor/SKILL.md) | `enforcement` | Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?" |
-| [`ci-triage`](ci-triage/SKILL.md) | `enforcement` | Triage failing GitHub Actions runs across recent commits, dedupe against a persisted case store, judge new failures against a model/context/harness taxonomy with a required repro + regression test, and record them without re-analyzing repeats. |
+| [`ci-triage`](ci-triage/SKILL.md) | `enforcement` | Triage failing GitHub Actions runs across recent commits, dedupe against a persisted case store, judge new failures against a model/context/harness taxonomy with a required repro + regression test, and record them witho… |
+| [`code-viz`](code-viz/SKILL.md) | `state` | 0-arg generic plugin-architecture visualizer. Walks any target repo, emits self-contained HTML with multi-level views (architecture / code / skill / hook / tools-lib / external) + domain pillar map (DB · Cloud · API · M… |
 | [`cost-gate`](cost-gate/SKILL.md) | `enforcement` | 0-arg cost-gate status. Prints current session spend, threshold distance, and a two-line git-trailer block to include in commits so the PR-level cost flag can aggregate. |
 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `analysis` | Audit repository documentation, remove superseded guidance, and refresh the README without recording volatile inventory facts. |
 | [`hook-doctor`](hook-doctor/SKILL.md) 🔒 | `enforcement` | Diagnose failed Claude Code or Codex hooks, repair safe cache and registration drift, and report the exact restart step. |
@@ -28,7 +29,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`bootstrap-full`](bootstrap-full/SKILL.md) | `state` | One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker. |
 | [`ci-setup`](ci-setup/SKILL.md) | `enforcement` | Install dev-kit's reusable CI workflow templates into a target project. Idempotent via `.dev-kit/ci-config.json` presence, no version gate. Hand-off to /dev-kit:build. |
 
-### `build` (8)
+### `build` (7)
 
 | Skill | α | Description |
 |---|---|---|
@@ -45,7 +46,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | Skill | α | Description |
 |---|---|---|
 | [`config`](config/SKILL.md) | `state` | skill + MCP + hook + methodology picker (multiSelect). |
-| [`linear`](linear/SKILL.md) | `state` | Optional public Linear task tracker; can also be called by workflow skills. |
+| [`linear`](linear/SKILL.md) | `state` | Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured. |
 
 ### `design` (4)
 
@@ -67,12 +68,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | Skill | α | Description |
 |---|---|---|
 | [`plan`](plan/SKILL.md) | `state` | 0-arg plan stage. Take 1-line idea → PRD.md + phases/<name>/{index.json, step<N>.md} in 5 gates. Quantified value (cost/LTV) + ambiguity loop (0-10) replace the old 5-question grill-me. |
-
-### `repair` (1)
-
-| Skill | α | Description |
-|---|---|---|
-| [`repair`](repair/SKILL.md) | `state` | 8-step Eval-Repair loop (golden → judge → root cause → fix → judge → A/B → diff → Human Review). Final step = single user approve. |
 
 ### `review` (1)
 
@@ -125,27 +120,27 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 11 | [`ci-doctor`](ci-doctor/SKILL.md) | `audit` | `enforcement` | human |
 | 12 | [`ci-setup`](ci-setup/SKILL.md) | `bootstrap` | `enforcement` | human |
 | 13 | [`ci-triage`](ci-triage/SKILL.md) | `audit` | `enforcement` | human |
-| 14 | [`codex-cache-update`](codex-cache-update/SKILL.md) | `shortcuts` | `analysis` | human |
-| 15 | [`config`](config/SKILL.md) | `config` | `state` | human |
-| 16 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
-| 17 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
-| 18 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
-| 19 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
-| 20 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
-| 21 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
-| 22 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
-| 23 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
-| 24 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
-| 25 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
-| 26 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
-| 27 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
-| 28 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
-| 29 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
-| 30 | [`repair`](repair/SKILL.md) | `repair` | `state` | human |
+| 14 | [`code-viz`](code-viz/SKILL.md) | `audit` | `state` | human |
+| 15 | [`codex-cache-update`](codex-cache-update/SKILL.md) | `shortcuts` | `analysis` | human |
+| 16 | [`config`](config/SKILL.md) | `config` | `state` | human |
+| 17 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
+| 18 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
+| 19 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
+| 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
+| 21 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
+| 22 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
+| 23 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
+| 24 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
+| 25 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
+| 26 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
+| 27 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
+| 28 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
+| 29 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
+| 30 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
 | 31 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
 | 32 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
 | 33 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
 | 34 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
 | 35 | [`status`](status/SKILL.md) | `status` | `state` | human |
 | 36 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
-| 38 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
+| 37 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |

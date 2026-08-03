@@ -144,10 +144,6 @@ must not mirror a count that changes as skills evolve.
   retained in `JUDGE_AXES` for backward-compat with
   `tests/test_llm_judge.py` and any external callers, but no longer
   used by the eval runner.
-- The Eval-Repair loop in `skills/repair/SKILL.md` step 2 still names
-  the 4-axis judge; that is now misleading. A follow-up PR will update
-  the repair skill to point at the per-dim rubric.
-
 ## References
 
 - `lib/eval_runner.py:1-300` — new case-based runner
