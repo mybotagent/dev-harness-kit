@@ -586,9 +586,17 @@ jobs:
         run: |
           set -eEuo pipefail
           # Idempotency: skip if the PR already has an APPROVED review
-          # (re-runs of this job must not stack duplicate events).
-          EXISTING=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
-            --jq '.review_decision // ""')
+          # (re-runs of this job must not stack duplicate events). The
+          # REST `pulls/{n}` endpoint does NOT expose review_decision
+          # — that field is only available via the GraphQL `gh pr
+          # view --json reviewDecision` query. Using the wrong field
+          # would make the // "" fallback always return empty, the
+          # APPROVED check fall through, and a re-run on an
+          # already-approved PR would re-cast the approval. (CC-6
+          # finding from the 2026-08-03 maintenance review of
+          # PR #559.)
+          EXISTING=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json reviewDecision --jq '.reviewDecision // ""')
           if [ "$EXISTING" = "APPROVED" ]; then
             echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
             exit 0
