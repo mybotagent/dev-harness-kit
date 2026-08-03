@@ -544,6 +544,139 @@ def _summarize_prompt(prompt: str) -> str:
     return s[:160] + ("…" if len(s) > 160 else "")
 
 
+def _last_commit_info(repo: Path) -> dict[str, str]:
+    """Return short hash + subject + author + relative date for HEAD."""
+    info = {"sha": "", "short": "", "subject": "", "author": "", "date": ""}
+    try:
+        out = subprocess.check_output(
+            ["git", "log", "-1", "--pretty=%H%n%h%n%s%n%an%n%ar"],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
+        ).decode("utf-8", "ignore")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return info
+    parts = out.split("\n", 4)
+    if len(parts) >= 5:
+        info["sha"], info["short"], info["subject"], info["author"], info["date"] = parts
+    return info
+
+
+def _changed_files_since(repo: Path, base: str = "origin/main") -> list[tuple[str, int, int]]:
+    """Return ``[(path, added, removed), ...]`` for files changed
+    since ``base``. Falls back to the empty list if `base` is missing
+    or `git` is unavailable. The list is capped at 20 files to keep
+    the Linear description under the 64 KiB limit."""
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--numstat", f"{base}...HEAD"],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
+        ).decode("utf-8", "ignore")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+    rows: list[tuple[str, int, int]] = []
+    for line in out.splitlines():
+        try:
+            added, removed, path = line.split("\t", 2)
+        except ValueError:
+            continue
+        try:
+            rows.append((path, int(added or "0"), int(removed or "0")))
+        except ValueError:
+            rows.append((path, 0, 0))
+        if len(rows) >= 20:
+            break
+    return rows
+
+
+def _extract_acceptance_criteria(prompt: str, commit_body: str) -> list[str]:
+    """Pull `- [ ] …` items out of the commit body or the prompt.
+
+    Order of preference:
+      1. Lines from the commit body that look like checkboxes.
+      2. Same pattern from the user prompt.
+    Each line is returned trimmed; the leading `- [ ] ` is stripped.
+    """
+    pat = re.compile(r"^[\s>*\-+]*\[[ xX]\]\s+(.+)$")
+    found: list[str] = []
+    for source in (commit_body, prompt):
+        for raw in source.splitlines():
+            m = pat.match(raw.strip())
+            if m:
+                item = m.group(1).strip()
+                if item and item not in found:
+                    found.append(item)
+    return found[:10]
+
+
+def _commit_body(repo: Path) -> str:
+    """Return the body of the latest commit (subject line excluded)."""
+    try:
+        out = subprocess.check_output(
+            ["git", "log", "-1", "--pretty=%b"],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
+        ).decode("utf-8", "ignore").strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+    return out
+
+
+def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> str:
+    """Build a structured Markdown body for the Linear issue.
+
+    Sections, in order: Summary, Context, Files changed, Acceptance
+    criteria, Test plan, Related. The scope marker is the first
+    line so `_find_issue()` can detect reuse by prefix match.
+    """
+    summary = _summarize_prompt(prompt)
+    commit = _last_commit_info(repo)
+    files = _changed_files_since(repo)
+    criteria = _extract_acceptance_criteria(_commit_body(repo), prompt)
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    sections: list[str] = [f"<!-- scope:{scope} -->"]
+
+    sections.append("## Summary")
+    sections.append(summary)
+
+    sections.append("## Context")
+    sections.append(f"- **Branch:** `{branch}`")
+    sections.append(f"- **Worktree:** `{repo}`")
+    if commit["short"]:
+        sections.append(
+            f"- **Last commit:** `{commit['short']}` — {commit['subject']}"
+        )
+        if commit["author"] or commit["date"]:
+            sections.append(
+                f"  - author: {commit['author']} · {commit['date']}"
+            )
+    sections.append(f"- **Auto-synced at:** {timestamp}")
+
+    if files:
+        sections.append("## Files changed")
+        sections.append("| path | + | - |")
+        sections.append("|---|---:|---:|")
+        for path, added, removed in files:
+            sections.append(f"| `{path}` | {added} | {removed} |")
+
+    if criteria:
+        sections.append("## Acceptance criteria")
+        for item in criteria:
+            sections.append(f"- [ ] {item}")
+
+    sections.append("## Test plan")
+    sections.append(
+        "_Updated automatically by `tools/linear_sync.py`. "
+        "Run the suite and paste the exit code + test count here._"
+    )
+
+    sections.append("## Related")
+    sections.append("- Branch: `" + branch + "`")
+    if commit["sha"]:
+        sections.append(f"- Commit: `{commit['sha']}`")
+
+    sections.append(f"_Last updated: {timestamp}_")
+    return "\n\n".join(sections) + "\n"
+
+
 def sync() -> int:
     """Entry point. Returns 0 always (non-blocking contract)."""
     if not _enabled():
@@ -564,11 +697,7 @@ def sync() -> int:
         project_id = _find_or_create_project(repo, team_id)
         existing = _find_issue(project_id, scope)
         summary = _summarize_prompt(prompt)
-        body = (
-            f"Auto-synced from branch `{branch}`.\n\n"
-            f"**Prompt:** {summary}\n\n"
-            f"_Last updated: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}_"
-        )
+        body = _build_issue_body(prompt=prompt, branch=branch, repo=repo, scope=scope)
         if existing:
             _update_issue(existing, body)
             issue_ref = handoff.get("issue") or existing

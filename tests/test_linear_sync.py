@@ -61,7 +61,13 @@ def _fake_repo(linear_api_key: str | None = "test-key",
              mock.patch.object(linear_sync, "_repo_root", return_value=repo), \
              mock.patch.object(linear_sync, "_current_branch", return_value=branch), \
              mock.patch.object(linear_sync, "_is_main_checkout", return_value=main_checkout), \
-             mock.patch.object(linear_sync, "_latest_commit_subject", return_value=commit_subject):
+             mock.patch.object(linear_sync, "_latest_commit_subject", return_value=commit_subject), \
+             mock.patch.object(linear_sync, "_resolve_team_id", return_value="team-test"), \
+             mock.patch.object(linear_sync, "_last_commit_info",
+                               return_value={"sha": "", "short": "", "subject": "",
+                                              "author": "", "date": ""}), \
+             mock.patch.object(linear_sync, "_changed_files_since", return_value=[]), \
+             mock.patch.object(linear_sync, "_commit_body", return_value=""):
             yield repo
 
 
@@ -203,6 +209,78 @@ class TestLinearSync(unittest.TestCase):
             nested = Path(tmp) / "dev-harness-kit"
             nested.mkdir()
             self.assertEqual(linear_sync._repo_name(nested), "dev-harness-kit")
+
+    def test_issue_body_is_structured(self):
+        """Linear issues should land with a consistent template
+        (Summary / Context / Files / Acceptance / Test plan / Related)
+        and a leading scope marker so future syncs reuse the same issue."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            scope = "fix/x::test"
+            with mock.patch.object(linear_sync, "_changed_files_since",
+                                   return_value=[("a.py", 10, 2), ("b.md", 4, 0)]), \
+                 mock.patch.object(linear_sync, "_last_commit_info",
+                                   return_value={"sha": "abcdef0", "short": "abcdef0",
+                                                  "subject": "implement x",
+                                                  "author": "Claude", "date": "1 minute ago"}):
+                body = linear_sync._build_issue_body(
+                    prompt="implement feature x",
+                    branch="fix/x",
+                    repo=repo,
+                    scope=scope,
+                )
+            # Scope marker must be the very first line so _find_issue
+            # can detect reuse by prefix match.
+            self.assertTrue(body.startswith(f"<!-- scope:{scope} -->"))
+            for section in (
+                "## Summary",
+                "## Context",
+                "## Files changed",
+                "## Test plan",
+                "## Related",
+            ):
+                self.assertIn(section, body, f"missing section: {section}")
+            self.assertIn("**Branch:**", body)
+            self.assertIn("**Worktree:**", body)
+            self.assertIn("**Auto-synced at:**", body)
+            self.assertIn("`a.py`", body)
+            self.assertIn("`abcdef0`", body)
+
+    def test_issue_body_omits_optional_sections_when_unavailable(self):
+        """`## Files changed` and the commit line should be absent
+        when running outside a git checkout (e.g. from a unit test)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            body = linear_sync._build_issue_body(
+                prompt="do thing",
+                branch="fix/x",
+                repo=repo,
+                scope="fix/x::do thing",
+            )
+            self.assertNotIn("## Files changed", body)
+            self.assertNotIn("**Last commit:**", body)
+            # Required sections still present.
+            self.assertIn("## Summary", body)
+            self.assertIn("## Context", body)
+            self.assertIn("## Test plan", body)
+            self.assertIn("## Related", body)
+
+    def test_issue_body_extracts_acceptance_criteria(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            prompt = (
+                "do the thing\n"
+                "- [ ] first criterion\n"
+                "- [x] already done item\n"
+                "  - [ ] indented criterion\n"
+            )
+            criteria = linear_sync._extract_acceptance_criteria(prompt, "")
+            self.assertIn("first criterion", criteria)
+            self.assertIn("already done item", criteria)
+            self.assertIn("indented criterion", criteria)
 
     def test_enabled_json_auto_state(self):
         with _fake_repo(linear_api_key=None,
