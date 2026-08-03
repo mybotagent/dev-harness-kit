@@ -13,15 +13,23 @@ The full chain is:
     -> PR opens; branch's plugin.json:version equals origin/main's
        (no auto-bump on feature branches; parallel PRs never conflict)
     -> ci.yml:version-freshness check (HEAD > BASE) gates the merge
-    -> squash-merge lands the PR on main
-    -> version-bump.yml fires on push-to-main, bumps PATCH, commits,
-       pushes, then emits dev-kit--vX.Y.Z
+    -> PR is merged into main
+    -> version-bump.yml fires on pull_request(closed) with merged==true,
+       bumps PATCH, commits, pushes, then emits dev-kit--vX.Y.Z
+
+Trigger note (2026-08-03): the workflow used to fire on `push:
+branches: [main]`, but its own bump commit is pushed straight to main
+-- a push event -- which re-fired the workflow on itself and cascaded
+(v0.3.183 -> v0.3.188 in under a minute before being caught). Gating on
+"a PR into main was merged" is structurally immune: the bump step
+never goes through a PR, so it can't retrigger itself.
 
 This test pins the structural contract the workflow must satisfy so the
 refactor cannot drift silently:
 
   T1: workflow file exists and parses as YAML.
-  T2: workflow ONLY triggers on push to main (no pull_request trigger).
+  T2: workflow ONLY triggers on pull_request(closed) into main, gated
+      on merged==true (no bare push trigger -- see cascade note above).
   T3: permissions include `contents: write` (for tag push + commit push).
   T4: concurrency group is configured with `cancel-in-progress: false`
       (bump+tag must serialize; never drop in-flight pushes).
@@ -100,19 +108,64 @@ class TestBumpWorkflow(unittest.TestCase):
         self.assertEqual(len(doc["jobs"]), 1,
                          "workflow must declare exactly one job")
 
-    def test_03_push_only_trigger_no_pull_request(self):
-        """The workflow is push-to-main only. No pull_request trigger —
-        the trunk owns the version bump after a PR merges. Pin this to
-        prevent re-introduction of the old bump-PR creation path."""
+    def test_03_pull_request_merged_trigger_no_bare_push(self):
+        """The workflow fires on pull_request(closed) into main, gated on
+        merged==true, NOT on a bare `push: branches: [main]`. A bare push
+        trigger re-fires on the workflow's own bump commit (also pushed
+        to main) and cascades unboundedly -- pin this to prevent
+        re-introduction of that bug."""
         doc = _yaml_doc()
         on_dict = self._on(doc)
-        self.assertIn("push", on_dict)
-        push = on_dict["push"]
-        self.assertEqual(push.get("branches"), ["main"],
-                         "push trigger must pin to branches: [main]")
-        self.assertNotIn("pull_request", on_dict,
-                         "version-bump.yml must NOT trigger on pull_request; "
-                         "the trunk owns the version bump post-merge")
+        self.assertIn("pull_request", on_dict)
+        pr = on_dict["pull_request"]
+        self.assertEqual(pr.get("types"), ["closed"],
+                         "pull_request trigger must fire on types: [closed]")
+        self.assertEqual(pr.get("branches"), ["main"],
+                         "pull_request trigger must pin to branches: [main]")
+        self.assertNotIn("push", on_dict,
+                         "version-bump.yml must NOT trigger on bare push; "
+                         "its own bump commit is pushed to main and would "
+                         "self-retrigger, cascading unboundedly")
+
+        job = doc["jobs"][next(iter(doc["jobs"]))]
+        self.assertIn("merged == true", job.get("if", ""),
+                      "job must gate on github.event.pull_request.merged "
+                      "== true (a closed-but-not-merged PR must not bump)")
+
+    def test_03b_bump_pr_merge_skips_rebump_not_tag(self):
+        """/dev-kit:bump opens a `chore(release): bump dev-kit to v...`
+        PR for manual bumps; merging it is also a pull_request(closed)
+        event. Without a guard, that double-bumps on top of the skill's
+        own bump. The idempotency step must detect this by PR title and
+        skip only the bump-and-commit steps -- tagging must still run,
+        since skills/bump/SKILL.md relies on this workflow for post-merge
+        tag emission (it does no local tagging)."""
+        doc = _yaml_doc()
+        idem = _find_step(doc, "skip re-bump")
+        self.assertIsNotNone(idem, "expected a 'Skip re-bump if PR is "
+                              "itself a bump' step")
+        self.assertEqual(idem.get("id"), "idempotency")
+        run = idem.get("run", "")
+        self.assertIn(r"chore\(release\):\ bump\ dev-kit\ to\ v", run,
+                      "idempotency step must match the bump PR title format")
+
+        next_step = _find_step(doc, "compute next version")
+        bump_step = _find_step(doc, "bump both manifests")
+        commit_step = _find_step(doc, "commit + push version bump")
+        for step, label in (
+            (next_step, "compute next version"),
+            (bump_step, "bump both manifests"),
+            (commit_step, "commit + push version bump"),
+        ):
+            self.assertIsNotNone(step, f"expected a '{label}' step")
+            self.assertEqual(step.get("if"), "steps.idempotency.outputs.skip != 'true'",
+                             f"'{label}' step must be gated on the idempotency skip output")
+
+        tag_step = _find_step(doc, "emit annotated tag")
+        self.assertIsNotNone(tag_step)
+        self.assertNotIn("if", tag_step,
+                         "tag step must NOT be gated on the idempotency skip "
+                         "output -- tagging runs even on a bump-PR merge")
 
     def test_04_permissions_declares_contents_write(self):
         doc = _yaml_doc()
@@ -171,7 +224,9 @@ class TestBumpWorkflow(unittest.TestCase):
         .codex-plugin/plugin.json. The two surfaces publish the same
         version; only one plugin on the bump would desync releases."""
         doc = _yaml_doc()
-        bump_step = _find_step(doc, "bump") or _find_step(doc, "manifest")
+        # "manifest" first: "bump" alone now also matches the earlier
+        # "Skip re-bump if PR is itself a bump" idempotency step.
+        bump_step = _find_step(doc, "manifest") or _find_step(doc, "bump")
         self.assertIsNotNone(bump_step, "expected a 'Bump manifests' step")
         run = bump_step.get("run", "")
         self.assertIn(".claude-plugin/plugin.json", run,
