@@ -206,6 +206,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | Command | What it does |
 |---|---|
 | [`/dev-kit:inspect`](docs/skills/inspect.md) | Read-only whole-codebase health scan (dead code, duplication, smells) → one report. |
+| [`/dev-kit:code-viz`](docs/skills/code-viz.md) | Generic plugin-architecture visualizer — multi-level views + domain pillar map + per-skill workflows to one self-contained HTML page. |
 | [`/dev-kit:token-analyzer`](docs/skills/token-analyzer.md) | Shows where your Claude Code / Codex token spend is going, as an HTML dashboard. |
 | [`/dev-kit:research`](docs/skills/research.md) | Every factual claim you write either cites a source or gets removed. |
 | [`/dev-kit:docs-maintenance`](docs/skills/docs-maintenance.md) | Audits stale docs and refreshes the README without baking in facts that go out of date. |
