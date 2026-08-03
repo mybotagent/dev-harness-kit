@@ -461,6 +461,7 @@ jobs:
           fi
 
       - name: Combined verdict gate
+        id: combined_verdict
         run: |
           # Read verdicts directly from each job's outputs (set by the
           # 'Extract <skill> verdict' post-step in review + security jobs).
@@ -500,6 +501,9 @@ jobs:
           r=$(rank "$R"); s=$(rank "$S")
           worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
           echo "Combined worst verdict: $worst"
+          # Surface the resolved verdict to downstream steps so the
+          # auto-approve step can read it without re-computing.
+          echo "verdict=$worst" >> "$GITHUB_OUTPUT"
 
           # Tolerate unparseable verdicts (e.g. "Requested", "Skipped", or
           # unexpected formats from the /dev-kit:* agents): treat as non-
@@ -516,3 +520,42 @@ jobs:
             "Changes"*) echo "::error::Changes Requested (review=$R security=$S)"; exit 1 ;;
             Blocked) echo "::error::Blocked (review=$R security=$S)"; exit 1 ;;
           esac
+
+      - name: Auto-approve on clean verdict
+        # Implements the header-documented "Approve → success + auto-approve"
+        # contract that the code never actually wired up: when (a) the combined
+        # gate passed (verdict=Approve), (b) the L3 evidence gate was actually
+        # enforced (PR touches production code), and (c) the PR is open and
+        # not yet auto-approved, cast `gh pr review --approve` so GitHub's
+        # `reviewDecision` flips to APPROVED and the branch-protection gate
+        # unblocks merge.
+        #
+        # Runs as github-actions[bot], which is NOT the PR author — so the
+        # GitHub "reviewer cannot approve own PR" rule does not block this
+        # (the author's machine would have been blocked, see the babysit
+        # incident of 2026-08-03 / PR #557).
+        #
+        # Documents-only PRs (touches_prod=false) keep the existing
+        # "human + verdict-gate owns approval" policy from the L3 step: no
+        # auto-approve, human reviewer still required.
+        if: |
+          success() &&
+          steps.combined_verdict.outputs.verdict == 'Approve' &&
+          steps.touch_probe.outputs.touches_prod == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # Idempotency: skip if the PR already has an APPROVED review
+          # (re-runs of this job must not stack duplicate events).
+          EXISTING=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
+            --jq '.review_decision // ""')
+          if [ "$EXISTING" = "APPROVED" ]; then
+            echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
+            exit 0
+          fi
+          echo "Casting gh pr review --approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true)."
+          gh pr review "$PR_NUMBER" --approve \
+            --body "Auto-approved by review.yml on clean combined verdict (review + security both Approve, PR touches production code, L3 evidence gate passed). The operator still owns the actual `gh pr merge` step."
+          echo "Auto-approve posted."
