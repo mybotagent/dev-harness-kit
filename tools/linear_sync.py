@@ -392,7 +392,7 @@ def _repo_name(repo: Path) -> str:
 def _current_branch(repo: Path) -> str:
     try:
         out = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-re", "HEAD"],
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
         )
         return out.decode("utf-8", "ignore").strip() or "(detached)"

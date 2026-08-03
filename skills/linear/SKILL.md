@@ -62,7 +62,7 @@ The skill must invoke the CLI rather than replicate its logic. The standard patt
 python3 tools/linear_sync.py <subcommand> [args...]
 ```
 
-The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The API key is **read from** (but never written to) disk via the env files documented in the Setup section below.
+The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The API key is **read from** (but never written to) disk via the env files documented in the Setup section below.
 
 ### Setup (one-time, per machine)
 
