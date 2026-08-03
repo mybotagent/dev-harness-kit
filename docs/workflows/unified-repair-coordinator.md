@@ -119,8 +119,9 @@ flowchart LR
 ```
 
 The review and maintenance workflows run on `pull_request` and inspect the PR
-in PR-head context, so the checked-out PR content remains untrusted. The
-same-repository/fork guard is the boundary for whether the agent job runs. A PR
+in PR-head context, so the checked-out PR content remains untrusted. Fork PRs do
+not receive repository secrets; the consumer CI template additionally uses a
+same-repository/fork guard, while this repository's root workflows do not. A PR
 that changes a workflow file can still be reported as skipped by Claude's
 workflow-validation guard because the PR copy does not yet match the default
 branch. That is an expected bootstrap boundary: the workflow change is merged
