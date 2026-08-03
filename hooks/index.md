@@ -13,8 +13,9 @@
 | secret-scan     |  R    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
 | slop-detector   |  -    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
 | stop-verify     |  -    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |
+| linear-autosync |  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
 ```
-(R = read-only)
+(R = read-only) (* = fires only when Linear is configured.)
 
 ## Hook shells
 
@@ -27,3 +28,4 @@
 | `stop-verify` | plan / design / build / review / security / ship | Stop hook: AC claim verification. |
 | `worktree-guard` | n/a | PreToolUse Edit/Write block on main checkout (this repo). |
 | `git-guard` | n/a | PreToolUse Bash block on `git commit`/`push` to main. |
+| `linear-autosync` | always (gated) | PreToolUse Edit/Write block (gated) that calls `tools/linear_sync.py`. No-op when `LINEAR_API_KEY` and `.dev-kit/.enabled.json:mcp.linear` are both absent. Always exit 0 (non-blocking per #539). |
