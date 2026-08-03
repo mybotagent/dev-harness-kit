@@ -240,8 +240,44 @@ def _write_handoff(repo: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _main_repo_root(repo: Path) -> Path:
+    """Return the main checkout's path, even from inside a linked worktree.
+
+    Discriminator + resolution:
+      - `git rev-parse --git-common-dir` returns the main .git/ from
+        any worktree of the same repo.
+      - `dirname` of that path is the main checkout.
+      - In a non-worktree (or single-worktree) repo, the current
+        `repo` is the main checkout; return it unchanged.
+    """
+    try:
+        common = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
+        ).decode("utf-8", "ignore").strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return repo
+    if not common:
+        return repo
+    # `git rev-parse --git-common-dir` returns a path that may be
+    # relative to the worktree root. Resolve it against the worktree.
+    p = Path(common)
+    if not p.is_absolute():
+        p = (repo / p).resolve()
+    return p.parent
+
+
 def _repo_name(repo: Path) -> str:
-    name = repo.name
+    """Canonical repository name = main-checkout basename.
+
+    A worktree at `.worktrees/fix-xxx/` returns the main checkout's
+    directory name (e.g. `dev-harness-kit`), NOT the worktree's own
+    basename. This is the name Linear projects follow per #539
+    ("A repository whose Linear project name differs from its
+    canonical repository name gets a project named exactly after the
+    repository").
+    """
+    name = _main_repo_root(repo).name
     if name.startswith(".") and len(name) > 1:
         name = name[1:]
     return name or "repository"
@@ -476,10 +512,25 @@ def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_ke
     return f"{issue['identifier']} ({issue['id']})"
 
 
-def _update_issue(issue_ref: str, body: str) -> None:
+def _update_issue(issue_ref: str, body: str, project_id: str | None = None) -> None:
+    """Update the issue's description (and optionally its project).
+
+    `IssueUpdateInput` is `String!`-typed for the issue id and the
+    project id, just like `IssueCreateInput`. Keep these in sync.
+    """
     issue_id = issue_ref.split(" ", 1)[-1].strip("()")
+    if project_id is not None:
+        mutation = (
+            "mutation($id: String!, $body: String!, $projectId: String) {"
+            "  issueUpdate(id: $id, input: { description: $body, projectId: $projectId }) {"
+            "    issue { id identifier project { name } }"
+            "  }"
+            "}"
+        )
+        _linear_query(mutation, {"id": issue_id, "body": body, "projectId": project_id})
+        return
     mutation = (
-        "mutation($id: ID!, $body: String!) {"
+        "mutation($id: String!, $body: String!) {"
         "  issueUpdate(id: $id, input: { description: $body }) {"
         "    issue { id }"
         "  }"
