@@ -466,16 +466,13 @@ jobs:
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
 
-          # Tolerate missing verdicts in BOTH event modes. The previous
-          # strict pull_request branch hard-failed on empty R or S, which
-          # broke any PR whose agent skipped (workflow-validation skip on
-          # the very PR that ADDS .github/workflows/review.yml, action
-          # rate-limit, transient network error). The fix: default to
-          # Approve + ::warning:: in both modes so the human gate
-          # (REVIEW_REQUIRED / CHANGES_REQUESTED on the PR) is what
-          # actually blocks merge, not a single missing agent verdict.
-          [ -z "$R" ] && { echo "::warning::review verdict missing (event=$EVENT); defaulting to Approve"; R="Approve"; }
-          [ -z "$S" ] && { echo "::warning::security verdict missing (event=$EVENT); defaulting to Approve"; S="Approve"; }
+          # Missing verdicts are inconclusive and must fail closed. A repair
+          # cycle can retry the failed review, but merge eligibility must not
+          # be inferred from an absent agent result.
+          if [ -z "$R" ] || [ -z "$S" ]; then
+            echo "::error::review/security verdict missing (event=$EVENT); blocking"
+            exit 1
+          fi
 
           # Issue #397: PARSE_FAILED is a parse-error sentinel, NOT an
           # unparseable verdict. Hard-fail so a broken parser can't mask
@@ -497,14 +494,10 @@ jobs:
           worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
           echo "Combined worst verdict: $worst"
 
-          # Tolerate unparseable verdicts (e.g. "Requested", "Skipped", or
-          # unexpected formats from the /dev-kit:* agents): treat as non-
-          # blocking by analogy with the workflow_dispatch branch above — the
-          # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
-          # blocks merge, not a single regex trip.
+          # Unparseable verdicts are also inconclusive and must fail closed.
           if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
-            exit 0
+            echo "::error::Unparseable verdict '$worst' (review='$R' security='$S'); blocking."
+            exit 1
           fi
 
           case "$worst" in

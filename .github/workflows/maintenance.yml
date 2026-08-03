@@ -291,13 +291,12 @@ jobs:
           echo "judge_verdict=$judge_verdict  docs_ok=$docs_ok"
           echo "docs_reason=$docs_reason"
 
-          # Tolerate missing judge verdict (mirrors review.yml): default
-          # to Approve + ::warning:: so transient agent failures don't
-          # block merge; the docs-updated sub-gate still owns the
-          # final gate.
+          # A missing judge verdict is a failed required gate. Retryable
+          # provider failures belong in the repair loop; they must never
+          # become an approval.
           if [ -z "$judge_verdict" ]; then
-            echo "::warning::maintenance judge verdict missing; defaulting to Approve"
-            judge_verdict="Approve"
+            echo "::error::maintenance judge verdict missing; blocking"
+            exit 1
           fi
 
           # Combine via the same module so unit tests and CI share logic.
@@ -321,7 +320,7 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::warning::Unparseable combined verdict '$combined_verdict'; defaulting to Approve"
-              exit 0
+              echo "::error::Unparseable combined verdict '$combined_verdict'; blocking"
+              exit 1
               ;;
           esac

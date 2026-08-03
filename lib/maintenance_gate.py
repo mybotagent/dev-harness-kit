@@ -154,10 +154,10 @@ def combine_verdict(
     if jv == "Changes Requested":
         return {"verdict": "Changes Requested", "docs_ok": docs_ok,
                 "reason": docs_reason}
-    # Unknown / empty judge verdict — treat as non-blocking but
-    # surface so the operator sees the gap (matches review.yml).
-    return {"verdict": "Approve", "docs_ok": docs_ok,
-            "reason": f"unknown judge verdict {jv!r}; defaulting to Approve",
+    # Unknown / empty judge verdict is a failed required gate. A missing or
+    # malformed model result must never become an approval.
+    return {"verdict": "Blocked", "docs_ok": docs_ok,
+            "reason": f"unknown judge verdict {jv!r}; required verdict missing",
             "warn": True}
 
 

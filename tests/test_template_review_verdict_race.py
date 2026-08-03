@@ -214,38 +214,38 @@ class TestTemplateGateTolerance(unittest.TestCase):
             capture_output=True, text=True, env=env, timeout=10,
         )
 
-    def test_gate_tolerates_empty_R_in_pull_request(self):
-        """The new contract: empty R in pull_request MUST exit 0, not 1."""
+    def test_gate_blocks_empty_R_in_pull_request(self):
+        """Missing review verdicts must fail the required gate."""
         # If the template uses gh api at gate-time, _run_gate would actually
         # fail (no network). Skip in that case — covered by structural tests.
         cp = self._run_gate(r="", s="Approve", event="pull_request")
         if cp.returncode != 0 and cp.returncode != 1:
             self.skipTest(f"unexpected return code {cp.returncode}; gate may use live gh api: {cp.stderr}")
         self.assertEqual(
-            cp.returncode, 0,
-            f"empty R in pull_request MUST default to Approve + ::warning:: (was exit 1).\n"
+            cp.returncode, 1,
+            f"empty R in pull_request MUST block.\n"
             f"stdout={cp.stdout}\nstderr={cp.stderr}",
         )
-        self.assertIn("::warning::", cp.stdout)
+        self.assertIn("::error::review/security verdict missing", cp.stdout)
 
-    def test_gate_tolerates_empty_S_in_pull_request(self):
+    def test_gate_blocks_empty_S_in_pull_request(self):
         cp = self._run_gate(r="Approve", s="", event="pull_request")
         if cp.returncode not in (0, 1):
             self.skipTest(f"unexpected return code {cp.returncode}; gate may use live gh api")
         self.assertEqual(
-            cp.returncode, 0,
-            f"empty S in pull_request MUST default to Approve + ::warning:: (was exit 1).\n"
+            cp.returncode, 1,
+            f"empty S in pull_request MUST block.\n"
             f"stdout={cp.stdout}\nstderr={cp.stderr}",
         )
-        self.assertIn("::warning::", cp.stdout)
+        self.assertIn("::error::review/security verdict missing", cp.stdout)
 
-    def test_gate_tolerates_unparseable_verdict(self):
-        """Unparseable verdict ('Requested') MUST exit 0, not 1."""
+    def test_gate_blocks_unparseable_verdict(self):
+        """Unparseable verdicts must fail the required gate."""
         cp = self._run_gate(r="Requested", s="Approve", event="pull_request")
         if cp.returncode not in (0, 1):
             self.skipTest(f"unexpected return code {cp.returncode}; gate may use live gh api")
-        self.assertEqual(cp.returncode, 0, f"stdout={cp.stdout}\nstderr={cp.stderr}")
-        self.assertIn("::warning::", cp.stdout)
+        self.assertEqual(cp.returncode, 1, f"stdout={cp.stdout}\nstderr={cp.stderr}")
+        self.assertIn("::error::Unparseable verdict", cp.stdout)
 
     def test_gate_blocks_real_changes_requested(self):
         """Real review feedback must still exit 1."""
@@ -260,27 +260,13 @@ class TestTemplateGateTolerance(unittest.TestCase):
             self.skipTest(f"unexpected return code {cp.returncode}; gate may use live gh api")
         self.assertEqual(cp.returncode, 1, f"stdout={cp.stdout}\nstderr={cp.stderr}")
 
-    def test_gate_has_no_hard_fail_on_empty_verdict(self):
-        """Structural pin: the gate bash must NOT contain a hard-fail branch
-        that exits 1 on empty R or S. Project's own review.yml uses fallback
-        to Approve + ::warning::; template must match.
+    def test_gate_has_hard_fail_on_empty_verdict(self):
+        """Structural pin: missing verdicts must block rather than approve.
         """
-        # Look for the `if [ -z "$R" ]; then ... exit 1 ... fi` pattern that
-        # defined the old buggy behavior. The fixed gate should use `&& { ...;
-        # R="Approve"; }` (fallback) or a similar non-exit-1 construct.
-        # If gate-time extract is used, the R/S assignments come from gh api
-        # output and the tolerance is at the fallback defaulting point.
-        # In either case, the literal string "::error::review verdict missing"
-        # must NOT be present (that's the old hard-fail error message).
-        self.assertNotIn(
-            "::error::review verdict missing",
+        self.assertIn(
+            "::error::review/security verdict missing",
             self.gate_bash,
-            "gate still has the hard-fail branch on missing R (issue #104 bug 2)",
-        )
-        self.assertNotIn(
-            "::error::security verdict missing",
-            self.gate_bash,
-            "gate still has the hard-fail branch on missing S (issue #104 bug 2)",
+            "gate must fail closed on missing review or security verdict",
         )
 
 
@@ -341,13 +327,13 @@ class TestTemplateJobStatusTolerance(unittest.TestCase):
         )
         for arm, label, expect in (
             (transient, "cancelled|failure", {
-                "verdict": "Approve",
-                "verdict_source": "default-approve-job-${{ job.status }}",
+                "verdict": "PARSE_FAILED",
+                "verdict_source": "missing-verdict-job-${{ job.status }}",
                 "agent_ran": "true",
             }),
             (default, "*) default", {
-                "verdict": "Approve",
-                "verdict_source": "default-approve-no-file",
+                "verdict": "PARSE_FAILED",
+                "verdict_source": "missing-verdict-no-file",
                 "agent_ran": "false",
             }),
         ):
