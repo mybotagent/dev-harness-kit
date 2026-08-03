@@ -236,7 +236,7 @@ class TestSkillFrontmatter(unittest.TestCase):
     def test_category_is_allowed(self):
         allowed = {"bootstrap", "plan", "build", "review", "security",
                    "audit", "shortcuts", "ship", "config", "eval",
-                   "repair", "status"}
+                   "status"}
         self.assertIn(self.fm.get("category"), allowed)
 
     def test_allowed_tools_includes_webfetch(self):

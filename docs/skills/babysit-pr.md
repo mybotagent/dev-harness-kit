@@ -107,7 +107,6 @@ All stdout/stderr output is English only.
 ## Related
 
 - [ship](ship.md) — recommended next step once the loop terminates with an approved PR.
-- [repair](repair.md) — recommended on an abnormal exit that looks like a golden-asset regression.
 - `hooks/lib/worktree-detect.sh` — the shared worktree discriminator this skill sources rather than reimplementing.
 - `lib/babysit_pr_cli.py` — the pure helper backing the single-operator bypass.
 - `lib/babysit_pr_reliability.py` — `is_stale_lock()` and `classify_check()`.

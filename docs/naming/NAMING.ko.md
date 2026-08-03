@@ -12,7 +12,7 @@
 - **프런트매터 `name:`** = 디렉터리 마지막 세그먼트
 - **프런트매터 `category:`** ∈ {`bootstrap`, `plan`, `design`, `build`,
   `review`, `security`, `audit`, `shortcuts`, `ship`, `config`, `eval`,
-  `repair`, `status`}
+  `status`}
 
 ### 카테고리별 네이밍 패턴
 

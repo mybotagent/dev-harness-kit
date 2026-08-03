@@ -1,3 +1,28 @@
+
+
+# Runtime Portability
+
+**Language:** English · [한국어](RUNTIME-PORTABILITY.ko.md)
+
+> **Status: ARCHIVAL — substrate deleted in PR-G (commit `6a00288`).**
+>
+> `lib/runtime_adapters/`, `tests/test_portability.py`, and
+> `.github/workflows/test-portability.yml` no longer exist. The opening
+> sections below (TL;DR, Neutrality matrix, Common patterns) describe the
+> adapter package as if it were live. Treat them as **design history**,
+> not as a contract — there is no current cross-runtime adapter to
+> import from.
+>
+> **Today's portable-by-convention contract** (post-retraction):
+> runtime detection is `os.environ.get("CLAUDECODE")` /
+> `os.environ.get("CODEX_CLI")` (each runtime sets its own signal).
+> Any code that wants normalized token/session data must read the
+> runtime-native transcript directly (no shared dataclass). The CI
+> enforcement section ("CI enforcement (retracted in PR-G…)") further
+> down records what was removed.
+
+---
+
 # Runtime Portability (런타임 이식성)
 
 **언어:** [English](RUNTIME-PORTABILITY.md) · 한국어
@@ -116,24 +141,25 @@ def emit(adapter, neutral_name: str) -> None:
 
 이식 가능하다 — 중립 이름이 API이고, 런타임 고유 이름은 구현이다.
 
-## CI 시행
+## CI 시행 (PR-G에서 철회, 현재 브랜치에서 제거됨)
 
-`.github/workflows/test-portability.yml`은 `tests/test_portability.py`를
-두 런타임의 환경 신호(매트릭스 runtime = `[claude-code, codex]`)로
-실행한다. 어느 쪽 어댑터에서든 런타임 간 동등성 보장을 깨는 회귀는
-그것을 검사하는 레인에서 CI를 실패시킨다.
+PR-G(커밋 `6a00288`)는 Phase 0.9 이식성 하위 구조 전체 —
+`lib/runtime_adapters/`(프로덕션 호출자 없음)와
+`tests/test_portability.py`를 삭제했다. 검사할 어댑터 모듈이
+남지 않자 `.github/workflows/test-portability.yml`에 남아 있던
+환경 신호 검사는 GitHub Actions 플랫폼 동작만 검증하던 상태였고,
+본 브랜치는 그 워크플로까지 함께 삭제한다.
 
-전체 28개 테스트 계약은 `tests/test_portability.py`를,
-구현체는 `lib/runtime_adapters/`를 참고한다.
+이식성 계약은 이제 **관례**로만 존중된다 — 즉 다운스트림 코드에서
+`os.environ.get("CLAUDECODE")` / `os.environ.get("CODEX_CLI")`를
+사용한 런타임 감지만 남고 공유 추상화는 없다. 향후 런타임 간
+보장을 다시 강제하려면 삭제된 하위 구조(어댑터 패키지 + 28개
+테스트 계약 스위트 + CI 매트릭스)를 복원한 뒤 진행해야 한다.
 
 ## 관련
 
-- `lib/runtime_adapters/base.py` — `RuntimeAdapter` Protocol + 데이터 클래스.
-- `lib/runtime_adapters/claude_code.py` — Claude Code 어댑터.
-- `lib/runtime_adapters/codex.py` — Codex 어댑터.
-- `tests/test_portability.py` — 28개 테스트 계약 스위트.
-- `.github/workflows/test-portability.yml` — CI 매트릭스.
 - Issue #329 — Phase 0 상위 이슈.
-- Issue #343 — `__init__.py` 익스포트.
-- Issue #344 — `tests/test_portability.py`.
+- Issue #343 — `__init__.py` 익스포트 (PR-G와 함께 삭제됨).
+- Issue #344 — `tests/test_portability.py` (PR-G와 함께 삭제됨).
 - Issue #345 — CI 매트릭스 + 이 문서.
+- 커밋 `6a00288` — PR-G 철회.
