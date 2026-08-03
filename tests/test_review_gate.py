@@ -18,7 +18,7 @@ subprocess with controlled R/S/EVENT env vars. They protect against:
   - Pull_request mode with Changes Requested worst-of: exit 1
   - Pull_request mode with Blocked worst-of: exit 1
   - Workflow_dispatch mode with empty R: defaults to Approve, exit 0
-  - Unparseable verdict (e.g. "Requested"): ::warning:: + exit 0
+  - Unparseable verdict (e.g. "Requested"): ::error:: + exit 1
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
+LOCAL_REVIEW = (REPO_ROOT / ".github" / "workflows" / "review.yml").read_text()
 # Source-of-truth: the consumer template SSOT (templates/ci/.github/workflows/review.yml).
 # The local .github/workflows/review.yml is kept in lockstep with the template, but the
 # template is what ships to consumers via /dev-kit:ci-setup, so it is the canonical source.
@@ -187,16 +188,10 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("::error::Blocked", cp.stdout)
 
-    def test_pull_request_unparseable_verdict_exits_zero(self):
-        """Unparseable verdicts (e.g. 'Requested' truncation) are non-blocking.
-
-        The strict-gate contract previously hard-failed on unparseable verdicts,
-        which broke consumer repos whose agents emitted a non-standard verdict
-        string. Treat as non-blocking + ::warning::, mirroring the
-        workflow_dispatch tolerance in project's own .github/workflows/review.yml.
-        """
+    def test_pull_request_unparseable_verdict_hard_fails(self):
+        """A truncated `Changes Requested` must never be treated as approval."""
         cp = _run_gate(r="Requested", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("Unparseable verdict", cp.stdout)
 
     def test_workflow_dispatch_empty_R_exits_zero(self):
@@ -204,6 +199,17 @@ class TestSeverityGateTolerance(unittest.TestCase):
         cp = _run_gate(r="", s="Approve", event="workflow_dispatch")
         self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         self.assertIn("::warning::review verdict missing", cp.stdout)
+
+
+class TestVerdictExtractionContract(unittest.TestCase):
+    """The local workflow must preserve multi-word verdicts and audit parsing."""
+
+    def test_changes_requested_is_not_reduced_to_requested(self):
+        self.assertNotIn("awk '{print $NF}'", LOCAL_REVIEW)
+        self.assertIn("sed -E 's/^\\*\\*Verdict:\\*\\*[[:space:]]*//'", LOCAL_REVIEW)
+
+    def test_audit_comment_records_validation_state_for_each_job(self):
+        self.assertEqual(LOCAL_REVIEW.count("verdict_valid=${verdict_valid}"), 2)
 
     # === Issue #212-C1-fix: agent skip detection ===
 
@@ -314,18 +320,10 @@ class TestSeverityGateTolerance(unittest.TestCase):
         self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("::error::review+security gate: verdict parser failed", cp.stdout + cp.stderr)
 
-    def test_other_unparseable_still_tolerates(self):
-        """Other unparseable values (e.g. 'Requested') still hit the existing tolerance.
-
-        The fix for #397 is narrow: only the PARSE_FAILED sentinel (which
-        means 'parser couldn't extract a verdict from the agent's output
-        file') becomes a hard fail. Other unparseable values like a
-        truncated 'Requested' are still tolerated as non-blocking per
-        the pre-existing behavior, because they may originate from agent
-        output that the human reviewer can interpret.
-        """
+    def test_other_unparseable_also_hard_fails(self):
+        """A verdict outside the three-value contract must refuse approval."""
         cp = _run_gate(r="Requested", s="Approve", event="pull_request")
-        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
         self.assertIn("Unparseable verdict", cp.stdout)
 
     def test_extracted_bash_is_nonempty(self):

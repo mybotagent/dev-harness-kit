@@ -536,34 +536,17 @@ class TestCiSetup(unittest.TestCase):
             f"branch-policy job has no actions/checkout step; issue #202. steps={steps!r}",
         )
 
-    def test_auto_fix_pr_template_cap_step_exits_one(self):
-        """Issue #202: 5-iteration cap must hard-stop the job with exit 1.
-
-        `exit 0` lets the subsequent agent steps run anyway, which
-        re-triggers the loop and defeats the cap. `exit 1` fails the
-        step (job stops, red CI check, human review gets visibility).
-        """
+    def test_auto_fix_pr_template_is_single_repair_adapter_wave(self):
+        """The GitHub workflow delegates bounded repair state to the coordinator."""
         template = (PROJECT_ROOT / "templates" / "ci" / ".github" / "workflows" / "auto-fix-pr.yml")
         self.assertTrue(template.is_file(), f"template missing: {template}")
         content = template.read_text()
-        # The cap block's body is unique: it references "5 auto-fix iterations"
-        # and the PR-comment "🤖 Auto-fix reached 5-iteration cap". Within
-        # that block, the line right after the comment must be `exit 1`,
-        # not `exit 0`.
-        cap_marker = "Reached 5 auto-fix iterations"
-        self.assertIn(cap_marker, content, "cap warning text missing from template")
-        # Slice the script block from the cap step onward (next step header).
-        cap_idx = content.index(cap_marker)
-        next_step = content.find("\n      - name:", cap_idx)
-        cap_block = content[cap_idx:next_step if next_step != -1 else len(content)]
-        self.assertIn(
-            "exit 1", cap_block,
-            f"cap block must hard-stop with `exit 1` (issue #202); block was:\n{cap_block}",
-        )
-        self.assertNotIn(
-            "exit 0", cap_block,
-            f"cap block must NOT contain `exit 0` (issue #202); block was:\n{cap_block}",
-        )
+        self.assertIn("Original PR repair wave already ran", content)
+        self.assertIn("if [ \"$COUNT\" -ge 1 ]", content)
+        self.assertIn("exit 0", content)
+        self.assertIn("Record repair coordinator start", content)
+        self.assertIn("Record repair coordinator completion", content)
+        self.assertIn("NO_PATCH_REQUIRED", content)
 
     def test_gitignore_fragment_created_on_fresh_install(self):
         """Issue #202: empty target gets a `.gitignore` with the dev-kit fragment."""

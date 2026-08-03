@@ -295,6 +295,9 @@ jobs:
             # hard-fail. Report the real state so the gate can surface the
             # bootstrap-PR remediation message.
             echo "agent_ran=false" >> "$GITHUB_OUTPUT"
+            verdict_valid=false
+            audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=Approve verdict_valid=${verdict_valid} source=needs-fallback-bootstrap-pr agent_ran=false"
+            gh pr comment "$PR_NUMBER" --body "$audit_body"
             exit 0
           fi
           # Issue #244 root-cause fix: read the verdict from the agent's
@@ -357,6 +360,12 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=${verdict_source:-unknown}"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
     # See review-job comment above; same fork-safety contract.
@@ -573,6 +582,9 @@ jobs:
             # report agent_ran=false so the severity gate can hard-fail
             # with the bootstrap-PR remediation message.
             echo "agent_ran=false" >> "$GITHUB_OUTPUT"
+            verdict_valid=false
+            audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=Approve verdict_valid=${verdict_valid} source=needs-fallback-bootstrap-pr agent_ran=false"
+            gh pr comment "$PR_NUMBER" --body "$audit_body"
             exit 0
           fi
           # Issue #244 root-cause fix: same as the review extract step —
@@ -621,6 +633,12 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=${verdict_source:-unknown}"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     # Severity gate: same fork-safety guard. Pull from job outputs --
@@ -789,8 +807,8 @@ jobs:
           # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
           # blocks merge, not a single regex trip.
           if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
-            exit 0
+            echo "::error::Unparseable verdict '$worst' (review='$R' security='$S'); refusing approval."
+            exit 1
           fi
 
           case "$worst" in

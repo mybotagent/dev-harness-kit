@@ -208,10 +208,16 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
+            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
     name: /dev-kit:security (10-dim OWASP)
@@ -352,10 +358,16 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
+            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     name: severity gate (review + security)
@@ -503,8 +515,8 @@ jobs:
           # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
           # blocks merge, not a single regex trip.
           if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
-            exit 0
+            echo "::error::Unparseable verdict '$worst' (review='$R' security='$S'); refusing approval."
+            exit 1
           fi
 
           case "$worst" in

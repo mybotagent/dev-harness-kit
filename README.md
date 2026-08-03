@@ -125,6 +125,50 @@ What each one leaves behind, so you can see the progress on disk:
 
 When review is green, `/dev-kit:ship` cuts the release tag. That's the whole loop.
 
+### Core workflow at a glance
+
+The most important state transitions are intentionally small and resumable. The
+full Code-Viz source record is [unified-repair-coordinator.md](docs/workflows/unified-repair-coordinator.md).
+
+```mermaid
+flowchart LR
+  I[one-line idea] --> P[/dev-kit:plan/]
+  P --> PRD[PRD.md + phases/index.json]
+  PRD --> B[/dev-kit:build/]
+  B --> STEP[step worktree]
+  STEP --> TEST[acceptance checks]
+  TEST -->|pass| NEXT{more steps?}
+  NEXT -->|yes| STEP
+  NEXT -->|no| REVIEW[review / security / maintenance]
+  REVIEW -->|Approve| SHIP[/dev-kit:ship/]
+  REVIEW -->|Changes Requested or CI failure| S[/dev-kit:babysit-pr/]
+  S --> FIX[diagnose → patch → verify → push]
+  FIX --> REVIEW
+```
+
+`plan` records intent and acceptance criteria before implementation. `build`
+owns one step at a time and resumes from `index.json`. `babysit-pr` is the
+single repair entrypoint: it watches CI and review, applies bounded fixes, and
+rechecks the PR.
+
+```mermaid
+flowchart TD
+  OBSERVE[observe checks + findings] --> REPRODUCE[reproduce failure]
+  REPRODUCE --> PATCH[one minimal patch]
+  PATCH --> VERIFY[focused + full verification]
+  VERIFY --> PROGRESS{measurable progress?}
+  PROGRESS -->|yes| OBSERVE
+  PROGRESS -->|no, original PR| R1[repair PR 1]
+  R1 --> OBSERVE
+  PROGRESS -->|no, repair PR 1| R2[repair PR 2]
+  R2 --> OBSERVE
+  PROGRESS -->|no, repair PR 2| EX[exception evidence bundle]
+  VERIFY -->|all required gates pass| MERGE[eligible for automatic merge]
+```
+
+GitHub's `auto-fix-pr` is only an event adapter into the same repair state; it
+is not a second user-facing workflow.
+
 > A full "I have a brand-new repo" walkthrough (create repo → install → bootstrap
 > → first commit) is at [First-time setup, end to end](#first-time-setup-end-to-end).
 

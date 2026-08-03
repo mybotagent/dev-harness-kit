@@ -188,10 +188,16 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
+            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
+          gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
     name: maintenance gate (verdict + docs-updated)
@@ -321,7 +327,7 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::warning::Unparseable combined verdict '$combined_verdict'; defaulting to Approve"
-              exit 0
+              echo "::error::Unparseable combined verdict '$combined_verdict'; refusing approval"
+              exit 1
               ;;
           esac
