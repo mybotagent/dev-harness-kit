@@ -154,10 +154,10 @@ def combine_verdict(
     if jv == "Changes Requested":
         return {"verdict": "Changes Requested", "docs_ok": docs_ok,
                 "reason": docs_reason}
-    # Unknown / empty judge verdict — treat as non-blocking but
-    # surface so the operator sees the gap (matches review.yml).
-    return {"verdict": "Approve", "docs_ok": docs_ok,
-            "reason": f"unknown judge verdict {jv!r}; defaulting to Approve",
+    # Unknown / empty judge verdict is a failed verification, not approval.
+    # A missing model response must never become a merge authorization.
+    return {"verdict": "Blocked", "docs_ok": docs_ok,
+            "reason": f"unknown judge verdict {jv!r}; blocking until verified",
             "warn": True}
 
 
@@ -194,7 +194,7 @@ def cli_main(argv=None) -> int:
         help="changed file path (repeatable)",
     )
     parser.add_argument("--pr-body", default="")
-    parser.add_argument("--judge-verdict", default="Approve")
+    parser.add_argument("--judge-verdict", default="")
     parser.add_argument("--docs-ok", action="store_true",
                         help="pre-computed docs_ok flag (for combine mode)")
     parser.add_argument("--docs-reason", default="")

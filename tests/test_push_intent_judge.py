@@ -120,14 +120,15 @@ class TestPushIntentJudge(unittest.TestCase):
             "MINIMAX_API_KEY": "",
             "ANTHROPIC_API_KEY": "",
         }, clear=True):
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                rc = push_intent_judge.run(
-                    project_root=self.REPO_ROOT,
-                    commit_message="x",
-                    diff_stat=" x 1 +1 -1",
-                    diff_sample="",
-                )
+            with tempfile.TemporaryDirectory() as td:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = push_intent_judge.run(
+                        project_root=Path(td),
+                        commit_message="x",
+                        diff_stat=" x 1 +1 -1",
+                        diff_sample="",
+                    )
         self.assertEqual(rc, 2)
         self.assertIn("VERDICT=ROT", buf.getvalue())
         self.assertIn("api_key", buf.getvalue().lower())

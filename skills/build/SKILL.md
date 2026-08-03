@@ -16,7 +16,7 @@ disable-model-invocation: false
 
 ## What it does
 
-Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one `claude -p` sub-agent per step inside an isolated per-step git worktree, persisting real `step<N>-output.json` (subprocess exit code, stdout, stderr, measured duration), and emitting the 2-commit protocol on the per-step branch. Honors MUST-36 (one sub-agent per step), MUST-37 (3-cycle self-fix guard), MUST-38 (per-step worktree isolation).
+Executes `phases/<name>/step{1..N}.md` end-to-end by spawning one non-interactive agent per step inside an isolated per-step git worktree, persisting real `step<N>-output.json` (subprocess exit code, stdout, stderr, measured duration), and emitting the 2-commit protocol on the per-step branch. Claude is the default; set `DEV_KIT_BUILD_AGENT=codex` to use `codex exec`. Every step has a bounded timeout from `DEV_KIT_AGENT_TIMEOUT_SECONDS` (default 1 hour, max 24 hours). Honors MUST-36 (one sub-agent per step), MUST-37 (3-cycle self-fix guard), MUST-38 (per-step worktree isolation).
 
 ## Optional Linear preflight
 
@@ -63,7 +63,7 @@ code based on the verdict.
    - `git worktree add -B <branch> <wt> origin/main` (MUST-38).
    - Read `step<N>.md` as preamble; append AC guard + `3-cycle self-fix max`.
    - `update_step_status(... status="in_progress")` (stamps `started_at`).
-   - `subprocess.run(["claude", "-p", "--workdir", str(wt), full_prompt], capture_output=True, text=True)` (MUST-36).
+   - Spawn the selected agent command (`claude -p` or `codex exec`) with a bounded timeout (MUST-36).
    - Write `phases/<name>/step<N>-output.json` with REAL `exit_code`, `stdout`, `stderr`, `duration_seconds` (no fake `0.01` or `stub completed`).
    - On non-zero exit: `status="error"`, stash `error_message`, return non-zero — no commits.
    - On success: 2 commits on the per-step branch — `feat({phase}): step {N}[ — <name>]` then `chore({phase}): step {N} output`. Push the per-step branch to `origin` if `--push`.

@@ -18,6 +18,10 @@ hands them off after the parallel fan-out step.
 """
 from __future__ import annotations
 
+from .cross_validate import (  # noqa: F401
+    ESCALATE_VARIANCE_THRESHOLD,
+    cross_validate_scores,
+)
 from .dimensions import REGISTRY, Dimension, get, group, resolve  # noqa: F401
 from .evidence import (  # noqa: F401
     SEVERITY_ORDER,
@@ -39,8 +43,4 @@ from .runner import (  # noqa: F401
     emit_suggested_diffs,
     render_markdown,
     run_analysis,
-)
-from .cross_validate import (  # noqa: F401
-    ESCALATE_VARIANCE_THRESHOLD,
-    cross_validate_scores,
 )

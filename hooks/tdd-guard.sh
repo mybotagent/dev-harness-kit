@@ -6,10 +6,12 @@
 
 set -eo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+source "${BASH_SOURCE[0]%/*}/lib/stage-gate.sh"
 require_jq "TDD GUARD"
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [ -z "$FILE" ] && exit 0
+hook_stage_active tdd-guard || exit 0
 case "$FILE" in
   *.md|*.mdx|*.txt|*.rst|*.adoc|*.html|*.json|*.yaml|*.yml|*.toml|*.cfg|*.ini|*.sh) exit 0 ;;
   */docs/*|*/tools/*|*/scripts/*|*/bin/*|*/hooks/*|*/fixtures/*|*/eval/*) exit 0 ;;

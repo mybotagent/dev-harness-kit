@@ -168,6 +168,16 @@ class TestCombinedVerdictDerivation(unittest.TestCase):
         )
         self.assertEqual(outcome["verdict"], "Blocked")
 
+    def test_missing_or_unknown_judge_blocks(self):
+        for verdict in ("", "nonsense"):
+            with self.subTest(verdict=verdict):
+                outcome = maintenance_gate.combine_verdict(
+                    judge_verdict=verdict,
+                    docs_ok=True,
+                    docs_reason="ok",
+                )
+                self.assertEqual(outcome["verdict"], "Blocked")
+
 
 class TestCLISubprocess(unittest.TestCase):
     """End-to-end CLI invocation parity — the workflow calls the
