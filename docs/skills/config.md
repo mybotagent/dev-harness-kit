@@ -22,9 +22,17 @@ The skill asks 4 multiSelect questions in sequence:
 The result of the interview is written to `.dev-kit/.enabled.json` (skills + MCP + hook-matrix selections) and `.dev-kit/methodology.json` (the chosen methodology), updating whatever was previously stored.
 
 Linear is an optional MCP integration. Set it to `off` to skip implicit
-tracking, or `auto` to use it when the connector is available. The public
-`/dev-kit:linear` skill can still be invoked directly and reports setup
-problems without blocking other skills.
+tracking, `auto` to use it when the connector is available (auto-sync on
+every Claude Code edit), or `on` to require the connector and surface
+setup problems. The public `/dev-kit:linear` skill can still be invoked
+directly and reports setup problems without blocking other skills.
+
+The `auto` mode is implemented by `hooks/linear-autosync.sh` (wired into
+PreToolUse Edit|Write|MultiEdit) calling `tools/linear_sync.py`. With
+`LINEAR_API_KEY` set, every Claude Code edit auto-creates or auto-updates
+a Linear issue under the project named after the repository; without it,
+the hook is a fast-path no-op. See `skills/linear/SKILL.md` for the
+reconciliation contract.
 
 ## Usage
 

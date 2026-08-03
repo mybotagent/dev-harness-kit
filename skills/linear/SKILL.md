@@ -1,12 +1,13 @@
 ---
 name: linear
 category: config
-description: Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue.
+description: Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured.
 alpha: state
 when_to_use: |
   - User types /dev-kit:linear
   - A workflow skill starts a new implementation, debugging, refactor, or plan task
   - The user asks to register, reconcile, or update work in Linear
+  - Every Edit|Write|MultiEdit fires the auto-sync hook (when configured)
 allowed-tools: Read Write
 model: sonnet
 disable-model-invocation: false
@@ -16,7 +17,7 @@ user-invocable: true
 
 ## What it does
 
-`linear` is an optional task-tracking skill. It can be invoked directly by a user or called once by a workflow skill at task start. It never runs on every prompt, never treats an existing handoff as proof of registration, and never blocks normal work when Linear is unavailable.
+`linear` is an optional task-tracking skill. It can be invoked directly by a user, called once by a workflow skill at task start, or fired automatically on every Edit|Write when Linear is configured. The skill itself describes the reconciliation contract; the actual sync is implemented by `tools/linear_sync.py` and invoked through `hooks/linear-autosync.sh`. The skill never treats an existing handoff as proof of registration, and it never blocks normal work when Linear is unavailable.
 
 ## Optional capability
 
@@ -26,6 +27,19 @@ Resolve the current repository name and the user's Linear capability before maki
 - If this is an explicit `/dev-kit:linear` call and Linear is unavailable, report the missing connection/setup clearly; do not pretend the task was registered.
 - If `.dev-kit/.enabled.json` exists, respect its Linear/MCP selection. Missing configuration means `auto`, not a hard failure.
 - Do not invoke Linear for read-only work such as inspect, review, security, or code-viz unless the user explicitly requests registration.
+
+## Auto-sync trigger (every Edit|Write)
+
+When Linear is configured (`LINEAR_API_KEY` env var OR `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
+
+1. Reads the current task's first user prompt from `.dev-kit/hand-off/linear.json` (or a fresh prompt surfaced through the same handoff).
+2. Skips read-only / non-task prompts (`/`, `#`, `!`, `ls `, `cat `, `grep `, `git status`, and prompts that lack a work verb).
+3. Finds or creates the project named exactly after the repository.
+4. Searches for an open issue whose `description` starts with `<!-- scope:<branch>::<prompt-head> -->`.
+5. Updates the existing issue OR creates a new one with the same scope marker.
+6. Writes the updated handoff so the next edit reuses the same issue.
+
+The script always returns exit code 0. Transport errors, missing tokens, and GraphQL failures are logged to stderr and never block the edit (per #539: "Linear failures are non-blocking for implicit workflow calls."). Users without Linear configured are unaffected — the hook fast-paths on missing env var and `.enabled.json`.
 
 ## Reconciliation workflow
 
