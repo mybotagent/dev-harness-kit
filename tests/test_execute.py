@@ -58,6 +58,18 @@ class TestExecute(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             execute.read_step(self.root, "0-mvp", 99)
 
+    def test_codex_agent_command_is_supported(self):
+        with patch.dict("os.environ", {"DEV_KIT_BUILD_AGENT": "codex"}):
+            command = execute._agent_command(Path("/tmp/step-wt"), "implement the step")
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertIn("--cd", command)
+        self.assertIn("/tmp/step-wt", command)
+
+    def test_unknown_agent_command_fails_closed(self):
+        with patch.dict("os.environ", {"DEV_KIT_BUILD_AGENT": "unknown"}):
+            with self.assertRaises(ValueError):
+                execute._agent_command(Path("/tmp/step-wt"), "implement the step")
+
     def test_parse_step_index_pending(self):
         idx_path = self.root / "phases" / "0-mvp" / "index.json"
         parsed = execute.parse_step_index(idx_path)
