@@ -507,6 +507,212 @@ class TestLinearSync(unittest.TestCase):
                 self.assertEqual(os.environ.get("LINEAR_API_KEY"), "abc123")
                 self.assertEqual(os.environ.get("PLAIN"), "value")
 
+
+    # ---- user-scope env loader --------------------------------------------
+
+    def test_user_scope_env_loads_linear_api_key(self):
+        """`~/.config/dev-kit/.env` feeds LINEAR_API_KEY when no shell value."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            (fake_home / ".config" / "dev-kit").mkdir(parents=True)
+            (fake_home / ".config" / "dev-kit" / ".env").write_text(
+                "# comment\n"
+                "LINEAR_API_KEY=user-scope-token\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(fake_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "user-scope-token")
+
+    def test_user_scope_env_filters_non_linear_keys(self):
+        """Generic `~/.config/dev-kit/.env` only injects LINEAR_* keys."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            (fake_home / ".config" / "dev-kit").mkdir(parents=True)
+            (fake_home / ".config" / "dev-kit" / ".env").write_text(
+                "LINEAR_API_KEY=key-1\n"
+                "LINEAR_TEAM_ID=team-7\n"
+                "SOME_OTHER_KEY=should-not-leak\n"
+                "GH_TOKEN=ghp_should-not-leak\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(fake_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "key-1")
+                self.assertEqual(os.environ.get("LINEAR_TEAM_ID"), "team-7")
+                self.assertIsNone(os.environ.get("SOME_OTHER_KEY"))
+                self.assertIsNone(os.environ.get("GH_TOKEN"))
+
+    def test_user_scope_env_overrides_worktree_file(self):
+        """User-scope `.env` is loaded first, so per-worktree file is ignored."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            (repo / ".dev-kit").mkdir()
+            (repo / ".dev-kit" / ".env.linear").write_text(
+                "LINEAR_API_KEY=worktree-token\n", encoding="utf-8",
+            )
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            (fake_home / ".config" / "dev-kit").mkdir(parents=True)
+            (fake_home / ".config" / "dev-kit" / ".env").write_text(
+                "LINEAR_API_KEY=user-scope-token\n", encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(fake_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "user-scope-token")
+
+    def test_user_scope_env_respects_xdg_config_home(self):
+        """`$XDG_CONFIG_HOME/dev-kit/.env` wins over the default home path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            xdg = Path(tmp) / "xdg"
+            xdg.mkdir()
+            (xdg / "dev-kit").mkdir()
+            (xdg / "dev-kit" / ".env").write_text(
+                "LINEAR_API_KEY=xdg-token\n", encoding="utf-8",
+            )
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(fake_home),
+                "XDG_CONFIG_HOME": str(xdg),
+            }
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "xdg-token")
+
+    def test_user_scope_env_quotes_and_comments_strip(self):
+        """User-scope file honors the same quote/comment rules as per-worktree."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            (fake_home / ".config" / "dev-kit").mkdir(parents=True)
+            (fake_home / ".config" / "dev-kit" / ".env").write_text(
+                "LINEAR_API_KEY=\"abc123\"  # trailing\n"
+                "LINEAR_TEAM_ID=team  # team comment\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(fake_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertEqual(os.environ.get("LINEAR_API_KEY"), "abc123")
+                self.assertEqual(os.environ.get("LINEAR_TEAM_ID"), "team")
+
+    def test_user_scope_env_no_keys_is_noop(self):
+        """Empty user-scope file is a silent no-op."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            fake_home = Path(tmp) / "fakehome"
+            fake_home.mkdir()
+            (fake_home / ".config" / "dev-kit").mkdir(parents=True)
+            (fake_home / ".config" / "dev-kit" / ".env").write_text(
+                "OTHER_KEY=ignored\n", encoding="utf-8",
+            )
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(fake_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                linear_sync._load_env_file(repo)
+                self.assertIsNone(os.environ.get("LINEAR_API_KEY"))
+                self.assertIsNone(os.environ.get("OTHER_KEY"))
+
+    # ---- `list` subcommand helpers ----------------------------------------
+
+    def test_parse_list_args_defaults(self):
+        from linear_sync import _parse_list_args
+        out = _parse_list_args([])
+        self.assertEqual(out["state"], None)
+        self.assertEqual(out["team"], None)
+        self.assertEqual(out["assignee"], None)
+        self.assertEqual(out["limit"], 25)
+
+    def test_parse_list_args_overrides(self):
+        from linear_sync import _parse_list_args
+        out = _parse_list_args([
+            "--state=Backlog",
+            "--team=SHO",
+            "--assignee=me",
+            "--limit=10",
+        ])
+        self.assertEqual(out["state"], "Backlog")
+        self.assertEqual(out["team"], "SHO")
+        self.assertEqual(out["assignee"], "me")
+        self.assertEqual(out["limit"], 10)
+
+    def test_parse_list_args_clamps_limit(self):
+        from linear_sync import _parse_list_args
+        self.assertEqual(_parse_list_args(["--limit=0"])["limit"], 1)
+        self.assertEqual(_parse_list_args(["--limit=999"])["limit"], 100)
+        self.assertEqual(_parse_list_args(["--limit=notanumber"])["limit"], 25)
+
+    def test_list_query_no_filters(self):
+        from linear_sync import _list_query
+        q, v = _list_query({"state": None, "team": None, "assignee": None, "limit": 25})
+        self.assertIn("issues(first: $first", q)
+        self.assertNotIn("filter:", q)
+        self.assertNotIn("$state", q)
+        self.assertEqual(v["first"], 25)
+
+    def test_list_query_with_state_filter(self):
+        from linear_sync import _list_query
+        q, v = _list_query({"state": "Backlog", "team": None, "assignee": None, "limit": 5})
+        self.assertIn("state: { name: { eq: $state } }", q)
+        self.assertIn("$state: String", q)
+        self.assertEqual(v["state"], "Backlog")
+        self.assertNotIn("teamKey", v)
+
+    def test_list_query_with_team_and_assignee(self):
+        from linear_sync import _list_query
+        q, v = _list_query({
+            "state": None, "team": "SHO", "assignee": "u-123", "limit": 7,
+        })
+        self.assertIn("team: { key: { eq: $teamKey } }", q)
+        self.assertIn("assignee: { id: { eq: $assigneeId } }", q)
+        self.assertEqual(v["teamKey"], "SHO")
+        self.assertEqual(v["assigneeId"], "u-123")
+        self.assertNotIn("state", v)
+
+    def test_format_issue_row_columns(self):
+        from linear_sync import _format_issue_row
+        row = _format_issue_row({
+            "identifier": "SHO-153",
+            "title": "Unify babysit-pr and GitHub auto-fix behind one repair coordinator",
+            "state": {"name": "In Progress"},
+            "priority": 2,
+            "updatedAt": "2026-08-03T12:34:56Z",
+            "url": "https://linear.app/x",
+        })
+        self.assertIn("SHO-153", row)
+        self.assertIn("In Progress", row)
+        self.assertIn("2026-08-03", row)
+        self.assertIn("Unify babysit-pr", row)
+        self.assertIn("pri=2", row)
+
+    def test_format_issue_row_handles_missing_fields(self):
+        from linear_sync import _format_issue_row
+        row = _format_issue_row({})
+        # No crash, returns a string with "-" for missing priority.
+        self.assertIn("pri=-", row)
+
     def test_worktree_config_project_name_overrides_repo_basename(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "wt"

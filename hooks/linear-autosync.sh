@@ -15,10 +15,11 @@
 #
 # The fast-path is a deliberate micro-optimization. It MUST mirror
 # every activation source the Python script supports; if the user
-# configured Linear only via `.dev-kit/.env.linear` (Option B in
-# the skill), the gate is wide open and we still need to fork
-# Python to read the key. Failing to check this is the single
-# most common way auto-sync silently stops working.
+# configured Linear via user-scope `~/.config/dev-kit/.env` (Option B
+# in the skill) or per-worktree `.dev-kit/.env.linear` (Option C), the
+# gate is wide open and we still need to fork Python to read the key.
+# Failing to check this is the single most common way auto-sync
+# silently stops working.
 
 set -uo pipefail
 
@@ -31,8 +32,17 @@ fi
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
 # Fast-path: bail before forking Python only if NO activation
-# source is present. Mirrors `_enabled()` in tools/linear_sync.py.
+# source is present. Mirrors `_load_env_file()` + `_enabled()` in
+# tools/linear_sync.py. Sources (priority order, first match wins):
+#   1. $LINEAR_API_KEY env var (untouched by files)
+#   2. user-scope:  $XDG_CONFIG_HOME/dev-kit/.env  (or $HOME/.config/dev-kit/.env)
+#   3. per-worktree: <repo>/.dev-kit/.env.linear  (Linear-only file)
+#   4. per-worktree config: <repo>/.dev-kit/linear-config.json
+#   5. legacy:      <repo>/.dev-kit/.enabled.json  (mcp.linear == auto|on)
+USER_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+USER_ENV="$USER_ENV_DIR/dev-kit/.env"
 if [ -z "${LINEAR_API_KEY:-}" ] && \
+   [ ! -f "$USER_ENV" ] && \
    [ ! -f "$PROJECT_DIR/.dev-kit/.env.linear" ] && \
    [ ! -f "$PROJECT_DIR/.dev-kit/linear-config.json" ] && \
    [ ! -f "$PROJECT_DIR/.dev-kit/.enabled.json" ]; then
