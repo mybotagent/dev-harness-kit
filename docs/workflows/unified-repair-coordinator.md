@@ -33,7 +33,7 @@ flowchart TD
   PATCH --> VERIFY[focused test + full required verification]
   VERIFY --> REVIEW[independent diff review]
   REVIEW --> GATE{all required gates explicit?}
-  GATE -->|yes| MERGE[final recheck and auto-merge]
+  GATE -->|yes| MERGE[final recheck and human merge]
   GATE -->|no| PROGRESS{measurable progress?}
   PROGRESS -->|yes| OBSERVE
   PROGRESS -->|no, attempt 0| R1[create repair PR attempt 1]
@@ -90,7 +90,7 @@ flowchart LR
     A5 --> A4
     A4 -->|no progress| A6[repair PR 2]
     A6 --> A4
-    A4 -->|all gates pass| A7[auto-merge]
+    A4 -->|all gates pass| A7[human merge]
     A4 -->|third no-progress| A8[exception evidence]
   end
 ```
@@ -103,3 +103,31 @@ flowchart LR
 - Only one coordinator worker may modify a PR at a time.
 - Every patch has focused verification, full verification, commit SHA, and an event record.
 - Transcripts remain available for recovery; compact events drive analysis and token accounting.
+
+## Current execution policy
+
+```mermaid
+flowchart LR
+  CHANGE[PR changes code] --> REVIEW[review.yml via pull_request]
+  CHANGE --> MAINT[maintenance.yml via pull_request]
+  WORKFLOW[PR changes .github/workflows] --> VALIDATE[Claude workflow validation guard]
+  VALIDATE -->|skip until merged| HUMAN[human merges workflow PR]
+  HUMAN --> NEXT[next PR receives normal review]
+  REVIEW --> COMMENT[review/security comments + audit comment]
+  MAINT --> COMMENT
+  COMMENT --> GATE[required checks and human merge]
+```
+
+The review and maintenance workflows run on `pull_request` and inspect the PR
+in PR-head context, so the checked-out PR content remains untrusted. Fork PRs do
+not receive repository secrets; the consumer CI template additionally uses a
+same-repository/fork guard, while this repository's root workflows do not. A PR
+that changes a workflow file can still be reported as skipped by Claude's
+workflow-validation guard because the PR copy does not yet match the default
+branch. That is an expected bootstrap boundary: the workflow change is merged
+by a human, and the next ordinary PR exercises the updated workflow.
+
+`/dev-kit:babysit-pr` may diagnose, patch, verify, create bounded repair PRs,
+and write audit events, but it never merges into `main`. Passing gates produce
+a human-merge hand-off, not an automatic merge. Missing or malformed agent
+verdicts are recorded as audit evidence and do not constitute a human approval.
