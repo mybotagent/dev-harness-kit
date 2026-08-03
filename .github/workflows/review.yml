@@ -545,17 +545,26 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          # Idempotency: skip if the PR already has an APPROVED review
-          # (re-runs of this job must not stack duplicate events).
-          EXISTING=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
-            --jq '.review_decision // ""')
-          if [ "$EXISTING" = "APPROVED" ]; then
-            echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
-            exit 0
-          fi
-          echo "Casting gh pr review --approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true)."
-          gh pr review "$PR_NUMBER" --approve \
-            --body "Auto-approved by review.yml on clean combined verdict (review + security both Approve, PR touches production code, L3 evidence gate passed). The operator still owns the actual `gh pr merge` step."
-          echo "Auto-approve posted."
+        # `gh pr review` shells out to git to resolve the current branch;
+        # the gate job has no prior checkout step, so seed the context
+        # with a shallow actions/checkout. `persist-credentials: false`
+        # so the token is not left in git config after the step.
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              persist-credentials: false
+          - name: Cast auto-approve
+            run: |
+              set -uo pipefail
+              # Idempotency: skip if the PR already has an APPROVED review
+              # (re-runs of this job must not stack duplicate events).
+              EXISTING=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
+                --jq '.review_decision // ""')
+              if [ "$EXISTING" = "APPROVED" ]; then
+                echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
+                exit 0
+              fi
+              echo "Casting auto-approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true)."
+              gh pr review "$PR_NUMBER" --approve \
+                --body "Auto-approved by review.yml on clean combined verdict (review + security both Approve, PR touches production code, L3 evidence gate passed). The operator still owns the final merge step."
+              echo "Auto-approve posted."
