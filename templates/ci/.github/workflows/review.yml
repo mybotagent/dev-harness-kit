@@ -13,26 +13,10 @@ name: PR Review
 # ::warning:: in BOTH pull_request and workflow_dispatch modes. The
 # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what blocks merge.
 #
-# Why `pull_request` (not `pull_request_target`):
-#   `anthropics/claude-code-action@v1` does an OIDC token exchange by
-#   default. With `pull_request_target` the exchanged token is rejected
-#   with 401 Invalid OIDC token in any consumer repo that does not have
-#   OIDC trust configured at the org/repo level. `pull_request` issues
-#   a token the action's federation endpoint accepts, so the agent runs
-#   and posts a verdict.
-#
-#   Trade-off: on `pull_request`, the action's workflow-validation gate
-#   skips runs when the workflow file itself is modified on the PR head.
-#   The first PR that ADDS `.github/workflows/review.yml` is the obvious
-#   example; the verdict comes back empty, the severity gate defaults to
-#   Approve + ::warning::, and the human review state is what actually
-#   blocks merge. Normal PRs (not touching the workflow file) get a real
-#   agent review.
-#
-#   The dev-harness-kit repo's own review.yml has always used
-#   `pull_request` for this reason. The consumer template previously
-#   used `pull_request_target` to attempt reviews on workflow-modifying
-#   PRs, at the cost of breaking consumer repos without OIDC trust.
+# Why `pull_request_target`: the workflow is loaded from the base branch, so
+# Claude's workflow-validation guard can run even when a PR changes workflow
+# files. The job checks out only the base branch and asks Claude to inspect the
+# PR through `gh pr diff`; it never executes PR-head code with secrets.
 #
 # Fork safety: `pull_request` runs in PR-head context (untrusted code
 # from forks), but fork PRs still receive NO repo secrets (only
@@ -45,7 +29,7 @@ name: PR Review
 # rename (would break existing repo secret config).
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -67,7 +51,7 @@ on:
 # workflow_dispatch runs are independent and use a separate group.
 concurrency:
   group: review-pr-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   review:
@@ -160,7 +144,8 @@ jobs:
 
       - name: Run /dev-kit:review via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
-        # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
+        # MiniMax uses both the provider endpoint env and the explicit action
+        # credential. The action input is required for the SDK to start turns.
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -171,6 +156,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             Load the /dev-kit:review skill from $HOME/.claude/plugins/marketplaces/dev-kit/skills/review/SKILL.md
@@ -295,6 +281,9 @@ jobs:
             # hard-fail. Report the real state so the gate can surface the
             # bootstrap-PR remediation message.
             echo "agent_ran=false" >> "$GITHUB_OUTPUT"
+            verdict_valid=false
+            audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=Approve verdict_valid=${verdict_valid} source=needs-fallback-bootstrap-pr agent_ran=false"
+            gh pr comment "$PR_NUMBER" --body "$audit_body"
             exit 0
           fi
           # Issue #244 root-cause fix: read the verdict from the agent's
@@ -357,7 +346,11 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=${verdict_source:-unknown}"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=${verdict_source:-unknown}"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
@@ -455,6 +448,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           track_progress: false  # force per-line inline comments (track_progress: true suppresses them)
           prompt: |
             Load the /dev-kit:security skill from $HOME/.claude/plugins/marketplaces/dev-kit/skills/security/SKILL.md
@@ -575,6 +569,9 @@ jobs:
             # report agent_ran=false so the severity gate can hard-fail
             # with the bootstrap-PR remediation message.
             echo "agent_ran=false" >> "$GITHUB_OUTPUT"
+            verdict_valid=false
+            audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=Approve verdict_valid=${verdict_valid} source=needs-fallback-bootstrap-pr agent_ran=false"
+            gh pr comment "$PR_NUMBER" --body "$audit_body"
             exit 0
           fi
           # Issue #244 root-cause fix: same as the review extract step —
@@ -623,7 +620,11 @@ jobs:
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
           echo "verdict_source=${verdict_source}" >> "$GITHUB_OUTPUT"
           echo "agent_ran=${agent_ran}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=${verdict_source:-unknown}"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=${verdict_source:-unknown}"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
@@ -793,8 +794,8 @@ jobs:
           # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
           # blocks merge, not a single regex trip.
           if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
-            exit 0
+            echo "::error::Unparseable verdict '$worst' (review='$R' security='$S'); refusing approval."
+            exit 1
           fi
 
           case "$worst" in

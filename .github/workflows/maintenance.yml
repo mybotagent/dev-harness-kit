@@ -30,7 +30,7 @@ name: PR Maintenance Gate
 # bypassing branch protection. The gate never auto-approves.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -54,11 +54,16 @@ jobs:
     name: /dev-kit:maintenance (code-sanity + docs)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Skip on bump-PRs: same rationale as review.yml. The bump content
-    # is version-bump.yml-generated and merged by a human; running the
-    # maintenance judge on it would only confirm "plugin.json version
-    # bumped by 0.0.1" with no reviewable surface change.
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    # pull_request_target exposes base-repository secrets, so fork PRs are
+    # excluded. The action reads the PR diff from the base checkout and never
+    # executes PR-head code.
+    if: |
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
+    # The bump content is version-bump.yml-generated and merged by a human;
+    # running the maintenance judge on it would only confirm the version
+    # increment with no reviewable surface change.
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -114,8 +119,9 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
+          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -141,7 +147,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -164,7 +170,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' }}
+          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
           prompt: |
             /dev-kit:maintenance --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -188,11 +194,15 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
+            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          verdict_valid=false
+          case "$verdict" in
+            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
+          esac
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
@@ -201,6 +211,8 @@ jobs:
     needs: [maintenance_judge]
     if: |
       always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     permissions:
       contents: read
@@ -323,7 +335,7 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::warning::Unparseable combined verdict '$combined_verdict'; defaulting to Approve"
-              exit 0
+              echo "::error::Unparseable combined verdict '$combined_verdict'; refusing approval"
+              exit 1
               ;;
           esac
