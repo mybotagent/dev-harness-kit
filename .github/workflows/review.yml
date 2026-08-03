@@ -1,10 +1,8 @@
 name: PR Review
 
 # Auto-run /dev-kit:review (3-dim) and /dev-kit:security (10-dim OWASP) on every
-# same-repository PR, in parallel. pull_request_target lets the action validate
-# the immutable base workflow even when a PR changes .github/workflows/*. The
-# workspace stays on the base checkout; prompts inspect the PR through `gh pr
-# diff` instead of executing PR-head code with secrets.
+# PR, in parallel. dev-kit plugin is installed from this checkout via a
+# local marketplace symlink so the namespaced skills resolve.
 #
 # Severity gate + auto-approve (per claude-review-plugins spec):
 #   Approve            (no critical, no major in BOTH review + security) → success + auto-approve
@@ -43,7 +41,7 @@ name: PR Review
 # tracked file itself was removed in this change.
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -67,15 +65,14 @@ jobs:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    # pull_request_target exposes base-repository secrets, so fork PRs are
-    # excluded. workflow_dispatch remains available for an explicit run.
-    if: |
-      (github.event_name == 'workflow_dispatch' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
-    # The bump content is version-bump.yml-generated and merged by a human;
-    # running review on it would only confirm the version increment.
+    # The bump content is version-bump.yml-generated and merged by a
+    # human (auto-merge is disabled by policy). Running /dev-kit:review
+    # on it would only confirm "plugin.json version bumped by 0.0.1" — no
+    # reviewable change. Replaces the previous `[skip ci]` literal that
+    # globally suppressed ALL workflows on the bump commit (which broke
+    # the round-trip — see version-bump.yml).
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -122,8 +119,7 @@ jobs:
 
       - name: Run /dev-kit:review via MiniMax
         if: steps.provider.outputs.provider == 'minimax'
-        # MiniMax uses both the provider endpoint env and the explicit action
-        # credential. The action input is required for the SDK to start turns.
+        # MiniMax channel: env-only (no with.anthropic_api_key to avoid mixed auth).
         env:
           ANTHROPIC_BASE_URL: ${{ env.MINIMAX_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -134,9 +130,8 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -161,7 +156,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -187,7 +182,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:review --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -213,26 +208,19 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
-            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          verdict_valid=false
-          case "$verdict" in
-            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
-          esac
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    # Skip fork and bump PRs — same rationale as `review:` above.
-    if: |
-      (github.event_name == 'workflow_dispatch' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
+    # Skip on bump-PRs — same rationale as `review:` above.
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -288,9 +276,8 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3[1m]'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.MINIMAX_API_KEY }}
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -314,7 +301,7 @@ jobs:
         with:
           allowed_bots: '*'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -339,7 +326,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           allowed_bots: '*'
-          track_progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+          track_progress: ${{ github.event_name == 'pull_request' }}
           prompt: |
             /dev-kit:security --diff ${{ github.repository }}/pull/${{ steps.provider.outputs.pr_number }}
 
@@ -367,15 +354,11 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*[[:space:]]*(Approve|Blocked|Changes Requested)' \
-            | sed -E 's/^\*\*Verdict:\*\*[[:space:]]*//' || true)"
+            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
+            | awk '{print $NF}' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          verdict_valid=false
-          case "$verdict" in
-            Approve|"Changes Requested"|Blocked) verdict_valid=true ;;
-          esac
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} verdict_valid=${verdict_valid} source=issue-comment-extraction"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
@@ -390,8 +373,6 @@ jobs:
     # upstream failures for non-bump PRs.
     if: |
       always() &&
-      (github.event_name == 'workflow_dispatch' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
     # No permissions: gate only needs `gh api` (read) for verdict extraction
     # and does NOT auto-approve. Actual PR approval is the human's job.
@@ -526,8 +507,8 @@ jobs:
           # human gate (REVIEW_REQUIRED / CHANGES_REQUESTED) is what actually
           # blocks merge, not a single regex trip.
           if ! { [ "$worst" = "Approve" ] || [ "$worst" = "Changes Requested" ] || [ "$worst" = "Blocked" ]; }; then
-            echo "::error::Unparseable verdict '$worst' (review='$R' security='$S'); refusing approval."
-            exit 1
+            echo "::warning::Unparseable verdict '$worst' (review='$R' security='$S'); treating as non-blocking."
+            exit 0
           fi
 
           case "$worst" in

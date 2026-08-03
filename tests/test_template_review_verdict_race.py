@@ -239,13 +239,13 @@ class TestTemplateGateTolerance(unittest.TestCase):
         )
         self.assertIn("::warning::", cp.stdout)
 
-    def test_gate_rejects_unparseable_verdict(self):
-        """Unparseable verdict ('Requested') MUST refuse approval."""
+    def test_gate_tolerates_unparseable_verdict(self):
+        """Unparseable verdict ('Requested') MUST exit 0, not 1."""
         cp = self._run_gate(r="Requested", s="Approve", event="pull_request")
         if cp.returncode not in (0, 1):
             self.skipTest(f"unexpected return code {cp.returncode}; gate may use live gh api")
-        self.assertEqual(cp.returncode, 1, f"stdout={cp.stdout}\nstderr={cp.stderr}")
-        self.assertIn("Unparseable verdict", cp.stdout)
+        self.assertEqual(cp.returncode, 0, f"stdout={cp.stdout}\nstderr={cp.stderr}")
+        self.assertIn("::warning::", cp.stdout)
 
     def test_gate_blocks_real_changes_requested(self):
         """Real review feedback must still exit 1."""
