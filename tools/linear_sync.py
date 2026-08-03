@@ -359,10 +359,15 @@ def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "ignore") if exc.fp else ""
+        raise RuntimeError(f"linear http {exc.code}: {body[:300] or exc.reason}") from exc
     if "errors" in payload and payload["errors"]:
-        raise RuntimeError(f"linear graphql: {payload['errors'][0].get('message', 'unknown')}")
+        first = payload["errors"][0]
+        raise RuntimeError(f"linear graphql: {first.get('message', 'unknown')}")
     return payload.get("data") or {}
 
 
@@ -377,20 +382,48 @@ def _scope_key(prompt: str, branch: str) -> str:
     return f"{branch}::{head}"
 
 
+def _resolve_team_id() -> str:
+    """Return the team id to use, auto-detecting the first available
+    team when the user has not pinned one via env or worktree config.
+    Caches the lookup in a module-level variable so subsequent calls
+    in the same `sync()` invocation don't re-query."""
+    global _TEAM_ID_CACHE
+    if _TEAM_ID_CACHE is not None:
+        return _TEAM_ID_CACHE
+    repo = _repo_root()
+    cached = _team_id_override(repo)
+    if cached:
+        _TEAM_ID_CACHE = cached
+        return cached
+    data = _linear_query(
+        "query { viewer { teams { nodes { id name key } } } }",
+        {},
+    )
+    teams = ((data.get("viewer") or {}).get("teams") or {}).get("nodes") or []
+    if not teams:
+        raise RuntimeError("linear: no teams visible to this API key")
+    _TEAM_ID_CACHE = str(teams[0]["id"])
+    return _TEAM_ID_CACHE
+
+
+_TEAM_ID_CACHE: str | None = None
+
+
 def _find_or_create_project(repo: Path, team_id: str | None) -> str:
     """Return the project id, creating it if needed."""
     project_name = _project_name_override(repo) or _repo_name(repo)
     query = (
-        "query($name: String!, $teamId: String) {"
+        "query($name: String!) {"
         "  projects(filter: { name: { eq: $name } }, first: 1) {"
         "    nodes { id name }"
         "  }"
         "}"
     )
-    data = _linear_query(query, {"name": project_name, "teamId": team_id})
+    data = _linear_query(query, {"name": project_name})
     nodes = (data.get("projects") or {}).get("nodes") or []
     if nodes:
         return str(nodes[0]["id"])
+    resolved_team = team_id or _resolve_team_id()
     mutation = (
         "mutation($name: String!, $teamId: String!) {"
         "  projectCreate(input: { name: $name, teamIds: [$teamId] }) {"
@@ -398,16 +431,14 @@ def _find_or_create_project(repo: Path, team_id: str | None) -> str:
         "  }"
         "}"
     )
-    if not team_id:
-        raise RuntimeError("LINEAR_TEAM_ID required to create project")
-    data = _linear_query(mutation, {"name": project_name, "teamId": team_id})
+    data = _linear_query(mutation, {"name": project_name, "teamId": resolved_team})
     return str(data["projectCreate"]["project"]["id"])
 
 
 def _find_issue(project_id: str, scope_key: str) -> str | None:
     """Return the issue id whose description starts with `scope_key`."""
     query = (
-        "query($projectId: String!) {"
+        "query($projectId: ID!) {"
         "  issues(filter: { project: { id: { eq: $projectId } } }, first: 50) {"
         "    nodes { id description }"
         "  }"
@@ -421,16 +452,26 @@ def _find_issue(project_id: str, scope_key: str) -> str | None:
     return None
 
 
-def _create_issue(project_id: str, title: str, body: str, scope_key: str) -> str:
+def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_key: str) -> str:
+    # Linear's `IssueCreateInput.{teamId, projectId}` are both `String`
+    # (NOT `ID!` as in the `issues(filter:)` input). Match the schema.
     mutation = (
-        "mutation($projectId: String!, $title: String!, $body: String!) {"
-        "  issueCreate(input: { projectId: $projectId, title: $title, description: $body }) {"
-        "    issue { id identifier }"
-        "  }"
+        "mutation($teamId: String!, $projectId: String, $title: String!, $body: String!) {"
+        "  issueCreate(input: {"
+        "    teamId: $teamId"
+        "    projectId: $projectId"
+        "    title: $title"
+        "    description: $body"
+        "  }) { issue { id identifier } }"
         "}"
     )
     full_body = f"<!-- scope:{scope_key} -->\n{body}"
-    data = _linear_query(mutation, {"projectId": project_id, "title": title, "body": full_body})
+    data = _linear_query(mutation, {
+        "teamId": team_id,
+        "projectId": project_id,
+        "title": title,
+        "body": full_body,
+    })
     issue = data["issueCreate"]["issue"]
     return f"{issue['identifier']} ({issue['id']})"
 
@@ -438,7 +479,7 @@ def _create_issue(project_id: str, title: str, body: str, scope_key: str) -> str
 def _update_issue(issue_ref: str, body: str) -> None:
     issue_id = issue_ref.split(" ", 1)[-1].strip("()")
     mutation = (
-        "mutation($id: String!, $body: String!) {"
+        "mutation($id: ID!, $body: String!) {"
         "  issueUpdate(id: $id, input: { description: $body }) {"
         "    issue { id }"
         "  }"
@@ -483,7 +524,8 @@ def sync() -> int:
             action = "updated"
         else:
             title = f"[{branch}] {summary}"[:250]
-            issue_ref = _create_issue(project_id, title, body, scope)
+            resolved_team = team_id or _resolve_team_id()
+            issue_ref = _create_issue(project_id, resolved_team, title, body, scope)
             action = "created"
         _write_handoff(repo, {
             "issue": issue_ref,
