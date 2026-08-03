@@ -88,12 +88,21 @@ def next_state(
     new_commit_sha: Optional[str] = None,
 ) -> RepairState:
     """Advance after verification, creating at most two repair attempts."""
-    if has_progress({"failure_signature": state.failure_signature}, current_observation):
+    # Observations produced by external checks may omit stable fields. Missing
+    # failure identity means "unchanged", not "progress"; normalise it before
+    # comparing so a partial observation cannot create a false recheck state.
+    observation = dict(current_observation)
+    observed_signature = observation.get("failure_signature", state.failure_signature)
+    if not observed_signature:
+        raise ValueError("current_observation.failure_signature is required")
+    observation["failure_signature"] = str(observed_signature)
+
+    if has_progress({"failure_signature": state.failure_signature}, observation):
         result = RepairState(
             parent_pr=state.parent_pr,
             current_pr=state.current_pr,
             attempt=state.attempt,
-            failure_signature=str(current_observation.get("failure_signature", state.failure_signature)),
+            failure_signature=observation["failure_signature"],
             run_id=state.run_id,
             commit_sha=new_commit_sha or state.commit_sha,
             status="rechecking",
@@ -141,9 +150,12 @@ def repair_key(state: RepairState) -> str:
 def append_event(root: Path, event: str, state: RepairState, **details: Any) -> Path:
     """Append one compact, queryable event without blocking the repair loop."""
     state.validate()
+    if not isinstance(event, str) or not event.strip():
+        raise ValueError("event is required")
     path = root / REPAIR_STATE_DIR / "events.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
+        "schema_version": SCHEMA_VERSION,
         "run_id": state.run_id,
         "parent_pr": state.parent_pr,
         "current_pr": state.current_pr,

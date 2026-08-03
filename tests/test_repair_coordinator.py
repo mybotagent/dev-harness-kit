@@ -37,6 +37,22 @@ def test_no_progress_creates_repair_attempts_one_and_two():
     assert (second.attempt, second.current_pr) == (2, 3)
 
 
+def test_missing_observation_signature_is_treated_as_unchanged():
+    state = next_state(
+        _state(),
+        current_observation={"finding_ids": ["same-failure"]},
+        new_pr=2,
+        new_commit_sha="def456",
+    )
+    assert state.status == "repair_pr_required"
+    assert state.attempt == 1
+
+
+def test_empty_observation_signature_is_rejected():
+    with pytest.raises(ValueError, match="failure_signature"):
+        next_state(_state(), current_observation={"failure_signature": ""})
+
+
 def test_third_no_progress_becomes_human_exception():
     terminal = next_state(_state(MAX_REPAIR_ATTEMPTS), current_observation={"failure_signature": "same-failure"})
     assert terminal.status == "human_exception"
@@ -51,8 +67,14 @@ def test_append_event_writes_compact_jsonl(tmp_path: Path):
     path = append_event(tmp_path, "repair_pr_created", _state(), failure_reason="no_progress")
     record = json.loads(path.read_text().splitlines()[0])
     assert record["event"] == "repair_pr_created"
+    assert record["schema_version"] == "1.0.0"
     assert record["parent_pr"] == 1
     assert record["failure_reason"] == "no_progress"
+
+
+def test_append_event_rejects_empty_event(tmp_path: Path):
+    with pytest.raises(ValueError, match="event is required"):
+        append_event(tmp_path, "", _state())
 
 
 def test_invalid_attempt_is_rejected():
