@@ -69,20 +69,35 @@ _CONFIG_REL = Path(".dev-kit") / "linear-config.json"
 _ENV_FILE_REL = Path(".dev-kit") / ".env.linear"
 _ENABLED_REL = Path(".dev-kit") / ".enabled.json"
 _SKIP_MARKERS = ("/", "#", "!", "?", "ls ", "cat ", "grep ", "git status")
+# User-scope env file. XDG-aware: $XDG_CONFIG_HOME/dev-kit/.env falls back to
+# $HOME/.config/dev-kit/.env. A single shared file across repos / worktrees.
+_USER_ENV_REL = Path("dev-kit") / ".env"
+_LINEAR_KEY_PREFIX = "LINEAR_"
 
 
-def _load_env_file(repo: Path) -> None:
-    """Load `KEY=VALUE` pairs from `.dev-kit/.env.linear` into os.environ.
+def _user_env_path() -> Path:
+    """Return the user-scope env file path, honoring XDG_CONFIG_HOME.
 
-    The file is untracked (`.dev-kit/` is in `.gitignore`) and is a
-    fallback for users who do not want `LINEAR_API_KEY` in their
-    shell rc-file. Existing env vars win — the file only fills in
-    missing values. Values may be quoted with single or double
-    quotes; trailing comments (`# ...`) are stripped.
+    Falls back to $HOME/.config/dev-kit/.env when $XDG_CONFIG_HOME is
+    unset/empty. The file lives outside the repo so one key can be shared
+    across all of the user's repositories.
     """
-    path = repo / _ENV_FILE_REL
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if xdg:
+        return Path(xdg) / _USER_ENV_REL
+    return Path.home() / ".config" / _USER_ENV_REL
+
+
+def _read_env_file_lines(path: Path) -> list[tuple[str, str]]:
+    """Parse a dotenv file into (key, value) pairs. Empty when missing.
+
+    Lines starting with `#` and blanks are skipped. Values may be quoted
+    with single or double quotes; trailing `# comment` is stripped. The
+    caller decides which keys to accept via its own filter loop.
+    """
     if not path.is_file():
-        return
+        return []
+    out: list[tuple[str, str]] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -91,13 +106,49 @@ def _load_env_file(repo: Path) -> None:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        if not key or key in os.environ:
+        if not key:
             continue
         value = value.strip()
         if " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
+        out.append((key, value))
+    return out
+
+
+def _load_env_file(repo: Path) -> None:
+    """Load env-file pairs into os.environ from user-scope + per-worktree files.
+
+    Two sources, in priority order (first loaded wins per key, since the
+    file values only fill in keys already missing from os.environ):
+
+    1. **shell env** — untouched, never overwritten by files.
+    2. **user-scope** `~/.config/dev-kit/.env` (or
+       `$XDG_CONFIG_HOME/dev-kit/.env`) — a single shared file across
+       all repos / worktrees. Only `LINEAR_*` keys are injected so
+       unrelated app env vars in the same file do not leak into the
+       Python process.
+    3. **per-worktree** `<repo>/.dev-kit/.env.linear` — Linear-only file
+       by convention; all keys pass through (backward compat).
+
+    Both files are untracked (`.dev-kit/` and `.env*` patterns are in
+    `.gitignore`). Values may be quoted with single or double quotes;
+    trailing `# comment` is stripped.
+    """
+    # User-scope first. Filter to LINEAR_* only — a generic .env may host
+    # other apps' keys (GH_TOKEN, OPENAI_API_KEY, ...) and we must not
+    # silently promote them into the Linear subprocess.
+    for key, value in _read_env_file_lines(_user_env_path()):
+        if key in os.environ:
+            continue
+        if not key.startswith(_LINEAR_KEY_PREFIX):
+            continue
+        os.environ[key] = value
+    # Per-worktree fallback. No filter — the file is Linear-only by convention.
+    for key, value in _read_env_file_lines(repo / _ENV_FILE_REL):
+        if key in os.environ:
+            continue
         os.environ[key] = value
 
 
@@ -468,6 +519,124 @@ def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     return payload.get("data") or {}
 
 
+def _parse_list_args(rest: list[str]) -> dict[str, Any]:
+    """Parse `linear list` argv into a filter dict + limit.
+
+    Supported flags (all optional):
+      --state=<name>     filter by issue state name (e.g. Backlog, Done)
+      --team=<key>       filter by team key (e.g. SHO)
+      --assignee=<id|me|none>  filter by assignee (default: me)
+      --limit=<N>        max rows (default 25)
+
+    Unknown flags are silently ignored to keep the CLI forgiving.
+    """
+    out: dict[str, Any] = {
+        "state": None,
+        "team": None,
+        "assignee": None,  # explicit --assignee=me|none|<id> required to filter
+        "limit": 25,
+    }
+    for arg in rest:
+        if arg.startswith("--state="):
+            out["state"] = arg.split("=", 1)[1].strip() or None
+        elif arg.startswith("--team="):
+            out["team"] = arg.split("=", 1)[1].strip() or None
+        elif arg.startswith("--assignee="):
+            v = arg.split("=", 1)[1].strip().lower()
+            out["assignee"] = None if v in ("", "none", "unassigned") else v
+        elif arg.startswith("--limit="):
+            try:
+                out["limit"] = max(1, min(100, int(arg.split("=", 1)[1])))
+            except ValueError:
+                pass
+    return out
+
+
+def _list_query(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Build the GraphQL query + variables for the `list` subcommand.
+
+    Filters are joined with AND. Each clause + its variable declaration is
+    gated on the filter being non-None, so Linear's GraphQL validator never
+    sees an unused `$state` / `$teamKey` / `$assigneeId` variable.
+    """
+    variables: dict[str, Any] = {"first": filters["limit"]}
+    param_decls: list[str] = ["$first: Int!"]
+    clauses: list[str] = []
+    if filters.get("state"):
+        clauses.append("state: { name: { eq: $state } }")
+        param_decls.append("$state: String")
+        variables["state"] = filters["state"]
+    if filters.get("team"):
+        clauses.append("team: { key: { eq: $teamKey } }")
+        param_decls.append("$teamKey: String")
+        variables["teamKey"] = filters["team"]
+    if filters.get("assignee"):
+        clauses.append("assignee: { id: { eq: $assigneeId } }")
+        param_decls.append("$assigneeId: String")
+        variables["assigneeId"] = filters["assignee"]
+    filter_str = f", filter: {{ {', '.join(clauses)} }}" if clauses else ""
+    query = (
+        "query(" + ", ".join(param_decls) + ") {"
+        "  issues(first: $first" + filter_str + ", orderBy: updatedAt) {"
+        "    nodes { identifier title state { name } priority updatedAt url }"
+        "  }"
+        "}"
+    )
+    return query, variables
+
+
+def _format_issue_row(node: dict[str, Any]) -> str:
+    """Render one issue as a fixed-width line for grep-ability.
+
+    Columns: IDENT(10) [STATE(12)] pri=N(4) YYYY-MM-DD  TITLE
+    """
+    ident = str(node.get("identifier") or "")[:10]
+    state = str((node.get("state") or {}).get("name") or "")[:12]
+    prio = node.get("priority")
+    prio_s = "-" if prio is None else str(prio)
+    updated = str(node.get("updatedAt") or "")[:10]
+    title = str(node.get("title") or "")
+    return f"{ident:10} [{state:12}] pri={prio_s:<4} {updated}  {title}"
+
+
+def _resolve_assignee_me() -> str | None:
+    """Return the current viewer's Linear user id (for --assignee=me), or None."""
+    try:
+        data = _linear_query("query { viewer { id } }", {})
+    except RuntimeError:
+        return None
+    viewer = data.get("viewer") or {}
+    return str(viewer["id"]) if viewer.get("id") else None
+
+
+def _cmd_list(rest: list[str]) -> int:
+    """CLI `linear list` — non-blocking print of recent issues.
+
+    Always exits 0; transport / GraphQL failures are reported on stderr
+    so the command is safe to embed in shell pipelines and CI.
+    """
+    filters = _parse_list_args(rest)
+    try:
+        if filters.get("assignee") == "me":
+            me = _resolve_assignee_me()
+            if me is None:
+                print("linear: list: cannot resolve current viewer id", file=sys.stderr)
+                return 0
+            filters["assignee"] = me
+        query, variables = _list_query(filters)
+        data = _linear_query(query, variables)
+        nodes = ((data.get("issues") or {}).get("nodes")) or []
+        if not nodes:
+            print("linear: list: no issues match", file=sys.stderr)
+            return 0
+        for n in nodes:
+            print(_format_issue_row(n))
+        return 0
+    except RuntimeError as exc:
+        print(f"linear: list: {exc}", file=sys.stderr)
+        return 0
+
+
 def _scope_key(prompt: str, branch: str) -> str:
     """Hash-free scope key for matching an issue to a task.
 
@@ -628,7 +797,7 @@ def _changed_files_since(repo: Path, base: str = "origin/main") -> list[tuple[st
     the Linear description under the 64 KiB limit."""
     try:
         out = subprocess.check_output(
-            ["git", "diff", "--numstat", f"{base}...HEAD"],
+            ["git", "dif", "--numstat", f"{base}...HEAD"],
             cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
         ).decode("utf-8", "ignore")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
@@ -847,7 +1016,7 @@ def sync() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. Subcommands: setup|on|off|project-name|status|sync.
+    """CLI entry point. Subcommands: setup|on|off|project-name|status|list|sync.
 
     Default (no args, or `sync`) runs the auto-sync once and returns
     its exit code. All other subcommands manipulate the per-worktree
@@ -864,6 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg = _read_worktree_config(repo)
         env_key = bool(os.environ.get("LINEAR_API_KEY", "").strip())
         env_file = (repo / _ENV_FILE_REL).is_file()
+        user_env = _user_env_path()
         project = _project_name_override(repo) or _repo_name(repo)
         team = _team_id_override(repo)
         print(json.dumps({
@@ -871,11 +1041,15 @@ def main(argv: list[str] | None = None) -> int:
             "slug": _worktree_slug(repo),
             "config": cfg,
             "linear_api_key_set": env_key,
+            "user_env_path": str(user_env),
+            "user_env_present": user_env.is_file(),
             "env_file_present": env_file,
             "resolved_project": project,
             "resolved_team_id": team or None,
         }, indent=2, sort_keys=True))
         return 0
+    if cmd == "list":
+        return _cmd_list(rest)
     if cmd == "on":
         existing = _read_worktree_config(repo) or {}
         path = _write_worktree_config(repo, {
@@ -921,20 +1095,30 @@ def main(argv: list[str] | None = None) -> int:
         print("    3. python3 tools/linear_sync.py on")
         print("    4. python3 tools/linear_sync.py project-name <name>   # optional")
         print()
-        print("  Option B — per-worktree env file (recommended for solo dev):")
+        print("  Option B — user-scope env file (recommended for solo dev, shared across repos):")
+        print("    1. mkdir -p ~/.config/dev-kit")
+        print("    2. echo 'LINEAR_API_KEY=<your-token>' >> ~/.config/dev-kit/.env")
+        print("       (or $XDG_CONFIG_HOME/dev-kit/.env if XDG_CONFIG_HOME is set)")
+        print("         Optional: LINEAR_TEAM_ID=..., LINEAR_PROJECT_NAME=...")
+        print("    3. python3 tools/linear_sync.py on")
+        print("    4. python3 tools/linear_sync.py project-name <name>   # optional")
+        print()
+        print("  Option C — per-worktree env file (backward compat, Linear-only):")
         print(f"    1. Add to {repo / _ENV_FILE_REL} (untracked, .gitignore'd):")
         print("         LINEAR_API_KEY=<your-token>")
         print("    2. python3 tools/linear_sync.py on")
-        print("    3. python3 tools/linear_sync.py project-name <name>   # optional")
         env_key = bool(os.environ.get("LINEAR_API_KEY", "").strip())
         env_file = (repo / _ENV_FILE_REL).is_file()
+        user_env = _user_env_path()
+        user_env_present = user_env.is_file()
         print()
-        print(f"  LINEAR_API_KEY set: {env_key}")
-        print(f"  .dev-kit/.env.linear present: {env_file}")
+        print(f"  LINEAR_API_KEY set:                       {env_key}")
+        print(f"  ~/.config/dev-kit/.env present:           {user_env_present}  ({user_env})")
+        print(f"  .dev-kit/.env.linear present:             {env_file}")
         cfg = _read_worktree_config(repo)
         print(f"  worktree config: {cfg or '(none — defaults to env-only)'}")
         return 0
-    print(f"linear: unknown command {cmd!r} (try: setup|on|off|project-name|status|sync)")
+    print(f"linear: unknown command {cmd!r} (try: setup|on|off|project-name|status|list|sync)")
     return 2
 
 

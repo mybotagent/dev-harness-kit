@@ -31,7 +31,7 @@ Resolve the current repository name and the user's Linear capability before maki
 
 ## Auto-sync trigger (every Edit|Write)
 
-When Linear is configured (`LINEAR_API_KEY` env var OR per-worktree `.dev-kit/linear-config.json:enabled` OR legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
+When Linear is configured (`LINEAR_API_KEY` env var OR user-scope `~/.config/dev-kit/.env` OR per-worktree `.dev-kit/.env.linear` OR per-worktree `.dev-kit/linear-config.json:enabled` OR legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
 
 1. Resolves the task description in priority order: the active hand-off's `prompt` field → the latest commit subject on the current branch → the branch name. The hand-off is keyed by worktree slug, so two parallel sessions in two worktrees never share or overwrite each other's state.
 2. Skips read-only / non-task prompts (`/`, `#`, `!`, `ls `, `cat `, `grep `, `git status`, and prompts that lack a work verb).
@@ -53,6 +53,7 @@ The script always returns exit code 0. Transport errors, missing tokens, and Gra
 | `/dev-kit:linear off` | Disable auto-sync in this worktree. Writes `enabled: false`. Project name and team id are preserved. |
 | `/dev-kit:linear setup` | Print the one-time setup checklist + the current state (whether `LINEAR_API_KEY` is set, what the resolved project name is, whether the worktree config exists). |
 | `/dev-kit:linear project-name <name>` | Override the auto-detected project name for this worktree. Without an argument, prints the resolved name. |
+| `/dev-kit:linear list` | Print recent Linear issues (default 25, newest first). Flags: `--state=<name>`, `--team=<key>`, `--assignee=me|none|<id>`, `--limit=<N>`. Non-blocking; never raises. |
 | `/dev-kit:linear status` | Print a JSON snapshot of the resolved state (worktree path, slug, config, env-var presence, resolved project + team). |
 
 The skill must invoke the CLI rather than replicate its logic. The standard pattern for each subcommand is:
@@ -61,13 +62,13 @@ The skill must invoke the CLI rather than replicate its logic. The standard patt
 python3 tools/linear_sync.py <subcommand> [args...]
 ```
 
-The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The API key is **never** read from or written to disk; set it once in your shell environment (e.g. `export LINEAR_API_KEY=...` in `~/.zshrc`).
+The CLI writes the config at `<repo>/.dev-kit/linear-config.json` (untracked) and the handoff at `<repo>/.dev-kit/hand-off/linear/<worktree-slug>.json`. The API key is **read from** (but never written to) disk via the env files documented in the Setup section below.
 
 ### Setup (one-time, per machine)
 
-Two equivalent ways to provide `LINEAR_API_KEY`. Pick one.
+Three equivalent ways to provide `LINEAR_API_KEY`. Pick **one**. Priority order is always: shell env > user-scope `.env` > per-worktree `.env.linear` — the first match wins per key.
 
-**Option A — shell env (recommended for shared machines):**
+**Option A — shell env (recommended for shared machines / CI):**
 
 ```bash
 export LINEAR_API_KEY=<your-linear-api-token>     # https://linear.app/settings/api
@@ -76,9 +77,23 @@ python3 tools/linear_sync.py on
 python3 tools/linear_sync.py project-name "<name>"    # optional
 ```
 
-**Option B — per-worktree env file (recommended for solo dev):**
+**Option B — user-scope env file (recommended for solo dev, shared across repos):**
 
-The script also reads `.dev-kit/.env.linear` (untracked, `.gitignore`'d) as a fallback when `LINEAR_API_KEY` is not in the shell env. Shell env always wins; the file only fills in missing values.
+A single file holds the key for every repo on your machine. XDG-aware: `$XDG_CONFIG_HOME/dev-kit/.env` when set, otherwise `~/.config/dev-kit/.env`. The script only injects `LINEAR_*` keys from this file so unrelated app env vars in the same file do not leak into the Linear subprocess.
+
+```bash
+mkdir -p ~/.config/dev-kit
+echo 'LINEAR_API_KEY=<your-linear-api-token>' >> ~/.config/dev-kit/.env
+# Optional, same file:
+# LINEAR_TEAM_ID=...
+# LINEAR_PROJECT_NAME=...
+```
+
+Lines starting with `#` are comments. Values may be quoted (`"..."` or `'...'`); trailing `# comment` is stripped.
+
+**Option C — per-worktree env file (backward compat, Linear-only):**
+
+The script also reads `.dev-kit/.env.linear` (untracked, `.gitignore`'d) as a fallback when neither shell env nor the user-scope file is present. All keys pass through (no `LINEAR_` filter) because the file is Linear-only by convention.
 
 ```bash
 # .dev-kit/.env.linear (you create this yourself — never committed)
@@ -87,7 +102,9 @@ LINEAR_API_KEY=<your-linear-api-token>
 # LINEAR_PROJECT_NAME=...   # optional override
 ```
 
-Lines starting with `#` are comments. Values may be quoted (`"..."` or `'...'`); trailing `# comment` is stripped. Then:
+Shell env always wins; files only fill in missing values.
+
+After picking an option:
 
 ```bash
 cd .worktrees/<your-worktree>
@@ -95,7 +112,7 @@ python3 tools/linear_sync.py on
 python3 tools/linear_sync.py project-name "<name>"    # optional
 ```
 
-Run `python3 tools/linear_sync.py setup` to print both checklists and the current state.
+Run `python3 tools/linear_sync.py setup` to print all three checklists plus the current state (which sources resolved, whether the user-scope file is present, etc.).
 
 Or, equivalently, through the skill:
 
@@ -103,6 +120,20 @@ Or, equivalently, through the skill:
 /dev-kit:linear on
 /dev-kit:linear project-name "My Project"
 ```
+
+### Linear MCP server (chat-side access)
+
+The Linear team publishes an MCP server (https://linear.app/docs/mcp) that exposes Linear objects (issues, projects, comments) to any MCP client. Registering it is optional and orthogonal to `linear_sync.py` — the sync script handles every Edit|Write, the MCP server handles ad-hoc chat queries and updates.
+
+**One-time setup:**
+
+```bash
+claude mcp add --transport http linear-server https://mcp.linear.app/mcp
+```
+
+Then in any session run `/mcp` and authenticate via OAuth (or paste a Linear API key as the Bearer token). The server exposes tools like `list_issues`, `get_issue`, `create_issue`, `update_issue`, and `list_projects` — the same surface the CLI's `list` subcommand queries, but reachable from chat without a sub-shell.
+
+The MCP server uses the same `LINEAR_*` scope (issues / projects / comments) as `linear_sync.py`; no extra env vars are required beyond the bearer token provided at `/mcp` time.
 
 ### Config file shape
 
