@@ -104,6 +104,29 @@ class TestLinearSkill(unittest.TestCase):
         # The matrix entry must mark it as gated rather than always-on.
         self.assertIn("gated", text.lower())
 
+    def test_skill_exposes_cli_subcommands(self):
+        """`/dev-kit:linear on | off | status | setup | project-name ...`
+        must delegate to `tools/linear_sync.py`."""
+        text = SKILL.read_text(encoding="utf-8")
+        frontmatter = _frontmatter(text)
+        # Subcommand bullets must be in when_to_use.
+        self.assertIn("/dev-kit:linear on", text)
+        self.assertIn("/dev-kit:linear off", text)
+        self.assertIn("/dev-kit:linear status", text)
+        # Bash is required to invoke the CLI.
+        self.assertIn("Bash", frontmatter.split("allowed-tools:")[1].split("\n")[0])
+        # The body must reference the CLI as the source of truth.
+        self.assertIn("python3 tools/linear_sync.py", text)
+
+    def test_skill_documents_priority_model(self):
+        """The skill must document that the Linear API is priority 1
+        and the hand-off file is priority 2 (cache)."""
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("Linear API > hand-off file", text)
+        self.assertIn("priority", text.lower())
+        self.assertIn("source of truth", text.lower())
+        self.assertIn("_meta", text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
