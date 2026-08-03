@@ -338,7 +338,7 @@ class TestBranchNamingConvention(unittest.TestCase):
                 )
 
     def test_recent_local_branches_match_convention(self):
-        """All local branches (except main/master/HEAD/grandfathered) must follow <type>/<slug>.
+        """The checked-out branch must follow <type>/<slug>.
 
         Grandfathered branches are pre-existing personal-work branches that predate
         the rule (currently: dev, stage). Once deleted, the grandfather list can
@@ -362,16 +362,14 @@ class TestBranchNamingConvention(unittest.TestCase):
         )
         if result.returncode != 0:
             self.skipTest("git branch failed (not a git repo?)")
-        branches = []
-        for line in result.stdout.splitlines():
-            # `git branch --list` prefixes: `* ` (current), `+ ` (worktree), or two spaces.
-            line = line.strip().lstrip("*+").strip()
-            if not line or line in ("main", "master", "HEAD"):
-                continue
-            # CI runs in detached HEAD at `pull/N/merge` refs — skip those.
-            if line.startswith("(") or "detached" in line:
-                continue
-            branches.append(line)
+        # Validate the checkout under test, not every historical local ref.
+        # A developer's repository can contain hundreds of archived/revert/
+        # agent branches, and those refs are not part of the current change.
+        current = subprocess.run(
+            ["git", "symbolic-ref", "--short", "-q", "HEAD"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=5,
+        )
+        branches = [current.stdout.strip()] if current.returncode == 0 else []
         for b in branches:
             with self.subTest(branch=b):
                 # Harness bookkeeping: EnterWorktree auto-names start with `worktree-`.

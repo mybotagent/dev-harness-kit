@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -37,6 +38,45 @@ BLOCKED_MARKER = "<!-- status: blocked -->"
 # restrictive parent Claude Code sandbox (issue #221 RC1: consumer project
 # does not pre-allow .worktrees/**) does not silently block all writes.
 SUBAGENT_ALLOWED_TOOLS = "Write,Edit,Bash"
+DEFAULT_AGENT_TIMEOUT_SECONDS = 3600
+
+
+def _agent_timeout_seconds() -> int:
+    """Return a bounded per-step timeout for unattended builds."""
+    raw = os.environ.get("DEV_KIT_AGENT_TIMEOUT_SECONDS", str(DEFAULT_AGENT_TIMEOUT_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError:
+        value = DEFAULT_AGENT_TIMEOUT_SECONDS
+    return max(60, min(value, 24 * 60 * 60))
+
+
+def _output_text(value: object) -> str:
+    """Normalize subprocess output, including bytes from timeout exceptions."""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value or "")
+
+
+def _agent_command(worktree: Path, prompt: str) -> list[str]:
+    """Build the non-interactive command for the selected agent runtime.
+
+    Claude remains the default for compatibility. Codex is selected with
+    ``DEV_KIT_BUILD_AGENT=codex`` and receives the same worktree + prompt.
+    """
+    agent = os.environ.get("DEV_KIT_BUILD_AGENT", "claude").strip().lower()
+    if agent == "claude":
+        return [
+            "claude", "-p", "--add-dir", str(worktree),
+            "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
+            "--workdir", str(worktree), prompt,
+        ]
+    if agent == "codex":
+        return [
+            "codex", "exec", "--cd", str(worktree),
+            "--add-dir", str(worktree), prompt,
+        ]
+    raise ValueError(f"unsupported DEV_KIT_BUILD_AGENT={agent!r}; use claude or codex")
 # Step lifecycle. Order roughly matches the typical progression; entries are
 # enforced by update_step_status() and indexed/queried by tests/CLI.
 VALID_STATUSES = (
@@ -515,11 +555,7 @@ def _run_step_body(
     # Claude Code sandbox blocks ".worktrees/**" by default.
     exit_code, stdout, stderr = run_proc(
         str(root),
-        ["claude", "-p",
-         "--add-dir", str(wt),
-         "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
-         "--workdir", str(wt),
-         ctx["full_prompt"]],
+        _agent_command(wt, ctx["full_prompt"]),
     )
     return _step_post_collect(
         root, phase, step_num, step_name, ctx,
@@ -537,8 +573,16 @@ def _run_one_step(
 ) -> int:
     """Sequential wrapper around `_run_step_body`. Uses `subprocess.run`."""
     def _run(cwd: str, args: list[str]) -> Tuple[int, str, str]:
-        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
-        return proc.returncode, proc.stdout or "", proc.stderr or ""
+        try:
+            proc = subprocess.run(
+                args, cwd=cwd, capture_output=True, text=True,
+                timeout=_agent_timeout_seconds(),
+            )
+            return proc.returncode, proc.stdout or "", proc.stderr or ""
+        except subprocess.TimeoutExpired as exc:
+            stdout = _output_text(exc.stdout)
+            stderr = _output_text(exc.stderr) + f"\nagent timed out after {_agent_timeout_seconds()} seconds"
+            return 124, stdout, stderr
     return _run_step_body(
         root, phase, step_num, worktree_branch, step_name,
         push=push, run_proc=_run,
@@ -658,19 +702,24 @@ class _SlotRunner:
         self.started_at_iso = self._ctx["started_at_iso"]
         # Issue #221 RC1: same --add-dir + --allowedTools fix as sequential.
         self.proc = subprocess.Popen(
-            ["claude", "-p",
-             "--add-dir", str(self.wt),
-             "--allowedTools", SUBAGENT_ALLOWED_TOOLS,
-             "--workdir", str(self.wt),
-             self._ctx["full_prompt"]],
+            _agent_command(self.wt, self._ctx["full_prompt"]),
             cwd=str(self.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
 
     def collect(self) -> None:
         """Communicate with the Popen + route through the shared post-collect stage."""
         assert self.proc is not None
-        stdout, stderr = self.proc.communicate()
-        self.exit_code = self.proc.returncode or 0
+        try:
+            stdout, stderr = self.proc.communicate(timeout=_agent_timeout_seconds())
+            self.exit_code = self.proc.returncode or 0
+        except subprocess.TimeoutExpired as exc:
+            self.proc.kill()
+            stdout, stderr = self.proc.communicate()
+            stdout = _output_text(stdout or exc.stdout)
+            stderr = _output_text(stderr or exc.stderr) + (
+                f"\nagent timed out after {_agent_timeout_seconds()} seconds"
+            )
+            self.exit_code = 124
         step = self.current_step
         assert step is not None
         # Route through the SAME post-collect helper the sequential path uses.

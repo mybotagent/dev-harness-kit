@@ -8,11 +8,13 @@ set -eo pipefail
 # strip dirname along with jq — see TestSecretScanRefactor.fails_closed).
 # shellcheck source=lib/payload-parse.sh
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+source "${BASH_SOURCE[0]%/*}/lib/stage-gate.sh"
 # shellcheck source=lib/secret-patterns.sh
 source "${BASH_SOURCE[0]%/*}/lib/secret-patterns.sh"
 require_jq secret-scan
 read_stdin_json secret-scan
 [ -z "$INPUT_JSON" ] && exit 0
+hook_stage_active secret-scan || exit 0
 FILE=$(printf '%s' "$INPUT_JSON" | jq -r '.tool_input.file_path // ""')
 extract_content
 [ -z "$CONTENT" ] && exit 0

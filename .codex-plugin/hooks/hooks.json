@@ -21,6 +21,10 @@
           {
             "type": "command",
             "command": "bash ${PLUGIN_ROOT}/hooks/worktree-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ${PLUGIN_ROOT}/hooks/linear-autosync.sh"
           }
         ]
       },
@@ -45,6 +49,10 @@
     "UserPromptSubmit": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${PLUGIN_ROOT}/hooks/tdd-scope-judge.sh"
+          },
           {
             "type": "command",
             "command": "bash ${PLUGIN_ROOT}/hooks/worktree-auto-cut.sh"

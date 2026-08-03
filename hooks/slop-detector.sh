@@ -29,9 +29,11 @@ set -eo pipefail
 # strip dirname along with jq — see TestSlopDetectorRefactor.fails_closed).
 # shellcheck source=lib/payload-parse.sh
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+source "${BASH_SOURCE[0]%/*}/lib/stage-gate.sh"
 require_jq slop-detector
 read_stdin_json slop-detector
 [ -z "$INPUT_JSON" ] && exit 0
+hook_stage_active slop-detector || exit 0
 
 # ── locale (extracted to hooks/lib/locale-utf8.sh — PR-F)
 # shellcheck source=lib/locale-utf8.sh

@@ -3,9 +3,11 @@
 # Default fail-open (exit 0); emit summary to stderr.
 
 set -eo pipefail
+source "${BASH_SOURCE[0]%/*}/lib/stage-gate.sh"
 INPUT=$(cat)
 LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""' 2>/dev/null)
 [ -z "$LAST_MSG" ] && exit 0
+hook_stage_active stop-verify || exit 0
 
 # Detect completion-claim patterns (KO + EN)
 CLAIM_RE='(완료|통과|작동|fixed|done|passes|should work|should be working|it works)'

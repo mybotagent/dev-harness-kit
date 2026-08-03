@@ -26,7 +26,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "lib"))
 
 import llm_judge  # noqa: E402
 
-
 RUBRICS_DIR = PROJECT_ROOT / "eval" / "rubrics"
 PROMPTS_DIR = PROJECT_ROOT / "eval" / "prompts"
 
