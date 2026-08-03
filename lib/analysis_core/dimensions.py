@@ -16,6 +16,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Tuple, Union
 
+# SSOT for the 8 fields every expert's JSON finding must include.
+# Referenced by name in every Dimension constructor; the parser in
+# lib/analysis_core/runner.py validates against this tuple.
+_STANDARD_CONTRACT_FIELDS: Tuple[str, ...] = (
+    "file", "line", "severity", "confidence",
+    "failure_scenario", "title", "tldr", "fix_hint",
+)
+
+# 7-field variant for dims (review core + owasp) whose findings
+# don't carry a `fix_hint` (the agent produces them as advisory
+# callouts, not actionable rewrites; the runner schema-validates
+# against this shape).
+_REVIEW_CONTRACT_FIELDS: Tuple[str, ...] = (
+    "file", "line", "severity", "confidence",
+    "failure_scenario", "title", "tldr",
+)
+
+# All severities the engine recognizes, lowest to highest. Used by
+# review/inspect dims that surface nits alongside majors.
+_ALL_SEVERITIES: Tuple[str, ...] = ("nit", "minor", "major", "critical")
+
+# Severities >= minor. Used by security/audit/owasp dims that do not
+# surface nits (nits would dilute the signal-to-noise ratio on a
+# security review).
+_MAJOR_PLUS_SEVERITIES: Tuple[str, ...] = ("minor", "major", "critical")
+
 
 @dataclass(frozen=True, slots=True)
 class Dimension:
@@ -97,11 +123,8 @@ _REVIEW_CORE = {
             "state transitions, error-handling gaps, race conditions, "
             "API/contract misuse, wrong return values. Precision over recall."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr",
-        ),
-        severity_floor=("nit", "minor", "major", "critical"),
+        contract_fields=_REVIEW_CONTRACT_FIELDS,
+        severity_floor=_ALL_SEVERITIES,
         mode="read-only",
     ),
     "security": Dimension(
@@ -113,11 +136,8 @@ _REVIEW_CORE = {
             "IDOR / hardcoded credentials / weak crypto. READ surrounding "
             "code; only report if reachable."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_REVIEW_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="read-only",
     ),
     "architecture": Dimension(
@@ -128,11 +148,8 @@ _REVIEW_CORE = {
             "duplication, God objects, poor extensibility. Report only "
             "structural problems with concrete maintenance/scaling impact."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_REVIEW_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="read-only",
     ),
 }
@@ -143,11 +160,8 @@ _OWASP_2025 = {
         name=f"owasp-a{n:02d}",
         family="security",
         charter=_OWASP_CHARTERS[n],
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_REVIEW_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="read-only",
     )
     for n in range(1, 11)
@@ -164,11 +178,8 @@ _INSPECT_HEALTH = {
             "(YAML/JSON keys no code reads), dead env vars (declared but "
             "never referenced), TODO/FIXME > 90 days old with no tracking issue."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("nit", "minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_ALL_SEVERITIES,
         mode="delete",
     ),
     "dup": Dimension(
@@ -179,11 +190,8 @@ _INSPECT_HEALTH = {
             "parallel class hierarchies, repeated test-setup blocks, "
             "repeated try/except boilerplate."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="rewrite",
     ),
     "smell": Dimension(
@@ -194,11 +202,8 @@ _INSPECT_HEALTH = {
             "positional params), deep nesting (>4 levels), primitive "
             "obsession, feature envy, data clumps."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("nit", "minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_ALL_SEVERITIES,
         mode="rewrite",
     ),
     "overeng": Dimension(
@@ -210,11 +215,8 @@ _INSPECT_HEALTH = {
             "unused), premature generalization (Strategy/Factory/Builder "
             "for a single implementation), expensive operations in hot paths."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="rewrite",
     ),
     "overarch": Dimension(
@@ -225,11 +227,8 @@ _INSPECT_HEALTH = {
             "privates), premature layering, parallel hierarchies, leaky "
             "abstractions, bidirectional coupling, circular imports."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="rewrite",
     ),
     "cleancode": Dimension(
@@ -241,11 +240,8 @@ _INSPECT_HEALTH = {
             "symbol), bare except:, swallowed errors, magic numbers, "
             "mutable default arguments, comparison to True/None with ==."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("nit", "minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_ALL_SEVERITIES,
         mode="rewrite",
     ),
     "tokenbudget": Dimension(
@@ -258,11 +254,8 @@ _INSPECT_HEALTH = {
             "parameterized-but-unused config, verbose docstrings that "
             "restate the signature line-for-line."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="delete",
     ),
     "slop": Dimension(
@@ -276,11 +269,8 @@ _INSPECT_HEALTH = {
             "docstrings restating the signature, AI-tell phrasing "
             "(delve into, It's worth noting, etc.)."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="delete",
     ),
 }
@@ -295,11 +285,8 @@ _AUDIT_CROSS = {
             "(ghp_* / gho_*), Slack (xox[bpoa]-*), PEM private keys, "
             "embedded postgres:// / mongodb+srv:// URIs. Mask, do not echo."
         ),
-        contract_fields=(
-            "file", "line", "severity", "confidence",
-            "failure_scenario", "title", "tldr", "fix_hint",
-        ),
-        severity_floor=("minor", "major", "critical"),
+        contract_fields=_STANDARD_CONTRACT_FIELDS,
+        severity_floor=_MAJOR_PLUS_SEVERITIES,
         mode="read-only",
     ),
 }
