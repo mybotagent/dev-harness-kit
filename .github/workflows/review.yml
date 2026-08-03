@@ -205,11 +205,18 @@ jobs:
           # Most recent claude[bot] comment that contains a **Verdict:** line.
           # In track_progress mode the action updates ONE comment per job, so
           # "most recent" = this job's comment.
+          # Capture the full verdict word (or "Changes Requested" two-word
+          # phrase). The previous `grep -oE ... | awk '{print $NF}'`
+          # pipeline dropped the first word of "Changes Requested" because
+          # awk's $NF is the last whitespace-separated field — the extract
+          # was producing "Requested" for the maintenance LLM's actual
+          # "Changes Requested" verdicts, which the maintenance gate then
+          # treated as unparseable.
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
+            | tr -d '[:space:]' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
@@ -351,11 +358,16 @@ jobs:
           # "most recent" = this job's comment (review job's older comments
           # come before security's in chronological order, so we still want
           # the latest = security's).
+          # See the review-job extract above for why we replaced
+          # `grep -oE ... | awk '{print $NF}'` with `sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' | tr -d '[:space:]'`
+          # — the awk pipeline dropped the first word of "Changes Requested"
+          # and the extract was reporting "Requested" for the LLM's
+          # actual two-word verdict.
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
+            | tr -d '[:space:]' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
