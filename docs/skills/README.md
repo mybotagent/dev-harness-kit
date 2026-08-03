@@ -40,6 +40,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`bootstrap-full`](bootstrap-full.md) | `state` | One-shot `bootstrap` + `ci-setup` — the new-project default. |
 | [`ci-setup`](ci-setup.md) | `enforcement` | Installs dev-kit's reusable CI workflow templates into a target project. |
 | [`config`](config.md) | `state` | Skill / MCP / hook / methodology picker. |
+| [`linear`](linear.md) | `state` | Optional Linear task tracker — reconciling the current repo task with a canonical project + issue (auto-sync on every edit when configured). |
 
 ### Plan → Build
 
@@ -73,6 +74,8 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`cost-gate`](cost-gate.md) | `enforcement` | Live, read-only cost ledger + PR cost-flag trailer. |
 | [`status`](status.md) | `state` | HOTL visualization: loop progress + cycles + hand-off chain + eval score. |
 | [`ci-doctor`](ci-doctor.md) | `enforcement` | Read-only PASS/FAIL audit of CI readiness. |
+| [`ci-triage`](ci-triage.md) | `enforcement` | Triage failing GitHub Actions runs; dedupe against a persisted case store; every case carries a re-runnable repro + regression test. |
+| [`code-viz`](code-viz.md) | `state` | Generic plugin-architecture visualizer — multi-level views + domain pillar map + per-skill workflows to one self-contained HTML page. |
 | [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits stale docs and refreshes the README without recording volatile facts. |
 | [`prune-propose`](prune-propose.md) | `state` | Usage-telemetry dump + per-skill delete proposal, user-approved. |
 
@@ -126,6 +129,8 @@ step inside their parent skill's flow; you never type them directly.
 | [`bump`](bump.md) | `ship` | `state` | human |
 | [`ci-doctor`](ci-doctor.md) | `audit` | `enforcement` | human |
 | [`ci-setup`](ci-setup.md) | `bootstrap` | `enforcement` | human |
+| [`ci-triage`](ci-triage.md) | `audit` | `enforcement` | human |
+| [`code-viz`](code-viz.md) | `audit` | `state` | human |
 | [`codex-cache-update`](codex-cache-update.md) | `shortcuts` | `analysis` | human |
 | [`config`](config.md) | `config` | `state` | human |
 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | human |
@@ -134,6 +139,7 @@ step inside their parent skill's flow; you never type them directly.
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | model |
 | [`inspect`](inspect.md) | `audit` | `analysis` | human |
 | [`interview`](interview.md) | `design` | `enforcement` | human |
+| [`linear`](linear.md) | `config` | `state` | human |
 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | human |
 | [`log`](log.md) | `shortcuts` | `state` | human |
 | [`plan`](plan.md) | `plan` | `state` | human |
