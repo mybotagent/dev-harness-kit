@@ -202,6 +202,23 @@ def _team_id_override(repo: Path) -> str:
     return str(cfg.get("team_id", "")).strip()
 
 
+def _notes_override(repo: Path) -> str:
+    """Return operator-written notes from `.dev-kit/linear-config.json`.
+
+    The `notes` field is free-form Markdown that the operator can
+    write per worktree to capture context that the auto-generated
+    body cannot derive (narrative, reasoning, follow-up TODOs,
+    anything in Korean the operator wants pinned to the issue).
+    """
+    env = os.environ.get("LINEAR_NOTES", "").strip()
+    if env:
+        return env
+    cfg = _read_worktree_config(repo)
+    if cfg is None:
+        return ""
+    return str(cfg.get("notes", "")).rstrip()
+
+
 def _should_skip_prompt(prompt: str) -> bool:
     """Filter read-only / non-task prompts (per #539: no Linear for
     inspect / review / security / code-viz unless explicit)."""
@@ -702,6 +719,11 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
         "_Updated automatically by `tools/linear_sync.py`. "
         "Run the suite and paste the exit code + test count here._"
     )
+
+    notes = _notes_override(repo)
+    if notes:
+        sections.append("## Notes")
+        sections.append(notes)
 
     sections.append("## Related")
     sections.append("- Branch: `" + branch + "`")

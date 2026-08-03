@@ -297,6 +297,30 @@ class TestLinearSync(unittest.TestCase):
         with mock.patch("subprocess.check_output", side_effect=err):
             self.assertIsNone(linear_sync._detect_pr(Path("/tmp")))
 
+    def test_issue_body_appends_notes_section(self):
+        """Operator-written `notes` in linear-config.json land as a
+        '## Notes' section so Korean narrative (or any free-form
+        context) survives into the Linear issue."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "wt"
+            repo.mkdir()
+            (repo / ".dev-kit").mkdir()
+            (repo / ".dev-kit" / "linear-config.json").write_text(
+                json.dumps({"enabled": True, "notes": "## 작업 메모\n- 한글 컨텍스트"}),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"PATH": os.environ.get("PATH", "")}, clear=True), \
+                 mock.patch.object(linear_sync, "_repo_root", return_value=repo):
+                body = linear_sync._build_issue_body(
+                    prompt="x", branch="fix/x", repo=repo, scope="fix/x::x",
+                )
+            self.assertIn("## Notes", body)
+            self.assertIn("## 작업 메모", body)
+            self.assertIn("한글 컨텍스트", body)
+            # Notes must come BEFORE Related so the auto-link block
+            # stays at the end.
+            self.assertLess(body.index("## Notes"), body.index("## Related"))
+
     def test_issue_body_extracts_acceptance_criteria(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "wt"
