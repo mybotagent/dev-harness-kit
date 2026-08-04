@@ -32,7 +32,7 @@ per-runtime wiring differences), see
 | `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
 | `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch (slot check extracted to `hooks/lib/slot-check.sh` for unit-testable truth table — see *Shared helpers* below) | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
-| `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
+| `stop-verify` | Quoted exit codes / test counts + 5-item intent checklist (`lib/pre_completion_checklist.py`) before session end | Plan + Design + Build + Review + Security + Ship |
 | `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
 
 ## Hook inventory, by event
@@ -55,7 +55,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop (phrase + structure + scoring, KO+EN) | advisory (opt-in strict) |
 | `worktree-log-auto-install.sh` | PostToolUse (Bash) | Install loghooks into a newly-added worktree | advisory |
 | `acp-tier-assert.sh` | PreToolUse (`*`) | Enforce ACP agent tier-assertion line on first tool call (M/T/L) | hard-block |
-| `stop-verify.sh` | Stop | Run regression tests on session end | hard-block |
+| `stop-verify.sh` | Stop | Run regression tests + pre-completion intent checklist on session end | hard-block |
 
 **Reading the "Mode" column:** `hard-block` means the tool call is denied
 outright — there is no override short of removing the hook. `advisory`
@@ -79,6 +79,7 @@ inside a PreToolUse shell script). Each helper carries its own
 | `hook-preamble.sh` | 6 hooks (see `tests/test_hook_preamble.py`) | Common preamble: `set -euo pipefail`, `LC_ALL=C.UTF-8`, `$0`-relative path setup |
 | `locale-utf8.sh` | preamble-using hooks | One-shot `LC_ALL=C.UTF-8` / `LANG=C.UTF-8` setup |
 | `slot-check.sh` | `git-guard.sh` | `slot_should_deny <claude> <codex> <expected>` truth table for the `plugin.json` version-slot check (added 2026-08-03, inspect finding #2) |
+| `stage-gate.sh` | `stop-verify.sh` | `hook_stage_active` + `pre_completion_checklist_active` stage-activation helpers (the second follows stop-verify's stage + override rules so the intent checklist fires under the same gate) |
 
 ---
 
