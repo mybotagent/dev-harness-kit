@@ -135,8 +135,8 @@ loop.
 | `templates/session_handoff.md` | Resume-from-cold-context checklist; read FIRST at session open, before any code change.
 
 Intended wiring rule: copy the four files into the per-step worktree at
-`<worktree>/templates/` on the first step (idempotent — `cp -n` over
-existing files). Each step's preamble (`step<N>.md`) must include a
+`<worktree>/templates/` on the first step (idempotent — `cp -u` refreshes
+only stale files). Each step's preamble (`step<N>.md`) must include a
 one-line reminder to append to `progress.log.md` before commit and to
 re-run `init.sh` at session open. Steps driven by `codex exec` honor the
 same contract; the runner would copy the templates into the worktree
