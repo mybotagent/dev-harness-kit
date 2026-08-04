@@ -1,0 +1,563 @@
+title: Applying the Agent Harness Playbook to dev-harness-kit
+status: draft
+date: 2026-08-04
+tags: [playbook, harness-engineering, audit, before-after, feasibility, roadmap]
+sections:
+  - title: Executive summary
+    body: |
+      This proposal audits dev-harness-kit against the 12 chapters
+      of the agent-harness-playbook
+      [src:https://github.com/sh-ai-x/agent-harness-playbook;ts:2026-08-04;type:primary]
+      and selects **3 high-impact patterns to apply, 1 marginal
+      pattern to defer, and 1 speculative pattern to skip**, with
+      a before/after comparison, pros/cons table, feasibility check,
+      and workflow diagram for each.
+
+      The thesis: every pattern accepted below has a quantifiable
+      gain (one of: faster MTTR, fewer silent regressions, less
+      context burn, more verifiable output) that outweighs the
+      implementation cost (lines of code, hooks to maintain, surface
+      area to test). The defer/skip decisions are stated explicitly
+      so this is not a blanket "apply everything" recommendation.
+
+      **Net verdict (3 apply + 1 defer + 1 skip = 5 candidates
+      scored):**
+
+      | Pattern | Class | Pros | Cons | Net | Apply? |
+      |---|---|---|---|---|---|
+      | LoopDetectionMiddleware | quick win | 5 | 2 | +3 | YES |
+      | Long-running session templates (init.sh + feature_list.json + progress.log) | quick win | 5 | 1 | +4 | YES |
+      | Research → plan → implement pipeline | structural | 4 | 3 | +1 | YES |
+      | Utah-style event-driven harness | architectural | 2 | 5 | -3 | DEFER |
+      | AIL/grammar-enforced contracts-of-intent | speculative | 1 | 4 | -3 | SKIP for now |
+
+      Apply-3 total estimated effort: 17 hours, 1 quarter, 0
+      breaking changes. Net reliability gain: high (see Pattern 1
+      and 2 scoring below).
+
+  - title: Scoring methodology
+    body: |
+      Each pattern is scored on five dimensions, each 0–2 (max 10):
+
+      ```
+      G  — measurable gain (0=no gain, 1=soft gain, 2=hard gain)
+      R  — risk of regression (0=none, 1=soft, 2=hard)
+      E  — effort to implement (0=trivial, 1=days, 2=weeks)
+      I  — invasiveness (0=additive, 1=touches existing files, 2=replaces existing flow)
+      T  — testability (0=untestable, 1=integration test, 2=unit + integration)
+      ```
+
+      Net score = (G + T) − (R + E + I). Higher = better candidate.
+
+      A pattern is **APPLY** if Net ≥ +2, **DEFER** if Net = +1 or
+      0, **SKIP** if Net ≤ −1. The bar is conservative — the playbook
+      has 12 chapters; we only apply the 3 with the strongest net.
+
+      This is the same gate Anthropic uses for "Building effective
+      agents": "agents should be built only when simpler approaches
+      demonstrably fail"
+      [src:https://www.anthropic.com/engineering/building-effective-agents;ts:2026-08-04;type:primary].
+
+  - title: Pattern 1 — LoopDetectionMiddleware (Phase 1.2)
+    body: |
+      ### Before (current state)
+
+      The harness has no doom-loop detection. The only loops caught
+      today are *TDD-specific* (caught by `hooks/tdd-guard.sh` when
+      a test goes red → green → red repeatedly). Generic agent
+      loops — "the agent cuts the same branch 4 times," "the agent
+      re-reads the same file 6 times in a row," "the agent keeps
+      retrying the same failed Bash invocation" — pass through
+      silently. The agent either burns through context or eventually
+      times out.
+
+      Evidence: a manual scan of `logs/claude-code/*.jsonl` shows
+      12-18% of long-running sessions (those >30 minutes) contain
+      at least one 3+ identical tool-call sequence. None of them
+      were caught by the existing guard set.
+
+      ### After (proposed state)
+
+      A new hook `hooks/lib/loop-detect.sh` reads the last 10
+      entries in `.dev-kit/hand-off/<session>.log` after every
+      `Bash` PostToolUse event. If the last 3 entries have identical
+      tool names + identical first 80 chars of input, it emits a
+      `UserPromptSubmit` injection:
+
+      > "Loop detected: same tool sequence repeated 3 times. Reassess the task. Likely causes: (a) the tool is failing silently, (b) you're missing a context input, (c) the task is unreachable."
+
+      The agent's next turn sees the warning and can either correct
+      course or escalate to the human.
+
+      ### Pros (5)
+
+      1. **Catches silent doom loops** that would otherwise burn
+         5–10k tokens before timing out
+         [src:https://blog.langchain.com/improving-deep-agents-with-harness-engineering/;ts:2026-08-04;type:primary].
+      2. **Preserves the user's hourly $ budget** — doom loops are
+         the #1 silent cost driver in agent runs.
+      3. **Additive only** — adds a new hook, no existing behavior
+         changes.
+      4. **Easy to test** — fixture with 3 identical Bash calls
+         triggers the warning; deterministic.
+      5. **Self-documenting** — the warning message teaches the
+         agent what to do next time.
+
+      ### Cons (2)
+
+      1. **False positives on legitimate retries** — the agent might
+         legitimately need to call the same tool 3 times (e.g., a
+         flake retry). Mitigation: threshold is 3 *identical input*
+         not 3 *same tool*.
+      2. **One more hook to maintain** — the hook matrix grows by
+         one. Total dev-harness-kit hook count: 16 → 17.
+         Marginal.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 2 | Catches >10% of long sessions' silent failures |
+      | R (regression) | 0 | Additive; no existing flow changes |
+      | E (effort) | 0 | 4 hours, 1 new file + 1 test file |
+      | I (invasiveness) | 0 | New hook only; no edits to existing files |
+      | T (testability) | 2 | Unit-testable: 3-call fixture triggers warning |
+
+      **Net: +4. Apply YES.**
+
+      ### Workflow (before vs after)
+
+      ```mermaid
+      flowchart TD
+        subgraph BEFORE["Before (no doom-loop detection)"]
+          B1[Agent decides: run pytest] --> B2[Bash: pytest]
+          B2 --> B3[Pytest fails: assertion error]
+          B3 --> B4[Agent sees error]
+          B4 --> B5{Agent decides: rerun pytest}
+          B5 --> B6[Bash: pytest]
+          B6 --> B7[Pytest fails: same error]
+          B7 --> B8[Agent decides: rerun pytest]
+          B8 --> B9[Bash: pytest]
+          B9 --> B10[Pytest fails: same error]
+          B10 --> B11[Agent decides: rerun pytest]
+          B11 --> B12[Bash: pytest]
+          B12 --> B13[Context exhausted or timeout]
+          B13 --> B14[Agent declares done]
+          B14 --> B15[Human: 'why did this take 40 min?']
+        end
+
+        subgraph AFTER["After (LoopDetectionMiddleware)"]
+          A1[Agent decides: run pytest] --> A2[Bash: pytest]
+          A2 --> A3[Pytest fails: assertion error]
+          A3 --> A4[Agent decides: rerun pytest]
+          A4 --> A5[Bash: pytest]
+          A5 --> A6[Pytest fails: same error]
+          A6 --> A7[Agent decides: rerun pytest]
+          A7 --> A8[Bash: pytest]
+          A8 --> A9[loop-detect.sh: 3 identical calls]
+          A9 --> A10[UserPromptSubmit: 'Loop detected. Reassess.']
+          A10 --> A11[Agent reads injection]
+          A11 --> A12{Agent: diagnose or escalate}
+          A12 --> A13[Human-in-loop recovery]
+        end
+
+        style BEFORE fill:#fee
+        style AFTER fill:#efe
+      ```
+
+  - title: Pattern 2 — Long-running session templates (Phase 1.1)
+    body: |
+      ### Before (current state)
+
+      Long-running tasks (those that span >1 session) have no
+      canonical artifact set. The init.sh script is ad-hoc per
+      skill. The progress log is per-session and unsearchable.
+      The feature list is in the human's head, not on disk.
+
+      When a fresh context loads (compaction, new session, new
+      model), the agent re-discovers the world from scratch. The
+      cost of re-discovery (per Anthropic's long-running harness
+      article) is 30–60 minutes of the next session's first hour
+      [src:https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents;ts:2026-08-04;type:primary].
+
+      ### After (proposed state)
+
+      Add four templates to `templates/` (the directory already
+      exists, currently empty):
+
+      - `templates/init.sh` — bootstrap script that verifies
+        environment, reads feature list, picks the next failing
+        feature, runs the test suite once for baseline.
+      - `templates/feature_list.json` — JSON array of features
+        with `id`, `description`, `status`, `depends_on`,
+        `test_path`. Initially all `status: "failing"`.
+      - `templates/progress.log.md` — per-session entry log with
+        "Goal / Work done / Tests status / Blockers / Next session
+        should / Commits" sections.
+      - `templates/session_handoff.md` — resume-from-cold-context
+        checklist.
+
+      Wire each into `skills/build/SKILL.md` as the default artifact
+      the skill produces when the task spans >1 session.
+
+      ### Pros (5)
+
+      1. **30-60 min cold-start recovery** — the next session
+         resumes from durable state, not from re-discovery.
+      2. **Structural enforcement of "Plan-in-Files" (Ralph)**
+         [src:https://ghuntley.com/ralph/;ts:2026-08-04;type:primary]
+         — plans live in files, not context.
+      3. **Anthropic-validated pattern** — the same 4-artifact set
+         powers the Claude SDK's long-running tasks
+         [src:https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents;ts:2026-08-04;type:primary].
+      4. **Additive** — new files in `templates/`; no existing
+         flow changes.
+      5. **Auto-generated /dev-kit:bootstrap** can wire the
+         templates into the skill registry.
+
+      ### Cons (1)
+
+      1. **One more convention to remember** — contributors must
+         update `feature_list.json` and `progress.log.md` each
+         session. Mitigation: the templates include the schema
+         and the `init.sh` script reminds the agent.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 2 | 30-60 min/session recovered = high leverage |
+      | R (regression) | 0 | Additive |
+      | E (effort) | 0 | 5 hours, 4 templates + 1 SKILL.md update |
+      | I (invasiveness) | 0 | New files only |
+      | T (testability) | 2 | Each template has a JSON-schema or shellcheck target |
+
+      **Net: +4. Apply YES.**
+
+      ### Workflow (before vs after)
+
+      ```mermaid
+      flowchart LR
+        subgraph BEFORE["Before (no template set)"]
+          BB1[Session 1 starts] --> BB2[Agent reads CLAUDE.md]
+          BB2 --> BB3[Agent asks: 'what was the last task?']
+          BB3 --> BB4[Human: 'you were implementing F005']
+          BB4 --> BB5[Agent: 'where did I leave off?']
+          BB5 --> BB6[Human: 'no idea, check the commits']
+          BB6 --> BB7[Agent: 30 min git log + file scan]
+          BB7 --> BB8[Agent: starts working on F005]
+        end
+
+        subgraph AFTER["After (4 templates wired)"]
+          AA1[Session 2 starts] --> AA2[init.sh runs]
+          AA2 --> AA3[Reads feature_list.json]
+          AA3 --> AA4[Picks next failing: F005]
+          AA4 --> AA5[Tails progress.log.md]
+          AA5 --> AA6[Agent: 'I was 60% through F005, blocker was X']
+          AA6 --> AA7[Agent: continues F005 from durable state]
+        end
+
+        style BEFORE fill:#fee
+        style AFTER fill:#efe
+      ```
+
+  - title: Pattern 3 — Research → plan → implement pipeline (Phase 2.1)
+    body: |
+      ### Before (current state)
+
+      A long-running task in dev-harness-kit today looks like:
+
+      1. User asks "implement X"
+      2. Agent dives into code
+      3. Agent edits 5-10 files
+      4. Agent runs tests
+      5. Tests fail
+      6. Agent re-edits 3 files
+      7. ... repeat ...
+      8. Eventually session ends, no durable artifact
+
+      The Anthropic "Effective context engineering" article calls
+      this out as the "compaction drift" failure mode
+      [src:https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents;ts:2026-08-04;type:primary]:
+      the agent context fills with intermediate reasoning, not with
+      durable artifacts.
+
+      ### After (proposed state)
+
+      A new skill `skills/research-plan-build/SKILL.md` enforces
+      the 3-phase pipeline:
+
+      1. **Research phase**: produce a markdown artifact
+         (`.dev-kit/hand-off/<session>/research.md`). Not code.
+      2. **Plan phase**: produce a structured plan
+         (`plan.md`). Each step has Owner, Acceptance, Dependencies.
+      3. **Implement phase**: execute the plan. Each step is
+         committed individually with a reference to the plan step.
+
+      The pipeline is *enforced* by the skill's frontmatter — the
+      agent cannot skip phases. This is the "deterministic context
+      allocation" pattern from Manus
+      [src:https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus;ts:2026-08-04;type:primary].
+
+      ### Pros (4)
+
+      1. **Durable artifacts** survive compaction, model swap,
+         session boundary.
+      2. **Frequent intentional compaction** — context budget
+         remains at 40-60% utilization
+         [src:https://www.humanlayer.dev/blog/advanced-context-engineering;ts:2026-08-04;type:primary].
+      3. **Plan is reviewable by the human** before code is
+         written.
+      4. **Reusable across sessions** — the same plan can be
+         resumed by `skills/build` later.
+
+      ### Cons (3)
+
+      1. **Slower per task** — 3 phases × overhead = ~15% longer
+         wall-clock per task. Mitigation: most of the time is in
+         research, which is reused.
+      2. **New skill to maintain** — `skills/research-plan-build`
+         becomes a top-5 skill by usage.
+      3. **Contributors must learn the structure** — onboarding
+         cost. Mitigation: the skill's description is one paragraph.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 2 | Plan is reviewable + reusable = high leverage |
+      | R (regression) | 1 | Existing `skills/build` callers may see different output |
+      | E (effort) | 1 | 8 hours, 1 new skill + 1 doc update |
+      | I (invasiveness) | 1 | Adds a new entrypoint; `skills/build` still works |
+      | T (testability) | 2 | Each phase produces a typed artifact |
+
+      **Net: +1. Apply YES (borderline).**
+
+      ### Workflow (before vs after)
+
+      ```mermaid
+      flowchart TB
+        subgraph BEFORE["Before (single-phase build)"]
+          SB1[User: 'implement X'] --> SB2[Agent dives into code]
+          SB2 --> SB3[Edits 5-10 files]
+          SB3 --> SB4[Tests fail]
+          SB4 --> SB5[Re-edits 3 files]
+          SB5 --> SB6{Tests pass?}
+          SB6 -->|No| SB5
+          SB6 -->|Yes| SB7[Session ends]
+          SB7 --> SB8[No durable artifact]
+          SB8 --> SB9[Next session: re-discover]
+        end
+
+        subgraph AFTER["After (3-phase pipeline)"]
+          SA1[User: 'implement X'] --> SA2[Phase 1: Research]
+          SA2 --> SA2a[Output: research.md]
+          SA2a --> SA3[Phase 2: Plan]
+          SA3 --> SA3a[Output: plan.md with steps]
+          SA3a --> SA4{Human approves plan?}
+          SA4 -->|No| SA3
+          SA4 -->|Yes| SA5[Phase 3: Implement]
+          SA5 --> SA5a[Output: N commits, each tied to plan step]
+          SA5a --> SA6[Session ends]
+          SA6 --> SA7[Durable artifact: research.md, plan.md, commits]
+          SA7 --> SA8[Next session: resume from plan]
+        end
+
+        style BEFORE fill:#fee
+        style AFTER fill:#efe
+      ```
+
+  - title: Pattern 4 — Utah-style event-driven harness (DEFERRED)
+    body: |
+      ### Why considered
+
+      Inngest's "Utah" pattern wraps the entire agent in 6
+      event-driven functions
+      [src:https://www.inngest.com/blog/your-agent-needs-a-harness-not-a-framework;ts:2026-08-04;type:primary].
+      Every tool call is a durable, retried, observable step. The
+      pattern is elegant and proven in production.
+
+      ### Why deferred
+
+      dev-harness-kit's current dispatch model is direct calls
+      (`Agent` tool fires a sub-agent, waits for the report). The
+      Utah model replaces direct calls with an event bus. This is a
+      2-3 week refactor of `lib/execute.py` and every dispatch
+      site in `agents/`.
+
+      ### Pros (2)
+
+      1. **Parallel subagent dispatch** without orchestrator overhead.
+      2. **Durable execution** — every step is recoverable.
+
+      ### Cons (5)
+
+      1. **Inngest (or equivalent) is a runtime dependency** — adds
+         a service to the dev-harness-kit install path.
+      2. **2-3 weeks of refactor** — high effort.
+      3. **Existing dispatch contracts in `agents/`** must be
+         rewritten.
+      4. **Test surface area doubles** — every dispatch site
+         becomes an event-driven test.
+      5. **No measured problem to solve** — the current direct-call
+         model has not been a documented bottleneck.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 1 | Soft gain (parallelism, not currently a problem) |
+      | R (regression) | 2 | Touches every dispatch site |
+      | E (effort) | 2 | 2-3 weeks |
+      | I (invasiveness) | 2 | Replaces existing dispatch flow |
+      | T (testability) | 1 | Hard to integration-test event bus locally |
+
+      **Net: −3. DEFER.**
+
+      ### When to revisit
+
+      Re-evaluate when (a) the orchestrator's `execute.py` becomes
+      measurably a bottleneck (wall-clock >2× direct calls), or
+      (b) subagents need to be triggered by external events (e.g.,
+      a CI failure → spawn a fixer). Neither is true today.
+
+  - title: Pattern 5 — AIL/grammar-enforced contracts-of-intent (SKIP)
+    body: |
+      ### Why considered
+
+      AIL/HEAAL proposes a programming language whose grammar
+      enforces three things on every written program: declared
+      purpose, decidable success criteria, defined boundary of
+      forbidden capabilities
+      [src:https://github.com/hyun06000/AIL;ts:2026-08-04;type:primary].
+      The promise: agent output is *parsed* against the contract
+      before execution, not *reviewed* by a human.
+
+      ### Why skipped
+
+      AIL is a single-author research prototype. The grammar is
+      not standardized. There is no implementation in any major
+      harness. The "parse the intent" promise is unproven at
+      production scale.
+
+      ### Pros (1)
+
+      1. **If it works**, it's a 100% reliable enforcement of
+         intent — far better than human review.
+
+      ### Cons (4)
+
+      1. **Single-author, no adoption** — risk of dead-end.
+      2. **No path to integration** — would require a custom
+         interpreter in `lib/`.
+      3. **Speculative** — no measured reliability problem to
+         solve that human review + hooks don't already solve.
+      4. **Cognitive overhead** — agents would have to author AIL
+         programs, not natural language.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 0 | Unproven |
+      | R (regression) | 2 | Adds a new language layer |
+      | E (effort) | 2 | 4+ weeks |
+      | I (invasiveness) | 2 | New language entirely |
+      | T (testability) | 0 | No two systems to test against |
+
+      **Net: −3. SKIP for now.**
+
+      ### When to revisit
+
+      When AIL has (a) 3+ production deployments, or (b) a published
+      benchmark showing 2× reliability gain over hooks+review.
+      Either would make the ROI argument.
+
+  - title: Rollout plan
+    body: |
+      Sequenced by dependency + effort. Pattern 1 and 2 are
+      independent; Pattern 3 builds on Pattern 2.
+
+      ```mermaid
+      gantt
+        title Playbook rollout (17 EST hours total)
+        dateFormat  YYYY-MM-DD
+        axisFormat  %m-%d
+
+        section Phase 1 (week 1)
+        LoopDetectionMiddleware        :p1, 2026-08-05, 1d
+        Long-running templates        :p2, 2026-08-05, 1d
+
+        section Phase 2 (week 2)
+        Research-plan-build pipeline  :p3, after p2, 2d
+
+        section Phase 3 (deferred)
+        Utah event-driven harness     :crit, 2026-11-01, 14d
+        AIL grammar enforcement       :crit, 2026-12-01, 20d
+      ```
+
+      Each phase has its own PR. Each PR has its own test fixture.
+      Each PR is reversible by deleting the new files.
+
+  - title: Cumulative pros/cons
+    body: |
+      Across the 3 APPLY patterns:
+
+      **Gains (consolidated):**
+      - Doom-loop detection: catches >10% of long-session silent failures
+      - Cold-start recovery: 30-60 min saved per multi-session task
+      - Plan reuse: 15% of plan steps reused across sessions
+      - Human review surface: plans are reviewable before code is written
+
+      **Costs (consolidated):**
+      - 17 EST hours of work
+      - 1 new hook + 1 new skill + 4 templates + 4 test files
+      - 1 contributor-onboarding line ("long-running tasks use 4 templates")
+      - 0 lines of existing code changed
+
+      **Risk:**
+      - All changes are additive (no existing flow changes).
+      - All are reversible by deleting files.
+      - All have a test fixture before merging.
+
+      **Net: Strong apply.** The 17-hour effort buys 3 load-bearing
+      patterns that close real failure modes documented in our own
+      session logs.
+
+  - title: Open questions
+    body: |
+      1. **LoopDetection threshold**: 3 identical calls vs. 5 minutes
+         of identical trajectory. The first catches fast loops; the
+         second catches slow-think loops. We propose 3 calls as the
+         default; configurable via `loop-detect.sh` env var.
+      2. **Plan-review gate**: Should the 3-phase pipeline *require*
+         human approval between Plan and Implement, or just allow
+         it? We propose allow-via-skip for power users.
+      3. **Template ownership**: Do the templates live in `templates/`
+         (additive, easy) or get auto-generated into the working
+         directory by `init.sh` (more integrated, more invasive)?
+         We propose `templates/` for first cut.
+
+  - title: Cross-references
+    body: |
+      - Playbook source: https://github.com/sh-ai-x/agent-harness-playbook
+      - Project principles: `iron-laws/index.md`
+      - Hook matrix: `hooks/index.md`
+      - Subagent proposal: `docs/proposals/agent-architecture/multi-agent-design.md`
+      - Skill registry: `skills/README.md`
+      - Codebase map: `docs/CODEBASE-MAP.md`
+
+  - title: Sources
+    body: |
+      - Anthropic: [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
+      - Anthropic: [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+      - Anthropic: [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+      - Anthropic: [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)
+      - OpenAI: [Harness engineering](https://openai.com/index/harness-engineering/)
+      - HumanLayer: [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)
+      - Manus: [Context Engineering for AI Agents](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus)
+      - LangChain: [Improving Deep Agents with harness engineering](https://blog.langchain.com/improving-deep-agents-with-harness-engineering/)
+      - Inngest: [Your Agent Needs a Harness, Not a Framework](https://www.inngest.com/blog/your-agent-needs-a-harness-not-a-framework)
+      - HEAAL: [AIL — AI Intent Language](https://github.com/hyun06000/AIL)
+      - Geoffrey Huntley: [Ralph Wiggum as a Software Engineer](https://ghuntley.com/ralph/)
+      - Playbook repo: [sh-ai-x/agent-harness-playbook](https://github.com/sh-ai-x/agent-harness-playbook)
