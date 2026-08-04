@@ -192,6 +192,7 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
   1. SNAPSHOT   — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS (single gh call)
   2. TERMINATE  — if REVIEW_VERDICT == "APPROVED"
                     AND every check.conclusion ∈ {success, skipped, neutral}
+                    AND step 8.5 freshness check confirms all verdicts are post-run
                     → print "✅ PR #<n> approved — done" + iterate count
                     → exit 0
   3. CLASSIFY   — bucket blockers into:
@@ -212,6 +213,10 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                     - review feedback    → read review comments, apply reviewer-requested change
   7. APPLY FIX  — modify code (Edit/Write). One logical change per iteration.
   8. VERIFY LOCAL — re-run the same failing command locally; quote exit code + test count
+  8.5 **VERIFY FRESHNESS** (mandatory, no echo of stale state) — before claiming "all green", the skill must:
+      a) re-fetch the current PR state via `gh pr checks <N> --json name,conclusion,startedAt,completedAt,databaseId` (mandatory fresh call, do NOT trust cached sub-agent output)
+      b) for each check with `conclusion=success` whose name is a comment-extraction gate (`/dev-kit:review`, `/dev-kit:security`, `/dev-kit:maintenance`): run `gh run view <run-id>` to confirm the underlying Claude action actually posted a `**Verdict:**` line that this run owns. If the extraction step ran on a stale page-1 comment (e.g. PR has 30+ comments), the maintenance gate's `judge_verdict` will not match the latest comment timestamp — fail-closed.
+      c) NEVER report "all green" without this step. Past bug (SHO-178): babysit echoed `judge_verdict=Requested` from a stale page-1 comment while the actual Claude comment on page 2 said `Approve`.
   9. COMMIT     — `git add <specific paths>` of the file(s) just modified (NEVER `git add -p` — interactive, hangs without TTY; the skill runs unattended) + conventional commit
   10. PUSH     — `git push origin HEAD`
   11. LOG     — append one line to `.dev-kit/babysit.log`:

@@ -263,3 +263,98 @@ def classify_check(
     if age > ghost_threshold_seconds:
         return "ghost"
     return "pending"
+
+# --------------------------------------------------------------------------- #
+# Verdict freshness check (issue SHO-179)
+# --------------------------------------------------------------------------- #
+
+# Maximum acceptable age (seconds) between the most recent claude[bot]
+# verdict comment and the workflow run that produced the current
+# check conclusion. Beyond this, the extraction step is presumed to
+# be reading a stale comment. Default 600s (10 min) is generous; the
+# Claude action typically posts a comment within 60-180s of the gate
+# firing.
+VERDICT_FRESHNESS_WINDOW_SECONDS: int = 600
+
+# Status strings returned by `check_verdict_freshness`.
+FRESH = "fresh"          # latest comment is newer than the run
+STALE = "stale"          # latest comment is older than the run (or missing)
+GHOST = "ghost"          # no claude[bot] comment AND the run completed without one
+
+
+def check_verdict_freshness(
+    pr_number: int,
+    run_id: int,
+    run_started_epoch: int,
+    now_epoch: int,
+) -> dict:
+    """Return whether the most recent claude[bot] verdict comment is
+    fresh relative to the given workflow run.
+
+    Returns a dict with `status` (FRESH / STALE / GHOST), `comment_id`,
+    `comment_age_seconds`, and the raw `comments` list. The function
+    never raises; transport errors return `status="ghost"` (the
+    conservative call).
+
+    Usage in babysit skill (skills/babysit-pr/SKILL.md step 8.5):
+
+        result = check_verdict_freshness(
+            pr_number=566,
+            run_id=30924004335,
+            run_started_epoch=...,
+            now_epoch=...,
+        )
+        if result["status"] in (STALE, GHOST):
+            # do NOT claim "all green" — surface the staleness
+            ...
+    """
+    try:
+        import json
+
+        # Use `gh api` to avoid token plumbing here -- the babysit skill
+        # shell that calls this helper already has `gh` authenticated.
+        import subprocess
+        repo = os.environ.get("GITHUB_REPOSITORY") or os.environ.get("GITHUB_REPO", "")
+        result = subprocess.run(
+            ["gh", "api",
+             f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
+             "--jq", ".",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return {"status": GHOST, "comment_id": None,
+                    "comment_age_seconds": None, "comments": []}
+        comments = json.loads(result.stdout)
+    except Exception:
+        return {"status": GHOST, "comment_id": None,
+                "comment_age_seconds": None, "comments": []}
+
+    claude_comments = [
+        c for c in comments
+        if (c.get("user", {}).get("login") or "").startswith("claude")
+        and "**Verdict:**" in (c.get("body") or "")
+    ]
+    if not claude_comments:
+        return {"status": GHOST, "comment_id": None,
+                "comment_age_seconds": None, "comments": []}
+
+    # Pick the most recent (newest updated_at)
+    latest = max(claude_comments, key=lambda c: c.get("updated_at", ""))
+    from datetime import datetime
+    try:
+        latest_dt = datetime.fromisoformat(latest["updated_at"].replace("Z", "+00:00"))
+        latest_epoch = int(latest_dt.timestamp())
+    except Exception:
+        return {"status": GHOST, "comment_id": latest.get("id"),
+                "comment_age_seconds": None, "comments": claude_comments}
+
+    age = now_epoch - latest_epoch
+    # If the latest comment is OLDER than the run started (the run
+    # completed but no fresh comment was posted) -> STALE.
+    if latest_epoch < run_started_epoch:
+        return {"status": STALE, "comment_id": latest.get("id"),
+                "comment_age_seconds": age, "comments": claude_comments}
+    return {"status": FRESH, "comment_id": latest.get("id"),
+            "comment_age_seconds": age, "comments": claude_comments}
+

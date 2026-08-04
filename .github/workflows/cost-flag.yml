@@ -178,7 +178,7 @@ Threshold: \$20.00. When total >= \$20.00 the \`cost-flag\` label is applied.
 "
           fi
           # Upsert: edit existing comment if present, else create.
-          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq '.[] | select((.body // "") | startswith("<!-- dev-kit:cost-gate -->")) | .id' \
             | head -1 || true)
           if [ -n "$EXISTING" ]; then
