@@ -68,7 +68,7 @@ address Codex review comments, push the branch and open the PR.
 
 ### Tests status
 
-- `pytest tests/test_long_running_templates.py -v` → exit `0`, all tests passed.
+- `pytest tests/test_long_running_templates.py -v` → exit `0`, 24 passed.
 - Notable output (last 5 lines):
 
   ```
