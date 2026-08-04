@@ -66,8 +66,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 
 | 스킬 | Alpha | 요약 |
 |---|---|---|
-| [`eval`](eval.md) | `analysis` | review/security/plan 차원 + 20항목 code-sanity 루브릭에 걸친 에이전트 행동 평가. |
-| [`report`](report.md) | `analysis` | 최신 eval + inspect 리포트를 결합하는 HTML 뷰어. |
 | [`token-analyzer`](token-analyzer.md) | `analysis` | 세션 로그 트랜스크립트에서 렌더링되는 토큰 효율 대시보드. |
 | [`cost-gate`](cost-gate.md) | `enforcement` | 실시간 읽기 전용 비용 원장 + PR 비용 플래그 트레일러. |
 | [`status`](status.md) | `state` | HOTL 시각화: 루프 진행 + 사이클 + 핸드오프 체인 + 평가 점수. |
@@ -75,7 +73,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`docs-maintenance`](docs-maintenance.md) | `analysis` | 오래된 문서를 감사하고 변동성 있는 사실을 기록하지 않으면서 README를 새로고침. |
 | [`prune-propose`](prune-propose.md) | `state` | 사용량 원격 측정 덤프 + 스킬별 삭제 제안, 사용자 승인. |
 | [`evaluate`](evaluate.md) | `enforcement` | 같은 러너에 `harness-quality`와 `os-quality` 차원을 추가하는 평가 확장. |
-| [`harness-audit`](harness-audit.md) | `analysis` | 5개 dev-kit 하네스(hooks / eval / plan_value / research / interview)에 대한 횡단 품질 감사. |
 
 ### 단축 명령 / 유지보수
 
@@ -131,9 +128,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`config`](config.md) | `config` | `state` | 사용자 |
 | [`cost-gate`](cost-gate.md) | `audit` | `enforcement` | 사용자 |
 | [`docs-maintenance`](docs-maintenance.md) | `audit` | `analysis` | 사용자 |
-| [`eval`](eval.md) | `eval` | `analysis` | 사용자 |
 | [`evaluate`](evaluate.md) | `eval` | `enforcement` | 사용자 |
-| [`harness-audit`](harness-audit.md) | `audit` | `analysis` | 사용자 |
 | [`hook-doctor`](hook-doctor.md) | `audit` | `enforcement` | 모델 |
 | [`inspect`](inspect.md) | `audit` | `analysis` | 사용자 |
 | [`interview`](interview.md) | `design` | `enforcement` | 사용자 |
@@ -144,7 +139,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`prune`](prune.md) | `build` | `analysis` | 사용자 |
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | 사용자 |
 | [`refactor`](refactor.md) | `build` | `analysis` | 사용자 |
-| [`report`](report.md) | `audit` | `analysis` | 사용자 |
 | [`research`](research.md) | `design` | `enforcement` | 사용자 |
 | [`review`](review.md) | `review` | `analysis` | 사용자 |
 | [`security`](security.md) | `security` | `enforcement` | 사용자 |

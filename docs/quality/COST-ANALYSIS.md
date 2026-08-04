@@ -54,7 +54,7 @@ Hook bypass requires explicit opt-in (`DEV_KIT_HOOK_OFF`). Secret scan runs Post
 
 ## 8. Operational Risk
 
-Provider outage fallback: manual `/dev-kit:eval`. **MEDIUM** (mitigated).
+Provider outage fallback: manual `/dev-kit:evaluate`. **MEDIUM** (mitigated).
 
 ## §9 Summary
 
