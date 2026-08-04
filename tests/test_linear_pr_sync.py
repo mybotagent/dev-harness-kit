@@ -5,6 +5,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -21,15 +22,17 @@ def ns(**kwargs):
     p.add_argument("--pr-number", default=None)
     p.add_argument("--pr-title", default=None)
     p.add_argument("--pr-url", default=None)
-    return p.parse_args([]).__class__(**{
-        "branch": "feat/x",
-        "event": "opened",
-        "merged": "false",
-        "pr_number": None,
-        "pr_title": None,
-        "pr_url": None,
-        **kwargs,
-    })
+    return p.parse_args([]).__class__(
+        **{
+            "branch": "feat/x",
+            "event": "opened",
+            "merged": "false",
+            "pr_number": None,
+            "pr_title": None,
+            "pr_url": None,
+            **kwargs,
+        }
+    )
 
 
 def target_state(args):
@@ -62,28 +65,58 @@ class TestClosedRefinesMerged(unittest.TestCase):
         self.assertEqual(target_state(ns(event="closed")), "Canceled")
 
 
-class TestProjectNameResolution(unittest.TestCase):
-    def test_default_project_name(self):
-        # No env override → dev-harness-kit
-        os.environ.pop("LINEAR_PROJECT_NAME", None)
-        self.assertEqual(lps.PROJECT_NAME, "dev-harness-kit")
+class TestIssueLookup(unittest.TestCase):
+    def test_matches_complete_scope_marker_only(self):
+        issues = [
+            {"identifier": "SHO-1", "description": "<!-- scope:feat/x-extra::auto-sync -->"},
+            {"identifier": "SHO-2", "description": "<!-- scope:feat/x::auto-sync -->"},
+        ]
+        with patch.object(lps, "_iter_issues", return_value=issues):
+            self.assertEqual(lps._issue_by_branch("feat/x", "project")["identifier"], "SHO-2")
 
-    def test_env_override(self):
-        os.environ["LINEAR_PROJECT_NAME"] = "custom-project"
-        # Re-import to pick up env
-        import importlib
-        importlib.reload(lps)
-        self.assertEqual(lps.PROJECT_NAME, "custom-project")
-        os.environ.pop("LINEAR_PROJECT_NAME", None)
-        importlib.reload(lps)
+
+class TestIssuePagination(unittest.TestCase):
+    def test_follows_cursor_and_scopes_to_project(self):
+        pages = [
+            {"data": {"issues": {"nodes": [{"id": "1"}], "pageInfo": {"hasNextPage": True, "endCursor": "next"}}}},
+            {"data": {"issues": {"nodes": [{"id": "2"}], "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+        ]
+        with patch.object(lps, "_request", side_effect=pages) as request:
+            self.assertEqual([i["id"] for i in lps._iter_issues("project")], ["1", "2"])
+            self.assertEqual(request.call_args_list[0].args[1], {"projectId": "project", "cursor": None})
+            self.assertEqual(request.call_args_list[1].args[1], {"projectId": "project", "cursor": "next"})
+            self.assertIn("project", request.call_args_list[0].args[0])
+
+
+class TestTitleConstruction(unittest.TestCase):
+    def test_missing_title_does_not_duplicate_pr_prefix(self):
+        args = ns(pr_number="570")
+        issue = {"identifier": "SHO-1", "state": {"name": "In Progress"}}
+        with (
+            patch.object(lps, "_required", return_value=True),
+            patch.object(lps, "_project_id", return_value="project"),
+            patch.object(lps, "_issue_by_branch", return_value=None),
+            patch.object(lps, "_state_id", return_value="state"),
+            patch.object(lps, "_create_issue", return_value=issue) as create,
+        ):
+            self.assertEqual(lps.cmd_sync(args), 0)
+            self.assertEqual(create.call_args.args[3], "PR #570")
+
+
+class TestSmoke(unittest.TestCase):
+    def test_returns_failure_when_a_required_state_is_missing(self):
+        with (
+            patch.object(lps, "_required", return_value=True),
+            patch.object(lps, "_project_id", return_value="project"),
+            patch.object(lps, "_state_id", side_effect=lambda name: None if name == "Done" else name),
+        ):
+            self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 1)
 
 
 class TestNoApiKeyIsNonBlocking(unittest.TestCase):
     def test_request_returns_none_without_key(self):
-        os.environ.pop("LINEAR_API_KEY", None)
-        import importlib
-        importlib.reload(lps)
-        self.assertIsNone(lps._request("{ me { id } }"))
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(lps._request("{ me { id } }"))
 
 
 if __name__ == "__main__":

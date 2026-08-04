@@ -9,7 +9,7 @@ name: linear-pr-sync
 #   PR reopened                   → In Review
 #   PR synchronize (new commits)  → In Review
 #   PR closed (merged=true)       → Done
-#   PR closed (merged=false)      → Cancelled
+#   PR closed (merged=false)      → Canceled
 #
 # The workflow is non-blocking: every step has `continue-on-error: true`
 # so a flaky Linear API never blocks the PR pipeline.
@@ -39,7 +39,6 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           sparse-checkout: tools/linear_pr_sync.py
 
       - name: sync linear state
@@ -82,4 +81,3 @@ jobs:
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: python3 tools/linear_pr_sync.py smoke
-        continue-on-error: true

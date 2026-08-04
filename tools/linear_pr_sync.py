@@ -23,9 +23,10 @@ Subcommands:
       Update ALL open issues in the project to STATE (used for initial bulk
       transitions like "Backlog → In Review").
 
-Failure modes: all transport errors are non-blocking (exit 0) except for
-an explicit supervisor override (LINEAR_OPS_REQUIRED=1).
+Failure modes: event-driven sync transport errors are reported without blocking the
+PR workflow; the explicit smoke command fails on configuration drift.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,6 +39,8 @@ import urllib.request
 
 LINEAR_API_URL = "https://api.linear.app/graphql"
 PROJECT_NAME = os.environ.get("LINEAR_PROJECT_NAME", "dev-harness-kit")
+
+REQUIRED_STATE_NAMES = ("Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled")
 
 EVENT_STATE_MAP = {
     "opened": "In Progress",
@@ -101,36 +104,23 @@ def _project_id() -> str | None:
     return nodes[0]["id"] if nodes else None
 
 
-def _state_id(state_name: str, project_id: str | None = None) -> str | None:
-    """Resolve workflow state ID by name.
-
-    Workflow states are team-scoped in Linear, not project-scoped. The
-    `project` field does not exist on WorkflowStateFilter — Linear returns
-    400 if you pass it. We ignore the project arg and query team-wide.
-    """
-    # Resolve the team (workflow states are team-scoped)
+def _state_id(state_name: str) -> str | None:
+    """Resolve a workflow state ID within the project's team."""
     team_id = _team_id()
+    if not team_id:
+        return None
     query = """
-    query($teamId: ID) {
+    query($teamId: ID!) {
       workflowStates(filter: { team: { id: { eq: $teamId } } }, first: 50) {
         nodes { id name type }
       }
     }
     """
-    r = _request(query, {"teamId": team_id}) if team_id else None
+    r = _request(query, {"teamId": team_id})
     if r:
-        for s in r.get("data", {}).get("workflowStates", {}).get("nodes", []):
-            if s["name"].lower() == state_name.lower():
-                return s["id"]
-    # Fallback: query without team filter (may return mixed teams but Linear
-    # resolves the most common state names uniquely)
-    fallback = _request("""
-    query { workflowStates(first: 50) { nodes { id name type } } }
-    """)
-    if fallback:
-        for s in fallback.get("data", {}).get("workflowStates", {}).get("nodes", []):
-            if s["name"].lower() == state_name.lower():
-                return s["id"]
+        for state in r.get("data", {}).get("workflowStates", {}).get("nodes", []):
+            if state["name"].lower() == state_name.lower():
+                return state["id"]
     return None
 
 
@@ -154,47 +144,47 @@ def _team_id() -> str | None:
 
 
 def _issue_by_branch(branch: str, project_id: str | None) -> dict | None:
-    """Find the issue for a branch.
-
-    Linear's IssueFilter does not have a `branch` field. We iterate
-    recent issues in the project and match the scope marker
-    `<!-- scope:<branch>::` in the description. Open issues first;
-    fall back to all states if not found.
-    """
-    scope_marker = f"<!-- scope:{branch}::"
-    issues = _iter_issues(project_id, only_open=False)
-    for i in issues:
-        desc = i.get("description") or ""
-        if scope_marker in desc:
-            return i
+    """Find the project issue whose full auto-sync marker names branch."""
+    scope_marker = f"<!-- scope:{branch}::auto-sync -->"
+    for issue in _iter_issues(project_id, only_open=False):
+        description = issue.get("description") or ""
+        if scope_marker in description.splitlines():
+            return issue
     return None
 
 
 def _iter_issues(project_id: str | None, only_open: bool = True) -> list[dict]:
-    """Iterate issues in the project, optionally only non-terminal."""
-    if only_open:
-        query = """
-        query {
-          issues(
-            filter: { state: { type: { nin: ["completed", "canceled"] } } },
-            first: 100
-          ) {
-            nodes { id identifier title description state { id name type } url }
-          }
-        }
-        """
-    else:
-        query = """
-        query {
-          issues(first: 100) {
-            nodes { id identifier title description state { id name type } url }
-          }
-        }
-        """
-    r = _request(query)
-    if not r:
+    """Return every matching project issue, following Linear pagination."""
+    if not project_id:
         return []
-    return r.get("data", {}).get("issues", {}).get("nodes", [])
+    state_filter = 'state: { type: { nin: ["completed", "canceled"] } },' if only_open else ""
+    query = f"""
+    query($projectId: ID!, $cursor: String) {{
+      issues(
+        filter: {{ project: {{ id: {{ eq: $projectId }} }}, {state_filter} }},
+        first: 100,
+        after: $cursor
+      ) {{
+        nodes {{ id identifier title description state {{ id name type }} url }}
+        pageInfo {{ hasNextPage endCursor }}
+      }}
+    }}
+    """
+    issues: list[dict] = []
+    cursor = None
+    while True:
+        response = _request(query, {"projectId": project_id, "cursor": cursor})
+        if not response:
+            return issues
+        page = response.get("data", {}).get("issues", {})
+        issues.extend(page.get("nodes", []))
+        page_info = page.get("pageInfo", {})
+        if not page_info.get("hasNextPage"):
+            return issues
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            print("Linear pagination missing endCursor", file=sys.stderr)
+            return issues
 
 
 def _create_issue(branch: str, project_id: str, state_id: str, title: str = "") -> dict | None:
@@ -219,13 +209,16 @@ def _create_issue(branch: str, project_id: str, state_id: str, title: str = "") 
       }
     }
     """
-    r = _request(query, {
-        "projectId": project_id,
-        "teamId": team_id,
-        "title": issue_title,
-        "stateId": state_id,
-        "desc": desc,
-    })
+    r = _request(
+        query,
+        {
+            "projectId": project_id,
+            "teamId": team_id,
+            "title": issue_title,
+            "stateId": state_id,
+            "desc": desc,
+        },
+    )
     if not r:
         return None
     payload = r.get("data", {}).get("issueCreate")
@@ -265,21 +258,24 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
 
     issue = _issue_by_branch(args.branch, project_id)
-    state_id = _state_id(target_state, project_id)
+    state_id = _state_id(target_state)
     if not state_id:
         print(f"state not found: {target_state}", file=sys.stderr)
         return 0
 
     if not issue:
         # Create the issue if missing
-        title = args.pr_title or f"PR #{args.branch}"
-        if "+" in title or "PR" in title:
-            title = f"PR #{args.pr_number}: {title}" if args.pr_number else title
+        if args.pr_number and args.pr_title:
+            title = f"PR #{args.pr_number}: {args.pr_title}"
+        elif args.pr_number:
+            title = f"PR #{args.pr_number}"
+        else:
+            title = args.pr_title or f"PR on branch {args.branch}"
         issue = _create_issue(args.branch, project_id, state_id, title)
         if not issue:
-            print(f"❌ could not create issue for branch={args.branch}", file=sys.stderr)
+            print(f"could not create issue for branch={args.branch}", file=sys.stderr)
             return 1
-        print(f"✅ created {issue['identifier']} → {target_state} (branch={args.branch})")
+        print(f"created {issue['identifier']} → {target_state} (branch={args.branch})")
         return 0
 
     if issue["state"]["name"].lower() == target_state.lower():
@@ -287,9 +283,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
 
     if _update_state(issue["id"], state_id):
-        print(f"✅ {issue['identifier']} → {target_state} (branch={args.branch})")
+        print(f"{issue['identifier']} → {target_state} (branch={args.branch})")
     else:
-        print(f"❌ update failed for {issue['identifier']}", file=sys.stderr)
+        print(f"update failed for {issue['identifier']}", file=sys.stderr)
         return 1
     return 0
 
@@ -308,7 +304,7 @@ def cmd_bulk_update(args: argparse.Namespace) -> int:
     if not _required():
         return 0
     project_id = _project_id()
-    state_id = _state_id(args.state, project_id)
+    state_id = _state_id(args.state)
     if not state_id:
         print(f"state not found: {args.state}", file=sys.stderr)
         return 1
@@ -327,7 +323,7 @@ def cmd_bulk_update(args: argparse.Namespace) -> int:
             branch = "?"
             if "<!-- scope:" in desc:
                 branch = desc.split("<!-- scope:", 1)[1].split("::", 1)[0]
-            print(f"✅ {i['identifier']} → {args.state} (branch={branch})")
+            print(f"{i['identifier']} → {args.state} (branch={branch})")
     print(f"\nMoved {moved}/{len(issues)} issues to {args.state}")
     return 0
 
@@ -341,10 +337,13 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         print("project not found", file=sys.stderr)
         return 1
     print(f"project: {PROJECT_NAME} (id={project_id})")
-    for name in ["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled"]:
-        sid = _state_id(name, project_id)
+    missing = []
+    for name in REQUIRED_STATE_NAMES:
+        sid = _state_id(name)
         print(f"state {name}: {'id=' + sid if sid else 'NOT FOUND'}")
-    return 0
+        if not sid:
+            missing.append(name)
+    return 1 if missing else 0
 
 
 def main() -> int:
