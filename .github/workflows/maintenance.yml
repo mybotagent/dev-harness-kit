@@ -181,18 +181,19 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Same extraction pattern as review.yml: most recent claude[bot]
-          # comment with a **Verdict:** line. In track_progress mode the
-          # action updates ONE comment per job, so "most recent" = this
-          # job's comment.
-          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+          # Extract the LAST "**Verdict:** <Word>" line out of the most
+          # recent claude[bot] comment. Delegates to
+          # `lib/maintenance_gate::extract_verdict` so the same regex
+          # the unit tests pin governs CI (no shell-only-awk drift that
+          # collapses "Changes Requested" to "Requested"). The
+          # `?per_page=100` ensures we read the latest comment on
+          # PRs with 30+ comments (pagination bug fix from PR #566).
+          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '[.[] | select((.user.login // "") | startswith("claude")) | .body][-1] // ""')"
+          verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=lib.maintenance_gate"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:

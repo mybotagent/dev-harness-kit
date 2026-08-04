@@ -5,14 +5,21 @@ name: linear-pr-sync
 # Mapping (declarative — see tools/linear_pr_sync.py EVENT_STATE_MAP):
 #
 #   PR opened (draft=false)       → In Progress
+#   PR opened (draft=true)        → no-op (silently skip; a draft is not a
+#                                     commitment to ship — PR #570 review VM-1)
 #   PR ready_for_review           → In Review
 #   PR reopened                   → In Review
 #   PR synchronize (new commits)  → In Review
+#   PR edited                     → In Review
 #   PR closed (merged=true)       → Done
 #   PR closed (merged=false)      → Canceled
 #
-# The workflow is non-blocking: every step has `continue-on-error: true`
-# so a flaky Linear API never blocks the PR pipeline.
+# The workflow is non-blocking by design: every step has
+# `continue-on-error: true` so a flaky Linear API never blocks the PR
+# pipeline. The smoke step intentionally is NOT `continue-on-error` —
+# its job is to fail loudly when the secret IS present but state IDs
+# are missing (config drift). When LINEAR_API_KEY is absent, the smoke
+# subcommand returns 0 (no-op) so repos without the secret stay green.
 
 on:
   pull_request:
@@ -48,6 +55,7 @@ jobs:
         run: |
           EVENT='${{ github.event.action }}'
           MERGED='${{ github.event.pull_request.merged }}'
+          DRAFT='${{ github.event.pull_request.draft }}'
           BRANCH='${{ github.event.pull_request.head.ref }}'
           PR_NUMBER='${{ github.event.number }}'
           PR_TITLE='${{ github.event.pull_request.title }}'
@@ -57,6 +65,7 @@ jobs:
             BRANCH='${{ inputs.branch }}'
             EVENT='${{ inputs.event }}'
             MERGED='false'
+            DRAFT='false'
           fi
 
           if [ -z "$BRANCH" ]; then
@@ -71,6 +80,7 @@ jobs:
               --branch "$BRANCH" \
               --event "$EVENT" \
               --merged "$MERGED" \
+              --draft "$DRAFT" \
               --pr-number "$PR_NUMBER" \
               --pr-title "$PR_TITLE" \
               --pr-url "$PR_URL"
