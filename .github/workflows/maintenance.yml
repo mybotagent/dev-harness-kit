@@ -181,22 +181,17 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Pick the MOST RECENT claude[bot] comment whose body actually
-          # contains a `**Verdict:**` line — NOT the most recent comment
-          # overall (the track_progress placeholder "Claude Code is
-          # working…" otherwise wins and the verdict is reported MISSING
-          # even when the run produced one). The `?per_page=100`
-          # ensures we read the latest comment on PRs with 30+ comments
-          # (pagination bug fix from PR #566). Delegate the line-level
-          # extraction to the python helper so the same regex the unit
-          # tests pin governs CI (no shell-only awk drift that collapses
-          # "Changes Requested" to "Requested").
-          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*")) | .body] | sort_by(.updated_at) | .[-1] // ""')"
-          verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
+          # Same extraction pattern as review.yml: most recent claude[bot]
+          # comment with a **Verdict:** line. In track_progress mode the
+          # action updates ONE comment per job, so "most recent" = this
+          # job's comment.
+          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
+            | grep -E '\*\*Verdict:\*\*' | tail -1 \
+            | sed -E 's/.*\*\*Verdict:\*\*[^A-Za-z]*(Approve|Blocked|Changes Requested).*/\1/' || true)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=lib.maintenance_gate"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=maintenance status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
@@ -297,18 +292,11 @@ jobs:
           echo "judge_verdict=$judge_verdict  docs_ok=$docs_ok"
           echo "docs_reason=$docs_reason"
 
-          # Issue (workflow self-validation): if the PR modifies the
-          # maintenance workflow itself, the claude-code-action refuses
-          # to run ("Workflow validation failed. The workflow file must
-          # exist and have identical content to the version on the
-          # repository's default branch"), and the judge never posts a
-          # **Verdict:** comment. Default the missing judge to Approve
-          # with a warning so the human-gate (REVIEW_REQUIRED on the PR)
-          # is what actually blocks merge. Mirrors the lenient policy
-          # in `review.yml:513-514` for review and security.
+          # Missing judge output is a verification failure. Never convert a
+          # transient agent/API/comment-extraction failure into approval.
           if [ -z "$judge_verdict" ]; then
-            echo "::warning::maintenance judge verdict missing (event=${EVENT:-unknown}); defaulting to Approve (workflow self-validation artifact; verify post-merge)"
-            judge_verdict="Approve"
+            echo "::error::maintenance judge verdict missing; blocking"
+            judge_verdict="Blocked"
           fi
 
           # Combine via the same module so unit tests and CI share logic.

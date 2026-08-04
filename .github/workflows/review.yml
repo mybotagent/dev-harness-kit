@@ -215,8 +215,7 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
-            | tr -d '[:space:]' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[^A-Za-z]*(Approve|Blocked|Changes Requested).*/\1/' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
@@ -366,8 +365,7 @@ jobs:
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
-            | tr -d '[:space:]' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[^A-Za-z]*(Approve|Blocked|Changes Requested).*/\1/' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
