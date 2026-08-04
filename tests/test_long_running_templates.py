@@ -5,7 +5,7 @@ Validates the four-template artifact bundle defined in
 `docs/proposals/playbook-application/02-reanalysis.yaml`:
 
   - templates/init.sh         — bash bootstrap (valid syntax, executable)
-  - templates/feature_list.json — JSON array of feature entries
+  - templates/feature_list.example.json — JSON array example of feature entries
   - templates/progress.log.md  — per-session log template
   - templates/session_handoff.md — resume-from-cold-context checklist
 
@@ -32,20 +32,20 @@ TEMPLATES_DIR = REPO_ROOT / "templates"
 
 
 class TestFeatureListExists(unittest.TestCase):
-    """feature_list.json parses, is a non-empty list, every entry has the
-    required keys, and at least one entry exists in `failing` status so
-    init.sh has something to pick."""
+    """feature_list.example.json parses, is a non-empty list, every
+    entry has the required keys, and at least one entry exists in `failing`
+    status so init.sh has an example feature to pick."""
 
     def setUp(self):
-        self.path = TEMPLATES_DIR / "feature_list.json"
+        self.path = TEMPLATES_DIR / "feature_list.example.json"
 
     def test_file_exists(self):
         self.assertTrue(self.path.is_file(), f"missing: {self.path}")
 
     def test_parses_as_json(self):
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertIsInstance(data, list, "feature_list.json must be a JSON array")
-        self.assertGreater(len(data), 0, "feature_list.json must have at least one entry")
+        self.assertIsInstance(data, list, "feature_list.example.json must be a JSON array")
+        self.assertGreater(len(data), 0, "feature_list.example.json must have at least one entry")
 
     def test_entries_have_required_keys(self):
         data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -78,8 +78,8 @@ class TestFeatureListExists(unittest.TestCase):
         failing = [e for e in data if e["status"] == "failing"]
         self.assertGreater(
             len(failing), 0,
-            "feature_list.json must contain at least one failing entry "
-            "for init.sh to have work to pick",
+            "feature_list.example.json must contain at least one failing entry "
+            "for init.sh to have an example feature to pick",
         )
 
 
@@ -265,8 +265,11 @@ class TestInitShExecutesInDocumentedLayout(unittest.TestCase):
         # Drop a stub pytest.ini so init.sh auto-detects the test runner.
         (Path(self.tmp) / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
         src_dir = TEMPLATES_DIR
-        for name in ("init.sh", "feature_list.json"):
-            (self.tpl_dir / name).write_bytes((src_dir / name).read_bytes())
+        for source_name, target_name in (
+            ("init.sh", "init.sh"),
+            ("feature_list.example.json", "feature_list.json"),
+        ):
+            (self.tpl_dir / target_name).write_bytes((src_dir / source_name).read_bytes())
         (self.tpl_dir / "init.sh").chmod(0o755)
 
     def tearDown(self):

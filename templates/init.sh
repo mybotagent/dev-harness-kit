@@ -8,8 +8,7 @@
 #
 # Exit codes (machine-readable; consumers branch on `$?`):
 #   exit 0   — bootstrap complete; baseline test failures are recorded, not propagated
-#               Exit 0 is returned even when the baseline test command exits non-zero —
-#               the baseline captures current state, not a pass/fail signal.
+#               Exit 0 is returned even when the baseline test command exits non-zero — the baseline captures current state, not a pass/fail signal.
 #   exit 2   — missing prerequisite (feature_list.json, tests dir, git)
 #   exit 3   — no failing feature remaining (entire feature list is green)
 #   exit 1   — generic failure (feature-list parse or git error)
