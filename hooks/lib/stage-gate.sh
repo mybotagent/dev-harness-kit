@@ -34,3 +34,8 @@ from active_hooks_codec import is_hook_active  # noqa: E402
 raise SystemExit(0 if is_hook_active(Path(project_root), stage, hook_name) else 1)
 PY
 }
+
+pre_completion_checklist_active() {
+  # The checklist follows stop-verify's stage activation and override rules.
+  hook_stage_active stop-verify
+}
