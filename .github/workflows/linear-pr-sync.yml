@@ -1,0 +1,85 @@
+name: linear-pr-sync
+
+# Sync the Linear issue state to the PR's lifecycle.
+#
+# Mapping (declarative — see tools/linear_pr_sync.py EVENT_STATE_MAP):
+#
+#   PR opened (draft=false)       → In Progress
+#   PR ready_for_review           → In Review
+#   PR reopened                   → In Review
+#   PR synchronize (new commits)  → In Review
+#   PR closed (merged=true)       → Done
+#   PR closed (merged=false)      → Cancelled
+#
+# The workflow is non-blocking: every step has `continue-on-error: true`
+# so a flaky Linear API never blocks the PR pipeline.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, closed, reopened, edited, synchronize]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch name to sync (defaults to ref_name)'
+        required: false
+      event:
+        description: 'Synthetic event name (opened, ready_for_review, closed)'
+        required: false
+      state:
+        description: 'Target state name (used by bulk-update)'
+        required: false
+
+jobs:
+  sync:
+    name: sync linear state
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          sparse-checkout: tools/linear_pr_sync.py
+
+      - name: sync linear state
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_PROJECT_NAME: dev-harness-kit
+        run: |
+          EVENT='${{ github.event.action }}'
+          MERGED='${{ github.event.pull_request.merged }}'
+          BRANCH='${{ github.event.pull_request.head.ref }}'
+          PR_NUMBER='${{ github.event.number }}'
+          PR_TITLE='${{ github.event.pull_request.title }}'
+          PR_URL='${{ github.event.pull_request.html_url }}'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH='${{ inputs.branch }}'
+            EVENT='${{ inputs.event }}'
+            MERGED='false'
+          fi
+
+          if [ -z "$BRANCH" ]; then
+            echo "no branch resolved; skipping"
+            exit 0
+          fi
+
+          if [ -n "${{ inputs.state }}" ]; then
+            python3 tools/linear_pr_sync.py bulk-update --state "${{ inputs.state }}"
+          else
+            python3 tools/linear_pr_sync.py sync \
+              --branch "$BRANCH" \
+              --event "$EVENT" \
+              --merged "$MERGED" \
+              --pr-number "$PR_NUMBER" \
+              --pr-title "$PR_TITLE" \
+              --pr-url "$PR_URL"
+          fi
+        continue-on-error: true
+
+      - name: smoke (key + project + state ids)
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: python3 tools/linear_pr_sync.py smoke
+        continue-on-error: true
