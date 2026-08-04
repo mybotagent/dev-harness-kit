@@ -14,9 +14,9 @@
 | slop-detector         |  -    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
 | stop-verify           |  -    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |
 | linear-autosync       |  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
-| sub-agent-handoff     |  -    |  -    |  -    |  ✅    |  ✅    |  -    |  ✅    |
+| sub-agent-handoff     |  A    |  A    |  A    |  A    |  A    |  A    |  A    |
 ```
-(R = read-only) (* = fires only when Linear is configured.)
+(R = read-only) (* = fires only when Linear is configured.) (A = always-on with per-worktree opt-out via `.dev-kit/.sub-agent-handoff-disabled`.)
 
 ## Hook shells
 
@@ -30,4 +30,4 @@
 | `worktree-guard` | n/a | PreToolUse Edit/Write block on main checkout (this repo). |
 | `git-guard` | n/a | PreToolUse Bash block on `git commit`/`push` to main. |
 | `linear-autosync` | always (gated) | PreToolUse Edit/Write block (gated) that calls `tools/linear_sync.py`. No-op when `LINEAR_API_KEY` and `.dev-kit/.enabled.json:mcp.linear` are both absent. Always exit 0 (non-blocking per #539). |
-| `sub-agent-handoff` | build / review / ship | PostToolUse Agent advisory verifying the agent response carries the STATUS / EVIDENCE / NEXT-ACTION pieces needed for the standard handoff template (SHO-154). Always exit 0 except when `jq` is missing (exit 2 + deny JSON). Per-worktree opt-out via `.dev-kit/.sub-agent-handoff-disabled`. Non-blocking on parse errors (per #539). |
+| `sub-agent-handoff` | all (opt-out per worktree) | PostToolUse Agent advisory verifying the agent response carries the STATUS / EVIDENCE / NEXT-ACTION pieces needed for the standard handoff template (SHO-154). **Always-on** (the handoff contract applies regardless of stage); per-worktree opt-out via `.dev-kit/.sub-agent-handoff-disabled`. Non-blocking on parse errors (per #539). Fail-closed (exit 2 + plain stderr ERROR) when `jq` or `python3` is missing — PostToolUse cannot actually block, so we emit a stderr signal instead of a `permissionDecision: deny` envelope (which is decorative in PostToolUse; see `slop-detector.sh` / `secret-scan.sh` for the precedent). |
