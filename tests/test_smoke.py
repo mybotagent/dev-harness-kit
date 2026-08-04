@@ -36,9 +36,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Removed skills/repair/SKILL.md (asset-repair design stub — no runtime,
 # L4/L7 violations, F1/F2/F3/F6/F7/F8 in the multi-dim review; PR-repair
 # still owned by /dev-kit:babysit-pr + lib/repair_coordinator.py).
+# Added skills/research-plan-build/SKILL.md (3-phase binder, PR #563) (37 -> 38).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 37
+SKILL_COUNT = 38
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
