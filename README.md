@@ -174,6 +174,103 @@ is not a second user-facing workflow.
 
 ---
 
+## Visualization: how workflows become diagrams
+
+`/dev-kit:code-viz` walks the plugin and emits one self-contained HTML with
+multi-level views (architecture → code → skill → hook → tools → external) plus a
+per-skill workflow extraction. The patterns it uses are reusable — same approach
+to render GH Actions pipelines, multi-phase repair loops, or any other
+long-running process with discrete phases.
+
+### GH Actions gate workflow
+
+The shipped `review.yml` defines a PR → review/security fan-out → gate verdict
+sequence. code-viz emits this as a `sequenceDiagram`; the same shape renders
+cleanly on GitHub from a fenced ```mermaid``` block:
+
+```mermaid
+sequenceDiagram
+  participant Dev as Developer
+  participant PR as Pull Request
+  participant GH as GitHub Actions
+  participant R as /dev-kit:review
+  participant S as /dev-kit:security
+  participant G as gate job
+  Dev->>PR: open / synchronize / reopen
+  PR->>GH: pull_request event
+  GH->>R: spawn review job
+  GH->>S: spawn security job (parallel)
+  R->>R: 3-dim fan-out (correctness + security + architecture)
+  S->>S: OWASP A01-A10 fan-out
+  R-->>GH: review verdict + per-line findings
+  S-->>GH: security verdict + findings
+  GH->>G: gate job (needs review + security)
+  G->>G: touch-probe + L3 evidence gate
+  G->>G: aggregate combined verdict
+  G-->>PR: post verdict as PR comment
+  alt verdict = Approve
+    PR->>Dev: mergeable
+  else verdict = Block
+    PR->>Dev: changes requested
+  end
+```
+
+### Per-skill workflow extraction
+
+For each user-invocable skill, code-viz tries five strategies in order — first
+match wins — and falls back to the next only if the previous yields fewer than
+two items:
+
+1. **Domain-content sections** — `## Categories`, `## Dimensions`, `## Audit
+   areas`, `## Checks` with bolded bullets (e.g. security's A01–A10, inspect's
+   8 dimensions).
+2. **`[N/M] LABEL → desc`** — used by `plan`'s 5-step framing.
+3. **`## Gate N/M — label` / `## Phase N — label`** — numbered gates.
+4. **Numbered list under `## Algorithm`** — used by `babysit-pr`'s 14-step
+   repair loop.
+5. **`## <SectionName>` headers** as implicit phases.
+
+Skills without an extractable workflow are listed as text chips in a "no
+workflow detected" section, never visualized as empty diagrams.
+
+### Loop-back detection
+
+Workflows that loop get a dotted, labeled back-edge — not just a straight
+top-to-bottom chain:
+
+- **Explicit** — a step's own text contains `goto N` (e.g. babysit-pr's step
+  13 says "otherwise `goto 1`"). The back-edge points to the referenced step,
+  labeled `retry -> step N`.
+- **Implicit fallback** — no explicit goto, but the skill body uses recognized
+  loop language (`3-cycle self-fix`, `repeat until`, `safety_valve` cap, …).
+  The last step loops back to the first step, since "the process repeats" is
+  the only sensible default.
+
+A `python` fenced code block is stripped before the implicit-keyword scan — a
+skill's own source code (including this one) can match the detector's pattern
+strings as if they were prose describing a real loop.
+
+### Edge semantics
+
+Every edge in every diagram represents a real relationship — never a layout
+artifact:
+
+- **Sequential (chained arrows)** — used only where a real before/after
+  relationship exists: per-skill workflow phases, hooks within one Claude
+  event (they execute in declared array order).
+- **Fan-out (no sibling edges)** — used for every pure inventory: `lib/`,
+  `bin/`, `tools/` modules, directory listing, GitHub Actions workflows, MCP
+  servers, third-party CLI invocations, and the domain pillar map. Root fans
+  out to every item directly; no fabricated ordering between siblings that
+  don't actually depend on each other.
+
+Row grouping beyond 5 items renders as a borderless, fill-less subgraph with a
+blank title — a layout aid, never a container. Consecutive inventory rows are
+linked with Mermaid's invisible operator (`~~~`) to force vertical stacking
+without implying an execution order.
+
+---
+
 ## Most-used skills
 
 There are many skills, but these are the ones you'll actually reach for. Every
