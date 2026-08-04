@@ -119,27 +119,45 @@ constants.
 
 When a build phase is expected to span more than one Claude Code session
 (typical signal: step count >= 5, or the user explicitly says "this is a
-multi-day effort"), `build` emits the four-template artifact bundle from
-`templates/` into the working tree of the build's per-step worktree
-before the first step starts. The templates implement Pattern 2 from
-`docs/proposals/playbook-application/02-reanalysis.yaml` — the cold-start
-recovery cost is the dominant per-session waste, and shipping a fixed
-file layout removes the "what did the last session do?" discovery loop.
+multi-day effort"), `build` is meant to copy the four-template artifact
+bundle from `templates/` into the working tree of the build's per-step
+worktree before the first step starts. The templates implement Pattern 2
+from `docs/proposals/playbook-application/02-reanalysis.yaml` — the
+cold-start recovery cost is the dominant per-session waste, and shipping a
+fixed file layout removes the "what did the last session do?" discovery
+loop.
 
 | Template | Purpose |
 |---|---|
 | `templates/init.sh` | Bootstrap: verify env, read feature list, pick next failing feature, run baseline test. Idempotent — re-run every session open. |
 | `templates/feature_list.json` | JSON array of `{id, description, status, depends_on, test_path}`. The single source of truth for "what's left". |
 | `templates/progress.log.md` | Append-only per-session log (Goal / Work done / Tests status / Blockers / Next session should / Commits). |
-| `templates/session_handoff.md` | Resume-from-cold-context checklist; read FIRST at session open, before any code change. |
+| `templates/session_handoff.md` | Resume-from-cold-context checklist; read FIRST at session open, before any code change.
 
-Wiring rule: copy the four files into the per-step worktree at
+Intended wiring rule: copy the four files into the per-step worktree at
 `<worktree>/templates/` on the first step (idempotent — `cp -n` over
 existing files). Each step's preamble (`step<N>.md`) must include a
 one-line reminder to append to `progress.log.md` before commit and to
 re-run `init.sh` at session open. Steps driven by `codex exec` honor the
-same contract; the runner copies the templates into the worktree before
-spawning the agent so the agent sees them as part of its working tree.
+same contract; the runner would copy the templates into the worktree
+before spawning the agent so the agent sees them as part of its working
+tree.
+
+Status: as of this PR the runner does NOT yet perform the copy step
+(`lib/execute.py` has no reference to `templates/`). Operators running a
+multi-session build must run the copy manually before the first step:
+
+```bash
+mkdir -p .worktrees/<phase>-step<N>/templates
+cp -n templates/init.sh templates/feature_list.json \
+   templates/progress.log.md templates/session_handoff.md \
+   .worktrees/<phase>-step<N>/templates/
+```
+
+Follow-up: add the copy step to the per-step worktree creation site in
+`lib/execute.py` (after `cut_worktree` returns) so the manual step above
+is no longer needed. Until then the SKILL.md is normative for the bundle
+shape, not for the runner behavior.
 
 Failure mode: if `init.sh` exits 3 ("no failing feature remaining") at
 the start of a step, the build has effectively finished — bail to
