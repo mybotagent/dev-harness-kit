@@ -288,20 +288,27 @@ def check_verdict_freshness(
     pr_number: int,
     run_started_epoch: float,
     now_epoch: float,
+    expected_run_id: int | None = None,
+    expected_job_key: str | None = None,
 ) -> dict:
     """Return whether the most recent claude[bot] verdict comment is
     fresh relative to the given workflow run.
 
     A comment is FRESH when its `updated_at` is at or after the run's
-    `started_at`. STALE when the comment is older than the run (the
-    extraction page-1'd past a newer verdict the next job posted).
-    GHOST when no claude[bot] comment with `**Verdict:**` exists or
-    the transport / parse fails.
+    `started_at` AND within `VERDICT_FRESHNESS_WINDOW_SECONDS` of
+    `now_epoch`. STALE when the comment is older than the run but still
+    within the window (extraction page-1'd past a newer verdict the
+    next job posted). GHOST when no claude verdict comment is found,
+    the comment is older than both the run and the window, or the
+    comment is newer than the run but arbitrarily old (past the
+    window). When `expected_run_id` is provided, the candidate set is
+    restricted to comments whose body contains `run=<expected_run_id>`
+    so a fresh verdict from one gate cannot certify another gate's
+    verdict (closes CROSS-GATE-FALSE-FRESH).
 
-    Returns a dict with `status` (FRESH / STALE / GHOST), `comment_id`,
-    `comment_age_seconds`, and the raw `comments` list. The function
-    never raises; transport errors return `status="ghost"` (the
-    conservative call).
+    Returns a dict with `status` (FRESH / STALE / GHOST) and `reason`.
+    No raw comments are returned (closes RETURN-SURFACE). The function
+    never raises; transport errors return `status="ghost"`.
 
     Usage in babysit skill (skills/babysit-pr/SKILL.md step 8.5):
 
@@ -315,6 +322,91 @@ def check_verdict_freshness(
             ...
     """
     repo = os.environ.get("GITHUB_REPOSITORY") or os.environ.get("GITHUB_REPO", "")
+    try:
+        # The babysit skill shell that calls this helper already has
+        # `gh` authenticated — `gh api` avoids token plumbing here.
+        result = subprocess.run(
+            ["gh", "api",
+             f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
+             "--jq", ".",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return {"status": GHOST,
+                    "reason": f"gh api exit={result.returncode}"}
+        comments = json.loads(result.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        # SubprocessError: `gh` missing / killed / timeout. OSError:
+        # file / network errors. ValueError: malformed JSON. All three
+        # are fail-closed -> GHOST (the conservative call); the
+        # babysit layer surfaces the reason in its own log.
+        return {"status": GHOST, "reason": "transport or parse error"}
+
+    # Build the set of claude[bot] verdict comments.
+    claude_verdicts = [
+        c for c in comments
+        if (c.get("user", {}).get("login") or "").startswith("claude")
+        and "**Verdict:**" in (c.get("body") or "")
+    ]
+    if not claude_verdicts:
+        return {"status": GHOST, "reason": "no claude verdict comment"}
+
+    # Build candidate set: if expected_run_id is given, the candidate
+    # must be a verdict audit comment that names that run. Otherwise
+    # any claude verdict is a candidate (preserves the original
+    # "newest of any" behavior for tests that don't pin a run).
+    candidates = claude_verdicts
+    if expected_run_id is not None:
+        run_match = [
+            c for c in claude_verdicts
+            if f"run={expected_run_id}" in (c.get("body") or "")
+        ]
+        candidates = run_match
+    if not candidates:
+        return {
+            "status": GHOST,
+            "reason": (
+                f"no claude verdict comment for run_id={expected_run_id} "
+                f"(comments inspected: {len(claude_verdicts)})"
+            ),
+        }
+
+    # Pick the most recent.
+    latest = max(candidates, key=lambda c: c.get("updated_at", ""))
+    latest_epoch = _epoch_from_iso(latest.get("updated_at"))
+    if latest_epoch is None:
+        return {"status": GHOST,
+                "reason": f"unparseable updated_at: {latest.get('updated_at')!r}"}
+
+    age = now_epoch - latest_epoch
+
+    # Apply both freshness conditions independently (closes the
+    # FRESH-WINDOW-BYPASS issue from SHO-179). A comment is FRESH
+    # only when BOTH:
+    #   (a) it was posted after the run started (i.e. this run is the
+    #       source of the verdict), AND
+    #   (b) it is within VERDICT_FRESHNESS_WINDOW_SECONDS of now_epoch
+    #       (an arbitrarily old comment is not a fresh verdict).
+    if latest_epoch < run_started_epoch:
+        if age > VERDICT_FRESHNESS_WINDOW_SECONDS:
+            return {"status": GHOST,
+                    "reason": (f"comment older than the run AND older "
+                               f"than {VERDICT_FRESHNESS_WINDOW_SECONDS}s "
+                               f"window (age={int(age)}s)")}
+        return {"status": STALE,
+                "reason": (f"comment older than the run but within "
+                           f"{VERDICT_FRESHNESS_WINDOW_SECONDS}s window "
+                           f"(age={int(age)}s)")}
+    if age > VERDICT_FRESHNESS_WINDOW_SECONDS:
+        return {"status": GHOST,
+                "reason": (f"comment newer than the run but older than "
+                           f"{VERDICT_FRESHNESS_WINDOW_SECONDS}s window "
+                           f"(age={int(age)}s)")}
+    return {"status": FRESH,
+            "reason": (f"comment newer than the run AND within "
+                       f"{VERDICT_FRESHNESS_WINDOW_SECONDS}s window "
+                       f"(age={int(age)}s)")}
     try:
         # The babysit skill shell that calls this helper already has
         # `gh` authenticated — `gh api` avoids token plumbing here.
