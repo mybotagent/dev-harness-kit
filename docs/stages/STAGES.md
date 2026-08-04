@@ -145,9 +145,9 @@
   summary table present.
 - **Active Skills**: `inspect`
 
-## Cross-cutting — Eval (`/dev-kit:eval`)
+## Cross-cutting — Eval (`/dev-kit:evaluate`)
 
-- **Goal**: Asset freshness eval (CLAUDE.md / skill / hook / Iron Law).
-- **Must**: 4-axis score (semantic_drift / completeness / correctness / consistency). 2-judge cross-check.
+- **Goal**: Agent-behavior eval (replay transcripts against registered rubrics).
+- **Must**: 4-axis score (harness-quality / os-quality / review / security / plan / maintenance). 2-judge cross-check.
 - **AC**: ≥ 8 OK. < 5 ROT → CI fail.
-- **Active Skills**: `eval` (3 dims: review, security, plan; cross-cutting agent-behavior rubrics)
+- **Active Skills**: `evaluate` (registered rubrics: harness-quality, os-quality, plus legacy review/security/plan)

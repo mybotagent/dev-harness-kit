@@ -230,29 +230,12 @@ of <code>Critical | Major drift | Minor drift | Healthy</code>. Per-dimension
 summary table present.</li>
 <li><strong>Active Skills</strong>: <code>inspect</code></li>
 </ul>
-<h2>Cross-cutting — Report (<code>/dev-kit:report</code>)</h2>
+<h2>Cross-cutting — Eval (<code>/dev-kit:evaluate</code>)</h2>
 <ul>
-<li><strong>Goal</strong>: Render the latest <code>eval-report.md</code> + <code>inspect-report.md</code> as
-one self-contained HTML file at <code>.dev-kit/report.html</code>. Distinct
-human action (&quot;view the report in a browser&quot;) with a distinct
-artifact; not an option on <code>/dev-kit:eval</code> or <code>/dev-kit:inspect</code>.</li>
-<li><strong>Must</strong>: Self-contained HTML (no <code>&lt;script&gt;</code>, no external CSS/IMG,
-inline styles only). Dark-mode aware. Defensive HTML escaping on
-every interpolated value.</li>
-<li><strong>Must-Not</strong>: Read source files (only the two report artifacts). Make
-network calls.</li>
-<li><strong>AC</strong>: <code>.dev-kit/report.html</code> exists. Either contains both report
-sections (when both source artifacts are present) or a &quot;not found&quot;
-banner (when one or both are missing). Open in a browser with no
-console errors.</li>
-<li><strong>Active Skills</strong>: <code>report</code></li>
-</ul>
-<h2>Cross-cutting — Eval (<code>/dev-kit:eval</code>)</h2>
-<ul>
-<li><strong>Goal</strong>: Asset freshness eval (CLAUDE.md / skill / hook / Iron Law).</li>
-<li><strong>Must</strong>: 4-axis score (semantic_drift / completeness / correctness / consistency). 2-judge cross-check.</li>
+<li><strong>Goal</strong>: Agent-behavior eval (replay transcripts against registered rubrics).</li>
+<li><strong>Must</strong>: 4-axis score (harness-quality / os-quality / review / security / plan / maintenance). 2-judge cross-check.</li>
 <li><strong>AC</strong>: ≥ 8 OK. &lt; 5 ROT → CI fail.</li>
-<li><strong>Active Skills</strong>: <code>eval</code> (3 dims: review, security, plan; cross-cutting agent-behavior rubrics)</li>
+<li><strong>Active Skills</strong>: <code>evaluate</code> (registered rubrics: harness-quality, os-quality, plus legacy review/security/plan)</li>
 </ul>
 <footer class="back">
   <a href="00-index.html">&larr; Documentation Home</a>

@@ -222,26 +222,11 @@
   요약 표 존재.
 - **활성 스킬**: `inspect`
 
-## 횡단 — Report (`/dev-kit:report`)
+## 횡단 — Eval (`/dev-kit:evaluate`)
 
-- **목표**: 최신 `eval-report.md` + `inspect-report.md`를 자체 완결
-  HTML 파일 하나(`.dev-kit/report.html`)로 렌더링. "브라우저에서
-  리포트 보기"라는 구분되는 사람 행동이며, 구분되는 산출물이다;
-  `/dev-kit:eval`이나 `/dev-kit:inspect`의 옵션이 아니다.
-- **Must**: 자체 완결 HTML(`<script>` 없음, 외부 CSS/IMG 없음,
-  인라인 스타일만). 다크 모드 대응. 모든 삽입값에 대한 방어적 HTML
-  이스케이프.
-- **Must-Not**: 소스 파일 읽기(두 리포트 산출물만). 네트워크 호출.
-- **AC**: `.dev-kit/report.html` 존재. (두 소스 산출물이 모두 있으면)
-  두 리포트 섹션을 모두 담거나, (하나 또는 둘 다 없으면) "찾을 수
-  없음" 배너를 담는다. 브라우저 콘솔 에러 없이 열림.
-- **활성 스킬**: `report`
-
-## 횡단 — Eval (`/dev-kit:eval`)
-
-- **목표**: 자산 신선도 평가(CLAUDE.md / 스킬 / 훅 / Iron Law).
-- **Must**: 4축 점수(semantic_drift / completeness / correctness /
-  consistency). 2-judge 교차 검증.
+- **목표**: 에이전트 행동 평가(등록된 루브릭에 대해 트랜스크립트 재생).
+- **Must**: 4축 점수(harness-quality / os-quality / review / security /
+  plan / maintenance). 2-judge 교차 검증.
 - **AC**: ≥ 8 OK. < 5 ROT → CI 실패.
-- **활성 스킬**: `eval`(3개 차원: review, security, plan; 횡단
-  에이전트 행동 루브릭)
+- **활성 스킬**: `evaluate`(등록된 루브릭: harness-quality, os-quality,
+  레거시 review/security/plan)

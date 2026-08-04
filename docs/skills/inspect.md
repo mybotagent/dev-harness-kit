@@ -60,7 +60,6 @@ The hand-off from each dimension to a downstream skill/phase:
 - `/dev-kit:prune` — deletion pipeline, particularly for `slop` findings.
 - `/dev-kit:plan` — full re-plan when HIGH findings exceed 0.
 - `/dev-kit:review` — per-PR counterpart to this whole-codebase sweep.
-- [report](report.md) — renders `.dev-kit/inspect-report.md` (alongside eval output) to a shareable HTML dashboard.
 - `lib/analysis_core/dimensions.py` — dimension charters and shared engine.
 
 ---

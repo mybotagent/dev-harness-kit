@@ -19,7 +19,7 @@ The plugin ships with a fixed set of skills (`/dev-kit:plan`,
 enforcement matrix (`worktree-guard`, `git-guard`, `tdd-guard`,
 `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify`, and more —
 see the full, current inventory in the root
-[`README.md` → Enforcement hooks](../../README.md#enforcement-hooks-the-durable-moat)),
+[`README.md` → Under the hood](../../README.md#under-the-hood)),
 and a stage-by-stage spec (`docs/stages/STAGES.md`) that pins which
 skill owns which step and what the acceptance criteria are.
 
@@ -97,7 +97,7 @@ That is the entire surface. Anything more specific is in the docs.
 
 | Metric | Value | Detail |
 |---|---|---|
-| Hooks shipped | see [Enforcement hooks](../../README.md#enforcement-hooks-the-durable-moat) | `worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify`, and others — the table there is the current, maintained inventory |
+| Hooks shipped | see [Under the hood](../../README.md#under-the-hood) | `worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify`, and others — the table there is the current, maintained inventory |
 | Stage owners | **7** | bootstrap, plan, valuate, build, review, security, ship |
 | Eval-Repair loops | **2 dims** | harness-quality + os-quality |
 | Return shapes | **1 per stage** | typed envelope contract pinned by `docs/stages/STAGES.md` |
@@ -138,7 +138,7 @@ That is the entire surface. Anything more specific is in the docs.
 
 ### Every other doc, by category
 
-The root [`README.md` → Doc map](../../README.md#doc-map-categorized) is
+The root [`README.md` → Doc map](../../README.md#doc-map) is
 the single categorized index of every topic doc, ADR, and skill reference
 in the repo (architecture, naming, CI setup, cost/risk, team adoption, hook
 coverage, and the skill index) — with its HTML/Markdown/Korean siblings

@@ -33,4 +33,4 @@ orchestrator reads the report and a human runs the removal command.
 For the orchestrated subagent dispatch contract (two envelopes — dispatch
 + report) and the multi-agent architecture research informing this
 proposal, see
-[`../architecture/multi-agent-orchestration-research.md`](../architecture/multi-agent-orchestration-research.md).
+[`../../architecture/multi-agent-orchestration-research.md`](../../architecture/multi-agent-orchestration-research.md).

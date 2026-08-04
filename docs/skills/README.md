@@ -8,7 +8,7 @@ expanding on the terse `skills/<name>/SKILL.md` source each is generated
 from. For the machine-facing summary table (the one `SKILL.md` frontmatter
 drives directly), see [`skills/README.md`](../../skills/README.md); for a
 one-line pointer from the project root, see the main
-[`README.md`](../../README.md#skills-by-audience).
+[`README.md`](../../README.md#most-used-skills).
 
 Every skill declares two frontmatter fields that matter for navigation:
 
@@ -68,7 +68,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | Skill | Alpha | Summary |
 |---|---|---|
 | [`evaluate`](evaluate.md) | `enforcement` | Agent-behavior eval across review/security/plan dimensions + a 20-checkbox code-sanity rubric, plus the `harness-quality` and `os-quality` dimensions on the same runner. |
-| [`report`](report.md) | `analysis` | HTML viewer combining the latest eval + inspect reports. |
 | [`token-analyzer`](token-analyzer.md) | `analysis` | Token-efficiency dashboard rendered from session log transcripts. |
 | [`cost-gate`](cost-gate.md) | `enforcement` | Live, read-only cost ledger + PR cost-flag trailer. |
 | [`status`](status.md) | `state` | HOTL visualization: loop progress + cycles + hand-off chain + eval score. |
@@ -146,7 +145,6 @@ step inside their parent skill's flow; you never type them directly.
 | [`prune`](prune.md) | `build` | `analysis` | human |
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
 | [`refactor`](refactor.md) | `build` | `analysis` | human |
-| [`report`](report.md) | `audit` | `analysis` | human |
 | [`research`](research.md) | `design` | `enforcement` | human |
 | [`review`](review.md) | `review` | `analysis` | human |
 | [`security`](security.md) | `security` | `enforcement` | human |

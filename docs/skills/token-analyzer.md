@@ -20,7 +20,7 @@
 3. Invoke `tools/token_efficiency_analyzer.py --repo <name> --days 30` and capture its `[ok] sessions=N files_scanned=M total_cost=$... estimated_savings=$...` summary line.
 4. Echo the summary plus the output HTML path to the user, resolved and printed as a **relative**, `./`-prefixed path (never an absolute `/Users/...` path, since the user may be on a different machine, worktree, or symlinked mount).
 
-The skill itself is read-only (`disallowed-tools: Write Edit`); the Python CLI writes the file directly, mirroring how `/dev-kit:report` keeps its skill body pure and lets the driver own I/O. Example emitted lines:
+The skill itself is read-only (`disallowed-tools: Write Edit`); the Python CLI writes the file directly, mirroring how the rest of the dev-kit audit/inspect skills keep their skill body pure and let the driver own I/O. Example emitted lines:
 
 ```
 [ok] sessions=14  files_scanned=14  total_cost=$1.23  estimated_savings=$0.01  stale_cost=$0.00  transcripts=14

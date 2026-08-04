@@ -4,7 +4,7 @@
 
 **Category:** `design` · **Alpha:** `state` · **Invocation:** `/dev-kit:proposal` (human-invoked)
 
-`proposal` renders any `docs/proposals/<main>/<sub>.yaml` design document into a single self-contained HTML page at `docs/proposals/<main>/<sub>.html`, for sharing with reviewers before implementation begins. It is a distinct skill (rather than a flag on `/dev-kit:report` or `/dev-kit:plan`) because proposals are a distinct artifact with their own lifecycle — `draft → design-discussion → ready-for-review → accepted/rejected/superseded` — and because slash-command autocomplete doesn't surface flags, so a dedicated entrypoint is the only reliable way for the user to find it.
+`proposal` renders any `docs/proposals/<main>/<sub>.yaml` design document into a single self-contained HTML page at `docs/proposals/<main>/<sub>.html`, for sharing with reviewers before implementation begins. It is a distinct skill (rather than a flag on `/dev-kit:plan`) because proposals are a distinct artifact with their own lifecycle — `draft → design-discussion → ready-for-review → accepted/rejected/superseded` — and because slash-command autocomplete doesn't surface flags, so a dedicated entrypoint is the only reliable way for the user to find it.
 
 ## When to use it
 
@@ -56,7 +56,7 @@ The proposal artifact has a stateful lifecycle: a YAML source on disk, a derived
 
 ## Iron Law
 
-Defensive HTML escaping on every interpolated value — titles, anchors, free-text fields, link URLs. A title containing `<script>` renders as `&lt;script&gt;`, never executed. The output has no `<script>` tag and no external assets (inline CSS only), so it is safe to email, archive, or open from `file://` — mirroring the `/dev-kit:report` invariant. Pinned by `HtmlEscapeTests` in `tests/test_proposal_skill.py`.
+Defensive HTML escaping on every interpolated value — titles, anchors, free-text fields, link URLs. A title containing `<script>` renders as `&lt;script&gt;`, never executed. The output has no `<script>` tag and no external assets (inline CSS only), so it is safe to email, archive, or open from `file://` — the same self-contained-HTML invariant that other dev-kit HTML renderers (e.g. `inspect`, `code-viz`) hold. Pinned by `HtmlEscapeTests` in `tests/test_proposal_skill.py`.
 
 ## Related
 

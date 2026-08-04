@@ -45,8 +45,9 @@ pipeline stages that deserve distinct slash commands.
    or symlinked mount).
 
 The skill itself is read-only (`disallowed-tools: Write Edit`); the Python
-CLI writes the file directly, mirroring how `/dev-kit:report` keeps its skill
-body pure and lets the driver own I/O. Example emitted lines:
+CLI writes the file directly, mirroring how the rest of the dev-kit
+audit/inspect skills keep their skill body pure and let the driver own I/O.
+Example emitted lines:
 
 ```
 [ok] sessions=14  files_scanned=14  total_cost=$1.23  estimated_savings=$0.01  stale_cost=$0.00  transcripts=14

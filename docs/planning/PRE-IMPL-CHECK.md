@@ -35,7 +35,7 @@
 | 5 | **Opportunity Cost** | Not building = 5 plugins × 2.5 day/month × 12 × $100/h × 5 people = **$15K/year loss** = HIGH VALUE |
 | 6 | Compatibility Risk | Opt-in provider. No conflict with existing review workflow. **LOW** |
 | 7 | Security Risk | Hook bypass possible (opt-in `DEV_KIT_HOOK_OFF`). Secret scan automated. **LOW** |
-| 8 | Operational Risk | CI dependency + provider down → manual `/dev-kit:eval`. **MEDIUM** |
+| 8 | Operational Risk | CI dependency + provider down → manual `/dev-kit:evaluate`. **MEDIUM** |
 
 (Detail: `docs/quality/COST-ANALYSIS.md`)
 
