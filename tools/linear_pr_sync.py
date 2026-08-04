@@ -346,18 +346,13 @@ def cmd_bulk_update(args: argparse.Namespace) -> int:
 def cmd_smoke(args: argparse.Namespace) -> int:
     """Run the bandwidth check: API key, project, state IDs.
 
-    Distinguishes two failure modes so the smoke step can run without
-    a configured secret yet still fail loudly on real config drift:
-
-      - Secret absent: workflow is not configured for this repository
-        → exit 0 (no-op). Repositories without LINEAR_API_KEY stay
-        green instead of failing every PR.
-      - Secret present but project/states missing → exit 1 (config
-        drift). The contract from the smoke command (fail-loud-when-
-        misconfigured) is preserved in the configured case.
+    Strict by design (per maintenance review M5): the smoke returns
+    non-zero whenever the secret is missing OR the project / any
+    required workflow state cannot be resolved. The operator must
+    add the LINEAR_API_KEY secret rather than silencing the gate.
     """
     if not _has_api_key():
-        return 0
+        return 1
     project_id = _project_id()
     if not project_id:
         print("project not found", file=sys.stderr)

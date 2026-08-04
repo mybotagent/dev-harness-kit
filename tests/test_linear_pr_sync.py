@@ -160,12 +160,12 @@ class TestSmoke(unittest.TestCase):
         ):
             self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 1)
 
-    def test_returns_zero_when_api_key_is_missing(self):
-        # Smoke must be a no-op (exit 0) when LINEAR_API_KEY is absent
-        # so the "sync linear state" workflow doesn't fail on repos
-        # that intentionally don't configure the secret.
+    def test_returns_one_when_api_key_is_missing(self):
+        # Smoke is strict: missing API key is a config drift failure
+        # (per maintenance review M5). The operator must add the
+        # LINEAR_API_KEY secret rather than silencing the gate.
         with patch.object(lps, "_has_api_key", return_value=False):
-            self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 0)
+            self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 1)
 
 
 class TestNoApiKeyIsNonBlocking(unittest.TestCase):
