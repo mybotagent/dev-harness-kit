@@ -6,14 +6,15 @@
 ## Hook matrix (per stage)
 
 ```
-| Hook           | Bootstrap | Plan | Design | Build | Review | Security | Ship |
-|----------------|:----:|:----:|:----:|:----:|:----:|:----:|:----:|
-| tdd-guard       |  -    |  -    |  -    |  ✅    |  -    |  -    |  -    |
-| bash-guard      |  -    |  -    |  -    |  ✅    |  -    |  -    |  -    |
-| secret-scan     |  R    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
-| slop-detector   |  -    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
-| stop-verify     |  -    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |
-| linear-autosync |  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
+| Hook                  | Bootstrap | Plan | Design | Build | Review | Security | Ship |
+|-----------------------|:----:|:----:|:----:|:----:|:----:|:----:|:----:|
+| tdd-guard             |  -    |  -    |  -    |  ✅    |  -    |  -    |  -    |
+| bash-guard            |  -    |  -    |  -    |  ✅    |  -    |  -    |  -    |
+| secret-scan           |  R    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
+| slop-detector         |  -    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
+| stop-verify           |  -    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |  ✅    |
+| linear-autosync       |  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
+| sub-agent-handoff     |  -    |  -    |  -    |  ✅    |  ✅    |  -    |  ✅    |
 ```
 (R = read-only) (* = fires only when Linear is configured.)
 
@@ -29,3 +30,4 @@
 | `worktree-guard` | n/a | PreToolUse Edit/Write block on main checkout (this repo). |
 | `git-guard` | n/a | PreToolUse Bash block on `git commit`/`push` to main. |
 | `linear-autosync` | always (gated) | PreToolUse Edit/Write block (gated) that calls `tools/linear_sync.py`. No-op when `LINEAR_API_KEY` and `.dev-kit/.enabled.json:mcp.linear` are both absent. Always exit 0 (non-blocking per #539). |
+| `sub-agent-handoff` | build / review / ship | PostToolUse Agent advisory verifying the agent response carries the STATUS / EVIDENCE / NEXT-ACTION pieces needed for the standard handoff template (SHO-154). Always exit 0 except when `jq` is missing (exit 2 + deny JSON). Per-worktree opt-out via `.dev-kit/.sub-agent-handoff-disabled`. Non-blocking on parse errors (per #539). |
