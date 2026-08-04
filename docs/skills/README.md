@@ -48,6 +48,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 |---|---|---|
 | [`plan`](plan.md) | `state` | Idea → `PRD.md` + `phases/<name>/` through a 5-gate loop. |
 | [`build`](build.md) | `state` | Per-step sub-agent delegation with an integrated TDD + auto-fix loop. |
+| [`research-plan-build`](research-plan-build.md) | `state` | 3-phase binder (research → plan → implement) — non-skippable pipeline for multi-session or multi-file tasks. |
 
 ### Review → Ship
 
@@ -146,6 +147,7 @@ step inside their parent skill's flow; you never type them directly.
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
 | [`refactor`](refactor.md) | `build` | `analysis` | human |
 | [`research`](research.md) | `design` | `enforcement` | human |
+| [`research-plan-build`](research-plan-build.md) | `build` | `state` | human |
 | [`review`](review.md) | `review` | `analysis` | human |
 | [`security`](security.md) | `security` | `enforcement` | human |
 | [`ship`](ship.md) | `ship` | `state` | human |

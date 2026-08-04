@@ -29,6 +29,7 @@ per-runtime wiring differences), see
 | `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
+| `loop-detect` | Warns after three consecutive identical Bash calls using per-session fingerprints | All |
 | `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
 | `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch (slot check extracted to `hooks/lib/slot-check.sh` for unit-testable truth table — see *Shared helpers* below) | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
@@ -54,6 +55,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
 | `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop (phrase + structure + scoring, KO+EN) | advisory (opt-in strict) |
 | `worktree-log-auto-install.sh` | PostToolUse (Bash) | Install loghooks into a newly-added worktree | advisory |
+| `loop-detect.sh` | PostToolUse (Bash) | Warn before another retry after repeated identical Bash calls | advisory (fails open) |
 | `acp-tier-assert.sh` | PreToolUse (`*`) | Enforce ACP agent tier-assertion line on first tool call (M/T/L) | hard-block |
 | `stop-verify.sh` | Stop | Run regression tests + pre-completion intent checklist on session end | hard-block |
 | `sub-agent-handoff.sh` | PostToolUse (Agent) | Verify sub-agent response carries STATUS / EVIDENCE / NEXT-ACTION pieces; advisory; fail-closed on jq missing | advisory (fail-closed on missing jq) |
@@ -81,6 +83,7 @@ inside a PreToolUse shell script). Each helper carries its own
 | `locale-utf8.sh` | preamble-using hooks | One-shot `LC_ALL=C.UTF-8` / `LANG=C.UTF-8` setup |
 | `slot-check.sh` | `git-guard.sh` | `slot_should_deny <claude> <codex> <expected>` truth table for the `plugin.json` version-slot check (added 2026-08-03, inspect finding #2) |
 | `stage-gate.sh` | `stop-verify.sh` | `hook_stage_active` + `pre_completion_checklist_active` stage-activation helpers (the second follows stop-verify's stage + override rules so the intent checklist fires under the same gate) |
+| `loop-detect.sh` | `hooks/loop-detect.sh` | Append per-session Bash fingerprints and detect consecutive matches at the configured threshold |
 
 ---
 
