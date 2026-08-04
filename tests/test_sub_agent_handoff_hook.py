@@ -29,21 +29,47 @@ def _run_hook(payload: str, cwd: Path | None = None,
               timeout: int = 15) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["CLAUDE_PLUGIN_ROOT"] = str(REPO_ROOT)
+    tmp_bin = None
     if strip_jq:
+        # Build an isolated bin dir with every utility the hook needs
+        # (bash, cat, mktemp, python3, rm, printf, ...) but NOT jq.
+        # This lets us strip jq from PATH on minimal CI images where
+        # jq lives in the same dir as bash (e.g. /usr/bin on
+        # ubuntu-latest) without losing the other deps the hook needs
+        # to run far enough to hit the fail-closed check.
+        tmp_bin = tempfile.mkdtemp(prefix="sub-agent-hook-jq-test-")
+        for util in (
+            "bash", "sh", "cat", "rm", "mktemp", "printf", "echo",
+            "python3", "env", "true", "tr", "cut", "grep", "head",
+            "tail", "sed", "awk", "wc", "dirname", "basename", "expr",
+        ):
+            src = shutil.which(util)
+            if src and not os.path.exists(os.path.join(tmp_bin, util)):
+                try:
+                    os.symlink(src, os.path.join(tmp_bin, util))
+                except FileExistsError:
+                    pass
         cleaned = env.get("PATH", "")
-        parts = [p for p in cleaned.split(":") if p and not _which_in(p, "jq")]
+        parts = [tmp_bin]
+        for p in cleaned.split(":"):
+            if p and not _which_in(p, "jq"):
+                parts.append(p)
         env["PATH"] = ":".join(parts)
     if env_extra:
         env.update(env_extra)
-    return subprocess.run(
-        ["bash", str(HOOK)],
-        input=payload,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=timeout,
-        cwd=str(cwd) if cwd else None,
-    )
+    try:
+        return subprocess.run(
+            ["bash", str(HOOK)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout,
+            cwd=str(cwd) if cwd else None,
+        )
+    finally:
+        if tmp_bin:
+            shutil.rmtree(tmp_bin, ignore_errors=True)
 
 
 def _which_in(path_dir: str, binary: str) -> bool:
