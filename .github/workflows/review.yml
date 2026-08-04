@@ -205,11 +205,18 @@ jobs:
           # Most recent claude[bot] comment that contains a **Verdict:** line.
           # In track_progress mode the action updates ONE comment per job, so
           # "most recent" = this job's comment.
+          # Capture the full verdict word (or "Changes Requested" two-word
+          # phrase). The previous `grep -oE ... | awk '{print $NF}'`
+          # pipeline dropped the first word of "Changes Requested" because
+          # awk's $NF is the last whitespace-separated field — the extract
+          # was producing "Requested" for the maintenance LLM's actual
+          # "Changes Requested" verdicts, which the maintenance gate then
+          # treated as unparseable.
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
+            | tr -d '[:space:]' || true)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
@@ -351,11 +358,16 @@ jobs:
           # "most recent" = this job's comment (review job's older comments
           # come before security's in chronological order, so we still want
           # the latest = security's).
+          # See the review-job extract above for why we replaced
+          # `grep -oE ... | awk '{print $NF}'` with `sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' | tr -d '[:space:]'`
+          # — the awk pipeline dropped the first word of "Changes Requested"
+          # and the extract was reporting "Requested" for the LLM's
+          # actual two-word verdict.
           verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
             | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | grep -oE '\*\*Verdict:\*\*\s*(Approve|Blocked|Changes Requested)' \
-            | awk '{print $NF}' || true)"
+            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
+            | tr -d '[:space:]' || true)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
           audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
@@ -374,13 +386,32 @@ jobs:
     if: |
       always() &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
-    # No permissions: gate only needs `gh api` (read) for verdict extraction
-    # and does NOT auto-approve. Actual PR approval is the human's job.
+    # The auto-approve step casts `gh pr review --approve`, which
+    # writes to the PR. The default GITHUB_TOKEN is read-only on most
+    # operations; grant pull-requests: write so the auto-approve
+    # call has the permission it needs. Other GITHUB_TOKEN scopes
+    # stay at the workflow default; we don't widen the surface
+    # beyond what the auto-approve path actually requires.
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - name: Checkout (seed git context for gh pr review)
+        # The new "Auto-approve on clean verdict" step shells out to
+        # `gh pr review --approve`, which in turn shells out to `git`
+        # to resolve the current branch. The gate job has no prior
+        # checkout, so without this seed the gh call exits 1 with
+        # "fatal: not a git repository" and the severity gate goes
+        # red instead of flipping reviewDecision=APPROVED.
+        # persist-credentials: false so the token does not leak into
+        # git config after the step.
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Touch-probe (does this PR touch production code?)
         id: touch_probe
         env:
@@ -461,6 +492,7 @@ jobs:
           fi
 
       - name: Combined verdict gate
+        id: combined_verdict
         run: |
           # Read verdicts directly from each job's outputs (set by the
           # 'Extract <skill> verdict' post-step in review + security jobs).
@@ -469,6 +501,15 @@ jobs:
           S="${{ needs.security.outputs.verdict }}"
           EVENT="$EVENT_NAME"
           echo "review=$R  security=$S"
+
+          # Capture the raw (undefaulted) values so the auto-approve
+          # step can refuse to fire when either LLM judge returned no
+          # verdict. The combined gate below is allowed to default
+          # missing verdicts to Approve + ::warning:: for the human
+          # gate, but auto-approve is a stricter path: a missing LLM
+          # verdict must NOT silently synthesize an approval.
+          echo "raw_review=${R:-}" >> "$GITHUB_OUTPUT"
+          echo "raw_security=${S:-}" >> "$GITHUB_OUTPUT"
 
           # Tolerate missing verdicts in BOTH event modes. The previous
           # strict pull_request branch hard-failed on empty R or S, which
@@ -500,6 +541,9 @@ jobs:
           r=$(rank "$R"); s=$(rank "$S")
           worst=$([ "$r" -ge "$s" ] && echo "$R" || echo "$S")
           echo "Combined worst verdict: $worst"
+          # Surface the resolved verdict to downstream steps so the
+          # auto-approve step can read it without re-computing.
+          echo "verdict=$worst" >> "$GITHUB_OUTPUT"
 
           # Tolerate unparseable verdicts (e.g. "Requested", "Skipped", or
           # unexpected formats from the /dev-kit:* agents): treat as non-
@@ -516,3 +560,60 @@ jobs:
             "Changes"*) echo "::error::Changes Requested (review=$R security=$S)"; exit 1 ;;
             Blocked) echo "::error::Blocked (review=$R security=$S)"; exit 1 ;;
           esac
+
+      - name: Auto-approve on clean verdict
+        # Implements the header-documented "Approve → success + auto-approve"
+        # contract that the code never actually wired up: when (a) the combined
+        # gate passed with verdict=Approve, (b) the L3 evidence gate was
+        # actually enforced (PR touches production code), and (c) the PR is
+        # open and not yet auto-approved, cast `gh pr review --approve` so
+        # GitHub's `reviewDecision` flips to APPROVED and the branch-
+        # protection gate unblocks merge.
+        #
+        # Fail-closed guards (the LLM maintenance judge flagged both of
+        # these in the 2026-08-03 babysit incident for PR #559; this
+        # commit addresses them):
+        #   1. The if: predicate requires BOTH the combined verdict to
+        #      be 'Approve' AND the raw (undefaulted) review + security
+        #      verdicts to be non-empty. The combined gate is allowed to
+        #      default missing verdicts to Approve + ::warning:: for the
+        #      human gate, but auto-approve is a stricter path: a missing
+        #      LLM verdict must NOT silently synthesize an approval.
+        #   2. The script uses `set -eEuo pipefail` (with -e) and
+        #      explicitly asserts that the gh API idempotency probe and
+        #      the gh pr review call both exited 0. A rate-limit or
+        #      network failure can no longer leave the step green while
+        #      the approval is unposted.
+        #
+        # Runs as github-actions[bot], which is NOT the PR author — so
+        # the GitHub "reviewer cannot approve own PR" rule does not
+        # block this (the author's machine would have been blocked, see
+        # the babysit incident of 2026-08-03 / PR #557).
+        if: |
+          success() &&
+          steps.combined_verdict.outputs.verdict == 'Approve' &&
+          steps.touch_probe.outputs.touches_prod == 'true' &&
+          steps.combined_verdict.outputs.raw_review != '' &&
+          steps.combined_verdict.outputs.raw_security != ''
+        run: |
+          set -eEuo pipefail
+          # Idempotency: skip if the PR already has an APPROVED review
+          # (re-runs of this job must not stack duplicate events). The
+          # REST `pulls/{n}` endpoint does NOT expose review_decision
+          # — that field is only available via the GraphQL `gh pr
+          # view --json reviewDecision` query. Using the wrong field
+          # would make the // "" fallback always return empty, the
+          # APPROVED check fall through, and a re-run on an
+          # already-approved PR would re-cast the approval. (CC-6
+          # finding from the 2026-08-03 maintenance review of
+          # PR #559.)
+          EXISTING=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json reviewDecision --jq '.reviewDecision // ""')
+          if [ "$EXISTING" = "APPROVED" ]; then
+            echo "PR already has reviewDecision=APPROVED; skipping auto-approve (idempotent)."
+            exit 0
+          fi
+          echo "Casting auto-approve for PR #${PR_NUMBER} (review=Approve, security=Approve, touches_prod=true, both raw verdicts present)."
+          gh pr review "$PR_NUMBER" --approve \
+            --body "Auto-approved by review.yml on clean combined verdict (review + security both Approve, PR touches production code, L3 evidence gate passed). The operator still owns the final merge step."
+          echo "Auto-approve posted."
