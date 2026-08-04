@@ -8,7 +8,7 @@
 
 What we are trying to learn. One sentence; framed as a falsifiable claim.
 
-```
+```text
 question: <single sentence>
 scope:    <files / modules / behavior in scope>
 out_of_scope: <what we deliberately will not investigate>
@@ -38,7 +38,7 @@ other source. If two independent sources disagree, escalate to
 `lib/research_engine.py:escalate()` Phase 2 (multi-source fan-out)
 before recording the resolution.
 
-```
+```text
 claim-1: agrees with claim-3 (independent origin) → confidence boosted
 claim-2: standalone, no second source → flag for follow-up
 claim-4: disagrees with claim-5 → escalated to Phase 2
@@ -60,3 +60,17 @@ citation block in the body, or be flagged `[UNCITED]` by
 Hand off to `templates/plan.md`. Do not start the plan phase until every
 sentence in the Conclusion either cites a source or is explicitly
 flagged `[UNCITED]`.
+
+## Gate (executable)
+
+The Phase 1 → Phase 2 advance gate is:
+
+```python
+annotated = enforce_citations(conclusion_text)
+gate_ok = "[UNCITED]" not in annotated
+```
+
+`enforce_citations()` returns annotated text, not a count — with
+`[UNCITED]` prefixed on each unsupported sentence. The gate is the
+absence of the marker in the returned Conclusion, not a numeric
+threshold.

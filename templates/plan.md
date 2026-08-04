@@ -10,7 +10,7 @@
 One sentence. The Goal here must match the Question-Verdict in
 `research.md`; if they diverge, return to research.
 
-```
+```text
 goal: <single sentence>
 acceptance_metric: <the single number that moves if this works>
 out_of_scope: <what we explicitly will not change>
@@ -33,7 +33,7 @@ is the human-readable companion to `phases/<name>/index.json` +
 
 ### Step detail (one block per step)
 
-```
+```text
 step: N
 name: <slug>
 owner: <agent or human role>
@@ -61,22 +61,29 @@ override this; it is the human-readable companion.
 
 ```text
 feat(<scope>): step N — <name>
-
-Implements plan.md step N (<topic>).
-- Acceptance: <paste acceptance criteria>
-- Verification: <test command + exit code>
-- Files: <list>
-
 chore(<scope>): step N output
-
-Writes phases/<name>/step<N>-output.json (real subprocess exit code,
-stdout, stderr, duration_seconds).
 ```
 
-The build runner enforces this contract - `plan.md` describes what the
-reviewer should see, not what the runner emits. A reviewer reading the
-commit log can cross-walk each `feat(...)` to its `plan.md` step row
-via the step number in the body.
+Where `<scope>` is the build phase name (e.g. `plan/plugin-harness-v3-0-mvp`)
+and `<N>` is the step number from the Steps table. The actual runner
+emits `feat({phase}): step {N}[ — <name>]` (the curly-brace form in
+`lib/execute.py:_step_post_collect` line 521). Either spelling is the
+same protocol — `(<scope>)` and `({phase})` differ only in how the
+build phase name is interpolated; both address the same commit
+subject.
+
+The runner does NOT inject a commit body — it runs `git commit -m <subject>`
+only. The cross-walk anchor between commit subject and `plan.md` is the
+step number embedded in the subject itself (not a body bullet block).
+A reviewer reading the commit log can map each `feat(...)` to its
+`plan.md` step row via that number.
+
+`phases/<name>/step<N>-output.json` is written into the per-step worktree
+BEFORE the first commit (`lib/execute.py:_step_post_collect`), so the
+`feat(...)` commit typically captures both the implementation files and
+the output JSON. The `chore(...)` commit is a no-op when there is
+nothing new to stage (see `_commit_step`'s `--quiet` check). `plan.md`
+is not the SSOT for the commit protocol — `lib/execute.py` is.
 
 ## Risks
 
@@ -99,5 +106,6 @@ reviewer reads alongside the per-step commits.
 Hand off to the implement phase via `/dev-kit:build`. The research → plan →
 implement chain is complete when every row in the Steps table above has
 (a) a matching `phases/<name>/step<N>.md` emitted by `/dev-kit:plan`,
-(b) the runner's 2-commit protocol on the feature branch, and
+(b) the runner's 2-commit protocol on the feature branch (step number
+    lives in the commit subject), and
 (c) verification commands in `### Step detail` that exit 0.

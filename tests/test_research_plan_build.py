@@ -28,18 +28,11 @@ def _read_text(path: Path) -> str:
 
 
 def _parse_frontmatter(md: str) -> dict:
-    """Minimal YAML-frontmatter parser (string-typed values only)."""
+    """Parse the YAML frontmatter block via PyYAML."""
+    import yaml  # already a project dependency (tests/test_smoke.py)
     m = re.match(r"^---\n(.+?)\n---", md, re.DOTALL)
     assert m, f"frontmatter missing in {md[:40]!r}..."
-    fm: dict = {}
-    for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        fm[k.strip()] = v.strip().strip('"').strip("'")
-    return fm
+    return yaml.safe_load(m.group(1)) or {}
 
 
 SKILL_PATH = PROJECT_ROOT / "skills" / "research-plan-build" / "SKILL.md"
@@ -75,8 +68,9 @@ class TestBinderSkillExists(unittest.TestCase):
     def test_skill_declares_user_invocable(self):
         """Human-use skill — exposed as `/dev-kit:research-plan-build`."""
         fm = _parse_frontmatter(_read_text(SKILL_PATH))
+        # PyYAML parses unquoted `true` as the bool True.
         self.assertEqual(
-            fm.get("user-invocable"), "true",
+            fm.get("user-invocable"), True,
             "research-plan-build is human-invoked; user-invocable must be true",
         )
 
@@ -276,6 +270,114 @@ class TestCrossArtifactContract(unittest.TestCase):
         self.assertIn(
             "cannot be skipped", text,
             "skill body must declare phases are non-skippable",
+        )
+
+
+class TestBuildSkillGateAlignment(unittest.TestCase):
+    """Contract tests for the build skill -> binder composition gate.
+
+    The composition instruction in `skills/build/SKILL.md` is
+    `Skill("research-plan-build", <idea>)`. For that call to be
+    permitted, `Skill` must appear in `allowed-tools`. Mirrors the
+    convention established at `skills/plan/SKILL.md:10`.
+    """
+
+    def test_build_skill_allows_skill_tool(self):
+        fm = _parse_frontmatter(_read_text(BUILD_SKILL_PATH))
+        allowed = fm.get("allowed-tools", "").split()
+        self.assertIn(
+            "Skill", allowed,
+            "build/SKILL.md allowed-tools must include 'Skill' so the "
+            "documented Skill('research-plan-build', <idea>) handoff is "
+            "permitted. Mirror skills/plan/SKILL.md:10.",
+        )
+
+    def test_build_skill_does_not_disallow_skill_tool(self):
+        fm = _parse_frontmatter(_read_text(BUILD_SKILL_PATH))
+        disallowed = fm.get("disallowed-tools", "").split()
+        self.assertNotIn(
+            "Skill", disallowed,
+            "build/SKILL.md disallowed-tools must NOT include 'Skill'.",
+        )
+
+
+class TestCitationGateExecutableContract(unittest.TestCase):
+    """The Phase 1 -> Phase 2 gate must match `enforce_citations()`'s
+    string return type, NOT a numeric count. The function returns
+    annotated text (`lib/research_engine.py:607`), not a count of
+    uncited sentences.
+    """
+
+    def test_skill_gate_uses_marker_absence_not_count(self):
+        body = _read_text(SKILL_PATH)
+        # Must describe absence-of-marker semantics, not a number.
+        self.assertIn(
+            "[UNCITED] not in annotated", body,
+            "research-plan-build skill must describe the gate as "
+            '"[UNCITED] not in annotated" (enforce_citations returns '
+            "annotated text, not a count)",
+        )
+        self.assertNotIn(
+            "zero uncited sentences",
+            body,
+            "skill must NOT describe the gate as a numeric count; "
+            "enforce_citations returns annotated text, not a count",
+        )
+
+    def test_research_template_gate_uses_marker_absence(self):
+        body = _read_text(RESEARCH_TEMPLATE)
+        self.assertIn(
+            "[UNCITED]", body,
+            "research.md must surface the [UNCITED] marker as the gate signal",
+        )
+        self.assertIn(
+            "returns annotated text, not a count",
+            body,
+            "research.md must clarify enforce_citations() return type so "
+            "the executable gate is unambiguous",
+        )
+
+    def test_docs_reference_mirrors_gate_wording(self):
+        body = _read_text(Path(__file__).parent.parent / "docs" / "skills" / "research-plan-build.md")
+        self.assertIn(
+            "[UNCITED] not in annotated", body,
+            "docs/skills/research-plan-build.md must mirror the "
+            "executable citation gate wording from the skill body",
+        )
+
+
+class TestCommitContractExcludesBody(unittest.TestCase):
+    """The build runner (`lib/execute.py:_commit_step`) runs
+    `git commit -m <subject>` only — no commit body. The skill and
+    template must NOT claim otherwise.
+    """
+
+    def test_skill_does_not_claim_commit_body(self):
+        body = _read_text(SKILL_PATH)
+        # Tolerate line-wrap (commit body may sit at start of next line).
+        self.assertRegex(
+            body,
+            r"does NOT inject a commit\s*body",
+            "skill must explicitly state the runner does NOT inject a "
+            "commit body (git commit -m <subject> only)",
+        )
+
+    def test_plan_template_does_not_claim_commit_body(self):
+        body = _read_text(PLAN_TEMPLATE)
+        self.assertRegex(
+            body,
+            r"does NOT inject a commit\s*body",
+            "plan.md template must explicitly state the runner does NOT "
+            "inject a commit body",
+        )
+
+    def test_docs_mirror_excludes_body_claim(self):
+        body = _read_text(Path(__file__).parent.parent / "docs" / "skills" / "research-plan-build.md")
+        self.assertIn(
+            "does NOT inject commit bodies",
+            body,
+            "docs/skills/research-plan-build.md must state the runner "
+            "does NOT inject commit bodies",
         )
 
 

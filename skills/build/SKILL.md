@@ -7,7 +7,7 @@ when_to_use: |
   - User types /dev-kit:build
   - After plan+design (PRD.md + phases/<name>/ exist)
   - After /dev-kit:ci-setup has written .dev-kit/ci-config.json (REQUIRED — refuse if marker missing)
-allowed-tools: Read Write Bash Glob Grep Agent
+allowed-tools: Read Write Bash Glob Grep Agent Skill
 disallowed-tools: WebFetch
 model: opus
 disable-model-invocation: false

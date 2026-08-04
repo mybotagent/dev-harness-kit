@@ -20,7 +20,7 @@ safety:
 ---
 > [← Skills index](../../README.md)
 
-# /dev-kit:research-plan-build — 3-phase binder
+## Overview
 
 Self-contained binder that walks a single task through three mandatory
 phases. No phase may be skipped; the safety_valve gate refuses to
@@ -45,16 +45,17 @@ proceed when the predecessor artifact is missing.
    `phases/<name>/index.json` (NOT `plan.md`); `plan.md` is the
    reviewer artifact. The build runner enforces the 2-commit protocol
    per step (`lib/execute.py:_run_sequential`): one `feat(...)`
-   commit + one `chore(...)` commit per successful step. Each commit
-   body MUST reference the matching `plan.md` step number so a
-   reviewer can cross-walk.
+   commit + one `chore(...)` commit per successful step. Commit
+   subjects are `feat({phase}): step {N}[ — <name>]` and
+   `chore({phase}): step {N} output`. The runner does NOT inject a commit
+   body. Step numbering lives in the subject.
 
 ## Why this skill exists
 
 - Plan is reviewable before code is written (Gate-5 emit vs Gate-4 decompose).
-- 40-60% context utilization (HumanLayer pattern) — each phase writes to
-  disk so the next phase can read the artifact cold, instead of re-asking
-  the model to recall a long prior turn.
+- Each phase writes to disk so the next phase can read the artifact
+  cold, instead of carrying the prior turn's context window into the
+  next phase.
 - Composes with the existing research half
   (`lib/research_engine.py` + `lib/analysis_core/`) which is already in
   production; this skill is the binder that ties research and plan
@@ -74,8 +75,10 @@ advance when the prior phase's artifact is missing or incomplete.
 - **Output contract**: every claim in the Conclusion cites
   `url` + `fetched_at` + `source_type`, OR is flagged `[UNCITED]` by
   `enforce_citations()`.
-- **Gate to advance**: `lib.research_engine.enforce_citations(text)`
-  returns zero uncited sentences in the Conclusion section.
+- **Gate to advance**: `annotated = enforce_citations(conclusion)` and
+  `[UNCITED] not in annotated`. `enforce_citations()` returns annotated
+  text, not a count; the absence of the marker in the returned
+  Conclusion is the executable gate.
 - **Refuse**: writing any source file under `src/`, `lib/`, `tests/`,
   `hooks/`, `skills/<other>/`, `commands/`, `tools/` during this phase.
 
@@ -101,10 +104,12 @@ advance when the prior phase's artifact is missing or incomplete.
   protocol per step.
 - **Output contract**: ONE PLAN STEP per build run. The build runner
   emits the canonical 2-commit protocol per step (`feat(...)` then
-  `chore(...)`) — see `lib/execute.py:_run_sequential`. Each commit
-  body references `plan.md step N` and the matching acceptance
-  criteria so a reviewer can cross-walk. Multiple plan steps in one
-  commit bundle is the runner's contract violation, not the binder's.
+  `chore(...)`) — see `lib/execute.py:_run_sequential`. The step
+  number lives in the commit subject; the runner does NOT inject a commit
+  body (no Acceptance/Verification/Files bullet block). The cross-walk
+  anchor between commit subject and `plan.md` is the step number, not a
+  body. Multiple plan steps in one commit bundle is the runner's
+  contract violation, not the binder's.
 - **Refuse**: bundling multiple plan steps into a single build run.
 
 ## Composition with /dev-kit:build
