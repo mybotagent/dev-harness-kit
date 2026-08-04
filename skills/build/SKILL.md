@@ -149,7 +149,7 @@ multi-session build must run the copy manually before the first step:
 
 ```bash
 mkdir -p .worktrees/<phase>-step<N>/templates
-cp -n templates/init.sh templates/feature_list.json \
+cp -u templates/init.sh templates/feature_list.json \
    templates/progress.log.md templates/session_handoff.md \
    .worktrees/<phase>-step<N>/templates/
 ```

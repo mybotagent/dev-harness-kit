@@ -275,7 +275,7 @@ class TestInitShExecutesInDocumentedLayout(unittest.TestCase):
     def test_dry_run_picks_next_failing_feature(self):
         """DRY_RUN=1 bash templates/init.sh should:
         - exit 0
-        - print the next failing feature id (F-001 in our seed data)
+        - print the next failing feature id (F-EX1 in the example data)
         - NOT create .session-baseline.json.baseline (DRY_RUN guard)."""
         proc = subprocess.run(
             ["bash", "templates/init.sh"],
@@ -288,7 +288,7 @@ class TestInitShExecutesInDocumentedLayout(unittest.TestCase):
             f"init.sh exited {proc.returncode} (stderr: {proc.stderr})",
         )
         self.assertIn(
-            "F-001", proc.stderr,
+            "F-EX1", proc.stderr,
             f"init.sh should report the next failing feature id (stderr: {proc.stderr!r})",
         )
         self.assertFalse(

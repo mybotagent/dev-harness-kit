@@ -7,13 +7,13 @@
 # re-run on each session open.
 #
 # Exit codes (machine-readable; consumers branch on `$?`):
-#   exit 0   — bootstrap complete (baseline recorded, next feature picked)
+#   exit 0   — bootstrap complete; baseline test failures are recorded, not propagated
 #   exit 2   — missing prerequisite (feature_list.json, tests dir, git)
 #   exit 3   — no failing feature remaining (entire feature list is green)
-#   exit 1   — generic failure (test runner error, git error, etc.)
+#   exit 1   — generic failure (feature-list parse or git error)
 #
 # Designed to be invoked at the top of a >1-session task. Writes:
-#   .session-baseline.json   — last test run output (for diff in session N+1)
+#   .session-baseline.json.baseline — last test output (for diff in session N+1)
 #   .session-next-feature    — id of the next failing feature to work on
 #
 # Env overrides (all optional):
@@ -95,7 +95,7 @@ log "next failing feature: $NEXT_FEATURE"
 # ---- 3. Run the test suite to capture baseline --------------------------
 if [ "$DRY_RUN" = "1" ]; then
   log "DRY_RUN=1: skipping test run and file writes"
-  log "would have written: .session-baseline.json, .session-next-feature=$NEXT_FEATURE"
+  log "would have written: .session-baseline.json.baseline, .session-next-feature=$NEXT_FEATURE"
   exit 0
 fi
 

@@ -1,51 +1,23 @@
 [
   {
-    "id": "F-001",
-    "description": "Add 4 long-running session templates (init.sh, feature_list.json, progress.log.md, session_handoff.md) under templates/.",
+    "id": "F-EX1",
+    "description": "Implement the first independently testable capability.",
     "status": "failing",
     "depends_on": [],
-    "test_path": "tests/test_long_running_templates.py::test_feature_list_exists"
+    "test_path": "tests/test_first_capability.py"
   },
   {
-    "id": "F-002",
-    "description": "Wire templates/ into skills/build/SKILL.md so a >1 session task emits them by default.",
-    "status": "failing",
-    "depends_on": ["F-001"],
-    "test_path": "tests/test_long_running_templates.py::test_skill_build_references_templates"
+    "id": "F-EX2",
+    "description": "Integrate the first capability with its consumer.",
+    "status": "blocked",
+    "depends_on": ["F-EX1"],
+    "test_path": "tests/test_capability_integration.py"
   },
   {
-    "id": "F-003",
-    "description": "Add test fixtures (tests/test_long_running_templates.py) validating file existence, JSON shape, and bash syntax for every template.",
-    "status": "failing",
-    "depends_on": ["F-001"],
-    "test_path": "tests/test_long_running_templates.py"
-  },
-  {
-    "id": "F-004",
-    "description": "Document the >1-session workflow in templates/progress.log.md (Goal / Work done / Tests status / Blockers / Next session should / Commits).",
-    "status": "failing",
-    "depends_on": ["F-001", "F-003"],
-    "test_path": "tests/test_long_running_templates.py::test_progress_log_has_required_sections"
-  },
-  {
-    "id": "F-005",
-    "description": "Author templates/session_handoff.md as a resume-from-cold-context checklist (where to start, what to verify, what to avoid).",
-    "status": "failing",
-    "depends_on": ["F-001", "F-003"],
-    "test_path": "tests/test_long_running_templates.py::test_session_handoff_has_resume_sections"
-  },
-  {
-    "id": "F-006",
-    "description": "Verify init.sh exits non-zero when feature_list.json is missing and runs a successful baseline when present.",
-    "status": "failing",
-    "depends_on": ["F-001", "F-003"],
-    "test_path": "tests/test_long_running_templates.py::test_init_sh_has_valid_bash_syntax"
-  },
-  {
-    "id": "F-007",
-    "description": "Register Linear issue for Pattern 2 implementation and create PR once all tests pass.",
-    "status": "failing",
-    "depends_on": ["F-002", "F-003", "F-004", "F-005", "F-006"],
-    "test_path": "tests/test_long_running_templates.py"
+    "id": "F-EX3",
+    "description": "Verify the completed workflow end to end.",
+    "status": "blocked",
+    "depends_on": ["F-EX1", "F-EX2"],
+    "test_path": "tests/test_workflow_e2e.py"
   }
 ]

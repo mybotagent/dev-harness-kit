@@ -65,7 +65,7 @@ Test evidence: 29 tests in `tests/test_execute.py` cover runner behavior (skippa
 
 ## Long-running session templates
 
-When a build phase is expected to span more than one Claude Code session — typical signal: step count >= 5, or the user explicitly says "this is a multi-day effort" — `build` copies the four-file template bundle from `templates/` into the per-step worktree at `<worktree>/templates/` before the first step starts (idempotent — `cp -n` over existing files). The bundle is the cold-start fix: without it, every new session spends 30-60 min re-discovering "what did the last session do?".
+When a build phase is expected to span more than one Claude Code session — typical signal: step count >= 5, or the user explicitly says "this is a multi-day effort" — `build` copies the four-file template bundle from `templates/` into the per-step worktree at `<worktree>/templates/` before the first step starts (idempotent — `cp -u` refreshes only stale files). The bundle is the cold-start fix: without it, every new session spends 30-60 min re-discovering "what did the last session do?".
 
 | Template | Purpose |
 |---|---|
