@@ -259,8 +259,12 @@ class TestCheckVerdictFreshness(unittest.TestCase):
         return fake
 
     def test_returns_ghost_on_transport_error(self):
+        # SubprocessError covers CalledProcessError / TimeoutExpired /
+        # any gh-side failure. The helper must swallow it and return
+        # GHOST (fail-closed) rather than raising.
+        import subprocess as _sp
         with patch.dict("os.environ", {"GITHUB_REPOSITORY": "sh-ai-x/dev-harness-kit"}):
-            with patch("subprocess.run", side_effect=Exception("boom")):
+            with patch("subprocess.run", side_effect=_sp.SubprocessError("boom")):
                 result = bpr.check_verdict_freshness(
                     pr_number=566, run_started_epoch=0, now_epoch=0,
                 )
@@ -297,10 +301,11 @@ class TestCheckVerdictFreshness(unittest.TestCase):
         self.assertEqual(result["comment_id"], "c1")
         self.assertEqual(result["comment_age_seconds"], 100)
 
-    def test_returns_stale_when_latest_comment_before_run(self):
+    def test_returns_stale_when_latest_comment_before_run_within_window(self):
+        # Comment 100s older than run; age 300s < 600s window -> STALE.
         latest = "2026-08-04T00:08:20Z"
         latest_epoch = _ts(latest)
-        run_started = latest_epoch + 500
+        run_started = latest_epoch + 100
         now_epoch = run_started + 200
         payload = [
             {"user": {"login": "claude[bot]"},
@@ -313,6 +318,27 @@ class TestCheckVerdictFreshness(unittest.TestCase):
                     pr_number=566, run_started_epoch=run_started, now_epoch=now_epoch,
                 )
         self.assertEqual(result["status"], bpr.STALE)
+        self.assertEqual(result["comment_id"], "c1")
+        self.assertEqual(result["comment_age_seconds"], 300)
+
+    def test_returns_ghost_when_latest_comment_past_freshness_window(self):
+        # Comment older than run AND older than the freshness window
+        # (VERDICT_FRESHNESS_WINDOW_SECONDS = 600) -> GHOST (fail-closed).
+        latest = "2026-08-04T00:00:00Z"
+        latest_epoch = _ts(latest)
+        run_started = latest_epoch + 100  # comment 100s older than run
+        now_epoch = latest_epoch + 700   # but 700s old from now -> past window
+        payload = [
+            {"user": {"login": "claude[bot]"},
+             "body": "**Verdict:** Approve",
+             "updated_at": latest, "id": "c1"},
+        ]
+        with patch.dict("os.environ", {"GITHUB_REPOSITORY": "sh-ai-x/dev-harness-kit"}):
+            with patch("subprocess.run", return_value=self._mock_run(payload)):
+                result = bpr.check_verdict_freshness(
+                    pr_number=566, run_started_epoch=run_started, now_epoch=now_epoch,
+                )
+        self.assertEqual(result["status"], bpr.GHOST)
         self.assertEqual(result["comment_id"], "c1")
         self.assertEqual(result["comment_age_seconds"], 700)
 

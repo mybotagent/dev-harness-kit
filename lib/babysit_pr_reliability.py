@@ -329,12 +329,11 @@ def check_verdict_freshness(
             return {"status": GHOST, "comment_id": None,
                     "comment_age_seconds": None, "comments": []}
         comments = json.loads(result.stdout)
-    except Exception as exc:
-        # GHOST is the fail-closed default. `exc` is intentionally
-        # swallowed — the babysit layer surfaces the reason; this
-        # helper stays a pure function over `(pr_number, run_started_epoch,
-        # now_epoch)` and the environment.
-        del exc
+    except (subprocess.SubprocessError, OSError, ValueError):
+        # SubprocessError: `gh` missing / killed / timeout. OSError:
+        # file / network errors. ValueError: malformed JSON. All three
+        # are fail-closed -> GHOST (the conservative call); the
+        # babysit layer surfaces the reason in its own log.
         return {"status": GHOST, "comment_id": None,
                 "comment_age_seconds": None, "comments": []}
 
@@ -357,8 +356,15 @@ def check_verdict_freshness(
 
     age = now_epoch - latest_epoch
     # If the latest comment is OLDER than the run started (the run
-    # completed but no fresh comment was posted) -> STALE.
+    # completed but no fresh comment was posted) -> STALE, but only
+    # while the comment is still within VERDICT_FRESHNESS_WINDOW_SECONDS
+    # of `now_epoch`. Past that window, the comment is from an
+    # unrelated older run and the extraction is reading genuinely
+    # stale data -> GHOST (fail-closed).
     if latest_epoch < run_started_epoch:
+        if age > VERDICT_FRESHNESS_WINDOW_SECONDS:
+            return {"status": GHOST, "comment_id": latest.get("id"),
+                    "comment_age_seconds": age, "comments": claude_comments}
         return {"status": STALE, "comment_id": latest.get("id"),
                 "comment_age_seconds": age, "comments": claude_comments}
     return {"status": FRESH, "comment_id": latest.get("id"),
