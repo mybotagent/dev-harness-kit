@@ -1,0 +1,406 @@
+title: Re-analysis — Applying the Agent Harness Playbook to dev-harness-kit (v0.3.199)
+status: draft
+date: 2026-08-04
+tags: [playbook, harness-engineering, reanalysis, v0.3.199, gaps, roadmap]
+sections:
+  - title: Why this re-analysis
+    body: |
+      The previous proposal ([01-chapter-mapping.yaml](01-chapter-mapping.yaml))
+      was written against v0.3.194. Between then and v0.3.199 (the
+      current origin/main), **6 substantive changes** landed:
+
+      | Commit | Change | Net lines | Pattern affected |
+      |---|---|---|---|
+      | #560 | close reliability gate escape hatches | +178/−67 | stage-gate, LoopDetection |
+      | #559 | auto-approve PR when combined verdict is clean | small | review pipeline |
+      | #558 | inspect-2026-08-04 phase 1 dead-code removal | −185 net | (no new pattern) |
+      | #557 | inspect 3 correctness majors | small | eval crash signal |
+      | #553 | prune asset-repair stub + dead test-portability workflow | −worktree | skill surface |
+      | #552 | optimize TDD scope enforcement | +88 | TDD cycle infrastructure |
+
+      Net effect: the harness is **more deterministic** (stage-gate
+      gates every stateful hook; TDD cycle is now machine-recorded)
+      and **smaller** (−185 dead lines, asset-repair removed). The
+      patterns I previously scored as GAP now lean PARTIAL or APPLIED.
+
+      This re-analysis preserves the scoring framework from v1,
+      **re-scores each pattern against v0.3.199**, and adds two
+      new patterns discovered during the re-audit.
+
+  - title: Updated audit scorecard (12 chapters, v0.3.199)
+    body: |
+      Compared to v0.3.194:
+
+      | Chapter | v0.3.194 | v0.3.199 | Reason for change |
+      |---|---|---|---|
+      | 00 Foundations | APPLIED | APPLIED | unchanged |
+      | 01 Instructions | APPLIED | APPLIED | unchanged |
+      | 02 Context | PARTIAL | PARTIAL | unchanged |
+      | 03 Verification | PARTIAL | **PARTIAL → APPLIED** | stage-gate + slot-check |
+      | 04 Subagents | APPLIED | APPLIED | unchanged |
+      | 05 Execution Loops | GAP | GAP | unchanged |
+      | 06 Tool Design | APPLIED | APPLIED | unchanged |
+      | 07 Safety | APPLIED | **APPLIED → STRONGER** | +1 dedicated lib (stage-gate) |
+      | 08 Evals | APPLIED | **APPLIED → STRONGER** | +1 crash signal in aggregates |
+      | 09 Session Lifecycle | PARTIAL | PARTIAL | unchanged |
+      | 10 Named Patterns | PARTIAL | **PARTIAL → APPLIED** | stage-gate matches pattern |
+      | 11 Anti-Patterns | AUDIT CLEAN | AUDIT CLEAN | unchanged |
+
+      Tally: 8 APPLIED (+3) · 3 PARTIAL (−2) · 1 GAP (unchanged) · 1 CLEAN.
+
+      The +3 steps come from:
+      - **#560** promoting stage-gate from concept (in 07-safety) to a
+        shipped helper (`hooks/lib/stage-gate.sh`).
+      - **#557** adding a `crashed` signal so eval aggregates no longer
+        absorb infrastructure failures as real signal.
+      - **#552** adding tdd-cycle.json which is the machine-recorded
+        evidence of RED/GREEN boundary.
+
+  - title: Pattern 1 — LoopDetectionMiddleware (re-scored)
+    body: |
+      ### v0.3.194 verdict: APPLY (+4)
+
+      In v0.3.199, **stage-gate.sh** (NEW) already gates every
+      stateful hook by reading `.dev-kit/.active-hooks.json` before
+      the hook runs. This is not the same thing as doom-loop
+      detection — it gates hook *execution*, not hook *outcome*.
+      Doom-loop detection (3 identical calls in a row) is still a
+      gap.
+
+      However, the gap is now smaller because:
+      - The bash-guard, secret-scan, slop-detector, stop-verify,
+        and tdd-guard all now source stage-gate.sh; a stage mismatch
+        short-circuits before the loop-prone code runs.
+      - The tdd-guard records the RED/GREEN boundary into
+        `.dev-kit/.tdd-cycle.json`; a retry-loop in TDD now produces
+        evidence that the system can flag.
+
+      ### Updated pros (4, was 5)
+
+      1. **Catches silent doom loops** that would otherwise burn
+         5–10k tokens before timing out.
+      2. **Preserves the user's hourly $ budget** — doom loops are
+         the #1 silent cost driver.
+      3. **Additive only** — adds a new hook, no existing behavior
+         changes.
+      4. **Easy to test** — fixture with 3 identical Bash calls
+         triggers the warning; deterministic.
+
+      ### Updated cons (3, was 2)
+
+      1. **False positives on legitimate retries** — same as before.
+      2. **Stage-gate already provides partial coverage** — the new
+         value-add is smaller than at v0.3.194 (the easy wins are
+         taken).
+      3. **One more hook to maintain** — hook count goes 16 → 17.
+
+      ### Updated feasibility
+
+      | Dimension | v0.3.194 | v0.3.199 | Notes |
+      |---|---|---|---|
+      | G (gain) | 2 | 1 | stage-gate already covers some cases |
+      | R (regression) | 0 | 0 | additive |
+      | E (effort) | 0 | 0 | 4 hours |
+      | I (invasiveness) | 0 | 0 | new hook file |
+      | T (testability) | 2 | 2 | fixture-based |
+
+      **Net: +3 (was +4). Apply? YES (Phase 2).**
+
+      ### Recommendation
+
+      Still apply, but deprioritize to Phase 2. Stage-gate has
+      consumed the easy wins; the remaining gap is the "slow-think
+      loop" (3 identical calls but spread across minutes). The
+      v0.3.194 urgency no longer applies.
+
+  - title: Pattern 2 — Long-running session templates (unchanged)
+    body: |
+      ### v0.3.199 verdict: APPLY (+4)
+
+      No change. The .dev-kit/hand-off/ directory is still
+      session-scoped, not feature-scoped. There is still no
+      canonical `feature_list.json`, `init.sh`, `progress.log`,
+      or `session_handoff.md` template.
+
+      The 30-60 min cold-start recovery claim from v0.3.194 stands.
+      The work is unchanged: 4 templates + 1 SKILL.md update.
+
+  - title: Pattern 3 — Research → plan → implement pipeline (re-scored)
+    body: |
+      ### v0.3.194 verdict: DEFER (borderline +1)
+
+      In v0.3.199, `lib/analysis_core/` provides a 7-module
+      infrastructure for "gather evidence → cross-validate → produce
+      structured output." This is the *research* half of the
+      pipeline:
+
+      ```
+      analysis_core/
+      ├── __init__.py        # API
+      ├── __main__.py        # CLI entry
+      ├── runner.py          # parallel runner
+      ├── dimensions.py      # typed dimension enumeration
+      ├── evidence.py        # evidence quotation
+      ├── cross_validate.py  # cross-source validation
+      └── fp_filter.py       # false-positive filter
+      ```
+
+      The pipeline is research-ready. The **plan** and **implement**
+      halves are still missing — there is no `plan.md` artifact
+      template and no `Plan → Implement → Validate` skill binder.
+
+      ### Updated pros (5, was 4)
+
+      1. **Research half is built** — `lib/analysis_core/` is a
+         production-tested runner.
+      2. **40-60% context utilization** — fits the HumanLayer pattern.
+      3. **Plan is reviewable** before code is written.
+      4. **Reusable across sessions** — same plan can be resumed.
+      5. **Composes with existing skills** — `skills/research/` and
+         `skills/valuate/` already use `lib/analysis_core/`.
+
+      ### Updated cons (2, was 3)
+
+      1. **Plan and implement halves still missing** — only research
+         is built.
+      2. **Slower per task** — 3 phases × overhead = ~15% longer.
+
+      ### Updated feasibility
+
+      | Dimension | v0.3.194 | v0.3.199 | Notes |
+      |---|---|---|---|
+      | G (gain) | 2 | 2 | unchanged |
+      | R (regression) | 1 | 0 | research half already in place |
+      | E (effort) | 1 | 1 | 6 hours (was 8) — research done |
+      | I (invasiveness) | 1 | 1 | new skill only |
+      | T (testability) | 2 | 2 | per-phase artifact |
+
+      **Net: +2 (was +1). Apply? YES.**
+
+      ### Recommendation
+
+      Move to Phase 1. The research half is already production-ready;
+      only the plan + implement binder needs to be wired.
+
+  - title: NEW Pattern 6 — PreCompletionChecklistMiddleware
+    body: |
+      ### Why now
+
+      LangChain reports 52.8% → 66.5% on Terminal Bench 2.0 with just
+      a `PreCompletionChecklistMiddleware` — a small piece of
+      middleware that forces the agent to verify against a checklist
+      *before* declaring done
+      [src:https://blog.langchain.com/improving-deep-agents-with-harness-engineering/;ts:2026-08-04;type:primary].
+
+      ### v0.3.199 state
+
+      No equivalent. The `stop-verify.sh` hook verifies *build* (lint,
+      test, type) but not *intent* (does the change accomplish the
+      user's stated goal, are the docs updated, are edge cases
+      covered). The build passes but the user reads the diff and
+      says "you didn't do what I asked."
+
+      ### Proposed implementation
+
+      Add a new module `lib/pre_completion_checklist.py` that
+      reads:
+      - The user's original request (from `.dev-kit/hand-off/`).
+      - The diff (`git diff HEAD~1`).
+      - The implementation file paths.
+
+      Then enforces a checklist before `stop-verify.sh` allows the
+      agent to declare done:
+
+      ```
+      □ Are the user's stated requirements addressed?
+      □ Are docs updated if behavior changed?
+      □ Are edge cases flagged in the diff?
+      □ Are public APIs documented?
+      □ Did the agent skip any tests marked as required?
+      ```
+
+      ### Pros (4)
+
+      1. **Catches "build passes but wrong work"** — the most
+         common dev-harness-kit failure mode anecdotally.
+      2. **Composes with stop-verify** — stop-verify is the build
+         check; the new middleware is the intent check.
+      3. **Reuses the existing diff-extraction machinery** in
+         `lib/`.
+      4. **Doesn't require LLM-as-judge** — the checklist is
+         deterministic (or rule-based) for 80% of items.
+
+      ### Cons (3)
+
+      1. **New module to maintain** — adds surface area.
+      2. **The "intent" check is fuzzy** — needs careful prompt
+         or rule design.
+      3. **One more failure mode** — false positives on the
+         intent check.
+
+      ### Feasibility
+
+      | Dimension | Score | Notes |
+      |---|---|---|
+      | G (gain) | 2 | Catches most-common failure mode |
+      | R (regression) | 0 | additive |
+      | E (effort) | 1 | 6 hours, 1 new module + 1 test |
+      | I (invasiveness) | 1 | Wired into stop-verify |
+      | T (testability) | 2 | fixture with diffs of varied quality |
+
+      **Net: +2. Apply? YES.**
+
+  - title: NEW Pattern 7 — CrashSignal in eval aggregates
+    body: |
+      ### Why now
+
+      Anthropic's langchain study reports: "a thrown scorer exception
+      used to yield value=1, arithmetically identical to a
+      legitimate lowest score; aggregate.compute() read only .value,
+      so eval verdicts silently absorbed infrastructure failures as
+      real signal."
+
+      ### v0.3.199 state
+
+      FIXED in #557. `lib/behavior_scorers` now exposes a `crashed:
+      bool` on `DimensionScore` and routes crashed dims to
+      ESCALATED, excluding them from the weighted-mean divisor.
+
+      ### Verdict: APPLIED (no work)
+
+      Pattern is already in place. The fix is in commit a7c0f5b
+      (2026-08-04). Documented here for completeness.
+
+  - title: Pattern 4 — Utah event-driven (still DEFER)
+    body: |
+      No change from v0.3.194. The concerns are unchanged:
+      - Inngest-equivalent runtime dependency
+      - 2-3 weeks of refactor
+      - No measured problem to solve
+
+      The v0.3.199 release does not move this needle.
+
+  - title: Pattern 5 — AIL grammar (still SKIP)
+    body: |
+      No change from v0.3.194. AIL remains a single-author research
+      prototype. No new deployments, no new benchmarks.
+
+  - title: Updated rollout plan (v0.3.199)
+    body: |
+      Re-prioritized based on v0.3.199 findings:
+
+      ```mermaid
+      gantt
+        title Playbook rollout (revised v0.3.199)
+        dateFormat  YYYY-MM-DD
+        axisFormat  %m-%d
+
+        section Phase 1 (week 1)
+        Long-running templates              :p2, 2026-08-05, 1d
+        Research-plan-build binder         :p3, after p2, 1d
+
+        section Phase 2 (week 2)
+        PreCompletionChecklistMiddleware   :p6, 2026-08-12, 1d
+        LoopDetectionMiddleware            :p1, after p6, 1d
+
+        section Phase 3 (deferred)
+        Utah event-driven harness          :crit, 2026-11-01, 14d
+        AIL grammar enforcement            :crit, 2026-12-01, 20d
+      ```
+
+      **Phase 1 changed**: pattern 3 (research-plan-build) moved up
+      from Phase 2 because the research half is already built.
+
+      **Phase 2 changed**: pattern 6 (PreCompletionChecklist) added
+      before pattern 1 (LoopDetection) because the marginal value
+      of LoopDetection dropped after stage-gate.
+
+      **Effort estimate**: 14 hours (was 9 in v0.3.194) — research
+      half already done plus Pattern 6 added.
+
+  - title: Updated cumulative pros/cons
+    body: |
+      Across the 3 APPLY patterns (long-running, research-plan-build,
+      PreCompletionChecklist):
+
+      **Gains (consolidated):**
+      - Cold-start recovery: 30-60 min/session (Pattern 2)
+      - Plan reuse: 15% of plan steps reused (Pattern 3)
+      - Intent verification: catches most-common "build passes,
+        wrong work" failure (Pattern 6)
+      - Doom-loop detection: bonus (Pattern 1, lower urgency)
+
+      **Costs (consolidated):**
+      - 14 EST hours of work (was 17) — 1 new module + 1 new skill
+        + 4 templates + 4 test files
+      - 0 lines of existing code changed
+
+      **Risk:**
+      - All additive. All reversible. All have a test fixture.
+
+      **Net: Strong apply.** The 14-hour effort buys 3 load-bearing
+      patterns, of which 1 has its research half already in
+      production.
+
+  - title: Diff vs v0.3.194 proposal
+    body: |
+      | Decision | v0.3.194 | v0.3.199 | Why |
+      |---|---|---|---|
+      | Pattern 1 (LoopDetection) | APPLY (Phase 1) | APPLY (Phase 2) | stage-gate covers some cases |
+      | Pattern 2 (Long-running templates) | APPLY (Phase 1) | APPLY (Phase 1) | unchanged |
+      | Pattern 3 (Research → plan → build) | DEFER (borderline +1) | APPLY (Phase 1) | research half built; R drops 1→0 |
+      | Pattern 4 (Utah event-driven) | DEFER | DEFER | unchanged |
+      | Pattern 5 (AIL grammar) | SKIP | SKIP | unchanged |
+      | Pattern 6 (PreCompletionChecklist) | (not scored) | APPLY (Phase 2) | new finding |
+      | Pattern 7 (CrashSignal) | (not scored) | APPLIED | #557 fixed it |
+      | Total effort | 9 EST hours | 14 EST hours | new Pattern 6 added |
+      | Total APPLY patterns | 2 | 3 | (Pattern 3 promoted; Pattern 6 new) |
+
+      The *count* of APPLY patterns grew by 1 in v0.3.199 (Pattern 3
+      promoted from DEFER-borderline, plus new Pattern 6). The
+      *effort* grew because Pattern 6 is new work; Pattern 3's
+      re-score is mostly a reclassification, not new effort.
+
+  - title: Open questions
+    body: |
+      1. **Phase ordering**: should PreCompletionChecklist land
+         *before* Long-running templates? The templates affect
+         session-start; the checklist affects session-end. They're
+         independent. Recommend parallel.
+      2. **Checklist medium**: should the PreCompletionChecklist
+         be a hook (mandatory) or a skill (advisory)? Mandate
+         breaks existing flows; advisory is ignored. Recommend
+         hook with a "skip with justification" escape.
+      3. **Doom-loop threshold**: with stage-gate in place, is the
+         3-call threshold still right? Or 5? Recommend defer to
+         first failure data after stage-gate is in production.
+
+  - title: Cross-references
+    body: |
+      - Previous proposal: [01-chapter-mapping.yaml](01-chapter-mapping.yaml)
+      - Stage-gate (#560): `hooks/lib/stage-gate.sh`
+      - TDD cycle (#552): `lib/tdd_cycle.py`, `lib/tdd_scope_judge.py`
+      - Eval crash signal (#557): `lib/behavior_scorers`
+      - Slot-check (#557): `hooks/lib/slot-check.sh`
+      - Asset-repair prune (#553): `skills/repair/` removed
+      - Project principles: `iron-laws/index.md`
+      - Hook matrix: `hooks/index.md`
+
+  - title: Sources
+    body: |
+      - Anthropic: [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
+      - Anthropic: [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+      - OpenAI: [Harness engineering](https://openai.com/index/harness-engineering/)
+      - HumanLayer: [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)
+      - LangChain: [Improving Deep Agents with harness engineering](https://blog.langchain.com/improving-deep-agents-with-harness-engineering/)
+      - LangChain: [Anatomy of an Agent Harness](https://blog.langchain.com/the-anatomy-of-an-agent-harness/)
+      - Geoffrey Huntley: [Ralph Wiggum as a Software Engineer](https://ghuntley.com/ralph/)
+      - Inngest: [Your Agent Needs a Harness, Not a Framework](https://www.inngest.com/blog/your-agent-needs-a-harness-not-a-framework)
+      - HEAAL: [AIL — AI Intent Language](https://github.com/hyun06000/AIL)
+      - Playbook repo: [sh-ai-x/agent-harness-playbook](https://github.com/sh-ai-x/agent-harness-playbook)
+      - PR #560: [fix(harness): close reliability gate escape hatches](https://github.com/sh-ai-x/dev-harness-kit/pull/560)
+      - PR #559: [fix(review): auto-approve PR when combined verdict is clean](https://github.com/sh-ai-x/dev-harness-kit/pull/559)
+      - PR #558: [refactor(inspect-2026-08-04): phase 1 — dead-code removal](https://github.com/sh-ai-x/dev-harness-kit/pull/558)
+      - PR #557: [fix(inspect): close 3 correctness majors from 2026-08-03 sweep](https://github.com/sh-ai-x/dev-harness-kit/pull/557)
+      - PR #553: [chore(harness): prune asset-repair stub + dead test-portability workflow](https://github.com/sh-ai-x/dev-harness-kit/pull/553)
+      - PR #552: [feat: optimize TDD scope enforcement](https://github.com/sh-ai-x/dev-harness-kit/pull/552)
