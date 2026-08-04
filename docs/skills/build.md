@@ -63,6 +63,23 @@ During the build stage, the hook matrix is: `tdd-guard` ON when `methodology=tdd
 
 Test evidence: 29 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`), plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics).
 
+## Long-running session templates
+
+When a build phase is expected to span more than one Claude Code session — typical signal: step count >= 5, or the user explicitly says "this is a multi-day effort" — `build` copies the four-file template bundle from `templates/` into the per-step worktree at `<worktree>/templates/` before the first step starts (idempotent — `cp -n` over existing files). The bundle is the cold-start fix: without it, every new session spends 30-60 min re-discovering "what did the last session do?".
+
+| Template | Purpose |
+|---|---|
+| `templates/init.sh` | Bootstrap: verify env, read feature list, pick next failing feature, run baseline test. Idempotent — re-run every session open. |
+| `templates/feature_list.json` | JSON array of `{id, description, status, depends_on, test_path}`. Single source of truth for "what's left". |
+| `templates/progress.log.md` | Append-only per-session log (Goal / Work done / Tests status / Blockers / Next session should / Commits). |
+| `templates/session_handoff.md` | Resume-from-cold-context checklist; read FIRST at session open, before any code change. |
+
+Operational contract: each step's preamble (`step<N>.md`) must include a one-line reminder to append to `progress.log.md` before commit and to re-run `init.sh` at session open. Steps driven by `codex exec` honor the same contract — the runner copies the templates into the worktree before spawning the agent so the templates are part of the agent's working tree.
+
+Failure mode: if `init.sh` exits 3 (`"no failing feature remaining"`) at the start of a step, the build has effectively finished — bail to `/dev-kit:review` instead of forcing another step.
+
+Template behavior is validated by `tests/test_long_running_templates.py` (structure + behavioral execution in a tmpdir covering dry-run / missing-list / all-passing exit codes).
+
 ## Related
 
 - [build-tdd](build-tdd.md) — the Red-Green-Refactor sub-skill active during build when `methodology=tdd`.
