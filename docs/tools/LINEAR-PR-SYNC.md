@@ -6,7 +6,8 @@
 
 | GitHub pull-request event | Linear state |
 |---|---|
-| `opened` | In Progress |
+| `opened` (draft=false) | In Progress |
+| `opened` (draft=true) | no-op (drafts sync on `ready_for_review`) |
 | `ready_for_review`, `reopened`, `synchronize`, `edited` | In Review |
 | `closed` with `merged=true` | Done |
 | `closed` without merge | Canceled |

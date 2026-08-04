@@ -19,19 +19,17 @@ def ns(**kwargs):
     p.add_argument("--branch", default="feat/x")
     p.add_argument("--event", default="opened")
     p.add_argument("--merged", default="false")
-    p.add_argument("--draft", default="false")
     p.add_argument("--pr-number", default=None)
     p.add_argument("--pr-title", default=None)
-    p.add_argument("--pr-url", default=None)
+    p.add_argument("--pr-draft", default="false")
     return p.parse_args([]).__class__(
         **{
             "branch": "feat/x",
             "event": "opened",
             "merged": "false",
-            "draft": "false",
             "pr_number": None,
             "pr_title": None,
-            "pr_url": None,
+            "pr_draft": "false",
             **kwargs,
         }
     )
@@ -55,6 +53,22 @@ class TestEventStateMap(unittest.TestCase):
         self.assertEqual(lps.EVENT_STATE_MAP["closed"], "Done")  # refined by --merged
 
 
+class TestHasApiKeyRename(unittest.TestCase):
+    def test_new_name_returns_true_when_key_present(self):
+        with patch.dict(os.environ, {"LINEAR_API_KEY": "test"}):
+            self.assertTrue(lps._has_api_key())
+
+    def test_new_name_returns_false_when_key_absent(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(lps._has_api_key())
+
+    def test_legacy_name_still_works(self):
+        with patch.dict(os.environ, {"LINEAR_API_KEY": "test"}):
+            self.assertTrue(lps._required())
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(lps._required())
+
+
 class TestClosedRefinesMerged(unittest.TestCase):
     def test_merged_true_promotes_to_done(self):
         self.assertEqual(target_state(ns(event="closed", merged="true")), "Done")
@@ -65,6 +79,38 @@ class TestClosedRefinesMerged(unittest.TestCase):
     def test_default_merged_is_false(self):
         # Default ns.merged = "false" → Canceled
         self.assertEqual(target_state(ns(event="closed")), "Canceled")
+
+
+class TestDraftOpenedIsNoOp(unittest.TestCase):
+    def test_draft_opened_returns_zero_without_touching_linear(self):
+        args = ns(event="opened", pr_draft="true")
+        with (
+            patch.object(lps, "_has_api_key", return_value=True),
+            patch.object(lps, "_project_id") as project_id,
+            patch.object(lps, "_issue_by_branch") as issue_lookup,
+            patch.object(lps, "_state_id") as state_id,
+            patch.object(lps, "_create_issue") as create_issue,
+            patch.object(lps, "_update_state") as update_state,
+        ):
+            self.assertEqual(lps.cmd_sync(args), 0)
+            project_id.assert_not_called()
+            issue_lookup.assert_not_called()
+            state_id.assert_not_called()
+            create_issue.assert_not_called()
+            update_state.assert_not_called()
+
+    def test_non_draft_opened_proceeds_normally(self):
+        args = ns(event="opened", pr_draft="false", pr_number="570")
+        issue = {"identifier": "SHO-1", "state": {"name": "In Progress"}}
+        with (
+            patch.object(lps, "_has_api_key", return_value=True),
+            patch.object(lps, "_project_id", return_value="project"),
+            patch.object(lps, "_issue_by_branch", return_value=None),
+            patch.object(lps, "_state_id", return_value="state"),
+            patch.object(lps, "_create_issue", return_value=issue) as create,
+        ):
+            self.assertEqual(lps.cmd_sync(args), 0)
+            create.assert_called_once()
 
 
 class TestIssueLookup(unittest.TestCase):
@@ -113,57 +159,6 @@ class TestSmoke(unittest.TestCase):
             patch.object(lps, "_state_id", side_effect=lambda name: None if name == "Done" else name),
         ):
             self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 1)
-
-    def test_no_op_when_api_key_missing(self):
-        # Smoke must not block PR CI when the workflow is not configured
-        # (LINEAR_API_KEY absent). PR #570 review fix for the failing
-        # "sync linear state" check on repos without the secret.
-        with patch.object(lps, "_has_api_key", return_value=False):
-            self.assertEqual(lps.cmd_smoke(argparse.Namespace()), 0)
-
-
-class TestDraftOpenedIsNoop(unittest.TestCase):
-    def test_draft_opened_event_is_skipped(self):
-        # PR #570 review VM-1: draft PRs should NOT move Linear state to
-        # "In Progress" because a draft is not a commitment to ship.
-        args = ns(event="opened", draft="true")
-        with (
-            patch.object(lps, "_has_api_key", return_value=True),
-            patch.object(lps, "_project_id") as project_id,
-            patch.object(lps, "_issue_by_branch") as lookup,
-        ):
-            self.assertEqual(lps.cmd_sync(args), 0)
-            project_id.assert_not_called()
-            lookup.assert_not_called()
-
-    def test_non_draft_opened_proceeds(self):
-        # opened draft=false should reach the project lookup (full path).
-        issue = {"id": "iss-1", "identifier": "SHO-1", "state": {"name": "Todo"}}
-        args = ns(event="opened", draft="false", pr_number="570", pr_title="t")
-        with (
-            patch.object(lps, "_has_api_key", return_value=True),
-            patch.object(lps, "_project_id", return_value="project"),
-            patch.object(lps, "_issue_by_branch", return_value=issue),
-            patch.object(lps, "_state_id", return_value="state"),
-            patch.object(lps, "_update_state", return_value=True),
-        ):
-            self.assertEqual(lps.cmd_sync(args), 0)
-
-
-class TestPrUrlEmbeddedInIssue(unittest.TestCase):
-    def test_pr_url_is_appended_to_issue_description(self):
-        # PR #570 review CC-8: --pr-url must be stored in the new issue
-        # so the Linear UI can link back to the PR.
-        args = ns(pr_number="570", pr_url="https://example/pr/570")
-        with (
-            patch.object(lps, "_has_api_key", return_value=True),
-            patch.object(lps, "_project_id", return_value="project"),
-            patch.object(lps, "_issue_by_branch", return_value=None),
-            patch.object(lps, "_state_id", return_value="state"),
-            patch.object(lps, "_create_issue", return_value={"identifier": "SHO-1", "state": {"name": "In Progress"}}) as create,
-        ):
-            self.assertEqual(lps.cmd_sync(args), 0)
-            self.assertEqual(create.call_args.kwargs["pr_url"], "https://example/pr/570")
 
 
 class TestNoApiKeyIsNonBlocking(unittest.TestCase):

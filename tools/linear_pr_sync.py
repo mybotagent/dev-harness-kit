@@ -8,34 +8,26 @@ the corresponding Linear issue's workflow state. Triggered by
 The mapping is:
 
   PR opened (draft=false)         → "In Progress"
-  PR opened (draft=true)          → no-op (silently skip)
+  PR opened (draft=true)          → no-op (drafts are not synced until ready)
   PR ready_for_review             → "In Review"
   PR reopened                     → "In Review"
   PR synchronize (new commits)   → "In Review"
-  PR edited                       → "In Review"
   PR closed (merged=true)         → "Done"
   PR closed (merged=false)        → "Canceled"
 
 Subcommands:
-  sync --branch X --event Y [--merged B] [--draft B] [--pr-number N] [--pr-title T] [--pr-url U]
-      Update the Linear issue mapped to branch X based on event Y. When
-      --event=opened --draft=true, the sync is a no-op (a draft PR is not a
-      commitment to ship, so the Linear state should not change). --pr-url is
-      stored in the issue description when a new issue is created so the
-      Linear UI links back to the PR that owns the work.
+  sync --branch X --event Y [--merged B] [--pr-number N] [--pr-title T] [--pr-draft D]
+      Update the Linear issue mapped to branch X based on event Y.
+      --pr-draft: "true" / "false". When event="opened" and --pr-draft="true",
+      the script is a no-op (drafts do not move Linear state).
   find --branch X
       Print the Linear issue identifier mapped to branch X (or empty).
   bulk-update --state STATE
       Update ALL open issues in the project to STATE (used for initial bulk
       transitions like "Backlog → In Review").
 
-Failure modes:
-  - Event-driven sync transport errors are reported without blocking the PR
-    workflow; missing LINEAR_API_KEY is a no-op (the workflow is gated on
-    the secret being present).
-  - The explicit smoke command exits 0 when the secret is absent (the
-    workflow isn't configured) but exits 1 when the secret IS present and
-    any required state ID cannot be resolved (config drift).
+Failure modes: event-driven sync transport errors are reported without blocking the
+PR workflow; the explicit smoke command fails on configuration drift.
 """
 
 from __future__ import annotations
@@ -68,16 +60,17 @@ def _api_key() -> str:
 
 
 def _has_api_key() -> bool:
-    """True iff LINEAR_API_KEY is present.
-
-    Renamed from ``_required`` (PR #570 review CC-7) so the name describes
-    what it actually checks. Kept the same diagnostic so existing log-grep
-    ops runs continue to match.
-    """
+    """Return True when LINEAR_API_KEY is present (non-empty)."""
     if not _api_key():
         print("LINEAR_API_KEY not set", file=sys.stderr)
         return False
     return True
+
+
+# Backward-compat alias. Earlier callers/tests used the misleading name
+# `_required`; the function actually returns True when the key IS set.
+# Keep both names so existing tests and external mocks keep working.
+_required = _has_api_key
 
 
 def _request(query: str, variables: dict | None = None) -> dict | None:
@@ -204,26 +197,14 @@ def _iter_issues(project_id: str | None, only_open: bool = True) -> list[dict]:
             return issues
 
 
-def _create_issue(
-    branch: str,
-    project_id: str,
-    state_id: str,
-    title: str = "",
-    pr_url: str | None = None,
-) -> dict | None:
-    """Create a Linear issue with the branch linked.
-
-    ``pr_url``, when provided, is appended to the description so the
-    Linear UI shows a back-link to the PR that owns the work.
-    """
+def _create_issue(branch: str, project_id: str, state_id: str, title: str = "") -> dict | None:
+    """Create a Linear issue with the branch linked. Returns the issue or None."""
     team_id = _team_id()
     if not team_id:
         print("cannot create issue: team_id not resolved", file=sys.stderr)
         return None
     issue_title = title or f"PR #{branch}"
     desc = f"<!-- scope:{branch}::auto-sync -->\n\n{issue_title}"
-    if pr_url:
-        desc = f"{desc}\n\nPR: {pr_url}"
     query = """
     mutation($projectId: String!, $teamId: String!, $title: String!, $stateId: String!, $desc: String!) {
       issueCreate(input: {
@@ -278,12 +259,10 @@ def _all_open_issues(project_id: str | None) -> list[dict]:
 def cmd_sync(args: argparse.Namespace) -> int:
     if not _has_api_key():
         return 0
-    # Draft PRs are not a commitment to ship; opening or re-opening a
-    # draft must not move the Linear issue into "In Progress"
-    # (PR #570 review VM-1).
-    draft = getattr(args, "draft", "false")
-    if args.event == "opened" and draft == "true":
-        print(f"draft PR opened; skipping sync (branch={args.branch})")
+    # Draft PRs are not synced until they leave draft state — the
+    # `ready_for_review` event handles the actual transition.
+    if args.event == "opened" and args.pr_draft == "true":
+        print(f"draft PR opened — no-op (branch={args.branch})")
         return 0
     project_id = _project_id()
     target_state = EVENT_STATE_MAP.get(args.event)
@@ -300,22 +279,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
 
     if not issue:
-        # Create the issue if missing. --pr-url (when provided) is stored
-        # in the description so the Linear UI can link back to the PR
-        # without forcing the operator to paste it (PR #570 review CC-8).
+        # Create the issue if missing
         if args.pr_number and args.pr_title:
             title = f"PR #{args.pr_number}: {args.pr_title}"
         elif args.pr_number:
             title = f"PR #{args.pr_number}"
         else:
             title = args.pr_title or f"PR on branch {args.branch}"
-        issue = _create_issue(
-            args.branch,
-            project_id,
-            state_id,
-            title,
-            pr_url=getattr(args, "pr_url", None),
-        )
+        issue = _create_issue(args.branch, project_id, state_id, title)
         if not issue:
             print(f"could not create issue for branch={args.branch}", file=sys.stderr)
             return 1
@@ -373,17 +344,9 @@ def cmd_bulk_update(args: argparse.Namespace) -> int:
 
 
 def cmd_smoke(args: argparse.Namespace) -> int:
-    """Run the bandwidth check: API key, project, state IDs.
-
-    Distinguishes two failure modes:
-      - Secret absent: workflow is not configured for this repository →
-        emit the missing-key diagnostic and exit 0 (no-op). This lets the
-        smoke step run on repos where LINEAR_API_KEY is intentionally not
-        set without forcing a failure.
-      - Secret present but states missing: configuration drift → exit 1.
-    """
+    """Run the bandwidth check: API key, project, state IDs."""
     if not _has_api_key():
-        return 0
+        return 1
     project_id = _project_id()
     if not project_id:
         print("project not found", file=sys.stderr)
@@ -406,14 +369,10 @@ def main() -> int:
     p_sync.add_argument("--branch", required=True)
     p_sync.add_argument("--event", required=True)
     p_sync.add_argument("--merged", default="false")
-    p_sync.add_argument(
-        "--draft",
-        default="false",
-        help="pull_request.draft flag; opened+draft events are no-ops",
-    )
     p_sync.add_argument("--pr-number")
     p_sync.add_argument("--pr-title")
-    p_sync.add_argument("--pr-url")
+    p_sync.add_argument("--pr-draft", default="false",
+                        help='GitHub PR draft flag ("true"/"false"). When event="opened" and --pr-draft="true", the script is a no-op.')
     p_sync.set_defaults(func=cmd_sync)
 
     p_find = sub.add_parser("find", help="print identifier for a branch")
