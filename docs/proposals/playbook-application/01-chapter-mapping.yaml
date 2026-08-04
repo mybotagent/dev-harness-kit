@@ -20,20 +20,22 @@ sections:
       area to test). The defer/skip decisions are stated explicitly
       so this is not a blanket "apply everything" recommendation.
 
-      **Net verdict (3 apply + 1 defer + 1 skip = 5 candidates
+      **Net verdict (2 apply + 2 defer + 1 skip = 5 candidates
       scored):**
 
       | Pattern | Class | Pros | Cons | Net | Apply? |
       |---|---|---|---|---|---|
       | LoopDetectionMiddleware | quick win | 5 | 2 | +3 | YES |
       | Long-running session templates (init.sh + feature_list.json + progress.log) | quick win | 5 | 1 | +4 | YES |
-      | Research → plan → implement pipeline | structural | 4 | 3 | +1 | YES |
+      | Research → plan → implement pipeline | structural | 4 | 3 | +1 | DEFER (borderline) |
       | Utah-style event-driven harness | architectural | 2 | 5 | -3 | DEFER |
       | AIL/grammar-enforced contracts-of-intent | speculative | 1 | 4 | -3 | SKIP for now |
 
-      Apply-3 total estimated effort: 17 hours, 1 quarter, 0
+      Apply-2 total estimated effort: 9 hours, 1 quarter, 0
       breaking changes. Net reliability gain: high (see Pattern 1
-      and 2 scoring below).
+      and 2 scoring below). Pattern 3 is DEFER under the +2 APPLY
+      gate but flagged borderline for re-evaluation in v0.3.199
+      once the research half lands.
 
   - title: Scoring methodology
     body: |
@@ -183,7 +185,9 @@ sections:
       ### After (proposed state)
 
       Add four templates to `templates/` (the directory already
-      exists, currently empty):
+      exists and currently holds `templates/ci/` — 16 files for
+      CI/branch-policy plumbing; new long-running templates will
+      sit alongside, not inside, that subtree):
 
       - `templates/init.sh` — bootstrap script that verifies
         environment, reads feature list, picks the next failing
@@ -261,7 +265,7 @@ sections:
         style AFTER fill:#efe
       ```
 
-  - title: Pattern 3 — Research → plan → implement pipeline (Phase 2.1)
+  - title: Pattern 3 — Research → plan → implement pipeline (DEFER, borderline)
     body: |
       ### Before (current state)
 
@@ -331,7 +335,7 @@ sections:
       | I (invasiveness) | 1 | Adds a new entrypoint; `skills/build` still works |
       | T (testability) | 2 | Each phase produces a typed artifact |
 
-      **Net: +1. Apply YES (borderline).**
+      **Net: +1. DEFER (borderline — methodology threshold requires +2 for APPLY; revisit in v0.3.199 when research half lands).**
 
       ### Workflow (before vs after)
 
@@ -476,11 +480,12 @@ sections:
   - title: Rollout plan
     body: |
       Sequenced by dependency + effort. Pattern 1 and 2 are
-      independent; Pattern 3 builds on Pattern 2.
+      independent. Pattern 3 is DEFER under the +2 APPLY gate
+      and re-evaluated in v0.3.199 once the research half lands.
 
       ```mermaid
       gantt
-        title Playbook rollout (17 EST hours total)
+        title Playbook rollout (9 EST hours, 2 APPLY patterns)
         dateFormat  YYYY-MM-DD
         axisFormat  %m-%d
 
@@ -488,7 +493,7 @@ sections:
         LoopDetectionMiddleware        :p1, 2026-08-05, 1d
         Long-running templates        :p2, 2026-08-05, 1d
 
-        section Phase 2 (week 2)
+        section Phase 2 (deferred)
         Research-plan-build pipeline  :p3, after p2, 2d
 
         section Phase 3 (deferred)
@@ -497,21 +502,23 @@ sections:
       ```
 
       Each phase has its own PR. Each PR has its own test fixture.
-      Each PR is reversible by deleting the new files.
+      Each PR is reversible by deleting the new files. Pattern 3
+      is held in Phase 2 (deferred) pending re-score under
+      v0.3.199 infrastructure.
 
   - title: Cumulative pros/cons
     body: |
-      Across the 3 APPLY patterns:
+      Across the 2 APPLY patterns (Pattern 3 deferred):
 
       **Gains (consolidated):**
       - Doom-loop detection: catches >10% of long-session silent failures
       - Cold-start recovery: 30-60 min saved per multi-session task
-      - Plan reuse: 15% of plan steps reused across sessions
-      - Human review surface: plans are reviewable before code is written
+      - (Pattern 3 deferred — Plan reuse + reviewable plans held
+        for v0.3.199 re-evaluation)
 
       **Costs (consolidated):**
-      - 17 EST hours of work
-      - 1 new hook + 1 new skill + 4 templates + 4 test files
+      - 9 EST hours of work
+      - 1 new hook + 4 templates + 2 test files
       - 1 contributor-onboarding line ("long-running tasks use 4 templates")
       - 0 lines of existing code changed
 
@@ -520,9 +527,10 @@ sections:
       - All are reversible by deleting files.
       - All have a test fixture before merging.
 
-      **Net: Strong apply.** The 17-hour effort buys 3 load-bearing
+      **Net: Strong apply.** The 9-hour effort buys 2 load-bearing
       patterns that close real failure modes documented in our own
-      session logs.
+      session logs. Pattern 3 (research-plan-build) is held
+      in DEFER pending the v0.3.199 re-score.
 
   - title: Open questions
     body: |
@@ -530,9 +538,10 @@ sections:
          of identical trajectory. The first catches fast loops; the
          second catches slow-think loops. We propose 3 calls as the
          default; configurable via `loop-detect.sh` env var.
-      2. **Plan-review gate**: Should the 3-phase pipeline *require*
-         human approval between Plan and Implement, or just allow
-         it? We propose allow-via-skip for power users.
+      2. **Pattern 3 re-score trigger**: when (a) does the research
+         half become production-tested, and (b) does that flip
+         Pattern 3 from DEFER (borderline +1) to APPLY (≥ +2)?
+         Proposed re-score at v0.3.199.
       3. **Template ownership**: Do the templates live in `templates/`
          (additive, easy) or get auto-generated into the working
          directory by `init.sh` (more integrated, more invasive)?

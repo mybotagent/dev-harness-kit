@@ -104,7 +104,7 @@ sections:
       | I (invasiveness) | 0 | 0 | new hook file |
       | T (testability) | 2 | 2 | fixture-based |
 
-      **Net: +2 (was +4). Apply? BORDERLINE.**
+      **Net: +3 (was +4). Apply? YES (Phase 2).**
 
       ### Recommendation
 
@@ -127,7 +127,7 @@ sections:
 
   - title: Pattern 3 — Research → plan → implement pipeline (re-scored)
     body: |
-      ### v0.3.194 verdict: APPLY BORDERLINE (+1)
+      ### v0.3.194 verdict: DEFER (borderline +1)
 
       In v0.3.199, `lib/analysis_core/` provides a 7-module
       infrastructure for "gather evidence → cross-validate → produce
@@ -175,7 +175,7 @@ sections:
       | I (invasiveness) | 1 | 1 | new skill only |
       | T (testability) | 2 | 2 | per-phase artifact |
 
-      **Net: +3 (was +1). Apply? YES.**
+      **Net: +2 (was +1). Apply? YES.**
 
       ### Recommendation
 
@@ -315,8 +315,8 @@ sections:
       before pattern 1 (LoopDetection) because the marginal value
       of LoopDetection dropped after stage-gate.
 
-      **Effort estimate**: 14 hours (was 17) — research half
-      already done.
+      **Effort estimate**: 14 hours (was 9 in v0.3.194) — research
+      half already done plus Pattern 6 added.
 
   - title: Updated cumulative pros/cons
     body: |
@@ -348,18 +348,18 @@ sections:
       |---|---|---|---|
       | Pattern 1 (LoopDetection) | APPLY (Phase 1) | APPLY (Phase 2) | stage-gate covers some cases |
       | Pattern 2 (Long-running templates) | APPLY (Phase 1) | APPLY (Phase 1) | unchanged |
-      | Pattern 3 (Research → plan → build) | APPLY BORDERLINE (Phase 2) | APPLY (Phase 1) | research half already in production |
+      | Pattern 3 (Research → plan → build) | DEFER (borderline +1) | APPLY (Phase 1) | research half built; R drops 1→0 |
       | Pattern 4 (Utah event-driven) | DEFER | DEFER | unchanged |
       | Pattern 5 (AIL grammar) | SKIP | SKIP | unchanged |
       | Pattern 6 (PreCompletionChecklist) | (not scored) | APPLY (Phase 2) | new finding |
       | Pattern 7 (CrashSignal) | (not scored) | APPLIED | #557 fixed it |
-      | Total effort | 17 EST hours | 14 EST hours | research half done |
-      | Total APPLY patterns | 3 | 3 | (sets differ) |
+      | Total effort | 9 EST hours | 14 EST hours | new Pattern 6 added |
+      | Total APPLY patterns | 2 | 3 | (Pattern 3 promoted; Pattern 6 new) |
 
-      The set of patterns didn't change in count but the *effort*
-      dropped because the harness already invested in the research
-      half. The new finding (Pattern 6) compensates for the
-      demoted urgency of Pattern 1.
+      The *count* of APPLY patterns grew by 1 in v0.3.199 (Pattern 3
+      promoted from DEFER-borderline, plus new Pattern 6). The
+      *effort* grew because Pattern 6 is new work; Pattern 3's
+      re-score is mostly a reclassification, not new effort.
 
   - title: Open questions
     body: |
