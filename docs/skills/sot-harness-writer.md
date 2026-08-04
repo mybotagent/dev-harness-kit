@@ -64,5 +64,5 @@ After the SOT doc is written:
 
 - [SKILL.md](../../skills/sot-harness-writer/SKILL.md) — full skill spec
 - [lib/sot_harness_engine.py](../../lib/sot_harness_engine.py) — the synthesizer
-- [tests/test_sot_harness_engine.py](../../tests/test_sot_harness_engine.py) — 16 tests
+- [tests/test_sot_harness_engine.py](../../tests/test_sot_harness_engine.py) — 23 tests (4 TestRounds + 2 TestRecLookup + 5 TestValidate + 6 TestSynthesize + 4 TestSafeSessionId + 2 TestWrite)
 - [agent-harness-playbook](https://github.com/sh-ai-x/agent-harness-playbook) — the source of all recommendations
