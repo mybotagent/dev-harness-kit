@@ -45,6 +45,30 @@ is `kill` or unresolved `hold`, the operator should not have invoked
 `build`. There is no auto-gate, no `--skip-valuation` flag, and no exit
 code based on the verdict.
 
+## Composition with /dev-kit:research-plan-build
+
+`/dev-kit:research-plan-build` is the 3-phase binder that wraps research
++ plan + implement into one non-skippable pipeline. The trigger fires
+when ANY of:
+
+- Task spans more than 1 session (multi-day work).
+- Task touches more than 3 files in its blast radius.
+- User explicitly typed `/dev-kit:research-plan-build <idea>`.
+
+When the trigger fires, hand off to `Skill("research-plan-build", <idea>)`
+BEFORE running `/dev-kit:plan`. The binder writes `research.md` + `plan.md`
+in `.dev-kit/hand-off/<session>/`, then `/dev-kit:plan` emits the
+canonical `phases/<name>/index.json` + `step<N>.md` artifacts. The
+build runner reads the phases artifacts (NOT `plan.md`); `plan.md` is
+the reviewer-facing companion the binder produced.
+
+For single-session work (<=3 files), `/dev-kit:build` runs the direct
+`plan -> build` path - no binder. The threshold lives here so a user who
+calls `/dev-kit:build` for a multi-file task still gets the 3-phase
+pipeline.
+
+See `skills/research-plan-build/SKILL.md` for the per-phase contract.
+
 ## Behavior
 
 1. `lib/execute.py:main` parses args; branches on `--parallel N`:
