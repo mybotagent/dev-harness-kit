@@ -162,6 +162,38 @@ class TestHarnessAudit(unittest.TestCase):
             self.assertEqual(ev["rubric_expected"], 2)
             self.assertTrue(any("rubric" in f for f in ev["findings"]))
 
+    def test_read_alpha_returns_none_when_pyyaml_absent(self):
+        """Regression for inspect 2026-08-03 finding #1.
+
+        The previous `except (ImportError, yaml.YAMLError)` referenced
+        `yaml` in its own failure handler, so when PyYAML was absent the
+        name was never bound and the except tuple itself raised
+        NameError. Splitting the except into two clauses (ImportError
+        first, then yaml.YAMLError only when yaml is bound) means a
+        missing PyYAML now returns (None, False) cleanly.
+        """
+        import sys
+
+        # Force `import yaml` inside _read_alpha to raise ImportError.
+        saved_yaml = sys.modules.pop("yaml", None)
+        sys.modules["yaml"] = None  # type: ignore[assignment]  # None triggers ImportError on re-import
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "skills" / "evaluate").mkdir(parents=True)
+                (root / "skills" / "evaluate" / "SKILL.md").write_text(
+                    "---\nname: evaluate\ncategory: eval\nalpha: enforcement\n---\n",
+                    encoding="utf-8",
+                )
+                # Must not raise NameError; must return (None, False).
+                alpha, valid = harness_audit._read_alpha(root, "evaluate")
+                self.assertIsNone(alpha)
+                self.assertFalse(valid)
+        finally:
+            del sys.modules["yaml"]
+            if saved_yaml is not None:
+                sys.modules["yaml"] = saved_yaml
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

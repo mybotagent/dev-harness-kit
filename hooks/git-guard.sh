@@ -18,7 +18,9 @@ set -uo pipefail
 # the source line still works when PATH is broken (jq-less test envs
 # strip dirname along with jq — see TestGitGuardRefactor.fails_closed).
 # shellcheck source=lib/payload-parse.sh
+# shellcheck source=lib/slot-check.sh
 source "${BASH_SOURCE[0]%/*}/lib/payload-parse.sh"
+source "${BASH_SOURCE[0]%/*}/lib/slot-check.sh"
 require_jq git-guard
 read_stdin_json git-guard
 [ -z "$INPUT_JSON" ] && exit 0
@@ -207,11 +209,13 @@ _verify_slot() {
   # both be pinned to the same expected slot — the version-bump
   # workflow on main keeps them in lockstep, and a Codex-only
   # plugin.json drift would let a Codex sub-agent push a stale slot
-  # even after the Claude manifest is re-pinned.
+  # even after the Claude manifest is re-pinned. The deny predicate
+  # is in hooks/lib/slot-check.sh so the truth table is unit-tested
+  # independently of this PreToolUse hook.
   local actual_claude="" actual_codex=""
   actual_claude="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_claude=""
   actual_codex="$(python3 -c "import json;print(json.load(open('.codex-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_codex=""
-  if [ "$actual_claude" != "$expected" ] || [ -n "$actual_codex" ] && [ "$actual_codex" != "$expected" ]; then
+  if slot_should_deny "$actual_claude" "$actual_codex" "$expected"; then
     deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi
 }

@@ -62,25 +62,45 @@ def compute(
 
     Returns:
         BehaviorReport with `verdict` ∈ {OK, DRIFT_WARNING, ROT, ESCALATED}.
+        `crashed_dims` lists any dim whose scorer raised an exception;
+        a crashed deterministic dim (D1..D4) is treated as a
+        catastrophic infrastructure failure and forces ESCALATED, so
+        eval verdicts can no longer silently absorb a thrown exception
+        as a real "1" score (inspect 2026-08-03 finding #3).
     """
     scores = tuple(dim_scores)
     by_dim = {s.dim: s.value for s in scores}
+    crashed_set = {s.dim for s in scores if s.crashed}
 
-    # Weighted mean over dims that appear in `weights`.
+    # Weighted mean over dims that appear in `weights`, EXCLUDING crashed
+    # dims. A crashed dim has no real signal; including its weight in
+    # the divisor would let a single infrastructure failure drag the
+    # weighted mean toward ROT for otherwise-fine cases.
     weighted_sum = 0.0
     weight_total = 0.0
     for dim, w in weights.items():
-        if dim in by_dim:
+        if dim in by_dim and dim not in crashed_set:
             weighted_sum += by_dim[dim] * w
             weight_total += w
     weighted_mean = weighted_sum / weight_total if weight_total else 0.0
 
-    # Deterministic mean: D1..D4 only. If any is missing, treat as 1.
-    det_values = [by_dim.get(d, 1) for d in DETERMINISTIC_DIMS]
+    # Deterministic mean: D1..D4 only, skipping crashed dims. A crashed
+    # D1..D4 is catastrophic — the scorer that owns the safety/outcome
+    # ground truth itself failed — and forces ESCALATED below. Non-
+    # crashed missing dims are treated as 1 to preserve the original
+    # conservative substitution.
+    det_values = [
+        by_dim[d] if d in by_dim and d not in crashed_set else 1
+        for d in DETERMINISTIC_DIMS
+    ]
     deterministic_mean = sum(det_values) / len(DETERMINISTIC_DIMS) if det_values else 0.0
 
+    crashed_deterministic = crashed_set & set(DETERMINISTIC_DIMS)
+
     # Verdict rules.
-    if deterministic_mean < _DETERMINISTIC_FLOOR:
+    if crashed_deterministic:
+        verdict = "ESCALATED"
+    elif deterministic_mean < _DETERMINISTIC_FLOOR:
         verdict = "ESCALATED"
     elif weighted_mean >= _VERDICT_OK_MEAN and deterministic_mean >= _DETERMINISTIC_FLOOR:
         verdict = "OK"
@@ -96,6 +116,7 @@ def compute(
         weighted_mean=round(weighted_mean, 4),
         deterministic_mean=round(deterministic_mean, 4),
         verdict=verdict,
+        crashed_dims=tuple(sorted(crashed_set)),
     )
 
 
@@ -108,17 +129,25 @@ def render_markdown(report: BehaviorReport) -> str:
         f"- weighted_mean: **{report.weighted_mean:.2f}**",
         f"- deterministic_mean: **{report.deterministic_mean:.2f}**",
         f"- verdict: **{report.verdict}**",
+    ]
+    if report.crashed_dims:
+        lines.append(
+            f"- crashed_dims: **"
+            f"{', '.join(report.crashed_dims)}** "
+            "(scorer raised an exception; treated as catastrophic for D1..D4)"
+        )
+    lines += [
         "",
         "## Per-dimension scores",
         "",
-        "| Dim | Score | Evidence |",
-        "|-----|------:|----------|",
+        "| Dim | Score | Crashed | Evidence |",
+        "|-----|------:|--------:|----------|",
     ]
     for s in report.dimension_scores:
         ev = ", ".join(f"{k}={v}" for k, v in s.evidence.items()) or "—"
         # Markdown cell escape: replace `|` and newlines.
         ev = ev.replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| `{s.dim}` | {s.value} | {ev} |")
+        lines.append(f"| `{s.dim}` | {s.value} | {s.crashed} | {ev} |")
     lines.append("")
     return "\n".join(lines)
 

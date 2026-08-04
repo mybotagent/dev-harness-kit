@@ -79,7 +79,12 @@ def _read_alpha(project_root: Path, skill_name: str) -> tuple[Optional[str], boo
     try:
         import yaml  # local import: keeps harness_audit import-cheap
         fm = yaml.safe_load(m.group(1))
-    except (ImportError, yaml.YAMLError):  # type: ignore[name-defined]
+    except ImportError:
+        # PyYAML is not installed; `yaml` is therefore not bound, so the
+        # follow-up `yaml.YAMLError` reference would raise NameError. Catch
+        # the missing-import case first and return the same fallback.
+        return (None, False)
+    except yaml.YAMLError:
         return (None, False)
     alpha = fm.get("alpha") if isinstance(fm, dict) else None
     if not isinstance(alpha, str):
