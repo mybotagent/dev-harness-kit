@@ -36,14 +36,26 @@ class DimensionScore:
     """One dimension's score + evidence (debug data for the reviewer).
 
     `value` is 1-5; `evidence` is a JSON-serializable mapping.
+    `crashed=True` means the scorer raised an exception; in that case
+    `value` is a fallback (1) and the aggregate treats the dim as
+    missing-for-judgement rather than as a real score of 1. Added for
+    inspect 2026-08-03 finding #3: previously a crashed scorer was
+    indistinguishable from a legitimately lowest-scoring dim, and the
+    aggregate silently absorbed infrastructure failures as real signal.
     """
 
     dim: str
     value: int
     evidence: Dict[str, Any] = field(default_factory=dict)
+    crashed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"dim": self.dim, "value": self.value, "evidence": dict(self.evidence)}
+        return {
+            "dim": self.dim,
+            "value": self.value,
+            "evidence": dict(self.evidence),
+            "crashed": self.crashed,
+        }
 
 
 @dataclass(frozen=True)
@@ -56,6 +68,7 @@ class BehaviorReport:
     weighted_mean: float
     deterministic_mean: float
     verdict: str  # OK | DRIFT_WARNING | ROT | ESCALATED
+    crashed_dims: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -65,6 +78,7 @@ class BehaviorReport:
             "weighted_mean": self.weighted_mean,
             "deterministic_mean": self.deterministic_mean,
             "verdict": self.verdict,
+            "crashed_dims": list(self.crashed_dims),
         }
 
 

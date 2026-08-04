@@ -30,7 +30,7 @@ per-runtime wiring differences), see
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
 | `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
-| `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch | All |
+| `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch (slot check extracted to `hooks/lib/slot-check.sh` for unit-testable truth table — see *Shared helpers* below) | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
 | `stop-verify` | Quoted exit codes / test counts before session end | Plan + Design + Build + Review + Security + Ship |
 | `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
@@ -63,6 +63,22 @@ means the hook warns (and, for `tdd-guard`/`bash-guard`, can be escalated to
 `--strict` to hard-block too). `fails open` means an internal error in the
 hook itself doesn't block your work — it just skips the check for that
 call.
+
+### Shared helpers (`hooks/lib/`)
+
+These are not hooks themselves — they are `source`-d by the hooks above
+to keep their logic unit-testable in isolation (rather than inlined
+inside a PreToolUse shell script). Each helper carries its own
+`tests/test_<helper>.py` regression coverage.
+
+| Helper | Sourced by | Purpose |
+|---|---|---|
+| `payload-parse.sh` | most PreToolUse hooks | `read_stdin_json`, `require_jq` |
+| `secret-patterns.sh` | `secret-scan.sh` | Bash ERE credential bank (SSOT with `lib/analysis_core/runner.py::_SECRET_PATTERNS`) |
+| `worktree-detect.sh` | `worktree-guard.sh`, `git-guard.sh` | `worktree_detect` (single source of truth for the `--git-dir == --git-common-dir` discriminator) |
+| `hook-preamble.sh` | 6 hooks (see `tests/test_hook_preamble.py`) | Common preamble: `set -euo pipefail`, `LC_ALL=C.UTF-8`, `$0`-relative path setup |
+| `locale-utf8.sh` | preamble-using hooks | One-shot `LC_ALL=C.UTF-8` / `LANG=C.UTF-8` setup |
+| `slot-check.sh` | `git-guard.sh` | `slot_should_deny <claude> <codex> <expected>` truth table for the `plugin.json` version-slot check (added 2026-08-03, inspect finding #2) |
 
 ---
 

@@ -189,7 +189,7 @@ def test_render_markdown_contains_table() -> None:
     report = compute(case_id="md", worktree=".", dim_scores=scores, weights=weights)
     md = render_markdown(report)
     assert "# Agent Behavior Report" in md
-    assert "| Dim | Score | Evidence |" in md
+    assert "| Dim | Score | Crashed | Evidence |" in md
     for dim in DIM_AXES_BEHAVIOR:
         assert f"`{dim}`" in md
 
@@ -212,3 +212,77 @@ def test_robustness_stub_returns_three(golden_worktree: Path) -> None:
     assert ds.dim == "D6_robustness"
     assert ds.value == 3
     assert ds.evidence["phase"] == 0
+
+
+def test_crashed_scorer_is_distinguishable_from_real_low_score() -> None:
+    """Regression for inspect 2026-08-03 finding #3.
+
+    Previously a crashed scorer yielded `DimensionScore(value=1)` and
+    the aggregate computed by_dim solely from `.value`, so a thrown
+    exception was arithmetically identical to a dimension that
+    legitimately scored 1. Eval verdicts silently absorbed
+    infrastructure failures as real signal. With `crashed=True`, the
+    aggregate:
+      - populates `BehaviorReport.crashed_dims`
+      - forces `verdict == "ESCALATED"` when any D1..D4 crashed
+      - excludes crashed dims from the weighted-mean divisor
+    """
+    scores = (
+        # A non-crashed dim with value=1 stays at value=1 (real low signal).
+        DimensionScore(dim="D1_outcome", value=1, evidence={}),
+        # A crashed dim also has value=1 (fallback) but crashed=True.
+        DimensionScore(
+            dim="D2_process", value=1,
+            evidence={"error": "RuntimeError: boom"},
+            crashed=True,
+        ),
+        DimensionScore(dim="D3_efficiency", value=5, evidence={}),
+        DimensionScore(dim="D4_safety", value=5, evidence={}),
+        DimensionScore(dim="D5_communication", value=5, evidence={}),
+        DimensionScore(dim="D6_robustness", value=5, evidence={}),
+        DimensionScore(dim="D7_trajectory", value=5, evidence={}),
+    )
+    weights = {dim: 1 / 7 for dim in DIM_AXES_BEHAVIOR}
+    report = compute(case_id="crash", worktree=".", dim_scores=scores, weights=weights)
+
+    # The crashed dim is listed.
+    assert "D2_process" in report.crashed_dims
+    # A crashed deterministic dim forces ESCALATED (not OK/DRIFT/ROT),
+    # even though the other dims are healthy.
+    assert report.verdict == "ESCALATED"
+    # The crashed dim is excluded from the weighted-mean divisor: only
+    # 6 of 7 dims count, so the weighted mean is 26/6 ≈ 4.3333 (not
+    # 27/7 ≈ 3.8571 which would happen if the crashed dim were counted).
+    assert report.weighted_mean == round((1 + 5 + 5 + 5 + 5 + 5) / 6, 4)
+    # And the markdown report surfaces the crash.
+    md = render_markdown(report)
+    assert "crashed_dims" in md
+    assert "D2_process" in md
+    assert "| Crashed |" in md
+    # The Crashed column separator must be right-aligned (trailing `:`),
+    # matching the Score column's `------:` so a `True` value is visually
+    # distinguished from `False` in the rendered table.
+    assert "|--------:|" in md
+
+
+def test_low_value_triggers_floor_escalation() -> None:
+    """Counterpart: a dim that legitimately scored 1 (not crashed) must
+    NOT trip the new ESCALATED-crash path. Only the deterministic
+    floor (D-mean < 3.5) decides whether it escalates.
+    """
+    scores = (
+        DimensionScore(dim="D1_outcome", value=1, evidence={}),
+        DimensionScore(dim="D2_process", value=1, evidence={}),
+        DimensionScore(dim="D3_efficiency", value=1, evidence={}),
+        DimensionScore(dim="D4_safety", value=5, evidence={}),  # D-mean=2.0 → ESCALATED via floor
+        DimensionScore(dim="D5_communication", value=5, evidence={}),
+        DimensionScore(dim="D6_robustness", value=5, evidence={}),
+        DimensionScore(dim="D7_trajectory", value=5, evidence={}),
+    )
+    weights = {dim: 1 / 7 for dim in DIM_AXES_BEHAVIOR}
+    report = compute(case_id="real-low", worktree=".", dim_scores=scores, weights=weights)
+    # No crashes.
+    assert report.crashed_dims == ()
+    # ESCALATED — but for the right reason (deterministic floor), not
+    # for a non-existent crash.
+    assert report.verdict == "ESCALATED"
