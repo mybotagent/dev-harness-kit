@@ -165,6 +165,23 @@ def test_threshold_override_via_env(tmp_path: Path) -> None:
     )
 
 
+def test_threshold_above_window_still_detects(tmp_path: Path) -> None:
+    """A configured threshold larger than the history window still fires."""
+    rcs = _loop_detected_rc(
+        log_dir=tmp_path,
+        session_id="threshold-window-sid",
+        calls=[("Bash", "echo stuck")] * 12,
+        env_overrides={
+            "LOOP_DETECT_THRESHOLD": "12",
+            "LOOP_DETECT_WINDOW": "10",
+        },
+    )
+    assert rcs == ([0] * 11) + [1], (
+        "threshold=12 must fire on the 12th identical call even when "
+        f"LOOP_DETECT_WINDOW=10. Got {rcs}."
+    )
+
+
 def test_missing_log_file_returns_0(tmp_path: Path) -> None:
     """First call ever (no log file on disk) → must NOT flag a loop."""
     log_file = tmp_path / "session-E.log"

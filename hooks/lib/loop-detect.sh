@@ -18,7 +18,7 @@
 # Env knobs (all override-able per call; defaults shown):
 #   LOOP_DETECT_LOG_DIR    = .dev-kit/hand-off
 #   LOOP_DETECT_SESSION_ID = ${SESSION_ID:-}      (required; empty = no-op)
-#   LOOP_DETECT_WINDOW     = 10
+#   LOOP_DETECT_WINDOW     = 10 (minimum history scan; threshold may expand it)
 #   LOOP_DETECT_THRESHOLD  = 3
 #   LOOP_DETECT_PREFIX_LEN = 80
 #
@@ -60,14 +60,22 @@ loop_detected() {
   # Count how many PRIOR consecutive log entries match the current
   # call's fingerprint; add this current call → (count + 1) consecutive
   # matches. If that meets or exceeds the threshold, the loop fires.
+  # A threshold can exceed the configured window, so scan enough prior
+  # entries to make every documented threshold reachable.
+  local history_limit="$window"
+  local required_prior_count=$((threshold > 1 ? threshold - 1 : 0))
+  if [ "$required_prior_count" -gt "$history_limit" ]; then
+    history_limit="$required_prior_count"
+  fi
+
   local prior_matches=0
   if [ -f "$log_file" ]; then
     local pattern="${tool_name}	${prefix}"
-    # tail -n "$window" keeps read cost bounded regardless of how long
-    # the log has grown; awk walks the slice bottom-up and stops on the
-    # first mismatch (consecutive from-the-bottom only).
+    # tail keeps read cost bounded regardless of how long the log has
+    # grown; awk walks the slice bottom-up and stops on the first mismatch
+    # (consecutive from-the-bottom only).
     prior_matches="$(
-      tail -n "$window" "$log_file" 2>/dev/null | awk -F '\t' -v want="$pattern" '
+      tail -n "$history_limit" "$log_file" 2>/dev/null | awk -F '\t' -v want="$pattern" '
         { lines[NR] = $0 }
         END {
           c = 0
