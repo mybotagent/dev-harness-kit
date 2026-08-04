@@ -50,8 +50,10 @@ primitives. It does not touch `lib/analysis_core/*` or
 from __future__ import annotations
 
 import calendar
+import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Mapping, Union
@@ -284,12 +286,17 @@ GHOST = "ghost"          # no claude[bot] comment AND the run completed without 
 
 def check_verdict_freshness(
     pr_number: int,
-    run_id: int,
-    run_started_epoch: int,
-    now_epoch: int,
+    run_started_epoch: float,
+    now_epoch: float,
 ) -> dict:
     """Return whether the most recent claude[bot] verdict comment is
     fresh relative to the given workflow run.
+
+    A comment is FRESH when its `updated_at` is at or after the run's
+    `started_at`. STALE when the comment is older than the run (the
+    extraction page-1'd past a newer verdict the next job posted).
+    GHOST when no claude[bot] comment with `**Verdict:**` exists or
+    the transport / parse fails.
 
     Returns a dict with `status` (FRESH / STALE / GHOST), `comment_id`,
     `comment_age_seconds`, and the raw `comments` list. The function
@@ -300,7 +307,6 @@ def check_verdict_freshness(
 
         result = check_verdict_freshness(
             pr_number=566,
-            run_id=30924004335,
             run_started_epoch=...,
             now_epoch=...,
         )
@@ -308,13 +314,10 @@ def check_verdict_freshness(
             # do NOT claim "all green" — surface the staleness
             ...
     """
+    repo = os.environ.get("GITHUB_REPOSITORY") or os.environ.get("GITHUB_REPO", "")
     try:
-        import json
-
-        # Use `gh api` to avoid token plumbing here -- the babysit skill
-        # shell that calls this helper already has `gh` authenticated.
-        import subprocess
-        repo = os.environ.get("GITHUB_REPOSITORY") or os.environ.get("GITHUB_REPO", "")
+        # The babysit skill shell that calls this helper already has
+        # `gh` authenticated — `gh api` avoids token plumbing here.
         result = subprocess.run(
             ["gh", "api",
              f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
@@ -326,7 +329,12 @@ def check_verdict_freshness(
             return {"status": GHOST, "comment_id": None,
                     "comment_age_seconds": None, "comments": []}
         comments = json.loads(result.stdout)
-    except Exception:
+    except Exception as exc:
+        # GHOST is the fail-closed default. `exc` is intentionally
+        # swallowed — the babysit layer surfaces the reason; this
+        # helper stays a pure function over `(pr_number, run_started_epoch,
+        # now_epoch)` and the environment.
+        del exc
         return {"status": GHOST, "comment_id": None,
                 "comment_age_seconds": None, "comments": []}
 
@@ -339,13 +347,11 @@ def check_verdict_freshness(
         return {"status": GHOST, "comment_id": None,
                 "comment_age_seconds": None, "comments": []}
 
-    # Pick the most recent (newest updated_at)
+    # Pick the most recent (newest updated_at) and parse via the same
+    # _epoch_from_iso helper classify_check already uses.
     latest = max(claude_comments, key=lambda c: c.get("updated_at", ""))
-    from datetime import datetime
-    try:
-        latest_dt = datetime.fromisoformat(latest["updated_at"].replace("Z", "+00:00"))
-        latest_epoch = int(latest_dt.timestamp())
-    except Exception:
+    latest_epoch = _epoch_from_iso(latest.get("updated_at"))
+    if latest_epoch is None:
         return {"status": GHOST, "comment_id": latest.get("id"),
                 "comment_age_seconds": None, "comments": claude_comments}
 
