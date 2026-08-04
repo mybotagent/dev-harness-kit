@@ -2,14 +2,17 @@
 # sub-agent-handoff.sh — PostToolUse Agent hook. SHO-154.
 #
 # Advisory check that the sub-agent response shape can support the
-# standard handoff template (feedback-subagent-handoff-template):
+# standard handoff template:
 #
 #   1. STATUS marker     — `**Status**:` line + ✅/⚠️/❌ (or
 #                          success/partial/failed)
-#   2. EVIDENCE block    — at least one `<cmd> -> <result> (exit N)`
-#                          quoted line (KO+EN prose accepted)
-#   3. NEXT-ACTION line  — `### Next action` heading OR final
-#                          imperative sentence.
+#   2. EVIDENCE block    — at least one quoted `exit N` reference
+#                          (canonical: `cmd -> result (exit N)`;
+#                          accepted: any `(exit N)`, `exit N` in
+#                          prose, `Ran 'cmd': result` form)
+#   3. NEXT-ACTION line  — `### Next action` heading, a list-item
+#                          prefix, OR a final imperative sentence
+#                          (KO + EN forms).
 #
 # If any of those three are absent, the hook emits an advisory to
 # stderr listing which pieces the orchestrator should add before
@@ -18,9 +21,17 @@
 # calls"), payload parse errors are also non-blocking so unrelated
 # sessions cannot hit a soft-bricked hook.
 #
-# Fail-CLOSED only when jq is missing (exit 2 with deny JSON) —
-# without jq, the payload cannot be parsed at all and the rule
-# silently lapses, parallel with worktree-guard.sh.
+# Fail-CLOSED only when jq OR python3 is missing (exit 2 with a
+# plain stderr ERROR) — without these, the payload cannot be
+# parsed/scanned and the rule silently lapses. NOTE: PostToolUse
+# cannot actually block (the tool has already executed by the time
+# we run), so the exit code is a *signal* to the harness and the
+# stderr line is what surfaces to the user. We deliberately do NOT
+# emit a `permissionDecision: "deny"` JSON envelope here — that
+# field is decorative in PostToolUse and misleads readers about
+# the actual contract. PreToolUse hooks in this repo use the
+# `permissionDecision` envelope; PostToolUse hooks (slop-detector,
+# secret-scan) emit plain stderr text. We follow the latter pattern.
 #
 # Per-worktree opt-out: write `<repo>/.dev-kit/.sub-agent-handoff-disabled`.
 # The hook prints a one-shot notice and exits 0; structurally the
@@ -50,7 +61,25 @@ fi
 
 # ── jq presence (fail-closed) ──────────────────────────────────────────────
 if ! command -v jq >/dev/null 2>&1; then
-  printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","permissionDecision":"deny","permissionDecisionReason":"SUB-AGENT HANDOFF: jq is required but not installed. Install jq (apt/brew/apk) — without it, this hook cannot enforce the handoff contract."}}\n' >&2
+  echo "[sub-agent-handoff] ERROR: jq is required but not installed. Install jq (apt/brew/apk) — without it, this hook cannot parse the PostToolUse payload and the handoff contract silently lapses." >&2
+  exit 2
+fi
+
+# ── python3 presence (fail-closed) ─────────────────────────────────────────
+# The inner scan runs as a Python script (tolerates dict+list payload
+# shapes, single regex scan). Without python3, the scan silently
+# no-ops via `|| true`, defeating the contract — same shape as the
+# jq-missing gap. Loop through common binary names parallel to
+# linear-autosync.sh:52-58.
+PYTHON=""
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1; then
+    PYTHON="$(command -v "$py")"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "[sub-agent-handoff] ERROR: python3 is required but not installed. The hook scans the payload in Python (to handle dict/list shapes); without it the handoff contract silently lapses. Install python3 (apt/brew/apk)." >&2
   exit 2
 fi
 
@@ -125,23 +154,102 @@ status_present = bool(
     or re.search(r"(?m)^Status\s*[:：]\s*(?:✅|⚠️|❌|success|partial|failed|Success|Partial|Failed)", text)
 )
 
+
+def _final_imperative(text: str) -> bool:
+    """Heuristic: the last non-empty line reads as an imperative.
+
+    Trigger when the last line ends with sentence-final punctuation
+    AND the line reads as a directive. Covers:
+
+    - EN imperatives starting with a known-imperative verb
+      ("Open the PR…", "Run the suite…", "Ship it.")
+    - KO imperatives containing a common verb form ("…해주세요.",
+      "…기다려주세요.", "…진행하세요.") — we do not require the
+      verb to be at the start because polite KO forms often lead
+      with adverbs or context ("마지막으로 PR을 열고 … 기다려주세요.")
+    """
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    last = lines[-1].strip()
+    if not last:
+        return False
+    # Sentence-final punctuation (en + ko)
+    if not re.search(r"[.!?。!?]$", last):
+        return False
+    # Imperative must start with a verb; reject question-form
+    # sentences (they end in ? but are requests, not directives).
+    if last.endswith("?"):
+        return False
+    # Reject very short lines (likely a heading or trailing label,
+    # not an imperative).
+    if len(last.split()) < 2:
+        return False
+    # EN: starts with a verb in the imperative mood.
+    en_openers = (
+        "open", "run", "fix", "merge", "wait", "check", "verify",
+        "create", "add", "remove", "delete", "update", "push", "ship",
+        "build", "deploy", "rebase", "review", "rerun",
+        "switch", "bump", "tag", "land", "send", "file", "close",
+        "monitor", "iterate",
+    )
+    first = last.split()[0].lower().rstrip(".,!?")
+    if first in en_openers:
+        return True
+    # KO: any common imperative/polite-imperative signal anywhere in
+    # the last line. "주세요" is the canonical polite-imperative
+    # suffix (verb + 주세요 = "please do X"). We also check for
+    # formal-imperative forms (세요/십시오) and a short list of
+    # common KO verbs.
+    if "주세요" in last or "해주" in last or "기다리" in last:
+        return True
+    if re.search(r"(세요|십시오)[.!?]?$", last):
+        return True
+    ko_verbs = (
+        "열어", "실행", "확인", "진행", "기다려", "오픈", "생성",
+        "추가", "삭제", "업데이트", "푸시", "머지", "리뷰",
+    )
+    if any(v in last for v in ko_verbs):
+        return True
+    return False
+
+
 # --- EVIDENCE detection ---
-# Quoted `<cmd> -> <result> (exit N)` (or `→`). At least one occurrence.
+# Canonical: quoted `<cmd> -> <result> (exit N)` (or `→`).
+# Accepted loose forms (prose):
+#   - any `(exit N)` substring (parenthesized, what we test for)
+#   - any `exit N` substring in prose (a paragraph that mentions
+#     "exit 0" or "exit 1" is a strong evidence signal)
+#   - `Ran 'cmd': result` form (Claude's narrative style)
+#   - common shell-tool invocation prefix on its own line
+# We deliberately accept loose forms because the orchestrator's
+# relay is what quotes the exit code back to the user; missing the
+# advisory on a prose-shaped evidence line defeats the hook's
+# primary purpose (finding SHO-154 / /dev-kit:review finding 3).
 evidence_present = bool(
-    re.search(
-        r"`.+?`\s*(?:->|→)\s*`.+?`\s*\(exit\s*-?\d+\)",
+    re.search(r"`[^`]+`\s*(?:->|→)\s*`[^`]+`\s*\(exit\s*-?\d+\)", text)
+    or re.search(r"\(exit\s*-?\d+\)", text)
+    or re.search(r"\bexit\s*-?\d+\b", text)
+    or re.search(r"(?im)^\s*Ran\s+['`\"][^'`\"]+['`\"]\s*[:：]", text)
+    or re.search(
+        r"(?im)^\s*(?:pytest|bash|python3|python|npm|make|cargo|go|git|gh|ruff|node|ruby|swift)\s+\S",
         text,
     )
 )
 
 # --- NEXT-ACTION detection ---
-# `### Next action` heading OR a closing imperative sentence.
+# `### Next action` heading, list-item prefix, or final-imperative
+# sentence (KO + EN). The loose final-imperative check covers
+# responses that close with "Open the PR and wait for CI." or
+# "마지막으로 PR을 열고 CI 결과를 기다려주세요." without an explicit
+# `Next action` label (finding SHO-154 / /dev-kit:review finding 4).
 next_action_present = bool(
     re.search(r"(?im)^#{2,4}\s*next\s+action\b", text)
     or re.search(
         r"(?m)^(?:[-*]\s+)?(?:Next action|Next steps?|후속 작업|다음 작업)\s*[:：]?\s*\S",
         text,
     )
+    or _final_imperative(text)
 )
 
 missing = []
@@ -169,5 +277,5 @@ print(
 for m in missing:
     print(f"[sub-agent-handoff] missing {m} piece")
 PY
-INPUT="$INPUT" python3 "$SCRIPT_TMP" >&2 || true
+INPUT="$INPUT" "$PYTHON" "$SCRIPT_TMP" >&2 || true
 exit 0
