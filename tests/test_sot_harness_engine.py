@@ -10,9 +10,11 @@ sys.path.insert(0, str(ROOT / "lib"))
 from sot_harness_engine import (
     ROUNDS,
     RoundDecision,
+    RoundLogEntry,
     SOTDecisionSet,
     _rec_for,
     synthesize_sot,
+    write_decision_log,
     write_sot_handout,
 )
 
@@ -98,6 +100,35 @@ class TestValidate(unittest.TestCase):
         errs = ds.validate()
         self.assertTrue(any("customize" in e for e in errs))
 
+    def test_cross_round_rec_id_rejected(self):
+        # recommendation_id 'subagent_firewall' belongs to round 'context',
+        # not 'project_context'; validate() must flag the mismatch.
+        ds = _full_decision_set()
+        ds.decisions["project_context"] = RoundDecision(
+            round_key="project_context",
+            recommendation_id="subagent_firewall",
+            decision="accept",
+        )
+        errs = ds.validate()
+        self.assertTrue(
+            any("does not belong" in e for e in errs),
+            f"expected cross-round ID error, got {errs!r}",
+        )
+
+    def test_reject_requires_note(self):
+        ds = _full_decision_set()
+        ds.decisions["context"] = RoundDecision(
+            round_key="context",
+            recommendation_id="subagent_firewall",
+            decision="reject",
+            note="",  # missing — rejects must cite a reason (VM-3)
+        )
+        errs = ds.validate()
+        self.assertTrue(
+            any("reject" in e and "reason" in e for e in errs),
+            f"expected reject-reason error, got {errs!r}",
+        )
+
 
 class TestSynthesize(unittest.TestCase):
     def test_synthesize_contains_all_dimensions(self):
@@ -120,10 +151,11 @@ class TestSynthesize(unittest.TestCase):
     def test_synthesize_contains_implementation_phases(self):
         ds = _full_decision_set()
         out = synthesize_sot(ds)
-        self.assertIn("Phase 1: Lifecycle", out)
-        self.assertIn("Phase 2: Verification", out)
-        self.assertIn("Phase 3: Context", out)
-        self.assertIn("Phase 4: Safety", out)
+        self.assertIn("Phase 1: Project Context", out)
+        self.assertIn("Phase 2: Lifecycle", out)
+        self.assertIn("Phase 3: Verification", out)
+        self.assertIn("Phase 4: Context", out)
+        self.assertIn("Phase 5: Safety", out)
 
     def test_synthesize_contains_acceptance_criteria(self):
         ds = _full_decision_set()
@@ -161,6 +193,25 @@ class TestWrite(unittest.TestCase):
             target = write_sot_handout(ds, root)
             self.assertTrue(target.exists())
             self.assertIn("SOT Harness Document", target.read_text())
+
+    def test_write_decision_log_creates_file(self):
+        import tempfile
+        ds = _full_decision_set()
+        log = [
+            RoundLogEntry(
+                round_key=r.key,
+                question=r.question,
+                user_choice=r.recommendations[0].id,
+                note="user picked first option",
+            )
+            for r in ROUNDS
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = write_decision_log(ds, log, root)
+            self.assertTrue(target.exists())
+            self.assertIn("Decision log", target.read_text())
+            self.assertIn("user picked first option", target.read_text())
 
 
 if __name__ == "__main__":

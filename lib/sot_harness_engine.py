@@ -7,8 +7,9 @@ customizes. Output is a complete SOT doc with traceability.
 
 Public surface:
   ROUNDS: list[Round] — the 5 interview rounds, in order
-  InterviewEngine: drives the loop, persists state, emits the SOT doc
   synthesize_sot: pure function that builds the SOT doc from a decision set
+  write_sot_handout: writes the SOT doc to .dev-kit/hand-off/
+  write_decision_log: writes the per-round Q+A log
 
 CLI: not provided. The skill (skills/sot-harness-writer/SKILL.md) drives
 the conversation; this module is the deterministic synthesizer.
@@ -32,9 +33,6 @@ class Recommendation:
     source_url: str
     source_label: str
     tradeoff: str = ""
-
-    def cite_markdown(self) -> str:
-        return f"[src:{self.source_url};ts:2026-08-04;type:primary]"
 
 
 @dataclass
@@ -349,12 +347,27 @@ class SOTDecisionSet:
         if not self.is_complete():
             missing = [r.key for r in ROUNDS if r.key not in self.decisions]
             errors.append(f"missing decisions for: {', '.join(missing)}")
+        rounds_by_key = {r.key: r for r in ROUNDS}
         for key, dec in self.decisions.items():
             if not dec.is_valid():
                 errors.append(f"decision for {key} is invalid")
+                continue
+            round_obj = rounds_by_key.get(key)
+            if round_obj is None:
+                errors.append(f"unknown round key: {key}")
+                continue
+            if round_obj.pick(dec.recommendation_id) is None:
+                errors.append(
+                    f"recommendation_id '{dec.recommendation_id}' does not "
+                    f"belong to round '{key}'"
+                )
             if dec.decision == "customize" and not dec.customize_text.strip():
                 errors.append(
                     f"customize chosen for {key} but no customize_text provided"
+                )
+            if dec.decision == "reject" and not dec.note.strip():
+                errors.append(
+                    f"reject chosen for {key} but no reason (note) provided"
                 )
         return errors
 
@@ -364,11 +377,16 @@ class SOTDecisionSet:
 # --------------------------------------------------------------------------- #
 
 
+# Precomputed index: round_key -> rec_id -> Recommendation. Built once
+# at module load so _rec_for does not scan ROUNDS on every call. Tests
+# exercise _rec_for directly as the canonical lookup API.
+_REC_INDEX: dict[str, dict[str, Recommendation]] = {
+    r.key: {rec.id: rec for rec in r.recommendations} for r in ROUNDS
+}
+
+
 def _rec_for(round_key: str, rec_id: str) -> Recommendation | None:
-    for r in ROUNDS:
-        if r.key == round_key:
-            return r.pick(rec_id)
-    return None
+    return _REC_INDEX.get(round_key, {}).get(rec_id)
 
 
 def _rec_table_row(rec: Recommendation) -> str:
@@ -467,40 +485,47 @@ def synthesize_sot(decisions: SOTDecisionSet) -> str:
     lines.append("## Implementation Phases (sequenced by dependency)")
     lines.append("")
     lines.append(
-        "Phases are derived from the selected patterns. The order is "
-        "conservative: lifecycle (Phase 1) before verification (Phase 2) "
-        "before context (Phase 3) before safety (Phase 4). Project-context "
-        "specific patterns span Phases 1-3."
+        "Each of the 5 interview dimensions maps to one implementation "
+        "phase. The order is conservative: project_context (Phase 1) before "
+        "lifecycle (Phase 2) before verification (Phase 3) before context "
+        "(Phase 4) before safety (Phase 5)."
     )
     lines.append("")
     lines.append("```mermaid")
     lines.append("flowchart LR")
-    lines.append("  P1[Phase 1: Lifecycle] --> P2[Phase 2: Verification]")
-    lines.append("  P2 --> P3[Phase 3: Context]")
-    lines.append("  P3 --> P4[Phase 4: Safety]")
+    lines.append("  P1[Phase 1: Project Context] --> P2[Phase 2: Lifecycle]")
+    lines.append("  P2 --> P3[Phase 3: Verification]")
+    lines.append("  P3 --> P4[Phase 4: Context]")
+    lines.append("  P4 --> P5[Phase 5: Safety]")
     lines.append("  P1 --> P3")
     lines.append("```")
     lines.append("")
 
-    lines.append("### Phase 1: Lifecycle")
+    lines.append("### Phase 1: Project Context")
+    lines.append("")
+    pc = decisions.decisions["project_context"]
+    lines.append(f"- Pattern: `{pc.recommendation_id}` ({pc.decision})")
+    lines.append("- Deliverables: harness category scaffold + long-running init or single-pass loop per chosen pattern")
+    lines.append("")
+    lines.append("### Phase 2: Lifecycle")
     lines.append("")
     lc = decisions.decisions["lifecycle"]
     lines.append(f"- Pattern: `{lc.recommendation_id}` ({lc.decision})")
-    lines.append("- Deliverables: init.sh / progress log / feature list as needed")
+    lines.append("- Deliverables: init.sh / progress log / feature list or Ralph loop per chosen pattern")
     lines.append("")
-    lines.append("### Phase 2: Verification")
+    lines.append("### Phase 3: Verification")
     lines.append("")
     v = decisions.decisions["verification"]
     lines.append(f"- Pattern: `{v.recommendation_id}` ({v.decision})")
     lines.append("- Deliverables: eval suite + self-verification prompts or eval middleware")
     lines.append("")
-    lines.append("### Phase 3: Context")
+    lines.append("### Phase 4: Context")
     lines.append("")
     c = decisions.decisions["context"]
     lines.append(f"- Pattern: `{c.recommendation_id}` ({c.decision})")
     lines.append("- Deliverables: compaction strategy + subagent isolation or filesystem memory")
     lines.append("")
-    lines.append("### Phase 4: Safety")
+    lines.append("### Phase 5: Safety")
     lines.append("")
     s = decisions.decisions["safety"]
     lines.append(f"- Pattern: `{s.recommendation_id}` ({s.decision})")
@@ -565,10 +590,19 @@ def write_sot_handout(decisions: SOTDecisionSet, root: Path) -> Path:
     return target
 
 
+@dataclass(frozen=True)
+class RoundLogEntry:
+    """One Q+A turn recorded by the skill driver."""
+    round_key: str
+    question: str
+    user_choice: str
+    note: str = ""
+
+
 def write_decision_log(
-    decisions: SOTDecisionSet, rounds_log: list[dict], root: Path
+    decisions: SOTDecisionSet, rounds_log: list[RoundLogEntry], root: Path
 ) -> Path:
-    """Write the per-round Q+A log."""
+    """Write the per-round Q+A log to .dev-kit/decision-log-sot-harness/<session>.md."""
     target = (
         root
         / ".dev-kit"
@@ -581,11 +615,12 @@ def write_decision_log(
         "",
     ]
     for entry in rounds_log:
-        lines.append(f"## Round: {entry.get('round_key', '?')}")
+        lines.append(f"## Round: {entry.round_key}")
         lines.append("")
-        lines.append(f"- Question: {entry.get('question', '')}")
-        lines.append(f"- User: {entry.get('user_choice', '')}")
-        lines.append(f"- Note: {entry.get('note', '')}")
+        lines.append(f"- Question: {entry.question}")
+        lines.append(f"- User: {entry.user_choice}")
+        if entry.note:
+            lines.append(f"- Note: {entry.note}")
         lines.append("")
     target.write_text("\n".join(lines))
     return target

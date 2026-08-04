@@ -85,9 +85,8 @@ the user to the failing dimension.
 - **Output**:
   - `.dev-kit/hand-off/sot-harness-<session>.md` — the SOT document
     with all 5 dimensions, traceability, implementation phases.
-  - `.dev-kit/decision-log-sot-harness-<session>.md` — every Q+A in
+  - `.dev-kit/decision-log-sot-harness/<session>.md` — every Q+A in
     order, including rejected recommendations and the user's reason.
-  - `.dev-kit/loop-log-sot-harness-<session>.json` — round stats.
 
 ## Post-interview handoff
 

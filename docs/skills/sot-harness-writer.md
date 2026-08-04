@@ -31,7 +31,6 @@ explanation). The output is a SOT document with traceability.
 
 - `.dev-kit/hand-off/sot-harness-<session>.md` — the SOT document
 - `.dev-kit/decision-log-sot-harness/<session>.md` — per-round Q+A
-- `.dev-kit/loop-log-sot-harness-<session>.json` — round stats
 
 ## Iron Laws (MUST-19)
 
