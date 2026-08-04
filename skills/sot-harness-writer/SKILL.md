@@ -1,7 +1,7 @@
 ---
 name: sot-harness-writer
 category: design
-description: "Interview-based Single Source of Truth (SOT) harness document writer. Each question surfaces 2-3 evidence-based recommendations from the agent-harness-playbook research; user accepts/rejects; final output is a complete SOT harness document with traceability (source pattern + URL per decision). Hands off to /dev-kit:plan → /dev-kit:build."
+description: "Interview-based Single Source of Truth harness document writer (5 rounds × 2-3 evidence-backed recommendations, full traceability, hands off to /dev-kit:plan)."
 alpha: state
 when_to_use:
   - User types /dev-kit:sot-harness-writer <1-line-idea>
@@ -15,8 +15,6 @@ disable-model-invocation: true
 user-invocable: true
 ---
 > [← Skills index](../../README.md)
-
-# /dev-kit:sot-harness-writer — Interview-based SOT harness document
 
 Self-contained. Runs 5 interview rounds (one per SOT dimension: project
 context, verification, context, safety, lifecycle). Each round surfaces
@@ -50,7 +48,7 @@ and Anthropic's "Effective harnesses for long-running agents"
 
 ## Conversational loop (5 dimensions × 5 turns max)
 
-```
+```text
 [1/5] project_context  — "What is your project's primary agent-harness category?"
 [2/5] verification     — "How will you verify the agent's work?"
 [3/5] context          — "How will you manage the context window?"
@@ -92,7 +90,7 @@ the user to the failing dimension.
 
 After the SOT document is written, the skill suggests:
 
-```
+```bash
 SOT doc written. To convert to a build-ready plan:
   /dev-kit:plan --from-sot .dev-kit/hand-off/sot-harness-<session>.md
 
@@ -115,10 +113,10 @@ build skill reads the PRD and runs the per-step sub-agent delegation.
 - **Source citation per decision**: enables the reviewer to verify
   the recommendation in 30 seconds.
 
-## See also
+## Next step
 
-- `/dev-kit:interview` — the 5-field safety contract (precedes this skill)
-- `/dev-kit:plan` — emits PRD.md from the SOT doc
-- `/dev-kit:build` — runs the build, reading PRD.md
-- `lib/sot_harness_engine.py` — the interview engine
-- `agent-harness-playbook` — the source of all recommendations
+Hand the SOT document off to `/dev-kit:plan --from-sot` for PRD
+emission, then `/dev-kit:build` for per-step implementation. See also:
+`/dev-kit:interview` (5-field safety contract, precedes this skill),
+`/dev-kit:plan`, `/dev-kit:build`, `lib/sot_harness_engine.py`, and
+`agent-harness-playbook` (the source of all recommendations).

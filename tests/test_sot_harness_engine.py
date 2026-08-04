@@ -13,6 +13,7 @@ from sot_harness_engine import (
     RoundLogEntry,
     SOTDecisionSet,
     _rec_for,
+    _safe_session_id,
     synthesize_sot,
     write_decision_log,
     write_sot_handout,
@@ -182,6 +183,24 @@ class TestSynthesize(unittest.TestCase):
         out = synthesize_sot(ds)
         self.assertIn("INCOMPLETE", out)
         self.assertIn("held", out)
+
+
+class TestSafeSessionId(unittest.TestCase):
+    def test_default_passes_through(self):
+        self.assertEqual(_safe_session_id("default"), "default")
+
+    def test_traversal_collapsed(self):
+        # '../../etc/passwd' becomes '.._.._etc_passwd' (slashes become underscores);
+        # the path component never contains '/' so the file lands inside .dev-kit/...
+        assert _safe_session_id("../../etc/passwd") == ".._.._etc_passwd"
+        for ch in "/\\":
+            assert ch not in _safe_session_id("../../etc/passwd")
+
+    def test_empty_falls_back_to_default(self):
+        self.assertEqual(_safe_session_id(""), "default")
+
+    def test_long_input_truncated(self):
+        self.assertEqual(len(_safe_session_id("a" * 200)), 64)
 
 
 class TestWrite(unittest.TestCase):

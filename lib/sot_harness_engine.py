@@ -17,6 +17,7 @@ the conversation; this module is the deterministic synthesizer.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -546,7 +547,7 @@ def synthesize_sot(decisions: SOTDecisionSet) -> str:
     lines.append("")
     lines.append("```bash")
     lines.append(
-        f"/dev-kit:plan --from-sot .dev-kit/hand-off/sot-harness-{decisions.session_id}.md"
+        f"/dev-kit:plan --from-sot .dev-kit/hand-off/sot-harness-{_safe_session_id(decisions.session_id)}.md"
     )
     lines.append("```")
     lines.append("")
@@ -584,7 +585,8 @@ def _incomplete_doc(decisions: SOTDecisionSet, errs: list[str]) -> str:
 
 def write_sot_handout(decisions: SOTDecisionSet, root: Path) -> Path:
     """Write the SOT doc to .dev-kit/hand-off/sot-harness-<session>.md."""
-    target = root / ".dev-kit" / "hand-off" / f"sot-harness-{decisions.session_id}.md"
+    safe = _safe_session_id(decisions.session_id)
+    target = root / ".dev-kit" / "hand-off" / f"sot-harness-{safe}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(synthesize_sot(decisions))
     return target
@@ -599,15 +601,33 @@ class RoundLogEntry:
     note: str = ""
 
 
+_SESSION_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_session_id(session_id: str) -> str:
+    """Return a filesystem-safe version of ``session_id``.
+
+    Defensive sanitization: the skill flow controls ``session_id`` (default
+    ``"default"``) and treats it as trusted, but a programmatic caller could
+    pass a traversal sequence. Collapse anything outside ``[A-Za-z0-9._-]``
+    to ``_``; truncate to 64 chars; fall back to ``"default"`` on empty.
+    """
+    cleaned = _SESSION_ID_SAFE_RE.sub("_", session_id).strip("_")
+    if not cleaned:
+        cleaned = "default"
+    return cleaned[:64]
+
+
 def write_decision_log(
     decisions: SOTDecisionSet, rounds_log: list[RoundLogEntry], root: Path
 ) -> Path:
     """Write the per-round Q+A log to .dev-kit/decision-log-sot-harness/<session>.md."""
+    safe = _safe_session_id(decisions.session_id)
     target = (
         root
         / ".dev-kit"
         / "decision-log-sot-harness"
-        / f"{decisions.session_id}.md"
+        / f"{safe}.md"
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [
