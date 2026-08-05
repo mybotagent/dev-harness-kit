@@ -345,14 +345,21 @@ def main() -> int:
     root = Path(args.project_root).resolve()
     idx_path = root / "phases" / args.phase / "index.json"
     steps = json.loads(idx_path.read_text(encoding="utf-8")).get("steps", [])
+    # Filter to the same eligible-step projection the runners use. The
+    # classifier must see only steps that will actually run; counting
+    # SKIPPABLE_STATUSES (completed/unimplemented) would inflate N past
+    # the parallel threshold and log a decision that doesn't match what
+    # executes.
+    eligible = [s for s in steps if s.get("status") in RESUMABLE_STATUSES
+                and s.get("status") != "blocked"]
     # Auto-classify dispatch mode via lib.dispatch_classifier. Replaces the
     # legacy --parallel flag. Decision + reason logged as the first build
     # line so the user can audit why parallelism was rejected.
     from dispatch_classifier import classify  # local import to avoid cycle
-    decision = classify(steps)
+    decision = classify(eligible)
     print(f"dispatch: {decision.mode} — {decision.reason}", file=sys.stderr)
     if decision.mode == "parallel":
-        return _run_parallel(root, args.phase, len(steps), args.push, args.skip_blocked)
+        return _run_parallel(root, args.phase, len(eligible), args.push, args.skip_blocked)
     return _run_sequential(root, args.phase, args.push, args.skip_blocked)
 
 

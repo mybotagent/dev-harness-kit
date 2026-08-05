@@ -79,7 +79,7 @@ See `skills/research-plan-build/SKILL.md` for the per-phase contract.
 
    **Classifier priority order** (first match wins):
    1. **Dependency edge** between any pair (`depends_on` / `consumes`) → sequential.
-   2. **Vague scope** (TODO/FIXME/TBD/?/maybe in preamble or AC) → sequential.
+   2. **Vague scope** (TODO/FIXME/TBD/maybe/perhaps/either in preamble or AC) → sequential.
    3. **Overlapping writes** between two steps without partition → sequential.
    4. **N ≥ 4** AND clean worktree isolation (every step with non-empty
       `writes` has an explicit `partition`) → parallel.

@@ -936,11 +936,6 @@ class TestStatusTransitionsTable(unittest.TestCase):
             self.assertGreaterEqual(len(params), 2,
                                     f"transition {status!r} has < 2 params")
 
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class TestMainDispatchDecision(unittest.TestCase):
     """Regression: main() emits dispatch decision via lib.dispatch_classifier.
 
@@ -1003,3 +998,64 @@ class TestMainDispatchDecision(unittest.TestCase):
         self.assertNotEqual(rc, 0, f"--parallel flag must be removed; got rc={rc}")
         self.assertIn("--parallel", stderr,
                       f"argparse error must mention --parallel; stderr was: {stderr!r}")
+
+
+class TestMainDispatchEligibleStepsOnly(unittest.TestCase):
+    """Regression: classify() must see only eligible (resumable, non-blocked) steps.
+
+    Otherwise a phase with N=4 steps where 1 is completed + 3 are pending
+    would log 'parallel' but only run 3 steps, while stale metadata can
+    force sequential dispatch by inflating N past the threshold.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        # 4 steps total: 1 completed, 1 unimplemented, 2 pending.
+        # Eligible = 2 (just the pending). Should classify as sequential
+        # because N=2 < threshold.
+        idx = {
+            "phase": "0-mvp",
+            "worktree": "feat/x",
+            "steps": [
+                {"step": 1, "name": "done", "status": "completed"},
+                {"step": 2, "name": "stub", "status": "unimplemented"},
+                {"step": 3, "name": "a", "status": "pending"},
+                {"step": 4, "name": "b", "status": "pending"},
+            ],
+        }
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+        self._patches = [
+            patch.object(execute, "_run_sequential", return_value=0),
+            patch.object(execute, "_run_parallel", return_value=0),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_main(self, argv):
+        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    rc = execute.main()
+                except SystemExit as e:
+                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
+            return rc, buf.getvalue()
+
+    def test_classify_sees_only_eligible_steps(self):
+        rc, stderr = self._run_main(["0-mvp"])
+        self.assertEqual(rc, 0)
+        # 2 eligible steps; threshold is 4. Must be sequential.
+        self.assertIn("sequential", stderr,
+                      f"classifier must only count eligible steps; stderr was: {stderr!r}")
+        self.assertIn("2 steps", stderr,
+                      f"classifier must report eligible step count (2), not total (4); stderr was: {stderr!r}")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

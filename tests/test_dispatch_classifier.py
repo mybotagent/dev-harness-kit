@@ -198,11 +198,6 @@ class TestClassifyReasonFormat(unittest.TestCase):
         d = classify([_step(1), _step(2), _step(3), _step(4), _step(5)])
         self.assertIn("5 steps", d.reason)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestClassifyVagueScopeFalsePositives(unittest.TestCase):
     """Regression: markers that LOOK like ambiguity but aren't.
 
@@ -242,3 +237,7 @@ class TestClassifyVagueScopeFalsePositives(unittest.TestCase):
         d = classify(steps)
         self.assertEqual(d.mode, "parallel",
                          "legitimate ? in a question must not trigger '?' as vague-scope")
+
+
+if __name__ == "__main__":
+    unittest.main()
