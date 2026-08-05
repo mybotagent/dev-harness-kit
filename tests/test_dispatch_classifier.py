@@ -170,9 +170,11 @@ class TestClassifyPriorityOrder(unittest.TestCase):
         ]
         d = classify(steps)
         self.assertEqual(d.mode, "sequential")
-        # Either dependency or vague is acceptable as the first hit;
-        # verify it isn't "parallel" — that's all the priority guarantees.
-        self.assertNotEqual(d.mode, "parallel")
+        # Per the first-match-wins contract, when both signals are present
+        # the dependency rule (Rule 1) must fire before the vague-scope rule
+        # (Rule 2). Lock the specific reason that won.
+        self.assertIn("dependency edge", d.reason,
+                      f"first-match-wins requires dependency rule to win over vague scope; got: {d.reason!r}")
 
     def test_idempotent(self):
         """Re-invoking with the same input yields a byte-identical decision."""

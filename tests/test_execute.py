@@ -748,8 +748,16 @@ class TestRunParallel(unittest.TestCase):
             self.assertGreaterEqual(len(wt_add_calls), 1)
 
     def test_parallel_returns_nonzero_on_slot_failure(self):
+        slot_instances: list[int] = []
+        original_slot_runner = execute._SlotRunner
+
+        def counting_slot_runner(*args, **kwargs):
+            slot_instances.append(1)
+            return original_slot_runner(*args, **kwargs)
+
         with patch.object(execute.subprocess, "run") as mr_run, \
-             patch.object(execute.subprocess, "Popen") as mr_popen:
+             patch.object(execute.subprocess, "Popen") as mr_popen, \
+             patch.object(execute, "_SlotRunner", side_effect=counting_slot_runner):
             mr_run.return_value = self._fake_proc()
             proc_mock = MagicMock()
             proc_mock.poll.return_value = 1
@@ -778,8 +786,16 @@ class TestRunParallel(unittest.TestCase):
             "project": "p", "phase": "0-mvp", "worktree": "feat/par", "steps": steps,
         }), encoding="utf-8")
 
+        slot_instances: list[int] = []
+        original_slot_runner = execute._SlotRunner
+
+        def counting_slot_runner(*args, **kwargs):
+            slot_instances.append(1)
+            return original_slot_runner(*args, **kwargs)
+
         with patch.object(execute.subprocess, "run") as mr_run, \
-             patch.object(execute.subprocess, "Popen") as mr_popen:
+             patch.object(execute.subprocess, "Popen") as mr_popen, \
+             patch.object(execute, "_SlotRunner", side_effect=counting_slot_runner):
             mr_run.return_value = self._fake_proc()
             proc_mock = MagicMock()
             proc_mock.poll.return_value = 0
@@ -794,9 +810,23 @@ class TestRunParallel(unittest.TestCase):
             # The guarantee is that no more than `_PARALLEL_MAX_CONCURRENT`
             # slots are alive at any moment, which is enforced by the
             # initial `slots = [...]` construction.
+            # The cap is the number of _SlotRunner instances created in
+            # the initial slots = [...] construction. A refactor that
+            # drops the `min(_PARALLEL_MAX_CONCURRENT, ...)` bound would
+            # push the initial count to len(eligible) = 20 and fail.
+            self.assertGreater(
+                len(slot_instances), 0,
+                "fixture error: no _SlotRunner instances were created",
+            )
             self.assertLessEqual(
-                execute._PARALLEL_MAX_CONCURRENT, 20,
-                "cap constant must be <= the 20-step fixture size to make the test meaningful",
+                len(slot_instances), execute._PARALLEL_MAX_CONCURRENT,
+                f"slot construction count {len(slot_instances)} exceeded "
+                f"cap {execute._PARALLEL_MAX_CONCURRENT}",
+            )
+            self.assertEqual(
+                len(slot_instances), execute._PARALLEL_MAX_CONCURRENT,
+                f"slot construction should be exactly the cap when "
+                f"len(eligible)=20 > cap; got {len(slot_instances)}",
             )
 class TestRunStepBody(unittest.TestCase):
     """_run_step_body is the shared body for sequential and parallel runners.
