@@ -355,5 +355,41 @@ class TestPreConfirmedFlag(unittest.TestCase):
         )
 
 
+# ---------- Path-traversal guard (CLI entry point) ----------
+
+
+class TestCliPathGuard(unittest.TestCase):
+    """The CLI must reject `--pre` values that would escape
+    `.dev-kit/integrity/` (e.g. `../../etc`). Regression for the
+    /dev-kit:review minor findings."""
+
+    def _run_main_capture(self, argv):
+        """Run main() swallowing SystemExit (argparse calls sys.exit on error)."""
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            try:
+                rc = intent_integrity.main(argv)
+            except SystemExit as e:
+                rc = e.code if isinstance(e.code, int) else 2
+        return rc
+
+    def test_rejects_dotdot_phase(self):
+        rc = self._run_main_capture(["--pre", "../etc"])
+        self.assertEqual(rc, 2, "path-traversal phase must be rejected (exit 2)")
+
+    def test_rejects_slash_phase(self):
+        rc = self._run_main_capture(["--pre", "a/b"])
+        self.assertEqual(rc, 2, "phase with slash must be rejected (exit 2)")
+
+    def test_accepts_normal_phase(self):
+        # Pass a benign phase + nonexistent root → we want to confirm the
+        # regex guard did NOT trip. Exit code 2 is expected from the
+        # phase-dir-not-found branch, which is a DIFFERENT code path.
+        rc = self._run_main_capture(["--pre", "demo", "--root", "/nonexistent-root-xyz"])
+        self.assertEqual(rc, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

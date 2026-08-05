@@ -386,6 +386,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.pre:
         parser.error("--pre <phase> is required (post-build arrives in PR #2)")
 
+    # Path-traversal guard: a malicious phase name (e.g. "../etc") would
+    # otherwise escape `.dev-kit/integrity/` and let the gate see a
+    # "missing report" → continue-without-check. Restrict to a safe
+    # character set; the same regex is enforced in lib/execute.py at the
+    # second entry point.
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.pre):
+        parser.error(f"invalid --pre phase: {args.pre!r} (use letters/digits/._-)")
+
     root = Path(args.root).resolve()
     plan_dir = root / "phases" / args.pre
     prd_path = root / "PRD.md"

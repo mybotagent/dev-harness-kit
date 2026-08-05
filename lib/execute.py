@@ -390,11 +390,27 @@ def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = Fal
     data = json.loads(idx_path.read_text(encoding="utf-8"))
     worktree_branch = data.get("worktree") or f"feat/{phase}"
     steps = data.get("steps", [])
-    # Intent integrity pre-build gate (defense-in-depth, not a hard block).
-    # The plan skill already runs the same check and refuses to emit if it
-    # fails; this second pass catches resumed runs whose plan was emitted
-    # before integrity existed. Missing file = the pre-build check was
-    # skipped (e.g. a resumed run); warn and continue.
+    # Path-traversal guard: a malicious `phase` value (e.g. "../../tmp/x")
+    # would escape `.dev-kit/integrity/` and either substitute attacker-
+    # controlled JSON or fall through to the "missing → continue" branch.
+    # Mirror the regex enforced in lib/intent_integrity.main.
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9._-]+", phase):
+        print(
+            f"intent_integrity: refusing to run gate — invalid phase {phase!r} "
+            f"(use letters/digits/._-)",
+            file=sys.stderr,
+        )
+        return 2
+    # Intent integrity pre-build gate. The plan skill already runs the
+    # same check at Gate 5/5 emit and refuses to mark complete if it
+    # fails; this second pass catches (a) a stale plan that pre-dates
+    # integrity and (b) any tampering with the .pre.json between plan
+    # and build. Behavior split:
+    #   - report missing        -> soft: warn + continue (resumed run)
+    #   - report present + high -> hard: return 2, do NOT mutate state
+    #   - report present + low  -> proceed
+    # Read-only: no update_step_status() before this gate's return.
     pre_report = root / ".dev-kit" / "integrity" / f"{phase}.pre.json"
     if pre_report.exists():
         try:
