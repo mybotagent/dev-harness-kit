@@ -1291,5 +1291,262 @@ class TestScriptEntrypoint(unittest.TestCase):
                          f"clean --help must not write to stderr; got: {cp.stderr}")
 
 
+class TestSessionMatchesIsPublic(unittest.TestCase):
+    """``sm.session_matches`` is a public predicate promoted from
+    ``_session_matches`` so the picker + the CLI can share one matching
+    function without re-entering the parent module. Empty pattern =
+    identity, case-insensitive, status haystack present, None-safe on
+    each field (an unset source / log_path must not raise)."""
+
+    def _sess(self, **kw):
+        base = _agg(session_id="sid-1", worktree="(main)", branch="main",
+                    model="opus", source="claude-code",
+                    log_path="/tmp/x.jsonl", last_ts=NOW)
+        base.update(kw)
+        return sm.Session(agg=base, worktree_state="live",
+                          status=sm.Status.IDLE)
+
+    def _wt(self, dirname="alpha"):
+        return sm.WorktreeInfo(dirname, "live", None, [])
+
+    def test_empty_pattern_is_identity(self):
+        self.assertTrue(sm.session_matches(self._sess(), self._wt(), ""))
+        self.assertTrue(sm.session_matches(self._sess(), self._wt(), "   "))
+
+    def test_case_insensitive_match(self):
+        s = self._sess(branch="feat-XYZ")
+        self.assertTrue(sm.session_matches(s, self._wt(), "FEAT-xyz"))
+        self.assertTrue(sm.session_matches(s, self._wt(), "feat-xyz"))
+
+    def test_status_in_haystack(self):
+        s = self._sess()
+        s.status = sm.Status.LIVE
+        self.assertTrue(sm.session_matches(s, self._wt(), "live"))
+        s.status = sm.Status.STALE
+        self.assertTrue(sm.session_matches(s, self._wt(), "stale"))
+
+    def test_none_safe_haystack(self):
+        # log_path / branch can be missing on aggregator output; the
+        # predicate must coerce None -> "" and keep matching safely.
+        s = self._sess(log_path=None, branch=None, model=None)
+        self.assertTrue(sm.session_matches(s, self._wt(), ""))
+        # no crash, and a non-substring still returns False cleanly.
+        self.assertFalse(sm.session_matches(s, self._wt(), "nope-not-here"))
+
+
+class TestFilterModuleIsIndependent(unittest.TestCase):
+    """Cycle regression guard: ``tools/session_monitor_filter.py`` must
+    NOT import the parent ``session_monitor`` module. Re-importing
+    session_monitor from any sibling re-creates the load cycle that
+    ``session_monitor_types`` was created to break. Static-source check
+    (via ``inspect.getsource``) catches the regression even when the
+    module is never executed."""
+
+    def test_filter_module_does_not_import_session_monitor(self):
+        import inspect
+        import re
+
+        import session_monitor_filter
+        src = inspect.getsource(session_monitor_filter)
+        # Strip docstrings + comments so the regex only matches real
+        # import statements (the module's docstring legitimately
+        # mentions "session_monitor" by name to describe the cycle it
+        # must avoid).
+        body = re.sub(r'^\s*""".*?"""\s*$', "", src, flags=re.S | re.M)
+        for stmt in ("import session_monitor",
+                     "from session_monitor "):
+            self.assertNotIn(stmt, body,
+                             f"session_monitor_filter must not contain "
+                             f"a real {stmt!r} statement (would recreate "
+                             f"the import cycle session_monitor_types was "
+                             f"created to break)")
+
+
+class TestClampCursor(unittest.TestCase):
+    """``_clamp_cursor`` keeps the cursor on a selectable row after a
+    filter rebuild. Preserved when still selectable; snaps forward
+    to the next selectable row when the current row was filtered out;
+    returns 0 when the row set is empty."""
+
+    def _model_with_sessions(self):
+        return [sm.WorktreeInfo("alpha", "live", None, [
+            sm.Session(agg=_agg(session_id="a1", last_ts=NOW),
+                       worktree_state="live", status=sm.Status.IDLE),
+            sm.Session(agg=_agg(session_id="a2", last_ts=NOW),
+                       worktree_state="live", status=sm.Status.IDLE),
+        ])]
+
+    def test_preserves_when_cursor_still_selectable(self):
+        rows = sm.build_rows(self._model_with_sessions(), now=NOW)
+        # First session row's index in the model with one worktree
+        sess_idx = sm._selectable_indices(rows)[0]
+        self.assertEqual(sm._clamp_cursor(rows, sess_idx), sess_idx)
+
+    def test_snaps_forward_when_cursor_filtered_out(self):
+        rows = sm.build_rows(self._model_with_sessions(), now=NOW)
+        # Simulate a filter that removed the first session row by
+        # building a row set that has only the second session.
+        # The cursor is now between selectable rows (on a header) and
+        # must snap to the first remaining selectable row.
+        sess_indices = sm._selectable_indices(rows)
+        if len(sess_indices) >= 2:
+            # Drop the first session row; cursor sits at sess_indices[0]
+            trimmed = [r for i, r in enumerate(rows) if i != sess_indices[0]]
+            cursor = sess_indices[0]  # now a header row
+            clamped = sm._clamp_cursor(trimmed, cursor)
+            self.assertEqual(trimmed[clamped]["kind"], "session")
+
+    def test_empty_rows_returns_zero(self):
+        self.assertEqual(sm._clamp_cursor([], 5), 0)
+        # Also returns 0 when the row set has no selectable rows
+        # (only section / header / columns kinds).
+        non_sess = [
+            {"kind": "section", "text": "x"},
+            {"kind": "header", "text": "x"},
+        ]
+        self.assertEqual(sm._clamp_cursor(non_sess, 0), 0)
+
+
+class TestRenderPickerWithQuery(unittest.TestCase):
+    """``_render_picker`` gains a ``query`` parameter that, when
+    non-empty, shows the active search pattern in the header and
+    switches the footer to edit-mode key hints. With ``query=""`` the
+    output must stay byte-identical to today's layout (header keeps
+    the ``N sessions / M worktrees`` shape, no match-count text)."""
+
+    def _sess(self, sid="s", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("a1", "feat-x"),
+                                 self._sess("a2", "feat-y")])]
+
+    def _render(self, model, query, *, max_y=12):
+        rows = sm.build_rows(model, now=NOW)
+        # Always pick a real session row as the cursor.
+        sel = sm._selectable_indices(rows)
+        cursor = sel[0] if sel else 0
+        buf = io.StringIO()
+        sm._render_picker(buf, rows, cursor=cursor, scroll=0,
+                          max_x=120, max_y=max_y, query=query)
+        return buf.getvalue()
+
+    def test_empty_query_keeps_legacy_header(self):
+        out = self._render(self._model(), query="")
+        self.assertIn("session-monitor", out)
+        # The legacy "N sessions / M worktrees" shape is the
+        # documented byte-identical contract for query="".
+        self.assertIn("sessions", out)
+        self.assertIn("worktrees", out)
+        # No edit-mode footer text leaks into the legacy layout.
+        self.assertNotIn("0 matches", out)
+        self.assertNotIn("/edit", out)
+
+    def test_nonempty_query_shows_search_in_header(self):
+        out = self._render(self._model(), query="feat")
+        # Header carries the active search pattern prefixed with '/'
+        self.assertIn("/feat", out)
+        # Legacy N/M counters are replaced by "N / M matches".
+        self.assertIn("matches", out)
+
+    def test_zero_session_rows_emits_zero_matches_in_edit_mode(self):
+        # Worktree with no sessions + an active query -> the
+        # edit-mode footer must surface the "0 matches" hint so the
+        # user can read why the body is empty.
+        empty = [sm.WorktreeInfo("alpha", "live", None, [])]
+        out = self._render(empty, query="feat")
+        self.assertIn("0 matches", out)
+
+
+class TestFilterModelBackCompat(unittest.TestCase):
+    """``sm.filter_model`` (re-exported from session_monitor_filter)
+    must keep its existing contract after the split: empty pattern
+    is identity, matching pattern keeps the worktree bucket open,
+    non-matching pattern drops it, and ``last_commit_subject`` /
+    ``state`` survive the rebuild untouched."""
+
+    def _sess(self, sid="s1", branch="main"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def test_empty_pattern_is_identity(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1"), self._sess("a2")])]
+        out = sm.filter_model(model, "")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(len(out[0].sessions), 2)
+
+    def test_matching_pattern_keeps_worktree(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1", "feat-x")])]
+        out = sm.filter_model(model, "feat-x")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].dirname, "alpha")
+        self.assertEqual(len(out[0].sessions), 1)
+
+    def test_no_match_drops_worktree(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1", "main")])]
+        self.assertEqual(sm.filter_model(model, "zzz-nope"), [])
+
+    def test_preserves_last_commit_subject_and_state(self):
+        model = [sm.WorktreeInfo("alpha", "merged", None,
+                                 [self._sess("a1", "feat-x")],
+                                 last_commit_subject="feat: latest commit")]
+        out = sm.filter_model(model, "feat-x")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].state, "merged")
+        self.assertEqual(out[0].last_commit_subject, "feat: latest commit")
+        # Drop case: even when the rebuild returns an empty list, the
+        # state/subject of the surviving buckets is untouched.
+        out2 = sm.filter_model(model, "zzz-nope")
+        self.assertEqual(out2, [])
+
+
+class TestSearchFlagEndToEnd(unittest.TestCase):
+    """End-to-end smoke: ``--filter <no-match>`` on the script entrypoint
+    preserves the existing ``cli.py:151-152`` stderr warning
+    (``matched 0 of N sessions``) and still exits 0. Runs the script
+    as a subprocess (not in-process) so the test exercises the same
+    load graph a real user invocation does."""
+
+    SCRIPT = PROJECT_ROOT / "tools" / "session_monitor.py"
+
+    def _run(self, cwd: Path, *args: str,
+             timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT), *args],
+            capture_output=True, text=True, timeout=timeout, cwd=str(cwd),
+        )
+
+    def test_no_match_filter_warns_on_stderr(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            logs = root / "logs"
+            (logs / "claude-code" / "feat-x").mkdir(parents=True)
+            shutil.copy(FIXTURES / "cc-subagents.jsonl",
+                        logs / "claude-code" / "feat-x"
+                        / "cc-subagents.jsonl")
+            # Run from the tempdir so discover_repo_root() falls back
+            # to start (the tempdir) and build_model scans only the
+            # tempdir's logs, not the entire dev-harness-kit log tree.
+            cp = self._run(
+                root,
+                "--logs-dir", str(logs),
+                "--days", "30",
+                "--filter", "zzz-no-match",
+                "--json",
+            )
+        self.assertEqual(cp.returncode, 0,
+                         f"--filter with no match should still exit 0; "
+                         f"got rc={cp.returncode}, stderr={cp.stderr}")
+        self.assertIn("matched 0 of", cp.stderr,
+                      f"expected 'matched 0 of' in stderr; got: {cp.stderr!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
