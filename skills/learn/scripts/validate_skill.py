@@ -15,6 +15,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 ALLOWED_CATEGORIES = {
     "audit", "bootstrap", "build", "config", "design", "eval",
     "plan", "review", "security", "ship", "shortcuts", "status",
@@ -34,16 +36,24 @@ SECTION_RE = re.compile(r"^## (.+?)$", re.MULTILINE)
 
 
 def extract_frontmatter(text: str) -> dict[str, str] | None:
+    """Parse YAML frontmatter via PyYAML safe_load.
+
+    Returns a dict of stringified values (lists → JSON-ish repr) for
+    downstream gate checks. Returns None when the '---' wrapper is
+    missing or the YAML fails to parse.
+    """
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
-    fields: dict[str, str] = {}
-    for line in m.group(1).splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        fields[key.strip()] = value.strip()
-    return fields
+    raw = m.group(1)
+    try:
+        loaded = yaml.safe_load(raw) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    return {str(k): str(v) if not isinstance(v, (list, dict)) else repr(v)
+            for k, v in loaded.items()}
 
 
 def g1_description_length(fm: dict[str, str]) -> list[str]:
@@ -94,35 +104,80 @@ def g2_frontmatter_schema(fm: dict[str, str] | None, skill_md: Path) -> list[str
 
 
 def g3_section_order(text: str) -> list[str]:
+    """Enforce BOTH presence AND order of all 7 canonical sections.
+
+    The /dev-kit:learn skill is a generator: a candidate missing
+    `Iron Laws` (the most load-bearing section under token pressure)
+    must not silently pass. G3 therefore requires all 7 sections to
+    appear, in the canonical order, not just a subset.
+    """
     sections = [m.group(1) for m in SECTION_RE.finditer(text)]
-    canonical_present = [
-        s for s in sections if any(s.startswith(c) for c in CANONICAL_SECTIONS)
-    ]
-    prefixes: list[str] = []
-    for s in canonical_present:
+    canonical_present: list[str] = []
+    for s in sections:
         for c in CANONICAL_SECTIONS:
             if s.startswith(c):
-                prefixes.append(c)
+                canonical_present.append(c)
                 break
-    indices = [CANONICAL_SECTIONS.index(p) for p in prefixes]
+    indices = [CANONICAL_SECTIONS.index(p) for p in canonical_present]
+    violations: list[str] = []
+    missing = [c for c in CANONICAL_SECTIONS if c not in canonical_present]
+    if missing:
+        violations.append(
+            "G3 missing canonical sections: "
+            f"{missing} (all 7 required)"
+        )
     if indices != sorted(indices):
-        return [
+        violations.append(
             "G3 section order mismatch: "
-            f"expected canonical prefix order, got {prefixes}"
-        ]
-    return []
+            f"expected canonical prefix order, got {canonical_present}"
+        )
+    return violations
 
 
-def g4_name_collision(skill_md: Path) -> list[str]:
-    """name must not collide with another skill directory (excluding self)."""
-    name = skill_md.parent.name
-    skills_root = skill_md.parent.parent
-    if not skills_root.is_dir():
-        return []  # Not running from the repo; skip collision check.
-    for entry in skills_root.iterdir():
-        if entry.is_dir() and entry.name == name and entry != skill_md.parent:
-            return [f"G4 name collides with skills/{name}/"]
-    return []
+def g4_name_collision(skill_md: Path, fm: dict[str, str] | None) -> list[str]:
+    """name field must not collide with an existing skill directory.
+
+    The validator runs before the candidate is written, so the
+    candidate file may live at any path (e.g. tests/_fixtures/x.md).
+    We use the frontmatter `name:` field to find the candidate's
+    eventual home (`skills/<name>/SKILL.md`) and check whether that
+    directory already exists — except when it equals the candidate's
+    own parent (which is the normal write target).
+    """
+    if not fm:
+        return []
+    name = fm.get("name", "").strip()
+    if not name:
+        return []
+    # Locate the skills/ root by walking up from the candidate file.
+    skills_root = None
+    ancestor = skill_md.resolve().parent
+    while ancestor != ancestor.parent:
+        if (ancestor / "skills").is_dir() and (
+            ancestor / "skills" / "SKILL.md"
+        ).exists() is False or (ancestor / "skills").is_dir():
+            # Either a real skills/ tree, or anything named skills/.
+            if (ancestor.name == "skills") or (
+                (ancestor / "skills").is_dir()
+            ):
+                pass
+        # Simpler heuristic: walk up to find a sibling `skills/`.
+        if (ancestor.parent / "skills").is_dir():
+            skills_root = ancestor.parent / "skills"
+            break
+        ancestor = ancestor.parent
+    if skills_root is None:
+        return []
+    target = skills_root / name
+    if not target.exists():
+        return []
+    # Allow the candidate to live inside its own target dir (normal
+    # write scenario). Otherwise it's a collision.
+    try:
+        skill_md.resolve().relative_to(target.resolve())
+        return []
+    except ValueError:
+        return [f"G4 name collides with skills/{name}/"]
 
 
 def main() -> int:
@@ -144,7 +199,7 @@ def main() -> int:
     if fm is not None:
         violations.extend(g1_description_length(fm))
     violations.extend(g3_section_order(text))
-    violations.extend(g4_name_collision(path))
+    violations.extend(g4_name_collision(path, fm))
 
     if violations:
         print("FAIL:", file=sys.stdout)
