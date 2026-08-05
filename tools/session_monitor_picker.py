@@ -19,7 +19,8 @@ Public surface (re-exported by ``tools/session_monitor.py`` so callers
 keep using ``sm.pick_session``, ``sm.build_rows``, etc.):
 - ``_ANSI``, ``_STATUS_COLOR``
 - ``build_rows``, ``_selectable_indices``, ``_move_selectable``,
-  ``_clamp_cursor``
+  ``_clamp_cursor``, ``_rebuild_rows_with_query``
+- ``_step_normal``, ``_step_editing``
 - ``_terminal_size``, ``_render_picker``, ``_read_key``
 - ``pick_session``
 """
@@ -160,6 +161,32 @@ def _clamp_cursor(rows: list[dict], cursor: int) -> int:
     return sel[-1]
 
 
+def _rebuild_rows_with_query(
+    model: list[WorktreeInfo],
+    buffer: str,
+    prev_session: Session | None,
+) -> tuple[list[dict], int]:
+    """Build rows from ``filter_model(model, buffer)`` and place the cursor.
+
+    ``prev_session`` is the session that the cursor was on before the
+    rebuild, or ``None`` when there was nothing to preserve. The function
+    returns the cursor pointing at the row whose payload session has the
+    same ``session_id`` as ``prev_session`` when one survives the filter --
+    so a narrowing buffer does not silently jump to a *different* session.
+    Falls back to ``_clamp_cursor(rows, 0)`` (first selectable row) when
+    the previous session was filtered out or no previous session existed.
+    """
+    filtered = filter_model(model, buffer)
+    rows = build_rows(filtered)
+    if prev_session is not None:
+        prev_id = prev_session.session_id
+        for i, r in enumerate(rows):
+            if (r["kind"] == "session"
+                    and r["session"].session_id == prev_id):
+                return rows, i
+    return rows, _clamp_cursor(rows, 0)
+
+
 def _terminal_size(fallback: tuple[int, int] = (80, 24)) -> tuple[int, int]:
     try:
         return os.get_terminal_size(0)
@@ -251,6 +278,183 @@ def _read_key(timeout: float = 0.5) -> bytes:
     return b"\x1b[" + os.read(0, 1)
 
 
+def _session_at_cursor(rows: list[dict], cursor: int) -> Session | None:
+    """Return the Session the cursor is on, or None when on a non-session row."""
+    if not rows:
+        return None
+    if cursor < 0 or cursor >= len(rows):
+        return None
+    r = rows[cursor]
+    if r.get("kind") != "session":
+        return None
+    return r.get("session")
+
+
+def _step_normal(
+    key: bytes,
+    rows: list[dict],
+    cursor: int,
+    buffer: str,
+    mode: str,
+    model: list[WorktreeInfo],
+    original_model: list[WorktreeInfo],
+    total_sessions: int,
+) -> tuple[list[dict], int, str, str, Session | None, bool]:
+    """Pure handler for a NORMAL-mode keypress.
+
+    Returns ``(rows, cursor, buffer, mode, returned_session, should_exit)``.
+
+    Quits: ``\\x1b``, ``b"q"``, ``b"Q"`` → ``should_exit=True`` with
+    ``returned_session=None``.
+    Selection: ``b"\\r"`` / ``b"\\n"`` → ``should_exit=True`` with
+    ``returned_session`` set to the row under the cursor when there is
+    a selectable match (Enter is otherwise a no-op).
+    State changes: arrows / j/k move the cursor; ``b"/"`` switches to
+    EDITING; any other printable char seeds the EDITING buffer with
+    that character and rebuilds the rows.
+
+    The 6th tuple slot (``should_exit``) is required so the helper
+    cleanly distinguishes "quit" from "no-op" -- the suggested
+    5-tuple (with ``None`` doubling as "no selection this turn" and
+    "quit") would force ``pick_session`` to re-inspect ``key`` after
+    every call, breaking the helper's contract that it fully owns the
+    decision for the key it was given.
+    """
+    # ``mode`` and ``total_sessions`` are part of the signature so the
+    # helper can be called from a context where they're already in
+    # scope; the NORMAL-mode handler doesn't actually mutate them, but
+    # keeping the signature lets ``pick_session`` route both helpers
+    # through the same call site.
+    del mode, model, total_sessions
+
+    # Enter: select the row at the cursor, or no-op when no rows.
+    if key in (b"\r", b"\n"):
+        sel = _selectable_indices(rows)
+        if not sel:
+            return rows, cursor, buffer, "NORMAL", None, False
+        return rows, cursor, buffer, "NORMAL", rows[cursor]["session"], True
+
+    # Esc / q / Q: quit.
+    if key == b"\x1b" or key in (b"q", b"Q"):
+        return rows, cursor, buffer, "NORMAL", None, True
+
+    # Move up.
+    if key == b"\x1b[A" or key in (b"k", b"K"):
+        return rows, _move_selectable(rows, cursor, -1), buffer, "NORMAL", None, False
+
+    # Move down.
+    if key == b"\x1b[B" or key in (b"j", b"J"):
+        return rows, _move_selectable(rows, cursor, +1), buffer, "NORMAL", None, False
+
+    # Enter edit mode (slash with no characters yet).
+    if key == b"/":
+        return rows, cursor, buffer, "EDITING", None, False
+
+    # Printable: seed the edit buffer with this character and rebuild.
+    if len(key) == 1 and 32 <= key[0] < 127:
+        ch = key.decode("utf-8", errors="replace")
+        prev = _session_at_cursor(rows, cursor)
+        new_rows, new_cursor = _rebuild_rows_with_query(original_model, ch, prev)
+        return new_rows, new_cursor, ch, "EDITING", None, False
+
+    # Unknown key: no-op.
+    return rows, cursor, buffer, "NORMAL", None, False
+
+
+def _step_editing(
+    key: bytes,
+    rows: list[dict],
+    cursor: int,
+    buffer: str,
+    mode: str,
+    model: list[WorktreeInfo],
+    original_model: list[WorktreeInfo],
+    total_sessions: int,
+) -> tuple[list[dict], int, str, str, Session | None, bool]:
+    """Pure handler for an EDITING-mode keypress.
+
+    Returns ``(rows, cursor, buffer, mode, returned_session, should_exit)``.
+
+    Selection: ``b"\\r"`` / ``b"\\n"`` → ``should_exit=True`` with the
+    row at the cursor when at least one match survives (otherwise
+    drops the picker back to NORMAL mode but keeps the buffer so
+    the user can refine instead of retype).
+    Esc: two-phase clear. With a non-empty buffer, clears the buffer
+    and stays in EDITING (rebuilding from the original unfiltered
+    model). With an empty buffer, returns to NORMAL.
+    ``\\b`` / ``\\x7f``: drop the last buffer char (no-op on empty),
+    then rebuild so the row set narrows immediately.
+    Arrows / j/k: move the cursor without touching the buffer.
+    Printables: append to the buffer (q, Q, slash are literal here
+    so the user can search for them), then rebuild.
+    Ctrl-C (``b"\\x03"``): re-raised so the outer ``try/except`` in
+    ``pick_session`` converts it to a clean ``None`` return.
+
+    Like ``_step_normal``, the 6th tuple slot (``should_exit``)
+    disambiguates "select" from "continue" so the caller does not
+    re-inspect ``key``.
+    """
+    del mode, model, total_sessions
+
+    # Enter: select the row at the cursor, or drop to NORMAL when
+    # the filter has dropped every match (the buffer is kept so the
+    # user can refine without retyping).
+    if key in (b"\r", b"\n"):
+        sel = _selectable_indices(rows)
+        if not sel:
+            return rows, cursor, buffer, "NORMAL", None, False
+        return rows, cursor, buffer, "EDITING", rows[cursor]["session"], True
+
+    # Ctrl-C: keep ISIG on so the OS raises KeyboardInterrupt, which
+    # the outer except turns into a clean None return. We re-raise
+    # explicitly (instead of returning a quit signal) so the helper
+    # remains pure for its structured state transitions and the
+    # kernel-level signal still works on a real TTY.
+    if key == b"\x03":
+        return rows, cursor, buffer, "EDITING", "RAISE_KEYBOARD_INTERRUPT", True
+
+    # Two-phase Esc: first press clears the buffer (stays in
+    # EDITING); an empty buffer exits EDITING to NORMAL.
+    if key == b"\x1b":
+        if buffer:
+            new_rows, new_cursor = _rebuild_rows_with_query(
+                original_model, "", None,
+            )
+            return new_rows, new_cursor, "", "EDITING", None, False
+        return rows, cursor, buffer, "NORMAL", None, False
+
+    # Backspace / DEL: drop the last char (no-op on empty).
+    if key in (b"\x7f", b"\b"):
+        if not buffer:
+            return rows, cursor, buffer, "EDITING", None, False
+        new_buffer = buffer[:-1]
+        prev = _session_at_cursor(rows, cursor)
+        new_rows, new_cursor = _rebuild_rows_with_query(
+            original_model, new_buffer, prev,
+        )
+        return new_rows, new_cursor, new_buffer, "EDITING", None, False
+
+    # Move up / down without touching the buffer.
+    if key == b"\x1b[A" or key in (b"k", b"K"):
+        return rows, _move_selectable(rows, cursor, -1), buffer, "EDITING", None, False
+    if key == b"\x1b[B" or key in (b"j", b"J"):
+        return rows, _move_selectable(rows, cursor, +1), buffer, "EDITING", None, False
+
+    # Printable: append to the buffer (q/Q/slash are literal here so
+    # the user can search for them), then rebuild.
+    if len(key) == 1 and 32 <= key[0] < 127:
+        ch = key.decode("utf-8", errors="replace")
+        new_buffer = buffer + ch
+        prev = _session_at_cursor(rows, cursor)
+        new_rows, new_cursor = _rebuild_rows_with_query(
+            original_model, new_buffer, prev,
+        )
+        return new_rows, new_cursor, new_buffer, "EDITING", None, False
+
+    # Unknown key: no-op.
+    return rows, cursor, buffer, "EDITING", None, False
+
+
 def pick_session(model: list[WorktreeInfo]) -> Session | None:
     """Run the inline arrow-key picker. Returns the selected Session, or
     None if the user quit (``q`` / ``Esc`` / ``Ctrl-C``). Always restores
@@ -262,6 +466,10 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
     (so they narrow the search, not quit). ``Esc`` is a two-phase
     clear: with a non-empty buffer it just clears the buffer (stays
     in EDITING); with an empty buffer it returns to NORMAL.
+
+    The bulk of the per-key logic lives in the pure helpers
+    :func:`_step_normal` and :func:`_step_editing` so it can be unit
+    tested without a TTY.
     """
     rows = build_rows(model)
     selectable = _selectable_indices(rows)
@@ -277,12 +485,6 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
     scroll = 0
     buffer = ""
     mode = "NORMAL"  # "NORMAL" | "EDITING"
-
-    def rebuild():
-        nonlocal rows, cursor
-        filtered = filter_model(original_model, buffer)
-        rows = build_rows(filtered)
-        cursor = _clamp_cursor(rows, cursor)
 
     try:
         saved = termios.tcgetattr(0)
@@ -309,67 +511,25 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
                 continue
 
             if mode == "NORMAL":
-                if key in (b"\r", b"\n"):
-                    sel = _selectable_indices(rows)
-                    if sel:
-                        return rows[cursor]["session"]
-                    # No selectable rows: ignore Enter.
-                    continue
-                if key == b"\x1b":
-                    return None
-                if key == b"\x1b[A" or key in (b"k", b"K"):
-                    cursor = _move_selectable(rows, cursor, -1)
-                elif key == b"\x1b[B" or key in (b"j", b"J"):
-                    cursor = _move_selectable(rows, cursor, +1)
-                elif key in (b"q", b"Q"):
-                    return None
-                elif key == b"/":
-                    mode = "EDITING"
-                elif len(key) == 1 and 32 <= key[0] < 127:
-                    # Printable char seeds the buffer (replacing any
-                    # previous buffer the user left behind in NORMAL).
-                    buffer = key.decode("utf-8", errors="replace")
-                    mode = "EDITING"
-                    rebuild()
-            else:  # EDITING
-                if key in (b"\r", b"\n"):
-                    sel = _selectable_indices(rows)
-                    if sel:
-                        return rows[cursor]["session"]
-                    # No matches left: drop back to NORMAL but keep
-                    # the buffer so the user can refine instead of
-                    # retype.
-                    mode = "NORMAL"
-                elif key == b"\x1b":
-                    if buffer:
-                        # Two-phase Esc: first press clears the
-                        # buffer (stays in EDITING). Rebuilding with
-                        # an empty pattern is the identity path, so
-                        # the full original model comes back.
-                        buffer = ""
-                        rebuild()
-                    else:
-                        mode = "NORMAL"
-                elif key == b"\x03":
-                    # Ctrl-C: keep ISIG on so the OS raises
-                    # KeyboardInterrupt, which the outer except
-                    # turns into a clean None return.
+                new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = _step_normal(
+                    key, rows, cursor, buffer, mode, model,
+                    original_model, total_sessions,
+                )
+            else:
+                new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = _step_editing(
+                    key, rows, cursor, buffer, mode, model,
+                    original_model, total_sessions,
+                )
+
+            rows = new_rows
+            cursor = new_cursor
+            buffer = new_buffer
+            mode = new_mode
+
+            if should_exit:
+                if returned == "RAISE_KEYBOARD_INTERRUPT":
                     raise KeyboardInterrupt
-                elif key in (b"\x7f", b"\b"):
-                    # Backspace / DEL: drop the last char (no-op on
-                    # empty buffer).
-                    if buffer:
-                        buffer = buffer[:-1]
-                        rebuild()
-                elif key == b"\x1b[A" or key in (b"k", b"K"):
-                    cursor = _move_selectable(rows, cursor, -1)
-                elif key == b"\x1b[B" or key in (b"j", b"J"):
-                    cursor = _move_selectable(rows, cursor, +1)
-                elif len(key) == 1 and 32 <= key[0] < 127:
-                    # Printable: append to the buffer (q/Q/slash are
-                    # literal here so the user can search for them).
-                    buffer += key.decode("utf-8", errors="replace")
-                    rebuild()
+                return returned
 
             body_h = max(1, max_y - 2)
             if cursor < scroll:

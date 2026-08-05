@@ -83,8 +83,11 @@ from session_monitor_picker import (  # noqa: E402
     _clamp_cursor,
     _move_selectable,
     _read_key,
+    _rebuild_rows_with_query,
     _render_picker,
     _selectable_indices,
+    _step_editing,
+    _step_normal,
     _terminal_size,
     build_rows,
     pick_session,
@@ -129,6 +132,7 @@ __all__ = [
     # picker
     "_ANSI", "_STATUS_COLOR",
     "build_rows", "_selectable_indices", "_move_selectable", "_clamp_cursor",
+    "_rebuild_rows_with_query", "_step_normal", "_step_editing",
     "_terminal_size", "_render_picker", "_read_key",
     "pick_session",
     # render
