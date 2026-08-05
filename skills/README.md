@@ -2,11 +2,11 @@
 
 This index lists every skill shipped by the `dev-kit` plugin. Click into any skill to read its full `SKILL.md`; every `SKILL.md` has a back-link at the top to return here.
 
-**39 skills** across 12 categories (34 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
+**40 skills** across 12 categories (35 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
 
 ## By category
 
-### `audit` (10)
+### `audit` (11)
 
 | Skill | α | Description |
 |---|---|---|
@@ -18,6 +18,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `analysis` | Audit repository documentation, remove superseded guidance, and refresh the README without recording volatile inventory facts. |
 | [`hook-doctor`](hook-doctor/SKILL.md) 🔒 | `enforcement` | Diagnose failed Claude Code or Codex hooks, repair safe cache and registration drift, and report the exact restart step. |
 | [`inspect`](inspect/SKILL.md) | `analysis` | 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report. |
+| [`learn`](learn/SKILL.md) | `state` | Distill source text into a new SKILL.md with approval gate. |
 | [`prune-propose`](prune-propose/SKILL.md) | `state` | 0-arg skill — usage telemetry dump + per-skill delete proposal. User approves each deletion explicitly. |
 | [`token-analyzer`](token-analyzer/SKILL.md) | `analysis` | 0-arg token-efficiency dashboard. Runs tools/token_efficiency_analyzer.py over logs/{claude-code,codex}/*.jsonl to produce an HTML report (+ lazy per-worktree transcript sidecars) -- 4-dim session scoring, 6 anti-patter… |
 
@@ -131,21 +132,22 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
 | 21 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
 | 22 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
-| 23 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
-| 24 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
-| 25 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
-| 26 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
-| 27 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
-| 28 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
-| 29 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
-| 30 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
-| 31 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
-| 32 | [`research-plan-build`](research-plan-build/SKILL.md) | `build` | `state` | human |
-| 33 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
-| 34 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
-| 35 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
-| 36 | [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `design` | `state` | human |
-| 37 | [`status`](status/SKILL.md) | `status` | `state` | human |
-| 38 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
-| 39 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
+| 23 | [`learn`](learn/SKILL.md) | `audit` | `state` | human |
+| 24 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
+| 25 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
+| 26 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
+| 27 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
+| 28 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
+| 29 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
+| 30 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
+| 31 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
+| 32 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
+| 33 | [`research-plan-build`](research-plan-build/SKILL.md) | `build` | `state` | human |
+| 34 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
+| 35 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
+| 36 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
+| 37 | [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `design` | `state` | human |
+| 38 | [`status`](status/SKILL.md) | `status` | `state` | human |
+| 39 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
+| 40 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
 

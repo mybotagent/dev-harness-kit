@@ -212,7 +212,7 @@ jobs:
           # or accidentally matches a nested literal "**Verdict:**"
           # mention inside a paragraph).
           comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*")) | .body] | sort_by(.updated_at) | .[-1] // ""')"
+            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*"))] | sort_by(.updated_at) | .[-1].body // ""')"
           verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
@@ -357,7 +357,7 @@ jobs:
           # false-positive from a literal `**Verdict:**` inside the
           # body prose).
           comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*")) | .body] | sort_by(.updated_at) | .[-1] // ""')"
+            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*"))] | sort_by(.updated_at) | .[-1].body // ""')"
           verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
