@@ -66,6 +66,7 @@ from session_monitor_cli import (  # noqa: E402
     main,
     parse_args,
 )
+from session_monitor_filter import filter_model, session_matches  # noqa: E402
 from session_monitor_format import (  # noqa: E402
     _GLYPH,
     STATE_SECTIONS,
@@ -79,6 +80,7 @@ from session_monitor_format import (  # noqa: E402
 from session_monitor_picker import (  # noqa: E402
     _ANSI,
     _STATUS_COLOR,
+    _clamp_cursor,
     _move_selectable,
     _read_key,
     _render_picker,
@@ -122,9 +124,11 @@ __all__ = [
     "STATE_SECTIONS", "group_by_state",
     "_GLYPH", "_rel_time", "_src_tag",
     "_column_header", "_commit_cell", "_per_worktree_top_skills",
+    # filter helpers (promoted to session_monitor_filter)
+    "filter_model", "session_matches",
     # picker
     "_ANSI", "_STATUS_COLOR",
-    "build_rows", "_selectable_indices", "_move_selectable",
+    "build_rows", "_selectable_indices", "_move_selectable", "_clamp_cursor",
     "_terminal_size", "_render_picker", "_read_key",
     "pick_session",
     # render
@@ -686,33 +690,6 @@ def attach_last_commit_subjects(model: list[WorktreeInfo],
     not a git repo. Mutates in place."""
     for w in model:
         w.last_commit_subject = get_last_commit_subject(w.path, runner=runner)
-
-
-def filter_model(model: list[WorktreeInfo], pattern: str) -> list[WorktreeInfo]:
-    """Substring filter (case-insensitive) against every visible session
-    field: session_id, branch, model, source, log_path, worktree
-    dirname, status. Empty pattern is identity. WorktreeInfo buckets
-    whose sessions all fail the filter are dropped entirely."""
-    pat = (pattern or "").strip().lower()
-    if not pat:
-        return list(model)
-    out: list[WorktreeInfo] = []
-    for w in model:
-        kept = [s for s in w.sessions if _session_matches(s, w, pat)]
-        if kept:
-            out.append(WorktreeInfo(
-                dirname=w.dirname, state=w.state, path=w.path,
-                sessions=kept, last_commit_subject=w.last_commit_subject,
-            ))
-    return out
-
-
-def _session_matches(s: Session, w: WorktreeInfo, pat: str) -> bool:
-    haystacks = (
-        s.session_id, s.branch, s.model, s.source, s.log_path,
-        w.dirname, s.status.value,
-    )
-    return any(pat in (h or "").lower() for h in haystacks)
 
 
 # Section labels for the structured listing. Order = display order, which

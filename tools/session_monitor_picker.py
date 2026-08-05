@@ -8,10 +8,18 @@ resume, ``q`` / ``Esc`` / ``Ctrl-C`` to cancel. Rendering stays inside
 the terminal's normal scrollback so the user never loses their last
 command's output.
 
+Live search: inside the picker, ``/`` enters edit mode where the
+buffer is a substring pattern applied on top of any ``--filter``
+narrowing the CLI may have already done. ``/edit`` / ``Backspace`` /
+``Esc`` (two-phase) / ``Enter`` (select) / ``q`` (quit) / ``j``/``k``/
+arrows (move) are the keys; Ctrl-C still raises KeyboardInterrupt so
+the outer try/except can return ``None`` cleanly.
+
 Public surface (re-exported by ``tools/session_monitor.py`` so callers
 keep using ``sm.pick_session``, ``sm.build_rows``, etc.):
 - ``_ANSI``, ``_STATUS_COLOR``
-- ``build_rows``, ``_selectable_indices``, ``_move_selectable``
+- ``build_rows``, ``_selectable_indices``, ``_move_selectable``,
+  ``_clamp_cursor``
 - ``_terminal_size``, ``_render_picker``, ``_read_key``
 - ``pick_session``
 """
@@ -29,6 +37,7 @@ from datetime import datetime, timezone
 # Dataclasses come from session_monitor_types to keep the load order safe
 # under `python3 tools/session_monitor.py --help` (no top-level
 # session_monitor module yet under the __main__ entrypoint).
+from session_monitor_filter import filter_model  # noqa: E402
 from session_monitor_format import (  # noqa: E402
     _GLYPH,
     _column_header,
@@ -132,6 +141,25 @@ def _move_selectable(rows: list[dict], cursor: int, delta: int) -> int:
     return sel[target]
 
 
+def _clamp_cursor(rows: list[dict], cursor: int) -> int:
+    """Re-snap the cursor onto a selectable row after a row-list rebuild.
+
+    Preserves the cursor when it still lands on a session row; otherwise
+    snaps forward to the next selectable row, and returns the last
+    selectable row when ``cursor`` is past the end. Returns 0 when the
+    row set has no selectable rows at all (caller can then exit cleanly).
+    """
+    sel = _selectable_indices(rows)
+    if not sel:
+        return 0
+    if cursor in sel:
+        return cursor
+    for i in sel:
+        if i >= cursor:
+            return i
+    return sel[-1]
+
+
 def _terminal_size(fallback: tuple[int, int] = (80, 24)) -> tuple[int, int]:
     try:
         return os.get_terminal_size(0)
@@ -140,17 +168,32 @@ def _terminal_size(fallback: tuple[int, int] = (80, 24)) -> tuple[int, int]:
 
 
 def _render_picker(out, rows: list[dict], cursor: int, scroll: int,
-                   max_x: int, max_y: int) -> None:
+                   max_x: int, max_y: int, query: str = "",
+                   total_sessions: int | None = None) -> None:
     """Write the picker frame to ``out`` (one full redraw per call).
 
     Layout: 1 header line + body + 1 footer line. ``max_x`` and ``max_y``
     are the caller's terminal size in columns / rows; this function does
     not query the terminal itself so the same call can be unit-tested.
+
+    With ``query=""`` the output is byte-identical to the legacy
+    layout (legacy ``N sessions / M worktrees`` header + NORMAL-mode
+    key-hint footer). With ``query!=""`` the header switches to
+    ``/<query>  N / M matches`` (post-filter / pre-filter totals) and
+    the footer switches to the edit-mode key hints; a zero-match
+    buffer additionally appends ``  0 matches  `` so the user can read
+    why the body is empty without scrolling.
     """
     body_h = max(1, max_y - 2)
     sess_total = sum(1 for r in rows if r["kind"] == "session")
     wt_total = sum(1 for r in rows if r["kind"] == "header")
-    head = (f" session-monitor  {sess_total} sessions / {wt_total} worktrees ")
+    if query:
+        n_post = sess_total
+        m_pre = total_sessions if total_sessions is not None else sess_total
+        head = f" session-monitor  /{query}  {n_post} / {m_pre} matches "
+    else:
+        head = (f" session-monitor  {sess_total} sessions "
+                f"/ {wt_total} worktrees ")
 
     out.write(_ANSI["home"] + _ANSI["hide_cur"])
     out.write(_ANSI["bold"] + _ANSI["cyan"] + head.ljust(max_x) + _ANSI["reset"] + "\n")
@@ -173,7 +216,12 @@ def _render_picker(out, rows: list[dict], cursor: int, scroll: int,
     for _ in range(body_h - (visible_end - scroll)):
         out.write(_ANSI["clear_eol"] + "\n")
 
-    footer = " ↑↓ / j k move   Enter resume   q / Esc / Ctrl-C quit "
+    if query:
+        footer = " /edit   Backspace del   Esc clear/quit-search   Enter select   q quit "
+        if sess_total == 0:
+            footer = footer + "  0 matches  "
+    else:
+        footer = " ↑↓ / j k move   Enter resume   q / Esc / Ctrl-C quit "
     out.write(_ANSI["reverse"] + footer.ljust(max_x) + _ANSI["reset"])
     out.flush()
 
@@ -207,14 +255,34 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
     """Run the inline arrow-key picker. Returns the selected Session, or
     None if the user quit (``q`` / ``Esc`` / ``Ctrl-C``). Always restores
     the original ``termios`` state on exit, even on exception.
+
+    Live search: ``/`` enters EDITING (in-place buffer), printable
+    characters enter EDITING with the buffer seeded with that char,
+    and ``q``/``Q``/``/`` are literal characters while EDITING
+    (so they narrow the search, not quit). ``Esc`` is a two-phase
+    clear: with a non-empty buffer it just clears the buffer (stays
+    in EDITING); with an empty buffer it returns to NORMAL.
     """
     rows = build_rows(model)
     selectable = _selectable_indices(rows)
     if not selectable:
         return None
 
+    # Keep the unfiltered model so an "Esc" with a non-empty buffer
+    # can rebuild rows from scratch (clearing the buffer == back to
+    # the full model the picker started with).
+    original_model = list(model)
+    total_sessions = sum(1 for r in rows if r["kind"] == "session")
     cursor = selectable[0]
     scroll = 0
+    buffer = ""
+    mode = "NORMAL"  # "NORMAL" | "EDITING"
+
+    def rebuild():
+        nonlocal rows, cursor
+        filtered = filter_model(original_model, buffer)
+        rows = build_rows(filtered)
+        cursor = _clamp_cursor(rows, cursor)
 
     try:
         saved = termios.tcgetattr(0)
@@ -233,22 +301,75 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
         while True:
             max_x, max_y = _terminal_size()
             max_y = max(5, max_y)
-            _render_picker(sys.stdout, rows, cursor, scroll, max_x, max_y)
+            _render_picker(sys.stdout, rows, cursor, scroll, max_x, max_y,
+                           query=buffer, total_sessions=total_sessions)
 
             key = _read_key(0.5)
             if not key:
                 continue
 
-            if key in (b"\r", b"\n"):
-                return rows[cursor]["session"]
-            if key == b"\x1b":
-                return None
-            if key == b"\x1b[A" or key in (b"k", b"K"):
-                cursor = _move_selectable(rows, cursor, -1)
-            elif key == b"\x1b[B" or key in (b"j", b"J"):
-                cursor = _move_selectable(rows, cursor, +1)
-            elif key in (b"q", b"Q"):
-                return None
+            if mode == "NORMAL":
+                if key in (b"\r", b"\n"):
+                    sel = _selectable_indices(rows)
+                    if sel:
+                        return rows[cursor]["session"]
+                    # No selectable rows: ignore Enter.
+                    continue
+                if key == b"\x1b":
+                    return None
+                if key == b"\x1b[A" or key in (b"k", b"K"):
+                    cursor = _move_selectable(rows, cursor, -1)
+                elif key == b"\x1b[B" or key in (b"j", b"J"):
+                    cursor = _move_selectable(rows, cursor, +1)
+                elif key in (b"q", b"Q"):
+                    return None
+                elif key == b"/":
+                    mode = "EDITING"
+                elif len(key) == 1 and 32 <= key[0] < 127:
+                    # Printable char seeds the buffer (replacing any
+                    # previous buffer the user left behind in NORMAL).
+                    buffer = key.decode("utf-8", errors="replace")
+                    mode = "EDITING"
+                    rebuild()
+            else:  # EDITING
+                if key in (b"\r", b"\n"):
+                    sel = _selectable_indices(rows)
+                    if sel:
+                        return rows[cursor]["session"]
+                    # No matches left: drop back to NORMAL but keep
+                    # the buffer so the user can refine instead of
+                    # retype.
+                    mode = "NORMAL"
+                elif key == b"\x1b":
+                    if buffer:
+                        # Two-phase Esc: first press clears the
+                        # buffer (stays in EDITING). Rebuilding with
+                        # an empty pattern is the identity path, so
+                        # the full original model comes back.
+                        buffer = ""
+                        rebuild()
+                    else:
+                        mode = "NORMAL"
+                elif key == b"\x03":
+                    # Ctrl-C: keep ISIG on so the OS raises
+                    # KeyboardInterrupt, which the outer except
+                    # turns into a clean None return.
+                    raise KeyboardInterrupt
+                elif key in (b"\x7f", b"\b"):
+                    # Backspace / DEL: drop the last char (no-op on
+                    # empty buffer).
+                    if buffer:
+                        buffer = buffer[:-1]
+                        rebuild()
+                elif key == b"\x1b[A" or key in (b"k", b"K"):
+                    cursor = _move_selectable(rows, cursor, -1)
+                elif key == b"\x1b[B" or key in (b"j", b"J"):
+                    cursor = _move_selectable(rows, cursor, +1)
+                elif len(key) == 1 and 32 <= key[0] < 127:
+                    # Printable: append to the buffer (q/Q/slash are
+                    # literal here so the user can search for them).
+                    buffer += key.decode("utf-8", errors="replace")
+                    rebuild()
 
             body_h = max(1, max_y - 2)
             if cursor < scroll:
