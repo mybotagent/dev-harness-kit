@@ -390,6 +390,37 @@ def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = Fal
     data = json.loads(idx_path.read_text(encoding="utf-8"))
     worktree_branch = data.get("worktree") or f"feat/{phase}"
     steps = data.get("steps", [])
+    # Intent integrity pre-build gate (defense-in-depth, not a hard block).
+    # The plan skill already runs the same check and refuses to emit if it
+    # fails; this second pass catches resumed runs whose plan was emitted
+    # before integrity existed. Missing file = the pre-build check was
+    # skipped (e.g. a resumed run); warn and continue.
+    pre_report = root / ".dev-kit" / "integrity" / f"{phase}.pre.json"
+    if pre_report.exists():
+        try:
+            pre_data = json.loads(pre_report.read_text(encoding="utf-8"))
+            high = [f for f in pre_data.get("findings", []) if f.get("severity") == "high"]
+        except (OSError, json.JSONDecodeError):
+            high = []
+        if high:
+            print(
+                f"intent_integrity: {len(high)} high-severity finding(s) in "
+                f"{pre_report} — refusing to start build:",
+                file=sys.stderr,
+            )
+            for f in high:
+                print(
+                    f"  [{f.get('finding_id', '?')}/{f.get('category', '?')}] "
+                    f"{f.get('evidence', '')}",
+                    file=sys.stderr,
+                )
+            return 2
+    else:
+        print(
+            f"intent_integrity: pre-build report missing at {pre_report} — "
+            f"continuing without the gate (plan did not run integrity).",
+            file=sys.stderr,
+        )
     for step_meta in steps:
         n = step_meta["step"]
         cur_status = step_meta.get("status")

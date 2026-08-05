@@ -280,6 +280,10 @@ Then:
 - **Auto-render the design proposal** (see "Proposal auto-invoke" below) —
   the final cleanup step of Gate 5/5 is to materialize the proposal HTML
   the reviewer will see before `/dev-kit:build` is invoked.
+- After emit, run `python -m lib.intent_integrity --pre <phase>` and refuse
+  to mark Gate 5/5 complete if the exit code is 2 (see
+  `lib/intent_integrity.py` for the IC-1..IC-4 semantics; high-severity
+  findings block the gate, medium-severity ones warn but do not block).
 
 ## Proposal auto-invoke (Gate 5/5 final step)
 
