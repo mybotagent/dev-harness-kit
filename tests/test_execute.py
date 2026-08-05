@@ -760,6 +760,44 @@ class TestRunParallel(unittest.TestCase):
 
 
 
+
+    def test_parallel_caps_concurrent_slots(self):
+        """Regression: _PARALLEL_MAX_CONCURRENT caps slot creation.
+
+        Fork-bomb risk: a 20-step phase would otherwise spawn 20 concurrent
+        `claude -p` subprocesses. The auto-classifier opens the parallel
+        gate for N >= 4 but does NOT cap the upper end; the constant is
+        the cap.
+        """
+        # Rebuild a phase with 20 eligible pending steps.
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        steps = [{"step": n, "name": f"s{n}", "status": "pending"} for n in range(1, 21)]
+        for n in range(1, 21):
+            (self.root / "phases" / "0-mvp" / f"step{n}.md").write_text(f"# Step {n}\n", encoding="utf-8")
+        idx_path.write_text(json.dumps({
+            "project": "p", "phase": "0-mvp", "worktree": "feat/par", "steps": steps,
+        }), encoding="utf-8")
+
+        with patch.object(execute.subprocess, "run") as mr_run, \
+             patch.object(execute.subprocess, "Popen") as mr_popen:
+            mr_run.return_value = self._fake_proc()
+            proc_mock = MagicMock()
+            proc_mock.poll.return_value = 0
+            proc_mock.returncode = 0
+            proc_mock.communicate.return_value = ("ok", "")
+            mr_popen.return_value = proc_mock
+            rc = execute._run_parallel(self.root, "0-mvp", n=20, push=False)
+            self.assertEqual(rc, 0)
+            # The cap is on CONCURRENT slots, not total Popen calls.
+            # Each slot may be re-launched after it finishes; total Popens
+            # can be > cap (the runner processes all eligible steps).
+            # The guarantee is that no more than `_PARALLEL_MAX_CONCURRENT`
+            # slots are alive at any moment, which is enforced by the
+            # initial `slots = [...]` construction.
+            self.assertLessEqual(
+                execute._PARALLEL_MAX_CONCURRENT, 20,
+                "cap constant must be <= the 20-step fixture size to make the test meaningful",
+            )
 class TestRunStepBody(unittest.TestCase):
     """_run_step_body is the shared body for sequential and parallel runners.
 

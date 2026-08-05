@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
+from dispatch_classifier import classify  # noqa: E402 — top-level (no cycle)
 from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 SCHEMA_VERSION = "1.0.0"
@@ -91,6 +92,16 @@ VALID_STATUSES = (
 RESUMABLE_STATUSES = ("pending", "error", "in_progress")
 # Statuses the runner SKIPS without doing anything.
 SKIPPABLE_STATUSES = ("completed", "unimplemented")
+
+# Upper bound on concurrent sub-agents in _run_parallel. The auto-classifier
+# defaults to sequential and only opens the parallel gate for N >= 4
+# eligible steps, but does NOT cap the upper end. A 50-step phase that
+# clears the parallel gate would otherwise fork 50 concurrent `claude -p`
+# subprocesses, each holding its own worktree + Popen — fork-bomb risk
+# on small CI runners. 8 was chosen as a balance: large enough to
+# parallelize typical multi-file work, small enough to bound the OS
+# process / file-descriptor / memory footprint on a 4-vCPU runner.
+_PARALLEL_MAX_CONCURRENT = 8
 
 
 # ---------- Phase / Step readers ----------
@@ -355,7 +366,6 @@ def main() -> int:
     # Auto-classify dispatch mode via lib.dispatch_classifier. Replaces the
     # legacy --parallel flag. Decision + reason logged as the first build
     # line so the user can audit why parallelism was rejected.
-    from dispatch_classifier import classify  # local import to avoid cycle
     decision = classify(eligible)
     print(f"dispatch: {decision.mode} — {decision.reason}", file=sys.stderr)
     if decision.mode == "parallel":
@@ -699,7 +709,8 @@ def _run_parallel(root: Path, phase: str, n: int, push: bool, skip_blocked: bool
         if len(eligible) >= n:
             break
 
-    slots = [_SlotRunner(root, phase, worktree_branch, push) for _ in range(min(n, len(eligible)))]
+    slot_count = min(_PARALLEL_MAX_CONCURRENT, n, len(eligible))
+    slots = [_SlotRunner(root, phase, worktree_branch, push) for _ in range(slot_count)]
     if not slots:
         return 0
 

@@ -66,9 +66,14 @@ def _has_dependency_edge(steps: list[dict]) -> bool:
       - `depends_on` list field (explicit, e.g. ["step1", "step3"]).
       - `consumes` string field (implicit: this step consumes another's
         artifact by name reference).
+
+    `depends_on` is constrained to a list per the helper docstring;
+    strings (or any other truthy non-list) are ignored — the contract
+    is explicit about the type.
     """
     for step in steps:
-        if step.get("depends_on"):
+        deps = step.get("depends_on")
+        if isinstance(deps, list) and deps:
             return True
         if step.get("consumes"):
             return True
