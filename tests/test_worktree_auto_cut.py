@@ -386,7 +386,17 @@ class TestWorktreeAutoCutWiring(unittest.TestCase):
             f"worktree-auto-cut.sh not wired into UserPromptSubmit. Got: {hooks}",
         )
         for h in match:
-            self.assertNotIn("timeout", h, f"hook timeout must be unset: {h}")
+            # The hook runs `git fetch origin main` + `git worktree add`,
+            # both of which regularly exceed the 30s default on slow
+            # networks or large HEADs. An explicit timeout >= 60 is
+            # required so the UserPromptSubmit hook doesn't lose its
+            # advisory output to "timeout after 30s — output discarded".
+            timeout = h.get("timeout", 30)
+            self.assertGreaterEqual(
+                timeout, 60,
+                f"worktree-auto-cut.sh timeout must be >= 60s (got {timeout}); "
+                f"30s default loses the advisory on slow networks",
+            )
 
     def test_worktree_auto_cut_wired(self):
         """Regression: the auto-cut hook must remain in UserPromptSubmit."""
