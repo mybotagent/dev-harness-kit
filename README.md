@@ -285,12 +285,14 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | [`/dev-kit:ci-setup`](docs/skills/ci-setup.md) | Installs dev-kit's CI workflows and hooks into your repo so PRs run the same checks. |
 | [`/dev-kit:ci-doctor`](docs/skills/ci-doctor.md) | Read-only check that answers "is my CI set up right — would the next PR pass?" |
 
-### Planning and building
+### Designing and planning
 
 | Command | What it does |
 |---|---|
+| [`/dev-kit:sot-harness-writer`](docs/skills/sot-harness-writer.md) | Interview-based SOT harness document writer. Walks 5 harness dimensions (project context, verification, context, safety, lifecycle), surfaces evidence-backed recommendations, and hands off to `/dev-kit:plan`. |
 | [`/dev-kit:plan`](docs/skills/plan.md) | Turns an idea into `PRD.md` + a step-by-step build checklist. |
 | [`/dev-kit:build`](docs/skills/build.md) | Works through the checklist one step at a time, writing tests and code and verifying each step. |
+| [`/dev-kit:research-plan-build`](docs/skills/research-plan-build.md) | 3-phase binder (`research` → `plan` → `implement`) for multi-session or multi-file tasks; non-skippable. |
 
 ### Getting a PR over the line
 
@@ -311,10 +313,9 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | [`/dev-kit:log`](docs/skills/log.md) | Turns session logging on/off. It's what feeds `token-analyzer`, `skill-usage`, and the session monitor. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | Shows which skills you actually use, and how much — useful for pruning. |
 
-For the complete, always-current list of every skill (there are more than the
-ones above), see [`docs/skills/README.md`](docs/skills/README.md). It's grouped by
-category with a one-line summary each. You can also just type `/dev-kit:` and let
-autocomplete show you what's available.
+For the full list, see [`docs/skills/README.md`](docs/skills/README.md) — grouped
+by category with a one-line summary each, generated from `skills/*/SKILL.md`.
+You can also just type `/dev-kit:` and let autocomplete show you what's available.
 
 > **A note on skill names:** if a name doesn't show up in autocomplete, it's an
 > internal helper the model runs on its own (like `build-tdd` inside `build`) —
@@ -388,8 +389,9 @@ that enforce it) lives in [`rules/git-workflow.md`](rules/git-workflow.md).
 
 ## Doc map
 
-The repo ships ~20 topic docs across `docs/<topic>/`. The full categorized
-table — HTML / MD / 한국어 sibling / what each doc gives you — lives in
+Topic docs live under `docs/<topic>/` (architecture, hooks, observability,
+quality, stages, workflow, …). The full categorized table — HTML / MD /
+한국어 sibling / what each doc gives you — lives in
 [`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md).
 
 **Start here:**

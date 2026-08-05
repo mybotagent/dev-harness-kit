@@ -285,8 +285,10 @@ sequenceDiagram
 
 | 명령 | 하는 일 |
 |---|---|
+| [`/dev-kit:sot-harness-writer`](docs/skills/sot-harness-writer.md) | 인터뷰 기반 SOT 하네스 문서 작성기. 5개 하네스 차원(project context, verification, context, safety, lifecycle)을 순회하며 근거 기반 추천을 제시하고 `/dev-kit:plan`으로 인계. |
 | [`/dev-kit:plan`](docs/skills/plan.md) | 아이디어를 `PRD.md` + 단계별 빌드 체크리스트로 바꾼다. |
 | [`/dev-kit:build`](docs/skills/build.md) | 체크리스트를 한 단계씩 처리하며 테스트와 코드를 작성하고 각 단계를 검증. |
+| [`/dev-kit:research-plan-build`](docs/skills/research-plan-build.md) | 다중 세션/다중 파일 작업을 위한 3단계 바인더(`research` → `plan` → `implement`); 단계 건너뛰기 불가. |
 
 ### PR 통과시키기
 
@@ -307,10 +309,9 @@ sequenceDiagram
 | [`/dev-kit:log`](docs/skills/log.md) | 세션 로깅을 켜고 끈다. `token-analyzer`, `skill-usage`, 세션 모니터가 데이터로 쓸 수 있게 한다. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | 어떤 스킬을 실제로 얼마나 쓰는지 보여준다 — 가지치기에 유용. |
 
-위 목록을 넘어서는 전체 스킬의 최신 목록은
-[`docs/skills/README.md`](docs/skills/README.md)를 참고한다. 카테고리별로
-묶여 있고 한 줄 요약이 붙어 있다. `/dev-kit:`만 입력하고 자동완성에
-떠오르는 목록을 봐도 된다.
+전체 목록은 [`docs/skills/README.md`](docs/skills/README.md)를 참고한다 —
+카테고리별로 묶여 있고 한 줄 요약이 붙어 있으며, `skills/*/SKILL.md`에서
+자동 생성된다. `/dev-kit:`만 입력하고 자동완성에 떠오르는 목록을 봐도 된다.
 
 > **스킬 이름에 대한 메모:** 자동완성에 안 뜨는 이름은 모델이 스스로
 > 호출하는 내부 헬퍼다 (`build` 내부의 `build-tdd` 등) — 헬퍼를 직접
@@ -383,9 +384,9 @@ git worktree add -b feat/my-task .worktrees/feat-my-task origin/main
 
 ## 문서 맵
 
-이 저장소는 `docs/<주제>/` 아래 주제별 문서 약 20개를 제공한다. HTML/MD/
-한국어 형제/각 문서가 제공하는 것을 분류한 전체 표는
-[`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md)에 있다.
+주제별 문서는 `docs/<주제>/`(architecture, hooks, observability, quality,
+stages, workflow, …) 아래에 있다. HTML/MD/한국어 형제/각 문서가 제공하는
+것을 분류한 전체 표는 [`docs/home/DOC-MAP.md`](docs/home/DOC-MAP.md)에 있다.
 
 **시작점:**
 
