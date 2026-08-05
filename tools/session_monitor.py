@@ -80,10 +80,14 @@ from session_monitor_format import (  # noqa: E402
 from session_monitor_picker import (  # noqa: E402
     _ANSI,
     _STATUS_COLOR,
+    _clamp_cursor,  # noqa: F401  (re-exported for tests)
     _move_selectable,
     _read_key,
+    _rebuild_rows_with_query,  # noqa: F401  (re-exported for tests)
     _render_picker,
     _selectable_indices,
+    _step_editing,  # noqa: F401  (re-exported for tests)
+    _step_normal,  # noqa: F401  (re-exported for tests)
     _terminal_size,
     build_rows,
     pick_session,
