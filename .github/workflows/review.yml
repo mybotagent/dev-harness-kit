@@ -202,24 +202,21 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
-          # In track_progress mode the action updates ONE comment per job, so
-          # "most recent" = this job's comment.
-          # Capture the full verdict word (or "Changes Requested" two-word
-          # phrase). The previous `grep -oE ... | awk '{print $NF}'`
-          # pipeline dropped the first word of "Changes Requested" because
-          # awk's $NF is the last whitespace-separated field — the extract
-          # was producing "Requested" for the maintenance LLM's actual
-          # "Changes Requested" verdicts, which the maintenance gate then
-          # treated as unparseable.
-          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
-            | tr -d '[:space:]' || true)"
+          # Pick the MOST RECENT claude[bot] comment whose body contains
+          # a `**Verdict:**` line, NOT the most recent comment overall
+          # (otherwise the track_progress placeholder wins and the
+          # verdict reports MISSING even when the run produced one).
+          # Delegate the line-level extraction to the python helper so
+          # the same regex the unit tests pin governs CI (no shell-only
+          # awk drift that collapses "Changes Requested" to "Requested"
+          # or accidentally matches a nested literal "**Verdict:**"
+          # mention inside a paragraph).
+          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*")) | .body] | last // ""')"
+          verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "review_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=review status=${{ job.status }} verdict=${verdict:-MISSING} source=lib.maintenance_gate"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   security:
@@ -353,24 +350,18 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
         run: |
           set -uo pipefail
-          # Most recent claude[bot] comment that contains a **Verdict:** line.
-          # In track_progress mode the action updates ONE comment per job, so
-          # "most recent" = this job's comment (review job's older comments
-          # come before security's in chronological order, so we still want
-          # the latest = security's).
-          # See the review-job extract above for why we replaced
-          # `grep -oE ... | awk '{print $NF}'` with `sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' | tr -d '[:space:]'`
-          # — the awk pipeline dropped the first word of "Changes Requested"
-          # and the extract was reporting "Requested" for the LLM's
-          # actual two-word verdict.
-          verdict="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select((.user.login // "") | startswith("claude")) | .body' \
-            | grep -E '\*\*Verdict:\*\*' | tail -1 \
-            | sed -E 's/.*\*\*Verdict:\*\*[[:space:]]+//' \
-            | tr -d '[:space:]' || true)"
+          # Pick the MOST RECENT claude[bot] comment whose body contains
+          # a `**Verdict:**` line, NOT the most recent comment overall.
+          # Delegate line-level extraction to the python helper so the
+          # same regex the unit tests pin governs CI (no nested-mention
+          # false-positive from a literal `**Verdict:**` inside the
+          # body prose).
+          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*")) | .body] | last // ""')"
+          verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "security_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"
-          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=issue-comment-extraction"
+          audit_body="<!-- dev-kit-verdict-audit --> run=${{ github.run_id }} job=security status=${{ job.status }} verdict=${verdict:-MISSING} source=lib.maintenance_gate"
           gh pr comment "$PR_NUMBER" --body "$audit_body"
 
   gate:
