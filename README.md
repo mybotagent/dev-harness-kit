@@ -291,6 +291,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 |---|---|
 | [`/dev-kit:plan`](docs/skills/plan.md) | Turns an idea into `PRD.md` + a step-by-step build checklist. |
 | [`/dev-kit:build`](docs/skills/build.md) | Works through the checklist one step at a time, writing tests and code and verifying each step. |
+| [`/dev-kit:research-plan-build`](docs/skills/research-plan-build.md) | 3-phase binder (research → plan → implement) — non-skippable pipeline for multi-session or multi-file tasks. |
 
 ### Getting a PR over the line
 
@@ -310,6 +311,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | [`/dev-kit:ci-triage`](docs/skills/ci-triage.md) | Triages failing GitHub Actions runs across recent commits, deduplicates against a persisted case store, and judges each new failure against a model/context/harness taxonomy — every case must carry a re-runnable repro plus an executable regression test. |
 | [`/dev-kit:log`](docs/skills/log.md) | Turns session logging on/off. It's what feeds `token-analyzer`, `skill-usage`, and the session monitor. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | Shows which skills you actually use, and how much — useful for pruning. |
+| [`/dev-kit:sot-harness-writer`](docs/skills/sot-harness-writer.md) | Interview-based Single Source of Truth harness document writer — 5 rounds × 2–3 evidence-backed recommendations, hands off to `/dev-kit:plan`. |
 
 For the complete, always-current list of every skill (there are more than the
 ones above), see [`docs/skills/README.md`](docs/skills/README.md). It's grouped by
@@ -577,6 +579,12 @@ surfaced as a warning, not an error.
 
 Full detail and the Codex-side setup live in
 [`docs/quality/ci-setup.md`](docs/quality/ci-setup.md).
+
+**Linear PR sync (optional)** — `tools/linear_pr_sync.py` runs from
+`.github/workflows/linear-pr-sync.yml` to keep the Linear issue tied to a PR
+branch aligned with the PR lifecycle (In Progress → In Review → Done/Canceled).
+It is non-blocking and drafts are skipped. Full state mapping in
+[`docs/tools/LINEAR-PR-SYNC.md`](docs/tools/LINEAR-PR-SYNC.md).
 
 ---
 
