@@ -654,9 +654,25 @@ On Enter, the picker changes into the session's worktree and re-opens
 the conversation (`claude --resume <sid>` or `codex resume <sid>`); if the
 worktree is gone, it falls back to the main checkout with a warning.
 
+Inside the picker, `/` enters live search: the buffer is a substring
+pattern that re-narrows the row set on every keystroke. It composes on
+top of `--filter`, so a CLI pass that already narrowed the set is
+still the starting point.
+
+| Key                              | Effect |
+|----------------------------------|--------|
+| `/` (or any printable char)      | enter live-search mode (buffer seeded with the printable) |
+| Printable (incl. `q` / `Q` / `/`)| append to the buffer (literal — does not quit) |
+| `Backspace` / `DEL`              | drop the last char |
+| `Esc` (two-phase)                | first press clears the buffer; second exits search mode |
+| `Enter` (matches)                | resume the highlighted session |
+| `Enter` (zero matches)           | drop back to NORMAL (buffer kept) |
+| `q` / `Q` / `Esc` / `Ctrl-C`     | quit the picker (NORMAL only) |
+| `j` / `k` / `↑` / `↓`            | move cursor |
+
 **LEARN MORE** — every flag, the status-glyph semantics, the picker
-architecture (termios + ANSI, no curses), and the "why a tool alongside
-a skill" rationale live in
+architecture (termios + ANSI, no curses), the full key table, and the
+"why a tool alongside a skill" rationale live in
 [`docs/observability/session-monitor.md`](docs/observability/session-monitor.md).
 For the narrative of *when* you'd reach for it (resuming from a different
 terminal or a different day), see

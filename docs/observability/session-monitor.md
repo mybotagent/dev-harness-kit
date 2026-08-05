@@ -99,6 +99,45 @@ one of N" pattern Claude Code's own `AskUserQuestion` uses — so the
 rendering stays inside the terminal's normal scrollback and the user never
 loses their last command's output.
 
+### Live search inside the picker
+
+Press `/` inside the picker to drop into an inline edit buffer. Each
+printable character (including `q`, `Q`, and `/`) appends to the buffer
+and re-narrows the row set; `Backspace` / `DEL` drop the last char. The
+header switches to ` session-monitor  /<query>  N / M matches ` (post-
+filter / pre-filter counts) and the footer switches to the edit-mode
+key hints. `Enter` on a non-empty result list resumes the selected
+session; on a zero-match buffer `Enter` drops back to NORMAL and keeps
+the buffer so the user can refine instead of retyping.
+
+The two-phase `Esc` rule: with a non-empty buffer the first `Esc` clears
+the buffer (stays in EDITING); with an empty buffer the second `Esc`
+exits EDITING (back to NORMAL). `Ctrl-C` still raises `KeyboardInterrupt`
+so the outer `try/except` can restore `termios` and return `None`
+cleanly.
+
+| Mode     | Key                                | Effect |
+|----------|------------------------------------|--------|
+| NORMAL   | `/`                                | enter EDITING (buffer unchanged) |
+| NORMAL   | printable `c`                      | enter EDITING with buffer = `c` |
+| NORMAL   | `q` / `Q` / `Esc` / `Ctrl-C`       | quit, return `None` |
+| NORMAL   | `Enter`                            | resume the highlighted session |
+| NORMAL   | `j` / `k` / `↑` / `↓`              | move cursor |
+| EDITING  | printable                          | append to buffer (re-narrow) |
+| EDITING  | `Backspace` / `DEL` (`\x7f` / `\b`) | drop last char (no-op on empty) |
+| EDITING  | `q` / `Q` / `/`                    | literal char, does NOT quit |
+| EDITING  | `Enter` (matches)                  | resume the highlighted session |
+| EDITING  | `Enter` (zero matches)             | drop back to NORMAL (buffer kept) |
+| EDITING  | `Esc`                              | if buffer non-empty: clear buffer; else: exit EDITING |
+| EDITING  | `Ctrl-C`                           | quit, return `None` |
+| EDITING  | `j` / `k` / `↑` / `↓`              | move cursor within the filtered view |
+
+Live search composes on top of `--filter`: if you passed
+`--filter feat-x`, the picker opens on that subset, and `/` narrows
+further within it. The header's `M` is the count at picker open (i.e.
+the post-CLI-filter total), so the `N / M matches` ratio reflects
+how much the live search has narrowed the view.
+
 ## Why a tool alongside a skill
 
 The skill needs the harness (to render `AskUserQuestion`); the CLI needs a
