@@ -180,3 +180,9 @@ the start of a step, the build has effectively finished — bail to
 ## Next step
 
 `/dev-kit:review` (3-dim) + `/dev-kit:security` (10-dim) then `/dev-kit:ship`.
+
+## Iron Law
+
+L5 (one answer, no option lists unless asked): dispatch is auto-classified;
+no `--parallel` user toggle exists. The harness reasons from step metadata;
+the user audits the `dispatch: <mode> — <reason>` line.
