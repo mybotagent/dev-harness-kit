@@ -80,14 +80,10 @@ from session_monitor_format import (  # noqa: E402
 from session_monitor_picker import (  # noqa: E402
     _ANSI,
     _STATUS_COLOR,
-    _clamp_cursor,
     _move_selectable,
     _read_key,
-    _rebuild_rows_with_query,
     _render_picker,
     _selectable_indices,
-    _step_editing,
-    _step_normal,
     _terminal_size,
     build_rows,
     pick_session,
@@ -129,10 +125,10 @@ __all__ = [
     "_column_header", "_commit_cell", "_per_worktree_top_skills",
     # filter helpers (promoted to session_monitor_filter)
     "filter_model", "session_matches",
-    # picker
+    # picker (private step / rebuild helpers live in
+    # session_monitor_picker and are imported directly by tests)
     "_ANSI", "_STATUS_COLOR",
-    "build_rows", "_selectable_indices", "_move_selectable", "_clamp_cursor",
-    "_rebuild_rows_with_query", "_step_normal", "_step_editing",
+    "build_rows", "_selectable_indices", "_move_selectable",
     "_terminal_size", "_render_picker", "_read_key",
     "pick_session",
     # render

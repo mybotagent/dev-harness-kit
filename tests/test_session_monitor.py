@@ -1704,8 +1704,7 @@ class TestPickSessionNORMALModeHandlesPrintables(unittest.TestCase):
         rows = sm.build_rows(self._model(), now=NOW)
         cursor = sm._selectable_indices(rows)[0]
         _, new_cursor, new_buffer, new_mode, returned, should_exit = \
-            sm._step_normal(b"r", rows, cursor, "", "NORMAL",
-                            self._model(), self._model(), 1)
+            sm._step_normal(b"r", rows, cursor, "", self._model())
         self.assertFalse(should_exit,
                          "r in NORMAL must not exit the picker")
         self.assertIsNone(returned)
@@ -1718,8 +1717,7 @@ class TestPickSessionNORMALModeHandlesPrintables(unittest.TestCase):
         rows = sm.build_rows(self._model(), now=NOW)
         cursor = sm._selectable_indices(rows)[0]
         _, _, new_buffer, new_mode, returned, should_exit = \
-            sm._step_normal(b"n", rows, cursor, "", "NORMAL",
-                            self._model(), self._model(), 1)
+            sm._step_normal(b"n", rows, cursor, "", self._model())
         self.assertFalse(should_exit)
         self.assertIsNone(returned)
         self.assertEqual(new_mode, "EDITING")
@@ -1765,8 +1763,7 @@ class TestPickSessionEDITINGTwoPhaseEsc(unittest.TestCase):
     def test_esc_with_nonempty_buffer_clears_buffer_stays_in_editing(self):
         rows, cursor, model = self._editing_state(buffer="feat")
         new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
-            sm._step_editing(b"\x1b", rows, cursor, "feat", "EDITING",
-                             model, model, 2)
+            sm._step_editing(b"\x1b", rows, cursor, "feat", model)
         self.assertFalse(should_exit,
                          "Esc in EDITING must not exit the picker")
         self.assertIsNone(returned)
@@ -1778,8 +1775,7 @@ class TestPickSessionEDITINGTwoPhaseEsc(unittest.TestCase):
     def test_esc_with_empty_buffer_exits_editing_to_normal(self):
         rows, cursor, model = self._editing_state()
         new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
-            sm._step_editing(b"\x1b", rows, cursor, "", "EDITING",
-                             model, model, 2)
+            sm._step_editing(b"\x1b", rows, cursor, "", model)
         self.assertFalse(should_exit,
                          "Esc with empty buffer must not exit the picker"
                          " -- it just drops back to NORMAL")
@@ -1810,8 +1806,7 @@ class TestPickSessionZeroMatchEnter(unittest.TestCase):
         empty_rows: list[dict] = []
         new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
             sm._step_editing(b"\r", empty_rows, 0, "zzz-no-match",
-                             "EDITING", self._model(),
-                             self._model(), 1)
+                             self._model())
         self.assertFalse(should_exit,
                          "Enter on no matches must not exit (continue)")
         self.assertIsNone(returned)
@@ -1840,8 +1835,7 @@ class TestPickSessionLiteralQuitsAreLiteralInEdit(unittest.TestCase):
     def _edit_step(self, key, buffer=""):
         rows = sm.build_rows(self._model(), now=NOW)
         cursor = sm._selectable_indices(rows)[0] if sm._selectable_indices(rows) else 0
-        return sm._step_editing(key, rows, cursor, buffer, "EDITING",
-                                self._model(), self._model(), 1)
+        return sm._step_editing(key, rows, cursor, buffer, self._model())
 
     def test_q_in_editing_appends_to_buffer(self):
         _, _, new_buffer, new_mode, returned, should_exit = \
@@ -1887,8 +1881,7 @@ class TestPickSessionBackspace(unittest.TestCase):
     def _backspace(self, buffer):
         rows = sm.build_rows(self._model(), now=NOW)
         cursor = sm._selectable_indices(rows)[0] if sm._selectable_indices(rows) else 0
-        return sm._step_editing(b"\x7f", rows, cursor, buffer, "EDITING",
-                                self._model(), self._model(), 1)
+        return sm._step_editing(b"\x7f", rows, cursor, buffer, self._model())
 
     def test_backspace_drops_last_char(self):
         _, _, new_buffer, new_mode, _, should_exit = \
@@ -1911,10 +1904,12 @@ class TestPickSessionBackspace(unittest.TestCase):
 
 class TestPickSessionLongQueryDoesNotCrash(unittest.TestCase):
     """A pathological buffer (no spaces, all printable, hundreds of
-    chars) must not crash the renderer -- the search header still has
-    to fit inside ``max_x`` columns without raising. A naive ``f"...{query}"``
-    approach would explode the header off the right edge; the renderer
-    truncates with ``[: max_x - 1]``."""
+    chars) must not crash the renderer. The header is ljust-padded to
+    ``max_x`` so the test only asserts "no exception"; the long buffer
+    is allowed to overflow off the right edge of the header (the user
+    sees only the first ``max_x`` chars of the query in the header).
+    Body rows are still sliced with ``[: max_x - 1]`` so the row
+    text never overflows."""
 
     def _model(self):
         return [sm.WorktreeInfo("alpha", "live", None, [
@@ -1968,8 +1963,7 @@ class TestPickSessionFilterComposition(unittest.TestCase):
         # Wide buffer "" (cleared) -- all rows still come back from
         # the prefiltered snapshot.
         new_rows, new_cursor, _, _, _, _ = sm._step_normal(
-            b"/", rows, cursor, "", "NORMAL",
-            prefiltered, prefiltered, 2,
+            b"/", rows, cursor, "", prefiltered,
         )
         # Sanity: the rebuilt rows do NOT contain the dropped session.
         sess_ids = [r["session"].session_id for r in new_rows

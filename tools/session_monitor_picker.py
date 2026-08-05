@@ -70,6 +70,12 @@ _STATUS_COLOR = {
     Status.STALE: "red",
 }
 
+# Sentinel returned by the step helpers when the underlying OS signal
+# (Ctrl-C) needs to be re-raised; using a module-private object instead
+# of a magic string keeps the call site type-checkable and immune to
+# typos in the literal.
+_RAISE = object()
+
 
 def build_rows(model: list[WorktreeInfo], *,
                now: datetime | None = None) -> list[dict]:
@@ -140,6 +146,17 @@ def _move_selectable(rows: list[dict], cursor: int, delta: int) -> int:
                 break
     target = max(0, min(pos + delta, len(sel) - 1))
     return sel[target]
+
+
+def _move(rows: list[dict], cursor: int, delta: int, mode: str
+          ) -> tuple[list[dict], int, str]:
+    """Shared move-with-key helper for both picker modes.
+
+    Returns ``(rows, cursor, mode)`` so the caller can rebind without
+    re-inspecting the key. ``mode`` is threaded through unchanged --
+    the only thing the helper decides is the new cursor position.
+    """
+    return rows, _move_selectable(rows, cursor, delta), mode
 
 
 def _clamp_cursor(rows: list[dict], cursor: int) -> int:
@@ -295,10 +312,7 @@ def _step_normal(
     rows: list[dict],
     cursor: int,
     buffer: str,
-    mode: str,
-    model: list[WorktreeInfo],
     original_model: list[WorktreeInfo],
-    total_sessions: int,
 ) -> tuple[list[dict], int, str, str, Session | None, bool]:
     """Pure handler for a NORMAL-mode keypress.
 
@@ -313,20 +327,10 @@ def _step_normal(
     EDITING; any other printable char seeds the EDITING buffer with
     that character and rebuilds the rows.
 
-    The 6th tuple slot (``should_exit``) is required so the helper
-    cleanly distinguishes "quit" from "no-op" -- the suggested
-    5-tuple (with ``None`` doubling as "no selection this turn" and
-    "quit") would force ``pick_session`` to re-inspect ``key`` after
-    every call, breaking the helper's contract that it fully owns the
-    decision for the key it was given.
+    The 6th tuple slot (``should_exit``) cleanly distinguishes "quit"
+    from "no-op" so ``pick_session`` does not have to re-inspect ``key``
+    after every call.
     """
-    # ``mode`` and ``total_sessions`` are part of the signature so the
-    # helper can be called from a context where they're already in
-    # scope; the NORMAL-mode handler doesn't actually mutate them, but
-    # keeping the signature lets ``pick_session`` route both helpers
-    # through the same call site.
-    del mode, model, total_sessions
-
     # Enter: select the row at the cursor, or no-op when no rows.
     if key in (b"\r", b"\n"):
         sel = _selectable_indices(rows)
@@ -340,11 +344,11 @@ def _step_normal(
 
     # Move up.
     if key == b"\x1b[A" or key in (b"k", b"K"):
-        return rows, _move_selectable(rows, cursor, -1), buffer, "NORMAL", None, False
+        return _move(rows, cursor, -1, "NORMAL") + (buffer, "NORMAL", None, False)
 
     # Move down.
     if key == b"\x1b[B" or key in (b"j", b"J"):
-        return rows, _move_selectable(rows, cursor, +1), buffer, "NORMAL", None, False
+        return _move(rows, cursor, +1, "NORMAL") + (buffer, "NORMAL", None, False)
 
     # Enter edit mode (slash with no characters yet).
     if key == b"/":
@@ -366,10 +370,7 @@ def _step_editing(
     rows: list[dict],
     cursor: int,
     buffer: str,
-    mode: str,
-    model: list[WorktreeInfo],
     original_model: list[WorktreeInfo],
-    total_sessions: int,
 ) -> tuple[list[dict], int, str, str, Session | None, bool]:
     """Pure handler for an EDITING-mode keypress.
 
@@ -389,13 +390,7 @@ def _step_editing(
     so the user can search for them), then rebuild.
     Ctrl-C (``b"\\x03"``): re-raised so the outer ``try/except`` in
     ``pick_session`` converts it to a clean ``None`` return.
-
-    Like ``_step_normal``, the 6th tuple slot (``should_exit``)
-    disambiguates "select" from "continue" so the caller does not
-    re-inspect ``key``.
     """
-    del mode, model, total_sessions
-
     # Enter: select the row at the cursor, or drop to NORMAL when
     # the filter has dropped every match (the buffer is kept so the
     # user can refine without retyping).
@@ -407,11 +402,11 @@ def _step_editing(
 
     # Ctrl-C: keep ISIG on so the OS raises KeyboardInterrupt, which
     # the outer except turns into a clean None return. We re-raise
-    # explicitly (instead of returning a quit signal) so the helper
-    # remains pure for its structured state transitions and the
-    # kernel-level signal still works on a real TTY.
+    # explicitly so the helper remains pure for its structured state
+    # transitions and the kernel-level signal still works on a real
+    # TTY.
     if key == b"\x03":
-        return rows, cursor, buffer, "EDITING", "RAISE_KEYBOARD_INTERRUPT", True
+        return rows, cursor, buffer, "EDITING", _RAISE, True
 
     # Two-phase Esc: first press clears the buffer (stays in
     # EDITING); an empty buffer exits EDITING to NORMAL.
@@ -436,9 +431,9 @@ def _step_editing(
 
     # Move up / down without touching the buffer.
     if key == b"\x1b[A" or key in (b"k", b"K"):
-        return rows, _move_selectable(rows, cursor, -1), buffer, "EDITING", None, False
+        return _move(rows, cursor, -1, "EDITING") + (buffer, "EDITING", None, False)
     if key == b"\x1b[B" or key in (b"j", b"J"):
-        return rows, _move_selectable(rows, cursor, +1), buffer, "EDITING", None, False
+        return _move(rows, cursor, +1, "EDITING") + (buffer, "EDITING", None, False)
 
     # Printable: append to the buffer (q/Q/slash are literal here so
     # the user can search for them), then rebuild.
@@ -512,13 +507,11 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
 
             if mode == "NORMAL":
                 new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = _step_normal(
-                    key, rows, cursor, buffer, mode, model,
-                    original_model, total_sessions,
+                    key, rows, cursor, buffer, original_model,
                 )
             else:
                 new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = _step_editing(
-                    key, rows, cursor, buffer, mode, model,
-                    original_model, total_sessions,
+                    key, rows, cursor, buffer, original_model,
                 )
 
             rows = new_rows
@@ -527,7 +520,7 @@ def pick_session(model: list[WorktreeInfo]) -> Session | None:
             mode = new_mode
 
             if should_exit:
-                if returned == "RAISE_KEYBOARD_INTERRUPT":
+                if returned is _RAISE:
                     raise KeyboardInterrupt
                 return returned
 
