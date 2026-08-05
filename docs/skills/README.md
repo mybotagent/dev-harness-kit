@@ -98,6 +98,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`interview`](interview.md) | `enforcement` | 5-field safety-contract interview that gates plan emission. |
 | [`research`](research.md) | `enforcement` | 0-arg research gate: cache/direct/multi/human escalation + citation enforcement. |
 | [`valuate`](valuate.md) | `enforcement` | Plan-value gate; scores a plan on 6 axes and returns proceed/revise/hold/kill. |
+| [`sot-harness-writer`](sot-harness-writer.md) | `state` | Interview-based Single Source of Truth harness document writer — 5 rounds × 2–3 evidence-backed recommendations, hands off to `/dev-kit:plan`. |
 
 ---
 
