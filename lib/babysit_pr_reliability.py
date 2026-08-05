@@ -289,7 +289,6 @@ def check_verdict_freshness(
     run_started_epoch: float,
     now_epoch: float,
     expected_run_id: int | None = None,
-    expected_job_key: str | None = None,
 ) -> dict:
     """Return whether the most recent claude[bot] verdict comment is
     fresh relative to the given workflow run.
@@ -407,58 +406,4 @@ def check_verdict_freshness(
             "reason": (f"comment newer than the run AND within "
                        f"{VERDICT_FRESHNESS_WINDOW_SECONDS}s window "
                        f"(age={int(age)}s)")}
-    try:
-        # The babysit skill shell that calls this helper already has
-        # `gh` authenticated — `gh api` avoids token plumbing here.
-        result = subprocess.run(
-            ["gh", "api",
-             f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
-             "--jq", ".",
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            return {"status": GHOST, "comment_id": None,
-                    "comment_age_seconds": None, "comments": []}
-        comments = json.loads(result.stdout)
-    except (subprocess.SubprocessError, OSError, ValueError):
-        # SubprocessError: `gh` missing / killed / timeout. OSError:
-        # file / network errors. ValueError: malformed JSON. All three
-        # are fail-closed -> GHOST (the conservative call); the
-        # babysit layer surfaces the reason in its own log.
-        return {"status": GHOST, "comment_id": None,
-                "comment_age_seconds": None, "comments": []}
-
-    claude_comments = [
-        c for c in comments
-        if (c.get("user", {}).get("login") or "").startswith("claude")
-        and "**Verdict:**" in (c.get("body") or "")
-    ]
-    if not claude_comments:
-        return {"status": GHOST, "comment_id": None,
-                "comment_age_seconds": None, "comments": []}
-
-    # Pick the most recent (newest updated_at) and parse via the same
-    # _epoch_from_iso helper classify_check already uses.
-    latest = max(claude_comments, key=lambda c: c.get("updated_at", ""))
-    latest_epoch = _epoch_from_iso(latest.get("updated_at"))
-    if latest_epoch is None:
-        return {"status": GHOST, "comment_id": latest.get("id"),
-                "comment_age_seconds": None, "comments": claude_comments}
-
-    age = now_epoch - latest_epoch
-    # If the latest comment is OLDER than the run started (the run
-    # completed but no fresh comment was posted) -> STALE, but only
-    # while the comment is still within VERDICT_FRESHNESS_WINDOW_SECONDS
-    # of `now_epoch`. Past that window, the comment is from an
-    # unrelated older run and the extraction is reading genuinely
-    # stale data -> GHOST (fail-closed).
-    if latest_epoch < run_started_epoch:
-        if age > VERDICT_FRESHNESS_WINDOW_SECONDS:
-            return {"status": GHOST, "comment_id": latest.get("id"),
-                    "comment_age_seconds": age, "comments": claude_comments}
-        return {"status": STALE, "comment_id": latest.get("id"),
-                "comment_age_seconds": age, "comments": claude_comments}
-    return {"status": FRESH, "comment_id": latest.get("id"),
-            "comment_age_seconds": age, "comments": claude_comments}
 
