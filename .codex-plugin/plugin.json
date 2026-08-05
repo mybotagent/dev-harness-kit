@@ -1,10 +1,6 @@
 {
   "name": "dev-kit",
-<<<<<<< HEAD
   "version": "0.3.212",
-=======
-  "version": "0.3.211",
->>>>>>> 7297890 (fix(ci): sort verdict comments by updated_at, not ID order)
   "description": "AI-native dev harness: 13 categories, 0-arg commands, A2A typed, Eval-Repair, Human-on-the-Loop.",
   "author": {
     "name": "sanghee",
