@@ -113,6 +113,15 @@
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/loop-detect.sh"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/sub-agent-handoff.sh"
+          }
+        ]
       }
     ],
     "Stop": [

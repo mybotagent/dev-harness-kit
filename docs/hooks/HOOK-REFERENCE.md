@@ -58,6 +58,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `loop-detect.sh` | PostToolUse (Bash) | Warn before another retry after repeated identical Bash calls | advisory (fails open) |
 | `acp-tier-assert.sh` | PreToolUse (`*`) | Enforce ACP agent tier-assertion line on first tool call (M/T/L) | hard-block |
 | `stop-verify.sh` | Stop | Run regression tests + pre-completion intent checklist on session end | hard-block |
+| `sub-agent-handoff.sh` | PostToolUse (Agent) | Verify sub-agent response carries STATUS / EVIDENCE / NEXT-ACTION pieces; advisory; fail-closed on jq missing | advisory (fail-closed on missing jq) |
 
 **Reading the "Mode" column:** `hard-block` means the tool call is denied
 outright — there is no override short of removing the hook. `advisory`
