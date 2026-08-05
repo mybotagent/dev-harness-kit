@@ -280,6 +280,8 @@ Then:
 - **Auto-render the design proposal** (see "Proposal auto-invoke" below) —
   the final cleanup step of Gate 5/5 is to materialize the proposal HTML
   the reviewer will see before `/dev-kit:build` is invoked.
+- Pre-build integrity check is enforced by `/dev-kit:build`; the plan emit
+  is complete when `phases/<name>/index.json` and `step<N>.md` are written.
 
 ## Proposal auto-invoke (Gate 5/5 final step)
 

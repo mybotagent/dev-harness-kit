@@ -376,6 +376,68 @@ def main() -> int:
     return _run_sequential(root, args.phase, args.push, args.skip_blocked)
 
 
+def _intent_integrity_pre_build_gate(root: Path, phase: str) -> int:
+    """Pre-build intent-integrity gate. Single source of truth shared by
+    `_run_sequential` and `_run_parallel`.
+
+    Behavior split:
+      - report missing         -> soft: warn + continue (return 0)
+      - report present + high  -> hard: print + return 2, do NOT mutate state
+      - report present + low   -> proceed (return 0)
+      - invalid `phase` arg    -> hard: print + return 2
+
+    Returns 0 if the build may proceed, 2 if it must stop.
+    Read-only: no update_step_status() before this function returns 2.
+    """
+    import re as _re
+    # Path-traversal guard: a malicious `phase` value (e.g. "../../tmp/x")
+    # would escape `.dev-kit/integrity/` and either substitute attacker-
+    # controlled JSON or fall through to the "missing → continue" branch.
+    if not _re.fullmatch(r"[A-Za-z0-9._-]+", phase):
+        print(
+            f"intent_integrity: refusing to run gate — invalid phase {phase!r} "
+            f"(use letters/digits/._-)",
+            file=sys.stderr,
+        )
+        return 2
+
+    pre_report = root / ".dev-kit" / "integrity" / f"{phase}.pre.json"
+    if not pre_report.exists():
+        print(
+            f"intent_integrity: pre-build report missing at {pre_report} — "
+            f"continuing without the gate (plan did not run integrity).",
+            file=sys.stderr,
+        )
+        return 0
+
+    try:
+        pre_data = json.loads(pre_report.read_text(encoding="utf-8"))
+        high = [f for f in pre_data.get("findings", []) if f.get("severity") == "high"]
+    except (OSError, json.JSONDecodeError):
+        print(
+            f"intent_integrity: pre-build report at {pre_report} is unreadable "
+            f"— continuing without the gate (corrupt JSON).",
+            file=sys.stderr,
+        )
+        return 0
+
+    if not high:
+        return 0
+
+    print(
+        f"intent_integrity: {len(high)} high-severity finding(s) in "
+        f"{pre_report} — refusing to start build:",
+        file=sys.stderr,
+    )
+    for f in high:
+        print(
+            f"  [{f.get('finding_id', '?')}/{f.get('category', '?')}] "
+            f"{f.get('evidence', '')}",
+            file=sys.stderr,
+        )
+    return 2
+
+
 def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = False) -> int:
     """Per-step: read → preamble → invoke claude CLI → write output → commit (feat + chore).
 
@@ -390,6 +452,9 @@ def _run_sequential(root: Path, phase: str, push: bool, skip_blocked: bool = Fal
     data = json.loads(idx_path.read_text(encoding="utf-8"))
     worktree_branch = data.get("worktree") or f"feat/{phase}"
     steps = data.get("steps", [])
+    rc = _intent_integrity_pre_build_gate(root, phase)
+    if rc != 0:
+        return rc
     for step_meta in steps:
         n = step_meta["step"]
         cur_status = step_meta.get("status")
@@ -623,6 +688,9 @@ def _run_parallel(root: Path, phase: str, n: int, push: bool, skip_blocked: bool
     data = json.loads(idx_path.read_text(encoding="utf-8"))
     worktree_branch = data.get("worktree") or f"feat/{phase}"
     steps = data.get("steps", [])
+    rc = _intent_integrity_pre_build_gate(root, phase)
+    if rc != 0:
+        return rc
     # Collect only steps that are RESUMABLE. Blocked bails the whole run.
     eligible = []
     for step_meta in steps:
