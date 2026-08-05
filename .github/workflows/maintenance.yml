@@ -307,7 +307,7 @@ jobs:
           # is what actually blocks merge. Mirrors the lenient policy
           # in `review.yml:513-514` for review and security.
           if [ -z "$judge_verdict" ]; then
-            echo "::warning::maintenance judge verdict missing (event=$EVENT); defaulting to Approve (workflow self-validation artifact; verify post-merge)"
+            echo "::warning::maintenance judge verdict missing (event=${EVENT:-unknown}); defaulting to Approve (workflow self-validation artifact; verify post-merge)"
             judge_verdict="Approve"
           fi
 
