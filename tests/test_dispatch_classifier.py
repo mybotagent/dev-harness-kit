@@ -3,7 +3,7 @@
 
 Covers the 5-rule classifier priority order + each rule's edge cases:
   1. Dependency edge → sequential
-  2. Vague scope (TODO/FIXME/TBD/?/etc.) → sequential
+  2. Vague scope (TODO/FIXME/TBD/maybe/perhaps/either) → sequential
   3. Overlapping writes without partition → sequential
   4. N >= 4 + clean isolation → parallel
   5. Default → sequential

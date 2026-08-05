@@ -175,7 +175,7 @@ the start of a step, the build has effectively finished — bail to
 
 ## Test evidence
 
-48 tests in `tests/test_execute.py` covering runner behavior (skippable status skips runner, blocked returns 2, pending step creates worktree + invokes claude with preamble+AC, 2-commit protocol per step, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in_progress idempotency, duration rounding, reset semantics)). Plus 15 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, and reason format.
+50 tests in `tests/test_execute.py` covering runner behavior (skippable status skips runner, blocked returns 2, pending step creates worktree + invokes claude with preamble+AC, 2-commit protocol per step, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in_progress idempotency, duration rounding, reset semantics)). Plus 18 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, and reason format.
 
 ## Next step
 

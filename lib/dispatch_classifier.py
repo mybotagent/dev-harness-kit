@@ -155,7 +155,7 @@ def classify(steps: Iterable[dict]) -> DispatchDecision:
     if _has_dependency_edge(steps_list):
         return DispatchDecision(
             mode="sequential",
-            reason=f"sequential — {n} steps, dependency edge detected",
+            reason=f"{n} steps, dependency edge detected",
         )
 
     # Rule 2 — vague scope.
@@ -163,26 +163,26 @@ def classify(steps: Iterable[dict]) -> DispatchDecision:
         if _has_vague_scope(step):
             return DispatchDecision(
                 mode="sequential",
-                reason=f"sequential — step {step.get('step', i + 1)} has vague scope",
+                reason=f"step {step.get('step', i + 1)} has vague scope",
             )
 
     # Rule 3 — overlap on shared writes.
     if _has_overlap(steps_list):
         return DispatchDecision(
             mode="sequential",
-            reason=f"sequential — {n} steps, overlapping writes without partition",
+            reason=f"{n} steps, overlapping writes without partition",
         )
 
     # Rule 4 — clean isolation AND sufficient N.
     if n >= _MIN_PARALLEL_N and _has_clean_isolation(steps_list):
         return DispatchDecision(
             mode="parallel",
-            reason=f"parallel — {n} steps, clean worktree isolation",
+            reason=f"{n} steps, clean worktree isolation",
         )
 
     # Rule 5 — default sequential.
     suffix = "insufficient N" if n < _MIN_PARALLEL_N else "non-clean isolation"
     return DispatchDecision(
         mode="sequential",
-        reason=f"sequential — {n} steps, {suffix}",
+        reason=f"{n} steps, {suffix}",
     )

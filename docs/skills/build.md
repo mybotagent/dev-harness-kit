@@ -91,8 +91,8 @@ Template behavior is validated by `tests/test_long_running_templates.py` (struct
 - `/dev-kit:review` and `/dev-kit:security`, then `/dev-kit:ship` — the next stages after `build` completes.
 - `lib/execute.py` — the harness-runner engine this skill wraps.
 - `lib/dispatch_classifier.py` — pure-Python classifier that decides parallel vs sequential per batch (5-rule priority order, default sequential; replaces the legacy `--parallel` flag).
-- `tests/test_execute.py` — the 29 + 10 tests referenced above.
-- `tests/test_dispatch_classifier.py` — the 15 classifier tests covering all 5 rules, priority order, idempotency, reason format.
+- `tests/test_execute.py` — the 50 tests referenced above.
+- `tests/test_dispatch_classifier.py` — the 18 classifier tests covering all 5 rules, priority order, idempotency, reason format.
 
 ---
 *Source: [`skills/build/SKILL.md`](../../skills/build/SKILL.md)*
