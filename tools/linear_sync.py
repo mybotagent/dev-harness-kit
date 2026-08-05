@@ -826,7 +826,7 @@ def _state_id(state_name: str) -> str | None:
         return None
     query = (
         "query($teamId: ID!) {"
-        "  workflowStates(filter: { team: { id: { eq: $teamId } } }, first: 50) {"
+        "  workflowStates(filter: { team: { id: { eq: $teamId } } }, first: 100) {"
         "    nodes { id name }"
         "  }"
         "}"
@@ -892,9 +892,11 @@ def _find_all_issues(project_id: str, scope_key: str) -> list[dict]:
     except RuntimeError:
         return []
     nodes = (data.get("issues") or {}).get("nodes") or []
+    TERMINAL = ("Done", "Canceled")
     matches = [
         n for n in nodes
         if str(n.get("description") or "").startswith(f"<!-- scope:{scope_key} -->")
+        and str((n.get("state") or {}).get("name") or "") not in TERMINAL
     ]
     matches.sort(key=lambda n: str(n.get("updatedAt") or ""), reverse=True)
     return matches
@@ -940,7 +942,7 @@ def _find_issue(project_id: str, scope_key: str) -> str | None:
 
 
 def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_key: str,
-                  state_id: str | None = None) -> str:
+                  state_id: str | None = None) -> tuple[str, str | None]:
     # Linear’s `IssueCreateInput.{teamId, projectId}` are both `String`
     # (NOT `ID!` as in the `issues(filter:)` input). Match the schema.
     full_body = f"<!-- scope:{scope_key} -->\n{body}"
@@ -981,7 +983,9 @@ def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_ke
             "body": full_body,
         })
     issue = data["issueCreate"]["issue"]
-    return f"{issue['identifier']} ({issue['id']})"
+    issue_ref = f"{issue['identifier']} ({issue['id']})"
+    state_name = ((issue.get("state") or {}).get("name") if isinstance(issue.get("state"), dict) else None)
+    return issue_ref, state_name
 
 
 def _update_issue(issue_ref: str, body: str, project_id: str | None = None,
@@ -1266,8 +1270,30 @@ def sync() -> int:
         elif len(matches) == 1:
             existing_issue_ref = f"{matches[0]['identifier']} ({matches[0]['id']})"
 
-        # Step 5 — auto-Done. Completion verb + existing issue -> Done.
+        # Resolve the API-fetched state once — it's the source of truth
+        # for both the auto-Done state guard and the auto-In-progress
+        # transition. The handoff cache can be stale or missing.
+        if matches:
+            api_state_name = str((matches[0].get("state") or {}).get("name") or "")
+
+                # Step 5 — auto-Done. Completion verb + existing issue -> Done.
+        # State guard: if the issue is already in a terminal state
+        # (Done / Canceled), do NOT resurrect it — the user may have
+        # moved it manually in the Linear UI.
         if existing_issue_ref and _is_completion_signal(prompt):
+            if api_state_name in ("Done", "Canceled"):
+                current_state = api_state_name
+                _write_handoff(repo, {
+                    **(handoff if isinstance(handoff, dict) else {}),
+                    "issue": existing_issue_ref,
+                    "project": _project_name_override(repo) or _repo_name(repo),
+                    "branch": branch,
+                    "prompt": prompt,
+                    "scope": scope,
+                    "action": "noop_terminal",
+                    "state": current_state,
+                })
+                return 0
             if _set_issue_state(existing_issue_ref, "Done"):
                 _write_handoff(repo, {
                     **(handoff if isinstance(handoff, dict) else {}),
@@ -1285,9 +1311,10 @@ def sync() -> int:
             return 0
 
         current_state: str | None = None
+        api_state_name: str | None = None
         if existing_issue_ref:
             # Step 7 — auto-In-progress on subsequent work signals.
-            current_state = (handoff.get("state") if isinstance(handoff, dict) else None)
+            current_state = api_state_name
             if _is_work_signal(prompt) and current_state != "In Progress":
                 if _set_issue_state(existing_issue_ref, "In Progress"):
                     current_state = "In Progress"
@@ -1301,12 +1328,15 @@ def sync() -> int:
             title = f"[{branch}] {summary}"[:250]
             resolved_team = team_id or _resolve_team_id()
             target_state_id = _state_id("Todo") or _state_id("Backlog")
-            issue_ref = _create_issue(
+            issue_ref, returned_state = _create_issue(
                 project_id, resolved_team, title, body, scope,
                 state_id=target_state_id,
             )
             action = "created"
-            current_state = "Todo" if target_state_id else None
+            # Use the actual returned state from the API so the handoff
+            # reflects the truth (Backlog fallback no longer records
+            # a misleading "Todo" label).
+            current_state = returned_state or ("Todo" if target_state_id else None)
 
         handoff_payload: dict[str, Any] = {
             "issue": issue_ref,

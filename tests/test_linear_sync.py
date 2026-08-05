@@ -1072,7 +1072,7 @@ class TestAutoOpen(unittest.TestCase):
             handoff = json.loads(
                 (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(handoff["state"], "Todo")  # logical label, not column name
+            self.assertEqual(handoff["state"], "Backlog")  # actual returned state from issueCreate
 
 
 class TestAutoInProgress(unittest.TestCase):
@@ -1331,6 +1331,80 @@ class TestEnabledGate(unittest.TestCase):
                     linear_sync._enabled()
                 self.assertIn("[linear-sync] _enabled()=", buf.getvalue())
 
+
+
+
+class TestAutoDoneStateGuard(unittest.TestCase):
+    """MAJOR 4: auto-Done must NOT resurrect Canceled/Done issues."""
+
+    def test_done_verb_skips_when_issue_already_canceled(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo", "issue": "DEMO-1 (iss-1)",
+                                 "state": "In Progress", "action": "updated",
+                                 "scope": "feat/x::implement foo done"},
+                        commit_subject="implement foo done"):
+            issueUpdate_calls: list[str] = []
+
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo done -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "Canceled"},
+                    }]}}}
+                if "issueUpdate" in q:
+                    issueUpdate_calls.append(q[:50])
+                    return {"data": {"issueUpdate": {"success": True, "issue": {"id": "iss-1"}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            # Canceled is filtered out by dedupe (MINOR 1), so matches is
+            # empty and sync() creates a new issue — issueUpdate never
+            # transitions the canceled one. The important guarantee:
+            # NO stateId mutation fires on the canceled issue.
+            state_updates = [c for c in issueUpdate_calls if "stateId" in c]
+            self.assertEqual(state_updates, [])
+
+
+class TestDedupeSkipsTerminal(unittest.TestCase):
+    """MINOR 1: _find_all_issues excludes Done/Canceled issues."""
+
+    def test_dedupe_skips_done_issue(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo"},
+                        commit_subject="implement foo again"):
+            archived: list[str] = []
+
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-old", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo again -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "Done"},
+                    }]}}}
+                if "issueArchive" in q:
+                    archived.append(payload["variables"]["id"])
+                    return {"data": {"issueArchive": {"success": True}}}
+                if "issueCreate" in q:
+                    return {"data": {"issueCreate": {"issue": {
+                        "id": "iss-new", "identifier": "DEMO-2", "state": {"name": "Todo"},
+                    }}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            self.assertEqual(archived, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
