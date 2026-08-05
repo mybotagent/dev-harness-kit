@@ -2,7 +2,7 @@
 
 This index lists every skill shipped by the `dev-kit` plugin. Click into any skill to read its full `SKILL.md`; every `SKILL.md` has a back-link at the top to return here.
 
-**37 skills** across 12 categories (32 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
+**39 skills** across 12 categories (34 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
 
 ## By category
 
@@ -29,7 +29,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`bootstrap-full`](bootstrap-full/SKILL.md) | `state` | One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker. |
 | [`ci-setup`](ci-setup/SKILL.md) | `enforcement` | Install dev-kit's reusable CI workflow templates into a target project. Idempotent via `.dev-kit/ci-config.json` presence, no version gate. Hand-off to /dev-kit:build. |
 
-### `build` (7)
+### `build` (8)
 
 | Skill | α | Description |
 |---|---|---|
@@ -40,6 +40,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`build-verify`](build-verify/SKILL.md) 🔒 | `enforcement` | verification-before-completion. No "done" without quoted exit code + test count + build log (MUST-L3, hook stop-verify). |
 | [`prune`](prune/SKILL.md) | `analysis` | 0-arg slop-removal chain. One slash wraps inspect → 3-pass delete sweep → review. Gated phases for deleting AI slop and dead features (not refactoring). |
 | [`refactor`](refactor/SKILL.md) | `analysis` | 0-arg cleanup chain. One slash wraps inspect -> build-refactor -> review. 3 gated phases with quoted exit codes between each. |
+| [`research-plan-build`](research-plan-build/SKILL.md) | `state` | 3-phase binder (research → plan → implement). Enforces non-skippable phases; cites lib/analysis_core/ for the research half; emits templates/research.md and templates/plan.md. |
 
 ### `config` (2)
 
@@ -48,13 +49,14 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | [`config`](config/SKILL.md) | `state` | skill + MCP + hook + methodology picker (multiSelect). |
 | [`linear`](linear/SKILL.md) | `state` | Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured. |
 
-### `design` (4)
+### `design` (5)
 
 | Skill | α | Description |
 |---|---|---|
 | [`interview`](interview/SKILL.md) | `enforcement` | 5-field safety-contract interview that gates plan emission. Drives `lib.interview_engine` through one Ralph loop, enforces `safety_valve=8`, `narrowed_delta`, `dedup_metric` (identical-ambiguity-cycle=2), and `user_inte… |
 | [`proposal`](proposal/SKILL.md) | `state` | 0-arg HTML renderer for design proposals / plans. Renders any docs/proposals/<main>/<sub>.yaml to docs/proposals/<main>/<sub>.html for pre-implementation review. |
 | [`research`](research/SKILL.md) | `enforcement` | 0-arg research gate. Run Phase 0-3 escalation (cache / direct / multi / human) + verify() + enforce_citations(). /dev-kit:research <claim> [--max-phase N]. |
+| [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `state` | Interview-based Single Source of Truth harness document writer (5 rounds × 2-3 evidence-backed recommendations, full traceability, hands off to /dev-kit:plan). |
 | [`valuate`](valuate/SKILL.md) | `enforcement` | Plan-value gate. Scores a plan on 6 axes via LLM judge and returns proceed / revise / hold / kill. Verdict envelope persists to .dev-kit/valuations/<plan-id>.json. |
 
 ### `eval` (1)
@@ -138,9 +140,12 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 29 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
 | 30 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
 | 31 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
-| 32 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
-| 33 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
-| 34 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
-| 35 | [`status`](status/SKILL.md) | `status` | `state` | human |
-| 36 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
-| 37 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
+| 32 | [`research-plan-build`](research-plan-build/SKILL.md) | `build` | `state` | human |
+| 33 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
+| 34 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
+| 35 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
+| 36 | [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `design` | `state` | human |
+| 37 | [`status`](status/SKILL.md) | `status` | `state` | human |
+| 38 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
+| 39 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
+
