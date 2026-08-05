@@ -760,69 +760,6 @@ class TestRunParallel(unittest.TestCase):
 
 
 
-class TestParallelWarnLoud(unittest.TestCase):
-    """Issue #175: --parallel > 1 must warn-and-refuse without --allow-parallel-build.
-
-    Two concurrent `claude -p` steps collide on shared files; the collision
-    is invisible during the run and surfaces only at merge time. The
-    dangerous path must require explicit acknowledgment.
-    """
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        # Stub out the runner entry points so main() never reaches the real
-        # subprocess pipeline; we only want to test the CLI gate here.
-        self._patches = [
-            patch.object(execute, "_run_sequential", return_value=0),
-            patch.object(execute, "_run_parallel", return_value=0),
-        ]
-        for p in self._patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _run_main(self, argv):
-        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
-            buf = io.StringIO()
-            with redirect_stderr(buf):
-                try:
-                    rc = execute.main()
-                except SystemExit as e:
-                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
-            return rc, buf.getvalue()
-
-    def test_parallel_above_1_refuses_without_override(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "3"])
-        self.assertEqual(rc, 2, f"--parallel 3 without --allow-parallel-build must refuse with exit 2, got {rc}")
-        self.assertIn("parallel", stderr.lower(), f"warning must mention 'parallel'; stderr was: {stderr!r}")
-        self.assertIn("merge", stderr.lower(), f"warning must explain the merge-conflict risk; stderr was: {stderr!r}")
-        self.assertIn("--allow-parallel-build", stderr,
-                      f"warning must tell the user the override flag; stderr was: {stderr!r}")
-
-    def test_parallel_above_1_proceeds_with_override(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "3", "--allow-parallel-build"])
-        self.assertNotEqual(rc, 2, f"--parallel 3 --allow-parallel-build must NOT be refused; got rc={rc}, stderr={stderr!r}")
-        self.assertNotIn("--allow-parallel-build", stderr,
-                         f"no warning expected when override is given; stderr was: {stderr!r}")
-
-    def test_parallel_zero_default_unchanged(self):
-        rc, stderr = self._run_main(["0-mvp"])
-        self.assertEqual(rc, 0, f"default --parallel 0 must remain unchanged, got rc={rc}")
-        self.assertNotIn("merge", stderr.lower(),
-                         f"no merge-conflict warning expected for --parallel 0; stderr was: {stderr!r}")
-
-    def test_parallel_one_unchanged(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "1"])
-        self.assertEqual(rc, 0, f"--parallel 1 must remain unchanged (effectively sequential), got rc={rc}")
-        self.assertNotIn("merge", stderr.lower(),
-                         f"no merge-conflict warning expected for --parallel 1; stderr was: {stderr!r}")
-
-
-# --- regression tests (issue #79) ---------------------------------------
-
 class TestRunStepBody(unittest.TestCase):
     """_run_step_body is the shared body for sequential and parallel runners.
 
@@ -1002,3 +939,67 @@ class TestStatusTransitionsTable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestMainDispatchDecision(unittest.TestCase):
+    """Regression: main() emits dispatch decision via lib.dispatch_classifier.
+
+    Replaces legacy --parallel flag with auto-classification. The decision
+    + reason must appear in stderr as the first build-log line.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        # Two steps, default sequential (below N>=4 threshold)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        (self.root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\n", encoding="utf-8")
+        (self.root / "phases" / "0-mvp" / "step2.md").write_text("# Step 2\n", encoding="utf-8")
+        idx = {
+            "phase": "0-mvp",
+            "worktree": "feat/x",
+            "steps": [
+                {"step": 1, "name": "a", "status": "pending"},
+                {"step": 2, "name": "b", "status": "pending"},
+            ],
+        }
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+        # Stub the runners; we only care about the dispatch decision logging.
+        self._patches = [
+            patch.object(execute, "_run_sequential", return_value=0),
+            patch.object(execute, "_run_parallel", return_value=0),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_main(self, argv):
+        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    rc = execute.main()
+                except SystemExit as e:
+                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
+            return rc, buf.getvalue()
+
+    def test_main_emits_dispatch_decision_line(self):
+        """main() must emit 'dispatch: <mode> — <reason>' as the first stderr line."""
+        rc, stderr = self._run_main(["0-mvp"])
+        self.assertEqual(rc, 0)
+        self.assertIn("dispatch:", stderr,
+                      f"main() must emit dispatch decision; stderr was: {stderr!r}")
+        # Two steps (below N>=4) → sequential.
+        self.assertIn("sequential", stderr,
+                      f"2 steps should classify as sequential; stderr was: {stderr!r}")
+
+    def test_main_no_longer_accepts_parallel_flag(self):
+        """Legacy --parallel flag is removed; argparse rejects it."""
+        rc, stderr = self._run_main(["0-mvp", "--parallel", "3"])
+        # argparse error → SystemExit(2). Stderr should mention --parallel.
+        self.assertNotEqual(rc, 0, f"--parallel flag must be removed; got rc={rc}")
+        self.assertIn("--parallel", stderr,
+                      f"argparse error must mention --parallel; stderr was: {stderr!r}")

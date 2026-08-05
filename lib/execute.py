@@ -352,27 +352,21 @@ def main() -> int:
     parser.add_argument("phase", help="phase alias (e.g., 0-mvp)")
     parser.add_argument("--project-root", default=".", help="project root directory")
     parser.add_argument("--push", action="store_true", help="git push after each step")
-    parser.add_argument("--parallel", type=int, default=0, metavar="N", help="run N steps in parallel worktrees")
-    parser.add_argument("--allow-parallel-build", action="store_true",
-                        help="Required when --parallel > 1; confirms understanding that "
-                             "parallel builds collide on shared files and the conflict "
-                             "surfaces at merge time. Without this flag, --parallel > 1 is refused.")
     parser.add_argument("--skip-blocked", action="store_true",
                         help="continue past steps with status='blocked' instead of bailing; "
                              "skipped steps are listed in .dev-kit/hand-off/build→review.md")
     args = parser.parse_args()
-    # Gate: --parallel > 1 must require explicit acknowledgment (issue #175).
-    # Two concurrent writers WILL collide on shared files; conflict surfaces
-    # only at merge time, so a silent acceptance is an active damage vector.
-    if args.parallel > 1 and not args.allow_parallel_build:
-        print(_PARALLEL_BUILD_WARN, file=sys.stderr)
-        return 2
     root = Path(args.project_root).resolve()
-    # The Phase 4 /dev-kit:valuate no-go gate was removed in #463 along with
-    # the LCS substrate. Operators run /dev-kit:valuate explicitly; the build
-    # stage no longer auto-blocks on missing verdict.
-    if args.parallel > 0:
-        return _run_parallel(root, args.phase, args.parallel, args.push, args.skip_blocked)
+    idx_path = root / "phases" / args.phase / "index.json"
+    steps = json.loads(idx_path.read_text(encoding="utf-8")).get("steps", [])
+    # Auto-classify dispatch mode via lib.dispatch_classifier. Replaces the
+    # legacy --parallel flag. Decision + reason logged as the first build
+    # line so the user can audit why parallelism was rejected.
+    from dispatch_classifier import classify  # local import to avoid cycle
+    decision = classify(steps)
+    print(f"dispatch: {decision.mode} — {decision.reason}", file=sys.stderr)
+    if decision.mode == "parallel":
+        return _run_parallel(root, args.phase, len(steps), args.push, args.skip_blocked)
     return _run_sequential(root, args.phase, args.push, args.skip_blocked)
 
 

@@ -71,14 +71,24 @@ See `skills/research-plan-build/SKILL.md` for the per-phase contract.
 
 ## Behavior
 
-1. `lib/execute.py:main` parses args; branches on `--parallel N`:
-   - `--parallel 0` → `_run_sequential` (default).
-   - `--parallel 1` → `_run_parallel` with 1 slot (effectively sequential).
-   - `--parallel N > 1` → refuses (exit 2) unless `--allow-parallel-build` is set.
-     Two concurrent `claude -p` steps WILL collide on shared files; the collision
-     is invisible during the run and surfaces only at merge time. The override
-     flag is an escape hatch for the rare case where declared `writes:` are
-     disjoint AND no step consumes another's output.
+1. `lib/execute.py:main` reads `phases/<name>/index.json` and calls
+   `lib/dispatch_classifier.classify(steps)` to decide parallel vs.
+   sequential. The decision + reason are emitted as the first stderr
+   line (`dispatch: <mode> — <reason>`) so the user can audit why
+   parallelism was rejected.
+
+   **Classifier priority order** (first match wins):
+   1. **Dependency edge** between any pair (`depends_on` / `consumes`) → sequential.
+   2. **Vague scope** (TODO/FIXME/TBD/?/maybe in preamble or AC) → sequential.
+   3. **Overlapping writes** between two steps without partition → sequential.
+   4. **N ≥ 4** AND clean worktree isolation (every step with non-empty
+      `writes` has an explicit `partition`) → parallel.
+   5. **Otherwise** → sequential.
+
+   The previous `--parallel N` / `--allow-parallel-build` flags are
+   removed. There is no user-facing toggle; the harness reasons about
+   dispatch, the user audits the decision.
+
 2. Read `phases/<name>/index.json` (must contain `worktree: "<branch-base>"`; emitted by `/dev-kit:plan` as `<prefix>-<phase>`, e.g. `plan/plugin-harness-v3-0-mvp`); derive per-step branch = `<branch-base>-step<N>` and worktree path = `<root>/.worktrees/<phase>-step<N>`. Falls back to `feat/<phase>` when the field is absent (defense-in-depth, not the contract).
 3. Skip entries where `status` ∈ `SKIPPABLE_STATUSES` (`completed`, `unimplemented`).
 4. Bail with exit 2 if any step has `status == "blocked"` (no implicit resume).
