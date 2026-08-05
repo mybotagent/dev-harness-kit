@@ -355,7 +355,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(args.project_root).resolve()
     idx_path = root / "phases" / args.phase / "index.json"
-    steps = json.loads(idx_path.read_text(encoding="utf-8")).get("steps", [])
+    steps = parse_step_index(idx_path)
     # Filter to the same eligible-step projection the runners use. The
     # classifier must see only steps that will actually run; counting
     # SKIPPABLE_STATUSES (completed/unimplemented) would inflate N past

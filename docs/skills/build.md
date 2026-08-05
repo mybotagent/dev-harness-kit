@@ -64,7 +64,7 @@ Dispatch mode is auto-classified per batch (see "How it works"). There is no `--
 - `.dev-kit/hand-off/build→review.md`, written automatically.
 - A 2-commit protocol per successful step on its per-step branch: `feat({phase}): step {N} — {name}` and `chore({phase}): step {N} output`.
 
-Test evidence: 48 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics)). Plus 18 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, reason format, and the `?`-marker false-positive regressions.
+Test evidence: 50 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics)). Plus 18 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, reason format, and the `?`-marker false-positive regressions.
 
 ## Long-running session templates
 
