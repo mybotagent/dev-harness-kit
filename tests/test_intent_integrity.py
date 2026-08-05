@@ -391,5 +391,80 @@ class TestCliPathGuard(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+# ---------- Substring-safety regression (Fix 1) ----------
+
+
+class TestSubstringSafety(unittest.TestCase):
+    """Regression: IC-1 / IC-2 must not treat `REQ-1` as referenced
+    by a step mentioning `REQ-10`. Plain substring `in` check collides
+    on shared prefixes; the fix uses word-boundary regex."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_req1_unreferenced_when_only_req10_present(self):
+        """PRD: REQ-1, REQ-10. Step references REQ-1 only.
+        Expectation: REQ-10 is missing (IC-1), no orphan (IC-2 = 0)."""
+        prd, phase = _setup_phase(
+            self.root,
+            prd_requirements=["REQ-1: alpha", "REQ-10: beta"],
+            steps=[
+                {"step_num": 1, "name": "alpha",
+                 "acceptance": ["implements REQ-1 only"]},
+            ],
+        )
+        findings = intent_integrity.analyze(phase, prd)
+        ic1 = _by_id(findings, "IC-1")
+        ic2 = _by_id(findings, "IC-2")
+        # Exactly one IC-1 (REQ-10 missing); word-boundary regex must
+        # not flag REQ-1 as missing just because REQ-10 is also present.
+        self.assertEqual(
+            len(ic1), 1,
+            f"expected exactly 1 IC-1 (REQ-10), got: {ic1}",
+        )
+        # The IC-1 evidence must open with the missing ID; this also
+        # confirms the substring collision is gone (REQ-1 must NOT
+        # appear as a standalone missing requirement).
+        self.assertTrue(
+            ic1[0].evidence.startswith("REQ-10"),
+            f"only REQ-10 should be reported missing, got: {ic1[0].evidence!r}",
+        )
+        self.assertEqual(
+            ic2, [],
+            f"step1 references REQ-1 → no IC-2 orphan, got: {ic2}",
+        )
+
+    def test_req10_unreferenced_when_only_req1_present(self):
+        """Mirror of the above: step references REQ-10 only.
+        REQ-1 must be flagged as missing (no false-negative from prefix)."""
+        prd, phase = _setup_phase(
+            self.root,
+            prd_requirements=["REQ-1: alpha", "REQ-10: beta"],
+            steps=[
+                {"step_num": 1, "name": "alpha",
+                 "acceptance": ["implements REQ-10 only"]},
+            ],
+        )
+        findings = intent_integrity.analyze(phase, prd)
+        ic1 = _by_id(findings, "IC-1")
+        ic2 = _by_id(findings, "IC-2")
+        self.assertEqual(
+            len(ic1), 1,
+            f"expected exactly 1 IC-1 (REQ-1), got: {ic1}",
+        )
+        self.assertTrue(
+            ic1[0].evidence.startswith("REQ-1"),
+            f"only REQ-1 should be reported missing, got: {ic1[0].evidence!r}",
+        )
+        self.assertEqual(
+            ic2, [],
+            f"step1 references REQ-10 → no IC-2 orphan, got: {ic2}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

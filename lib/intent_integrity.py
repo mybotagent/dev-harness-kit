@@ -237,11 +237,15 @@ def analyze(plan_dir: Path, prd_path: Path) -> List[Finding]:
         step_data[sn] = _parse_step_file(sf.read_text(encoding="utf-8"), sn)
 
     # IC-1 — missing-requirement (PRD ID not referenced by any step).
-    all_acceptance_text = "\n".join(
+    # Word-boundary match: a plain `req_id in text` substring check would
+    # treat `REQ-1` as referenced by a step mentioning `REQ-10`. Compile
+    # one regex per ID; `\b` rejects the prefix collision.
+    acceptance_texts = [
         "\n".join(sd["acceptance"]) for sd in step_data.values()
-    )
+    ]
     for req_id, _lineno, _text in prd_reqs:
-        if req_id not in all_acceptance_text:
+        pattern = re.compile(rf"\b{re.escape(req_id)}\b")
+        if not any(pattern.search(text) for text in acceptance_texts):
             findings.append(
                 Finding(
                     finding_id="IC-1",
@@ -257,10 +261,14 @@ def analyze(plan_dir: Path, prd_path: Path) -> List[Finding]:
 
     # IC-2 — orphan-step (a step whose acceptance does not reference any PRD ID).
     # Skip if PRD has no requirements — every step would be a false positive.
+    # Same word-boundary fix as IC-1.
     if prd_reqs:
+        rid_patterns = [
+            (rid, re.compile(rf"\b{re.escape(rid)}\b")) for rid in prd_id_set
+        ]
         for sn, sd in step_data.items():
             joined = "\n".join(sd["acceptance"])
-            referenced = any(rid in joined for rid in prd_id_set)
+            referenced = any(p.search(joined) for _rid, p in rid_patterns)
             if referenced:
                 continue
             name = sd["name"] or f"step{sn}"
