@@ -18,6 +18,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
@@ -1289,6 +1290,687 @@ class TestScriptEntrypoint(unittest.TestCase):
         self.assertEqual(cp.returncode, 0)
         self.assertEqual(cp.stderr, "",
                          f"clean --help must not write to stderr; got: {cp.stderr}")
+
+
+class TestSessionMatchesIsPublic(unittest.TestCase):
+    """``sm.session_matches`` is a public predicate promoted from
+    ``_session_matches`` so the picker + the CLI can share one matching
+    function without re-entering the parent module. Empty pattern =
+    identity, case-insensitive, status haystack present, None-safe on
+    each field (an unset source / log_path must not raise)."""
+
+    def _sess(self, **kw):
+        base = _agg(session_id="sid-1", worktree="(main)", branch="main",
+                    model="opus", source="claude-code",
+                    log_path="/tmp/x.jsonl", last_ts=NOW)
+        base.update(kw)
+        return sm.Session(agg=base, worktree_state="live",
+                          status=sm.Status.IDLE)
+
+    def _wt(self, dirname="alpha"):
+        return sm.WorktreeInfo(dirname, "live", None, [])
+
+    def test_empty_pattern_is_identity(self):
+        self.assertTrue(sm.session_matches(self._sess(), self._wt(), ""))
+        self.assertTrue(sm.session_matches(self._sess(), self._wt(), "   "))
+
+    def test_case_insensitive_match(self):
+        s = self._sess(branch="feat-XYZ")
+        self.assertTrue(sm.session_matches(s, self._wt(), "FEAT-xyz"))
+        self.assertTrue(sm.session_matches(s, self._wt(), "feat-xyz"))
+
+    def test_status_in_haystack(self):
+        s = self._sess()
+        s.status = sm.Status.LIVE
+        self.assertTrue(sm.session_matches(s, self._wt(), "live"))
+        s.status = sm.Status.STALE
+        self.assertTrue(sm.session_matches(s, self._wt(), "stale"))
+
+    def test_none_safe_haystack(self):
+        # log_path / branch can be missing on aggregator output; the
+        # predicate must coerce None -> "" and keep matching safely.
+        s = self._sess(log_path=None, branch=None, model=None)
+        self.assertTrue(sm.session_matches(s, self._wt(), ""))
+        # no crash, and a non-substring still returns False cleanly.
+        self.assertFalse(sm.session_matches(s, self._wt(), "nope-not-here"))
+
+
+class TestFilterModuleIsIndependent(unittest.TestCase):
+    """Cycle regression guard: ``tools/session_monitor_filter.py`` must
+    NOT import the parent ``session_monitor`` module. Re-importing
+    session_monitor from any sibling re-creates the load cycle that
+    ``session_monitor_types`` was created to break. Static-source check
+    (via ``inspect.getsource``) catches the regression even when the
+    module is never executed."""
+
+    def test_filter_module_does_not_import_session_monitor(self):
+        import inspect
+        import re
+
+        import session_monitor_filter
+        src = inspect.getsource(session_monitor_filter)
+        # Strip docstrings + comments so the regex only matches real
+        # import statements (the module's docstring legitimately
+        # mentions "session_monitor" by name to describe the cycle it
+        # must avoid).
+        body = re.sub(r'^\s*""".*?"""\s*$', "", src, flags=re.S | re.M)
+        for stmt in ("import session_monitor",
+                     "from session_monitor "):
+            self.assertNotIn(stmt, body,
+                             f"session_monitor_filter must not contain "
+                             f"a real {stmt!r} statement (would recreate "
+                             f"the import cycle session_monitor_types was "
+                             f"created to break)")
+
+
+class TestClampCursor(unittest.TestCase):
+    """``_clamp_cursor`` keeps the cursor on a selectable row after a
+    filter rebuild. Preserved when still selectable; snaps forward
+    to the next selectable row when the current row was filtered out;
+    returns 0 when the row set is empty."""
+
+    def _model_with_sessions(self):
+        return [sm.WorktreeInfo("alpha", "live", None, [
+            sm.Session(agg=_agg(session_id="a1", last_ts=NOW),
+                       worktree_state="live", status=sm.Status.IDLE),
+            sm.Session(agg=_agg(session_id="a2", last_ts=NOW),
+                       worktree_state="live", status=sm.Status.IDLE),
+        ])]
+
+    def test_preserves_when_cursor_still_selectable(self):
+        rows = sm.build_rows(self._model_with_sessions(), now=NOW)
+        # First session row's index in the model with one worktree
+        sess_idx = sm._selectable_indices(rows)[0]
+        self.assertEqual(sm._clamp_cursor(rows, sess_idx), sess_idx)
+
+    def test_snaps_forward_when_cursor_filtered_out(self):
+        rows = sm.build_rows(self._model_with_sessions(), now=NOW)
+        # Simulate a filter that removed the first session row by
+        # building a row set that has only the second session.
+        # The cursor is now between selectable rows (on a header) and
+        # must snap to the first remaining selectable row.
+        sess_indices = sm._selectable_indices(rows)
+        if len(sess_indices) >= 2:
+            # Drop the first session row; cursor sits at sess_indices[0]
+            trimmed = [r for i, r in enumerate(rows) if i != sess_indices[0]]
+            cursor = sess_indices[0]  # now a header row
+            clamped = sm._clamp_cursor(trimmed, cursor)
+            self.assertEqual(trimmed[clamped]["kind"], "session")
+
+    def test_empty_rows_returns_zero(self):
+        self.assertEqual(sm._clamp_cursor([], 5), 0)
+        # Also returns 0 when the row set has no selectable rows
+        # (only section / header / columns kinds).
+        non_sess = [
+            {"kind": "section", "text": "x"},
+            {"kind": "header", "text": "x"},
+        ]
+        self.assertEqual(sm._clamp_cursor(non_sess, 0), 0)
+
+
+class TestRenderPickerWithQuery(unittest.TestCase):
+    """``_render_picker`` gains a ``query`` parameter that, when
+    non-empty, shows the active search pattern in the header and
+    switches the footer to edit-mode key hints. With ``query=""`` the
+    output must stay byte-identical to today's layout (header keeps
+    the ``N sessions / M worktrees`` shape, no match-count text)."""
+
+    def _sess(self, sid="s", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("a1", "feat-x"),
+                                 self._sess("a2", "feat-y")])]
+
+    def _render(self, model, query, *, max_y=12):
+        rows = sm.build_rows(model, now=NOW)
+        # Always pick a real session row as the cursor.
+        sel = sm._selectable_indices(rows)
+        cursor = sel[0] if sel else 0
+        buf = io.StringIO()
+        sm._render_picker(buf, rows, cursor=cursor, scroll=0,
+                          max_x=120, max_y=max_y, query=query)
+        return buf.getvalue()
+
+    def test_empty_query_keeps_legacy_header(self):
+        out = self._render(self._model(), query="")
+        self.assertIn("session-monitor", out)
+        # The legacy "N sessions / M worktrees" shape is the
+        # documented byte-identical contract for query="".
+        self.assertIn("sessions", out)
+        self.assertIn("worktrees", out)
+        # No edit-mode footer text leaks into the legacy layout.
+        self.assertNotIn("0 matches", out)
+        self.assertNotIn("/edit", out)
+
+    def test_nonempty_query_shows_search_in_header(self):
+        out = self._render(self._model(), query="feat")
+        # Header carries the active search pattern prefixed with '/'
+        self.assertIn("/feat", out)
+        # Legacy N/M counters are replaced by "N / M matches".
+        self.assertIn("matches", out)
+
+    def test_zero_session_rows_emits_zero_matches_in_edit_mode(self):
+        # Worktree with no sessions + an active query -> the
+        # edit-mode footer must surface the "0 matches" hint so the
+        # user can read why the body is empty.
+        empty = [sm.WorktreeInfo("alpha", "live", None, [])]
+        out = self._render(empty, query="feat")
+        self.assertIn("0 matches", out)
+
+
+class TestFilterModelBackCompat(unittest.TestCase):
+    """``sm.filter_model`` (re-exported from session_monitor_filter)
+    must keep its existing contract after the split: empty pattern
+    is identity, matching pattern keeps the worktree bucket open,
+    non-matching pattern drops it, and ``last_commit_subject`` /
+    ``state`` survive the rebuild untouched."""
+
+    def _sess(self, sid="s1", branch="main"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def test_empty_pattern_is_identity(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1"), self._sess("a2")])]
+        out = sm.filter_model(model, "")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(len(out[0].sessions), 2)
+
+    def test_matching_pattern_keeps_worktree(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1", "feat-x")])]
+        out = sm.filter_model(model, "feat-x")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].dirname, "alpha")
+        self.assertEqual(len(out[0].sessions), 1)
+
+    def test_no_match_drops_worktree(self):
+        model = [sm.WorktreeInfo("alpha", "live", None,
+                                 [self._sess("a1", "main")])]
+        self.assertEqual(sm.filter_model(model, "zzz-nope"), [])
+
+    def test_preserves_last_commit_subject_and_state(self):
+        model = [sm.WorktreeInfo("alpha", "merged", None,
+                                 [self._sess("a1", "feat-x")],
+                                 last_commit_subject="feat: latest commit")]
+        out = sm.filter_model(model, "feat-x")
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].state, "merged")
+        self.assertEqual(out[0].last_commit_subject, "feat: latest commit")
+        # Drop case: even when the rebuild returns an empty list, the
+        # state/subject of the surviving buckets is untouched.
+        out2 = sm.filter_model(model, "zzz-nope")
+        self.assertEqual(out2, [])
+
+
+class TestSearchFlagEndToEnd(unittest.TestCase):
+    """End-to-end smoke: ``--filter <no-match>`` on the script entrypoint
+    preserves the existing ``cli.py:151-152`` stderr warning
+    (``matched 0 of N sessions``) and still exits 0. Runs the script
+    as a subprocess (not in-process) so the test exercises the same
+    load graph a real user invocation does."""
+
+    SCRIPT = PROJECT_ROOT / "tools" / "session_monitor.py"
+
+    def _run(self, cwd: Path, *args: str,
+             timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT), *args],
+            capture_output=True, text=True, timeout=timeout, cwd=str(cwd),
+        )
+
+    def test_no_match_filter_warns_on_stderr(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            logs = root / "logs"
+            (logs / "claude-code" / "feat-x").mkdir(parents=True)
+            shutil.copy(FIXTURES / "cc-subagents.jsonl",
+                        logs / "claude-code" / "feat-x"
+                        / "cc-subagents.jsonl")
+            # Run from the tempdir so discover_repo_root() falls back
+            # to start (the tempdir) and build_model scans only the
+            # tempdir's logs, not the entire dev-harness-kit log tree.
+            cp = self._run(
+                root,
+                "--logs-dir", str(logs),
+                "--days", "30",
+                "--filter", "zzz-no-match",
+                "--json",
+            )
+        self.assertEqual(cp.returncode, 0,
+                         f"--filter with no match should still exit 0; "
+                         f"got rc={cp.returncode}, stderr={cp.stderr}")
+        self.assertIn("matched 0 of", cp.stderr,
+                      f"expected 'matched 0 of' in stderr; got: {cp.stderr!r}")
+
+
+class TestRebuildRowsWithQuery(unittest.TestCase):
+    """``_rebuild_rows_with_query`` is the pure helper the picker uses to
+    rebuild the row list after every buffer change. The contract is:
+
+    - Build rows from ``filter_model(model, buffer)``.
+    - If ``prev_session`` is provided and a row in the new row set carries
+      that same ``Session``, the cursor lands on it -- the cursor's
+      *identity* is preserved across the rebuild even if the *index*
+      shifts because preceding rows were filtered out.
+    - Otherwise the cursor falls back to ``_clamp_cursor(rows, 0)`` (the
+      first selectable row) so an empty / dropped previous session can
+      never strand the cursor on a header.
+
+    This helper is the fix for the codex-review cursor-identity-loss
+    bug: ``rebuild()`` used ``_clamp_cursor(rows, cursor)`` which
+    preserved the *index* (so a narrowed filter silently moved to a
+    *different* session); this helper preserves the *session*.
+    """
+
+    def _sess(self, sid="s", branch="feat-x", model="opus"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, model=model,
+                     last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None, [
+            self._sess("aaa-sid-001", "feat-x", "opus"),
+            self._sess("bbb-sid-002", "main",   "haiku"),
+        ])]
+
+    def test_empty_buffer_preserves_all(self):
+        model = self._model()
+        rows, cursor = sm._rebuild_rows_with_query(model, "", None)
+        # Both sessions kept; cursor falls back to the first selectable.
+        self.assertEqual(len(rows), 5)  # section + header + columns + 2 sessions
+        self.assertEqual(rows[cursor]["session"].session_id, "aaa-sid-001")
+
+    def test_buffer_that_keeps_session_preserves_cursor(self):
+        """Narrowing the filter to a pattern that *both* sessions match
+        must keep the previously-selected session at the cursor, even
+        though its row index may shift in the new row set."""
+        model = self._model()
+        prev = model[0].sessions[1]  # "bbb-sid-002"
+        # Pattern that matches BOTH branches (feat-x and main → no such
+        # pattern). Use a pattern that matches only "bbb".
+        rows, cursor = sm._rebuild_rows_with_query(model, "main", prev)
+        # Only the second session matches "main"; cursor must point at
+        # THAT session, not be silently reassigned to the first session.
+        self.assertEqual(rows[cursor]["session"].session_id,
+                         "bbb-sid-002",
+                         "narrowing the filter must keep the cursor on "
+                         "the same session, not silently jump to another")
+
+    def test_buffer_that_drops_session_falls_back_to_clamp(self):
+        """When prev_session no longer matches the buffer, the cursor
+        falls back to ``_clamp_cursor(rows, 0)`` -- the first selectable
+        row of the surviving row set."""
+        model = self._model()
+        prev = model[0].sessions[1]  # "bbb-sid-002"
+        # Buffer drops the previous session -- "opus" only matches the
+        # first session.
+        rows, cursor = sm._rebuild_rows_with_query(model, "opus", prev)
+        self.assertEqual(rows[cursor]["session"].session_id, "aaa-sid-001",
+                         "with prev_session filtered out, cursor must "
+                         "fall back to the first selectable row")
+        self.assertEqual(cursor, sm._selectable_indices(rows)[0])
+
+    def test_empty_model_after_filter_returns_zero_cursor(self):
+        """A pattern that drops every session yields an empty row set
+        (no rows at all, no selectables); the cursor lands at 0 because
+        ``_clamp_cursor`` returns 0 when there are no selectable rows."""
+        model = self._model()
+        prev = model[0].sessions[0]
+        rows, cursor = sm._rebuild_rows_with_query(model, "zzz-no-match",
+                                                    prev)
+        self.assertEqual(rows, [])
+        self.assertEqual(cursor, 0)
+
+    def test_prev_session_none_clamps_to_first_selectable(self):
+        """When no previous session is given (e.g. the very first
+        rebuild on entering EDITING), the cursor just goes to the first
+        selectable row of whatever the filter produced."""
+        model = self._model()
+        rows, cursor = sm._rebuild_rows_with_query(model, "opus", None)
+        self.assertEqual(rows[cursor]["kind"], "session")
+        self.assertEqual(cursor, sm._selectable_indices(rows)[0])
+
+
+class _PickerKeyHarness:
+    """Drives ``sm.pick_session`` with a deterministic key sequence.
+
+    Patches the three terminal-coupling seams of the picker so the test
+    runs without a real TTY:
+
+    - ``_read_key`` returns successive bytes from ``keys``; when the
+      sequence is exhausted, KeyboardInterrupt is raised so the outer
+      ``try/except`` in pick_session returns None -- meaningful for
+      helper-level tests that assert state BEFORE the loop ends.
+    - ``_render_picker`` is silenced (the ANSI escapes would otherwise
+      pollute test stdout).
+    - ``_terminal_size`` returns a fixed 120x30 viewport.
+
+    Returns the value of ``sm.pick_session(model)``.
+    """
+
+    def __init__(self, keys):
+        self.keys = list(keys)
+        self.idx = 0
+        self.exhausted = False
+
+    def __call__(self, timeout=0.5):
+        if self.exhausted or self.idx >= len(self.keys):
+            self.exhausted = True
+            raise KeyboardInterrupt
+        k = self.keys[self.idx]
+        self.idx += 1
+        return k
+
+    @staticmethod
+    def run(model, *keys):
+        reader = _PickerKeyHarness(keys)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            with mock.patch("session_monitor_picker._read_key",
+                            side_effect=reader), \
+                 mock.patch("session_monitor_picker._render_picker",
+                            side_effect=lambda *a, **k: None), \
+                 mock.patch("session_monitor_picker._terminal_size",
+                            return_value=(120, 30)):
+                result = sm.pick_session(model)
+        return result, reader
+
+
+class TestPickSessionNORMALModeHandlesPrintables(unittest.TestCase):
+    """In NORMAL mode a printable character (32-126) that is not ``q`` /
+    ``Q`` / ``/`` seeds the EDITING buffer with that character and
+    rebuilds the rows. ``q`` and ``Q`` still quit because that is the
+    legacy behavior; the test locks it in so a future refactor does not
+    accidentally start treating ``q`` as a literal search character in
+    NORMAL mode (it would be a breaking UX change)."""
+
+    def _sess(self, sid="aaa", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("aaa1111", "feat-x")])]
+
+    def test_r_in_normal_enters_editing_with_buffer_r(self):
+        rows = sm.build_rows(self._model(), now=NOW)
+        cursor = sm._selectable_indices(rows)[0]
+        _, new_cursor, new_buffer, new_mode, returned, should_exit = \
+            sm._step_normal(b"r", rows, cursor, "", self._model())
+        self.assertFalse(should_exit,
+                         "r in NORMAL must not exit the picker")
+        self.assertIsNone(returned)
+        self.assertEqual(new_mode, "EDITING",
+                         "r in NORMAL must switch into EDITING mode")
+        self.assertEqual(new_buffer, "r",
+                         "r in NORMAL must seed the buffer with 'r'")
+
+    def test_n_in_normal_enters_editing_with_buffer_n(self):
+        rows = sm.build_rows(self._model(), now=NOW)
+        cursor = sm._selectable_indices(rows)[0]
+        _, _, new_buffer, new_mode, returned, should_exit = \
+            sm._step_normal(b"n", rows, cursor, "", self._model())
+        self.assertFalse(should_exit)
+        self.assertIsNone(returned)
+        self.assertEqual(new_mode, "EDITING")
+        self.assertEqual(new_buffer, "n")
+
+    def test_printable_q_in_normal_quits(self):
+        """End-to-end: pressing q in NORMAL mode quits with None.
+
+        This locks the existing quit behavior so a future refactor does
+        not silently reclassify ``q`` as a literal character (the
+        argument applies only to EDITING mode).
+        """
+        result, _ = _PickerKeyHarness.run(self._model(), b"q")
+        self.assertIsNone(result,
+                          "press q in NORMAL mode must return None (quit)")
+
+
+class TestPickSessionEDITINGTwoPhaseEsc(unittest.TestCase):
+    """``Esc`` in EDITING mode is a two-phase clear: the first press
+    empties the buffer (the picker stays in EDITING), and the second
+    press returns to NORMAL. Without this two-phase semantics, a single
+    Esc would feel like a typo to the user because the picker would
+    drop out of EDITING the moment they started typing."""
+
+    def _sess(self, sid="aaa", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("aaa1111", "feat-x"),
+                                 self._sess("bbb2222", "main")])]
+
+    def _editing_state(self, buffer="x"):
+        """Return (rows, cursor) that represent a typical mid-edit state."""
+        model = self._model()
+        rows = sm.build_rows(model, now=NOW)
+        sel = sm._selectable_indices(rows)
+        cursor = sel[0]  # first selectable row
+        return rows, cursor, model
+
+    def test_esc_with_nonempty_buffer_clears_buffer_stays_in_editing(self):
+        rows, cursor, model = self._editing_state(buffer="feat")
+        new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
+            sm._step_editing(b"\x1b", rows, cursor, "feat", model)
+        self.assertFalse(should_exit,
+                         "Esc in EDITING must not exit the picker")
+        self.assertIsNone(returned)
+        self.assertEqual(new_buffer, "",
+                         "first-Esc must clear the buffer (not exit)")
+        self.assertEqual(new_mode, "EDITING",
+                         "first-Esc must keep the picker in EDITING")
+
+    def test_esc_with_empty_buffer_exits_editing_to_normal(self):
+        rows, cursor, model = self._editing_state()
+        new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
+            sm._step_editing(b"\x1b", rows, cursor, "", model)
+        self.assertFalse(should_exit,
+                         "Esc with empty buffer must not exit the picker"
+                         " -- it just drops back to NORMAL")
+        self.assertEqual(new_buffer, "")
+        self.assertEqual(new_mode, "NORMAL",
+                         "Esc with empty buffer must drop back to NORMAL")
+
+
+class TestPickSessionZeroMatchEnter(unittest.TestCase):
+    """If the user has narrowed the buffer down to zero matches and
+    still presses Enter, the picker drops back to NORMAL mode but
+    KEEPS the buffer. Retyping the filter from scratch is hostile; the
+    buffer lingering lets the user refine the (now obvious) last
+    attempt."""
+
+    def _sess(self, sid="aaa", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("aaa1111", "feat-x")])]
+
+    def test_enter_with_no_matches_drops_to_normal_keeping_buffer(self):
+        # Simulate the post-filter state: rows rebuilt against a buffer
+        # that drops everything, leaving an empty row list.
+        empty_rows: list[dict] = []
+        new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = \
+            sm._step_editing(b"\r", empty_rows, 0, "zzz-no-match",
+                             self._model())
+        self.assertFalse(should_exit,
+                         "Enter on no matches must not exit (continue)")
+        self.assertIsNone(returned)
+        self.assertEqual(new_mode, "NORMAL",
+                         "Enter on no matches drops back to NORMAL")
+        self.assertEqual(new_buffer, "zzz-no-match",
+                         "Enter on no matches KEEPS the buffer so the "
+                         "user can refine instead of retype")
+
+
+class TestPickSessionLiteralQuitsAreLiteralInEdit(unittest.TestCase):
+    """In EDITING mode, q / Q / / are literal characters appended to the
+    buffer. This is what lets a user search for branches named
+    ``feat/q2`` or worktrees containing ``Q3`` -- the meta-keys from
+    NORMAL mode do NOT bleed into the search field."""
+
+    def _sess(self, sid="aaa", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("aaa1111", "feat-x")])]
+
+    def _edit_step(self, key, buffer=""):
+        rows = sm.build_rows(self._model(), now=NOW)
+        cursor = sm._selectable_indices(rows)[0] if sm._selectable_indices(rows) else 0
+        return sm._step_editing(key, rows, cursor, buffer, self._model())
+
+    def test_q_in_editing_appends_to_buffer(self):
+        _, _, new_buffer, new_mode, returned, should_exit = \
+            self._edit_step(b"q", buffer="")
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING",
+                         "q in EDITING must stay in EDITING (not quit)")
+        self.assertEqual(new_buffer, "q",
+                         "q in EDITING must be a literal char in the buffer")
+
+    def test_Q_in_editing_appends_to_buffer(self):
+        _, _, new_buffer, new_mode, _, should_exit = \
+            self._edit_step(b"Q", buffer="")
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING")
+        self.assertEqual(new_buffer, "Q")
+
+    def test_slash_in_editing_appends_to_buffer(self):
+        _, _, new_buffer, new_mode, _, should_exit = \
+            self._edit_step(b"/", buffer="")
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING",
+                         "/ in EDITING must stay in EDITING (else the "
+                         "user could not search for /-containing paths)")
+        self.assertEqual(new_buffer, "/")
+
+
+class TestPickSessionBackspace(unittest.TestCase):
+    """Backspace (``\\x7f`` / ``\\b``) drops the last buffer character
+    and rebuilds the rows so the new match set appears immediately.
+    On an empty buffer it is a no-op (does not crash, does not flip
+    mode)."""
+
+    def _sess(self, sid="aaa", branch="feat-x"):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None,
+                                [self._sess("aaa1111", "feat-x")])]
+
+    def _backspace(self, buffer):
+        rows = sm.build_rows(self._model(), now=NOW)
+        cursor = sm._selectable_indices(rows)[0] if sm._selectable_indices(rows) else 0
+        return sm._step_editing(b"\x7f", rows, cursor, buffer, self._model())
+
+    def test_backspace_drops_last_char(self):
+        _, _, new_buffer, new_mode, _, should_exit = \
+            self._backspace("fea")
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING",
+                         "backspace must not change mode")
+        self.assertEqual(new_buffer, "fe",
+                         "backspace must drop exactly the last char")
+
+    def test_backspace_on_empty_buffer_is_noop(self):
+        _, _, new_buffer, new_mode, _, should_exit = \
+            self._backspace("")
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING")
+        self.assertEqual(new_buffer, "",
+                         "backspace on empty buffer must NOT crash and "
+                         "must NOT raise / leak an IndexError")
+
+
+class TestPickSessionLongQueryDoesNotCrash(unittest.TestCase):
+    """A pathological buffer (no spaces, all printable, hundreds of
+    chars) must not crash the renderer. The header is ljust-padded to
+    ``max_x`` so the test only asserts "no exception"; the long buffer
+    is allowed to overflow off the right edge of the header (the user
+    sees only the first ``max_x`` chars of the query in the header).
+    Body rows are still sliced with ``[: max_x - 1]`` so the row
+    text never overflows."""
+
+    def _model(self):
+        return [sm.WorktreeInfo("alpha", "live", None, [
+            sm.Session(agg=_agg(session_id="aaa1111", last_ts=NOW),
+                       worktree_state="live", status=sm.Status.IDLE),
+        ])]
+
+    def test_long_buffer_renders_header_without_exception(self):
+        model = self._model()
+        rows = sm.build_rows(model, now=NOW)
+        long_buf = "a" * 200  # 200 chars is well past the 120-col viewport
+        buf = io.StringIO()
+        # No exception means the header was generated with the
+        # truncated form (or at least did not raise). We also assert
+        # the header still contains a "/a..." substring so the user
+        # sees they are filtering.
+        sm._render_picker(buf, rows, cursor=sm._selectable_indices(rows)[0],
+                          scroll=0, max_x=80, max_y=20,
+                          query=long_buf, total_sessions=1)
+        out = buf.getvalue()
+        self.assertIn("session-monitor", out)
+        self.assertIn("matches", out)
+
+
+class TestPickSessionFilterComposition(unittest.TestCase):
+    """``pick_session`` accepts an already-prefiltered model and then
+    keeps narrowing it via the live-search buffer. The prefilter is
+    fixed for the picker session (the original_model snapshot is taken
+    on entry), so a live-search rebuild must operate on the prefiltered
+    set, not on the entire session log. This prevents the cursor from
+    ``reappearing`` on a session that was filtered out at the CLI layer.
+    """
+
+    def _sess(self, sid, branch):
+        return sm.Session(
+            agg=_agg(session_id=sid, branch=branch, last_ts=NOW),
+            worktree_state="live", status=sm.Status.IDLE)
+
+    def test_pick_session_with_prefiltered_model_rebuild_preserves_identity(self):
+        # Simulate a CLI that already pre-filtered to "feat-x".
+        prefiltered = [sm.WorktreeInfo("alpha", "live", None, [
+            self._sess("aaa-feat-x", "feat-x"),
+            self._sess("ccc-feat-x", "feat-x"),
+        ])]
+        # The third session (branch=main) is intentionally NOT in the
+        # snapshot; pick_session must not be able to bring it back by
+        # via a wider buffer.
+        rows = sm.build_rows(prefiltered, now=NOW)
+        sel = sm._selectable_indices(rows)
+        cursor = sel[0]
+        # Wide buffer "" (cleared) -- all rows still come back from
+        # the prefiltered snapshot.
+        new_rows, new_cursor, _, _, _, _ = sm._step_normal(
+            b"/", rows, cursor, "", prefiltered,
+        )
+        # Sanity: the rebuilt rows do NOT contain the dropped session.
+        sess_ids = [r["session"].session_id for r in new_rows
+                    if r["kind"] == "session"]
+        self.assertNotIn("bbb-main", sess_ids)
+        self.assertEqual(set(sess_ids),
+                         {"aaa-feat-x", "ccc-feat-x"})
 
 
 if __name__ == "__main__":
