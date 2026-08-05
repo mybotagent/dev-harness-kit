@@ -18,7 +18,8 @@ Verifies that the new UserPromptSubmit hook:
   - The created branch name matches `<type>/<verb>-<noun>-<hash6>` and
     passes the git-workflow slug rules.
   - hooks.json wires worktree-auto-cut.sh into UserPromptSubmit with
-    a timeout large enough for `git fetch` (>= 25s).
+    a timeout large enough for `git fetch` (>= 60s; the wired value is
+    120s to cover slow origin or large HEAD).
 """
 from __future__ import annotations
 
