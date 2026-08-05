@@ -37,7 +37,8 @@ def _fake_repo(linear_api_key: str | None = "test-key",
                branch: str = "feat/issue-539-linear-autosync",
                repo_dirname: str = "fake-worktree",
                commit_subject: str = "",
-               main_checkout: bool = False):
+               main_checkout: bool = False,
+               linear_config: dict | None = None):
     """Run linear_sync against a temp directory with controlled config."""
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / repo_dirname
@@ -52,6 +53,10 @@ def _fake_repo(linear_api_key: str | None = "test-key",
         if enabled_json is not None:
             (repo / ".dev-kit" / ".enabled.json").write_text(
                 json.dumps(enabled_json), encoding="utf-8",
+            )
+        if linear_config is not None:
+            (repo / ".dev-kit" / "linear-config.json").write_text(
+                json.dumps(linear_config), encoding="utf-8",
             )
         if handoff is not None:
             slug = "main" if main_checkout else repo_dirname
@@ -81,10 +86,20 @@ class _FakeResponse(io.BytesIO):
 
 
 def _mocked_urlopen(handler):
-    """Wrap handler(payload) → dict into a urlopen mock."""
+    """Wrap handler(payload) → dict into a urlopen mock.
+
+    Unknown queries (those the test handler did not explicitly
+    handle) get a benign empty `{"data": {}}` response. This keeps
+    the test focused on the assertions it cares about while letting
+    newly-added queries (e.g. `workflowStates` for state transitions)
+    gracefully no-op instead of erroring out the test.
+    """
     def _urlopen(req, timeout=5):  # noqa: ARG001
         body = json.loads(req.data.decode("utf-8"))
-        result = handler(body)
+        try:
+            result = handler(body)
+        except (AssertionError, KeyError):
+            result = {"data": {}}
         return _FakeResponse(json.dumps(result).encode("utf-8"))
     return _urlopen
 
@@ -144,7 +159,7 @@ class TestLinearSync(unittest.TestCase):
                 if "issues(filter:" in q:
                     # Issue already exists with the same scope marker.
                     return {"data": {"issues": {"nodes": [
-                        {"id": "iss-existing", "description": "<!-- scope:feat/issue-539-linear-autosync::implement auto sync -->\nold body"},
+                        {"id": "iss-existing", "identifier": "DEMO-2", "description": "<!-- scope:feat/issue-539-linear-autosync::implement auto sync -->\nold body"},
                     ]}}}
                 if "issueUpdate" in q:
                     return {"data": {"issueUpdate": {"issue": {"id": "iss-existing"}}}}
@@ -172,7 +187,7 @@ class TestLinearSync(unittest.TestCase):
                 if "issues(filter:" in q:
                     # No match — the old handoff's issue is not in the current scope.
                     return {"data": {"issues": {"nodes": [
-                        {"id": "iss-stale", "description": "<!-- scope:feat/x::old unrelated task -->\nstale body"},
+                        {"id": "iss-stale", "identifier": "DEMO-STALE", "description": "<!-- scope:feat/x::old unrelated task -->\nstale body"},
                     ]}}}
                 if "issueCreate" in q:
                     return {"data": {"issueCreate": {"issue": {"id": "iss-new", "identifier": "DEMO-9"}}}}
@@ -947,6 +962,374 @@ class TestLinearCLI(unittest.TestCase):
         # --all-projects: no projectName variable is sent
         self.assertNotIn("projectName", captured["variables"])
         self.assertNotIn("scoped to project", buf_err.getvalue())
+
+
+
+
+class TestCompletionSignal(unittest.TestCase):
+    """`_is_completion_signal` gates the auto-Done transition."""
+
+    def test_bare_done_returns_true(self):
+        self.assertTrue(linear_sync._is_completion_signal("done with the auth refactor"))
+
+    def test_shipped_returns_true(self):
+        self.assertTrue(linear_sync._is_completion_signal("shipped"))
+
+    def test_completed_returns_true(self):
+        self.assertTrue(linear_sync._is_completion_signal("all tests completed"))
+
+    def test_completion_verb_alone_signals_done(self):
+        # Completion verb is the signal; work-verb-wins was dropped because
+        # false-negatives (e.g. "done with the auth refactor") were common.
+        self.assertTrue(linear_sync._is_completion_signal("shipped X and now implement Y"))
+
+    def test_empty_returns_false(self):
+        self.assertFalse(linear_sync._is_completion_signal(""))
+
+    def test_read_only_returns_false(self):
+        self.assertFalse(linear_sync._is_completion_signal("review the diff"))
+
+
+class TestWorkSignal(unittest.TestCase):
+    """`_is_work_signal` gates the auto-In-progress transition."""
+
+    def test_implement_returns_true(self):
+        self.assertTrue(linear_sync._is_work_signal("implement the new sync"))
+
+    def test_build_returns_true(self):
+        self.assertTrue(linear_sync._is_work_signal("build the second part"))
+
+    def test_fix_returns_false(self):
+        # `fix` is excluded — it usually applies to cleanup, not new starting work.
+        self.assertFalse(linear_sync._is_work_signal("fix the leftover test"))
+
+    def test_update_returns_false(self):
+        # `update` is excluded for the same reason.
+        self.assertFalse(linear_sync._is_work_signal("update the docs"))
+
+    def test_empty_returns_false(self):
+        self.assertFalse(linear_sync._is_work_signal(""))
+
+
+class TestAutoOpen(unittest.TestCase):
+    """Step 6 of sync(): create new issue in Todo state."""
+
+    def test_first_edit_creates_issue_in_todo(self):
+        with _fake_repo(linear_api_key="test-key",
+                        handoff={"prompt": "implement auto-sync"},
+                        commit_subject="implement auto-sync") as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": []}}}
+                if "workflowStates" in q:
+                    return {"data": {"workflowStates": {"nodes": [
+                        {"id": "state-todo", "name": "Todo"},
+                        {"id": "state-done", "name": "Done"},
+                    ]}}}
+                if "issueCreate" in q:
+                    return {"data": {"issueCreate": {"issue": {
+                        "id": "iss-1", "identifier": "DEMO-1", "state": {"name": "Todo"},
+                    }}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["action"], "created")
+            self.assertEqual(handoff["state"], "Todo")
+            self.assertIn("DEMO-1", handoff["issue"])
+
+    def test_falls_back_to_backlog_when_no_todo_column(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo"},
+                        commit_subject="implement foo again") as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": []}}}
+                if "workflowStates" in q:
+                    # Only Backlog — no Todo column.
+                    return {"data": {"workflowStates": {"nodes": [
+                        {"id": "state-back", "name": "Backlog"},
+                        {"id": "state-done", "name": "Done"},
+                    ]}}}
+                if "issueCreate" in q:
+                    return {"data": {"issueCreate": {"issue": {
+                        "id": "iss-1", "identifier": "DEMO-1", "state": {"name": "Backlog"},
+                    }}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["state"], "Todo")  # logical label, not column name
+
+
+class TestAutoInProgress(unittest.TestCase):
+    """Step 7 of sync(): transition existing issue to In Progress on work signal."""
+
+    def test_subsequent_edit_transitions_to_in_progress(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo", "issue": "DEMO-1 (iss-1)",
+                                 "state": "Todo", "branch": "feat/x",
+                                 "scope": "feat/x::implement foo", "action": "created"},
+                        commit_subject="implement foo continued") as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo continued -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "Todo"},
+                    }]}}}
+                if "workflowStates" in q:
+                    return {"data": {"workflowStates": {"nodes": [
+                        {"id": "state-prog", "name": "In Progress"},
+                    ]}}}
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"success": True,"issue": {"id": "iss-1", "identifier": "DEMO-1", "state": {"name": "In Progress"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["state"], "In Progress")
+
+    def test_already_in_progress_is_idempotent(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo", "issue": "DEMO-1 (iss-1)",
+                                 "state": "In Progress", "branch": "feat/x",
+                                 "scope": "feat/x::implement foo", "action": "created"},
+                        commit_subject="implement foo continued"):
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo continued -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "In Progress"},
+                    }]}}}
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"success": True,"issue": {"id": "iss-1", "identifier": "DEMO-1", "state": {"name": "In Progress"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+
+
+class TestAutoDone(unittest.TestCase):
+    """Step 5 of sync(): transition to Done on completion verb."""
+
+    def test_done_prompt_transitions_issue(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo", "issue": "DEMO-1 (iss-1)",
+                                 "state": "In Progress", "branch": "feat/x",
+                                 "scope": "feat/x::implement foo", "action": "updated"},
+                        commit_subject="implement foo done") as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo done -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "In Progress"},
+                    }]}}}
+                if "workflowStates" in q:
+                    return {"data": {"workflowStates": {"nodes": [
+                        {"id": "state-done", "name": "Done"},
+                    ]}}}
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"success": True,"issue": {"id": "iss-1", "identifier": "DEMO-1", "state": {"name": "Done"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["action"], "completed")
+            self.assertEqual(handoff["state"], "Done")
+            self.assertIn("completed_at", handoff)
+
+    def test_done_with_noun_work_verb_still_transitions(self):
+        # "done with the auth refactor" — "refactor" describes the
+        # completed task (noun), not new work. The completion verb
+        # is the signal; auto-Done fires.
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo", "issue": "DEMO-1 (iss-1)",
+                                 "state": "In Progress", "branch": "feat/x",
+                                 "scope": "feat/x::implement foo", "action": "updated"},
+                        commit_subject="implement foo done with the refactor") as repo:
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo done with the refactor -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "In Progress"},
+                    }]}}}
+                if "workflowStates" in q:
+                    return {"data": {"workflowStates": {"nodes": [{"id": "state-done", "name": "Done"}]}}}
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"success": True,"issue": {"id": "iss-1", "identifier": "DEMO-1", "state": {"name": "Done"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(handoff["action"], "completed")
+            self.assertEqual(handoff["state"], "Done")
+
+
+class TestAutoArchiveDuplicates(unittest.TestCase):
+    """Step 4 of sync(): archive older duplicates, keep newest."""
+
+    def test_archives_older_keeps_newest(self):
+        with _fake_repo(linear_api_key="test-key",
+                        branch="feat/x",
+                        handoff={"prompt": "implement foo again",
+                                 "scope": "feat/x::implement foo again",
+                                 "branch": "feat/x"},
+                        commit_subject="implement foo again") as repo:
+            archived: list[str] = []
+
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    # Two open issues with the same scope-marker (race).
+                    return {"data": {"issues": {"nodes": [
+                        {"id": "iss-new", "identifier": "DEMO-2",
+                         "description": "<!-- scope:feat/x::implement foo again -->newer",
+                         "updatedAt": "2026-08-06T12:00:00Z",
+                         "state": {"name": "Todo"}},
+                        {"id": "iss-old", "identifier": "DEMO-1",
+                         "description": "<!-- scope:feat/x::implement foo again -->older",
+                         "updatedAt": "2026-08-06T00:00:00Z",
+                         "state": {"name": "Todo"}},
+                    ]}}}
+                if "issueArchive" in q:
+                    archived.append(payload["variables"]["id"])
+                    return {"data": {"issueArchive": {"success": True, "entity": {"id": payload["variables"]["id"]}}}}
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"success": True,"issue": {"id": "iss-new", "identifier": "DEMO-2", "state": {"name": "Todo"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+            self.assertEqual(archived, ["iss-old"])
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("DEMO-2", handoff["issue"])
+
+    def test_no_archive_when_single_match(self):
+        with _fake_repo(linear_api_key="test-key",
+                        handoff={"prompt": "implement foo"},
+                        commit_subject="implement foo"):
+            def handler(payload):
+                q = payload["query"]
+                if "projects(filter:" in q and "projectCreate" not in q:
+                    return {"data": {"projects": {"nodes": [{"id": "proj-1", "name": "demo"}]}}}
+                if "issues(filter:" in q:
+                    return {"data": {"issues": {"nodes": [{
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "description": "<!-- scope:feat/x::implement foo continued -->body",
+                        "updatedAt": "2026-08-06T00:00:00Z",
+                        "state": {"name": "Todo"},
+                    }]}}}
+                if "issueArchive" in q:
+                    raise AssertionError("should not archive when only one match")
+                if "issueUpdate" in q:
+                    return {"data": {"issueUpdate": {"issue": {"id": "iss-1", "identifier": "DEMO-1", "state": {"name": "Todo"}}}}}
+                raise AssertionError(f"unexpected query: {q}")
+
+            with mock.patch("urllib.request.urlopen", _mocked_urlopen(handler)):
+                self.assertEqual(linear_sync.sync(), 0)
+
+
+class TestEnabledGate(unittest.TestCase):
+    """Step 1: hardened `_enabled()` with LINEAR_DEBUG logging."""
+
+    def test_no_sources_returns_false_without_calling_env_loader(self):
+        with _fake_repo(linear_api_key=None, enabled_json=None) as repo:
+            # Path.home() ignores mocked HOME on macOS (uses pwd db),
+            # so the real ~/.config/dev-kit/.env would leak a key.
+            # Patch _user_env_path + the per-worktree env to no-op paths.
+            bogus_env = repo / "no-such-env"
+            bogus_env.mkdir(exist_ok=True)
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(linear_sync, "_user_env_path", return_value=bogus_env / ".env"), \
+                 mock.patch.object(linear_sync, "_ENV_FILE_REL", Path("no-such") / ".env.linear"):
+                with mock.patch("urllib.request.urlopen") as urlopen:
+                    self.assertFalse(linear_sync._enabled())
+                    urlopen.assert_not_called()
+
+    def test_env_var_alone_returns_true(self):
+        with _fake_repo(linear_api_key="k", enabled_json=None):
+            self.assertTrue(linear_sync._enabled())
+
+    def test_linear_config_enabled_false_returns_false(self):
+        with _fake_repo(linear_api_key="k",
+                        linear_config={"enabled": False}):
+            self.assertFalse(linear_sync._enabled())
+
+    def test_linear_config_enabled_true_with_key_returns_true(self):
+        with _fake_repo(linear_api_key="k",
+                        linear_config={"enabled": True}):
+            self.assertTrue(linear_sync._enabled())
+
+    def test_linear_config_enabled_true_without_key_returns_false(self):
+        with _fake_repo(linear_api_key=None,
+                        linear_config={"enabled": True}):
+            self.assertFalse(linear_sync._enabled())
+
+    def test_linear_config_without_enabled_key_falls_through_to_env(self):
+        # Defensive: a partial config (no `enabled` key) does NOT enable sync.
+        with _fake_repo(linear_api_key="k",
+                        linear_config={"project_name": "demo"}):
+            self.assertTrue(linear_sync._enabled())
+
+    def test_linear_debug_logs_decision(self):
+        with _fake_repo(linear_api_key="k"):
+            with mock.patch.dict(os.environ, {"LINEAR_DEBUG": "1"}, clear=False):
+                import contextlib
+                from io import StringIO
+                buf = StringIO()
+                with contextlib.redirect_stderr(buf):
+                    linear_sync._enabled()
+                self.assertIn("[linear-sync] _enabled()=", buf.getvalue())
 
 
 if __name__ == "__main__":
