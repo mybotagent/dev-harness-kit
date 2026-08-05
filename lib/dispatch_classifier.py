@@ -48,8 +48,14 @@ _MIN_PARALLEL_N = 4
 # so a step that legitimately mentions "TODO" in a comment is not
 # penalized. All markers are lowercased; the haystack is lowercased before
 # the substring check.
+#
+# NOTE: single-character markers like "?" are intentionally NOT included.
+# A literal "?" appears in URLs (`?foo=bar`), ternary expressions
+# (`a ? b : c`), and legitimate documentation questions, none of which
+# signal ambiguous scope. Ambiguity is captured by the multi-character
+# words below.
 _VAGUE_SCOPE_MARKERS = (
-    "todo:", "fixme:", "tbd:", "tk:", "?", "maybe", "perhaps", "either",
+    "todo:", "fixme:", "tbd:", "tk:", "maybe", "perhaps", "either",
 )
 
 

@@ -12,7 +12,7 @@ Adds:
                                        ↘ blocked → pending (human unblock)
     completed → pending (manual reset)
 - per-step timing: started_at set on in_progress; completed_at + duration_seconds on completed
-- --parallel mode (worktree, N-step concurrent)
+- dispatch mode auto-classified via lib.dispatch_classifier (parallel/sequential decision logged as the first build line)
 """
 from __future__ import annotations
 
@@ -332,20 +332,6 @@ def _commit_step(wt: Path, msg: str) -> bool:
 
 
 # ---------- CLI ----------
-
-_PARALLEL_BUILD_WARN = (
-    "ERROR: --parallel N > 1 is rarely correct for /dev-kit:build.\n"
-    "\n"
-    "Two concurrent `claude -p` steps WILL collide on shared files\n"
-    "(config, imports, types, schema). The collision is invisible during\n"
-    "the run — both commits land cleanly in their own per-step worktrees.\n"
-    "The damage surfaces only when both branches are merged into main.\n"
-    "\n"
-    "Use parallel build only when each step's declared writes are disjoint\n"
-    "AND no step consumes another step's output. To override this gate,\n"
-    "re-run with --allow-parallel-build.\n"
-)
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="dev-harness-kit harness-runner")

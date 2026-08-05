@@ -113,7 +113,13 @@ class TestClassifyVagueScope(unittest.TestCase):
         self.assertEqual(d.mode, "sequential")
         self.assertIn("vague scope", d.reason)
 
-    def test_question_mark_in_preamble_triggers_sequential(self):
+    def test_question_mark_in_preamble_alone_is_not_vague(self):
+        """Regression: bare '?' must not trigger vague-scope.
+
+        Single-character markers are too coarse (collide with URLs,
+        ternary expressions, legitimate questions). Ambiguity is captured
+        by the multi-character words ("maybe", "perhaps", "either").
+        """
         steps = [
             _step(1, partition="a", preamble="What if the cache is stale?"),
             _step(2, partition="b"),
@@ -121,7 +127,7 @@ class TestClassifyVagueScope(unittest.TestCase):
             _step(4, partition="d"),
         ]
         d = classify(steps)
-        self.assertEqual(d.mode, "sequential")
+        self.assertEqual(d.mode, "parallel")
 
 
 class TestClassifyOverlap(unittest.TestCase):
@@ -195,3 +201,44 @@ class TestClassifyReasonFormat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClassifyVagueScopeFalsePositives(unittest.TestCase):
+    """Regression: markers that LOOK like ambiguity but aren't.
+
+    Single-character markers (e.g. "?") must NOT trigger sequential —
+    they appear in URLs, ternary expressions, and legitimate questions.
+    """
+
+    def test_url_with_query_string_is_not_vague(self):
+        steps = [
+            _step(1, partition="a", preamble="fetch https://api.example.com/items?id=42&page=2"),
+            _step(2, partition="b"),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        self.assertEqual(d.mode, "parallel",
+                         "URL with ?query=string must not trigger '?' as vague-scope")
+
+    def test_ternary_expression_is_not_vague(self):
+        steps = [
+            _step(1, partition="a", preamble="value = (a > b) ? c : d"),
+            _step(2, partition="b"),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        self.assertEqual(d.mode, "parallel",
+                         "ternary expression ? : must not trigger '?' as vague-scope")
+
+    def test_legitimate_question_in_preamble_is_not_vague(self):
+        steps = [
+            _step(1, partition="a", preamble="How does the runner choose parallel?"),
+            _step(2, partition="b"),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        self.assertEqual(d.mode, "parallel",
+                         "legitimate ? in a question must not trigger '?' as vague-scope")
