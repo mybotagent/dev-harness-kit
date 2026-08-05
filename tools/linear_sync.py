@@ -1311,9 +1311,9 @@ def sync() -> int:
             return 0
 
         current_state: str | None = None
-        api_state_name: str | None = None
         if existing_issue_ref:
             # Step 7 — auto-In-progress on subsequent work signals.
+            # Use the API-fetched state (set above, source of truth).
             current_state = api_state_name
             if _is_work_signal(prompt) and current_state != "In Progress":
                 if _set_issue_state(existing_issue_ref, "In Progress"):
