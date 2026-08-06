@@ -95,7 +95,7 @@ alias claude-dev='claude --plugin-dir /path/to/dev-harness-kit'
 새 저장소라면 한 명령으로 첫 설정을 마친다:
 
 ```bash
-/dev-kit:bootstrap (with ci-setup prompt)
+/dev-kit:bootstrap
 ```
 
 이 명령은 프로젝트 파일 세 개(`CLAUDE.md`, `AGENTS.md`, 훅 설정)를
@@ -277,7 +277,7 @@ sequenceDiagram
 | 명령 | 하는 일 |
 |---|---|
 | [`/dev-kit:bootstrap`](docs/skills/bootstrap.md) | 새 저장소의 첫 진입 — `CLAUDE.md`, `AGENTS.md`, 훅 설정을 작성. |
-| [`/dev-kit:bootstrap (with ci-setup prompt)`](docs/skills/bootstrap.md) | `bootstrap` + `ci-setup`을 한 번에. 신규 프로젝트 기본 진입점. |
+| [`/dev-kit:bootstrap`](docs/skills/bootstrap.md) | `bootstrap` + `ci-setup`을 한 번에. 신규 프로젝트 기본 진입점. |
 | [`/dev-kit:ci-setup`](docs/skills/ci-setup.md) | dev-kit의 CI 워크플로와 훅을 저장소에 설치해 PR에서 같은 검사가 돌게 한다. |
 | [`/dev-kit:ci-doctor`](docs/skills/ci-doctor.md) | 읽기 전용 검사 — "CI가 제대로 설정됐는가? 다음 PR이 통과할 것인가?"에 답한다. |
 
@@ -420,7 +420,7 @@ claude plugin install dev-kit
 # (라이브 소스: claude --plugin-dir /path/to/dev-harness-kit)
 
 # 3. 원샷 설정: CLAUDE.md + AGENTS.md + 훅 설정 + CI 템플릿
-/dev-kit:bootstrap (with ci-setup prompt)
+/dev-kit:bootstrap
 
 # 4. 첫 커밋 + 푸시
 git add -A && git commit -m "chore: bootstrap dev-kit"

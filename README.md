@@ -101,13 +101,10 @@ alias claude-dev='claude --plugin-dir /path/to/dev-harness-kit'
 On a brand-new repo, one command does all the first-time setup:
 
 ```bash
-/dev-kit:bootstrap (with ci-setup prompt)
+/dev-kit:bootstrap
 ```
 
-That writes three project files (`CLAUDE.md`, `AGENTS.md`, and the hook
-configuration) **and** installs the CI templates, in a single shot. It is exactly
-`/dev-kit:bootstrap` followed by `/dev-kit:ci-setup` — run them separately if you
-only want one half.
+This command now prompts you for ci-setup (the prompt defaults to Y; pass `--skip-ci` to decline or `--yes` to auto-accept). With Y, it writes three project files (`CLAUDE.md`, `AGENTS.md`, and the hook configuration) **and** installs the CI templates, in a single shot — matching the legacy `/dev-kit:bootstrap-full` behavior. Run `/dev-kit:bootstrap --skip-ci` or `/dev-kit:ci-setup --force` separately if you only want one half.
 
 From there, the everyday loop is three commands:
 
