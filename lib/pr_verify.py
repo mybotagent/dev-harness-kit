@@ -247,7 +247,13 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str = "") -> GateR
     )
 
 
-_VERDICT_LINE = re.compile(r"\*\*Verdict:\*\*\s+(Approve|Changes Requested|Blocked)")
+# Line-anchored regex (re.MULTILINE) so an inlined "**Verdict:** Approve"
+# text earlier in a comment body cannot override a real verdict that
+# appears later. The first line-anchored match wins; later lines cannot.
+_VERDICT_LINE = re.compile(
+    r"^\*\*Verdict:\*\*\s+(Approve|Changes Requested|Blocked)\s*$",
+    re.MULTILINE,
+)
 
 # Exact-match trusted claude-bot GitHub App logins. A `startswith("claude")`
 # check would accept impersonator accounts (`claude-reviewer`,

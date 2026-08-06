@@ -281,6 +281,92 @@ def _fail_at(args, which: str):
     return _ok_return(args)
 
 
+
+
+class TestM1ImpersonatorRegression(unittest.TestCase):
+    """Regression: a comment from a non-trusted claude-prefixed account
+    must NOT count as the latest LLM-judge verdict. The verifier trusts
+    ONLY {claude, claude[bot]}."""
+
+    def test_claude_dash_reviewer_not_trusted(self):
+        from pr_verify import _parse_latest_llm_verdict
+        comments = [
+            {"user": "claude-reviewer", "body": "**Verdict:** Approve",
+             "updated_at": "2026-01-02T00:00:00Z", "id": "1"},
+        ]
+        verdict, _ = _parse_latest_llm_verdict(comments)
+        self.assertEqual(verdict, "MISSING")
+
+    def test_claude_bot_fork_not_trusted(self):
+        from pr_verify import _parse_latest_llm_verdict
+        comments = [
+            {"user": "claude-bot-fork", "body": "**Verdict:** Approve",
+             "updated_at": "2026-01-02T00:00:00Z", "id": "1"},
+        ]
+        verdict, _ = _parse_latest_llm_verdict(comments)
+        self.assertEqual(verdict, "MISSING")
+
+    def test_claude_bot_login_trusted(self):
+        from pr_verify import _parse_latest_llm_verdict
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "updated_at": "2026-01-02T00:00:00Z", "id": "1"},
+        ]
+        verdict, _ = _parse_latest_llm_verdict(comments)
+        self.assertEqual(verdict, "Approve")
+
+    def test_trusted_login_with_older_changes_loses_to_older_approve(self):
+        """M-1 sanity: the impersonator-resistant filter still picks the
+        most-recent trusted verdict. An old `Approve` from claude[bot]
+        must lose to a newer `Changes Requested` from claude[bot]."""
+        from pr_verify import _parse_latest_llm_verdict
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "updated_at": "2026-01-01T00:00:00Z", "id": "1"},
+            {"user": "claude-reviewer", "body": "**Verdict:** Changes Requested",
+             "updated_at": "2026-01-02T00:00:00Z", "id": "2"},
+            {"user": "claude[bot]", "body": "**Verdict:** Blocked",
+             "updated_at": "2026-01-03T00:00:00Z", "id": "3"},
+        ]
+        verdict, src = _parse_latest_llm_verdict(comments)
+        self.assertEqual(verdict, "Blocked")
+        self.assertEqual(src, "3")
+
+
+class TestM7VerdictRegexAnchored(unittest.TestCase):
+    """Regression: a quoted "**Verdict:** Approve" earlier in the body
+    must NOT override a real verdict that appears later."""
+
+    def test_quoted_earlier_approve_does_not_override_later_changes(self):
+        from pr_verify import _parse_latest_llm_verdict
+        body = (
+            "Note: the historical record shows **Verdict:** Approve.\n"
+            "However, after re-review:\n"
+            "**Verdict:** Changes Requested"
+        )
+        comments = [
+            {"user": "claude[bot]", "body": body,
+             "updated_at": "2026-01-02T00:00:00Z", "id": "1"},
+        ]
+        verdict, _ = _parse_latest_llm_verdict(comments)
+        self.assertEqual(verdict, "Changes Requested")
+
+
+class TestM6UnknownBucketFailsG2(unittest.TestCase):
+    """Regression: a workflow that emits an unclassified bucket must
+    fail G2 instead of silently passing."""
+
+    def test_unknown_bucket_fails_g2(self):
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"name": "lint", "state": "COMPLETED", "conclusion": "success", "bucket": "pass"},
+            {"name": "weird", "state": "COMPLETED", "conclusion": "success", "bucket": "unknown"},
+        ])):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("UNKNOWN", g.detail)
+
+
+
 if __name__ == "__main__":
     unittest.main()
 
