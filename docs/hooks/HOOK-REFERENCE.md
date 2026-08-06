@@ -93,3 +93,22 @@ inside a PreToolUse shell script). Each helper carries its own
 - [`rules/git-workflow.md`](../../rules/git-workflow.md) — the worktree + branch rules `worktree-guard` and `git-guard` enforce.
 - [`docs/architecture/RUNTIME-PORTABILITY.md`](../architecture/RUNTIME-PORTABILITY.md) — how the same hooks run under both Claude Code and Codex.
 - Main [`README.md`](../../README.md) — the short version, under "Under the hood".
+
+## Timeout policy
+
+UserPromptSubmit hooks (specifically `tdd-scope-judge.sh` and
+`worktree-auto-cut.sh`) carry an explicit `timeout: 120` in
+`hooks.json`. The 30s default is insufficient for these because:
+
+- `worktree-auto-cut.sh` runs `git fetch origin main` + `git worktree add`,
+  both of which can exceed 30s on slow origin or large HEAD.
+- `tdd-scope-judge.sh` runs an LLM judge (`lib.tdd_scope_judge`) as
+  fallback for path-rule misses.
+
+Both hooks are advisory (exit 0 on failure per the script-level
+contract), so a timeout silently discards the nudge rather than
+breaking correctness — but the user loses the suggestion.
+120s is well above the typical case (<10s) and well below the
+600s default hook ceiling. Other hook groups (PreToolUse,
+SessionStart, PostToolUse, Stop) inherit the 30s default; none
+currently run heavy paths so defaults are fine.
