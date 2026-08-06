@@ -66,5 +66,47 @@ Defensive HTML escaping on every interpolated value — titles, anchors, free-te
 - `skills/report/SKILL.md` — sibling skill that still uses the read-only-skill + `bin/` CLI pattern this skill deviates from.
 - `tests/test_proposal_skill.py` — pins the HTML-escape contract.
 
+## Structured fields: before / after + pros / cons / limitations
+
+The YAML schema accepts five optional top-level fields that the renderer
+emits as first-class sections in the HTML:
+
+```yaml
+before:
+  summary: |                                  # markdown-lite body
+    Description of the code's CURRENT state.
+  evidence:                                   # list[str]
+    - 'file:line / log excerpt / commit hash'
+
+after:
+  summary: |                                  # markdown-lite body
+    Description of the code's PROPOSED state.
+  files:                                      # list[{path, change}]
+    - path: hooks/lib/x.sh
+      change: |                                # markdown-lite body
+        What this file becomes.
+
+pros:                                         # list[str]
+  - 'Strength 1 (with citation).'
+cons:                                         # list[str]
+  - 'Weakness the proposal knowingly accepts + mitigation.'
+limitations:                                  # list[str]
+  - 'What the design CANNOT do (out-of-scope by design).'
+```
+
+Each field is independent: a proposal may declare any subset. The
+renderer emits a `<section id="ba-section">` (two-column `.ba-grid`
+of `.before-card` + `.after-card`) when `before:` or `after:` is
+present; `<section id="pcl-{pros,cons,limit}">` for each present
+pros/cons/limitations list; and skips each wrapper when the
+corresponding field is absent. Backward-compatible: legacy proposals
+without any of the five fields render byte-identically except for
+the inline-CSS block growing.
+
+The parser enforces shape only (list[str], required `change`,
+non-string items rejected), not quality — see
+[`skills/proposal/SKILL.md` §Limitations](../../skills/proposal/SKILL.md)
+for what the lint cannot catch.
+
 ---
 *Source: [`skills/proposal/SKILL.md`](../../skills/proposal/SKILL.md)*

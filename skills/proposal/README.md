@@ -29,7 +29,8 @@ this skill renders and writes the HTML.
 
 The skill enforces a **before-then-after** authoring discipline. A
 proposal is a contract between the existing code and the change being
-proposed; both sides must be present and citable.
+proposed; both sides are encouraged to be present and citable, and the
+renderer renders each present section independently.
 
 **BEFORE** — analyze the existing code first. Read the file(s) the
 proposal will touch, capture concrete observations (file:line, commit
@@ -329,7 +330,7 @@ definition lists, footnotes):
 
 ## Hand-off
 
-After a proposal is `accepted:`, the implementation work follows
+After a proposal moves to `status: accepted`, the implementation work follows
 `/dev-kit:plan` → `/dev-kit:build`. The proposal HTML is the design record
 that closes the issue; the implementation PR references the proposal's
 `issue:` number for traceability.
@@ -366,8 +367,12 @@ scoped so a silent vulnerability is impossible.
 ## Pros of this skill
 
 - **Structured before/after analysis forces honest proposals.** The
-  YAML must declare `before.evidence` and `after.files`, so a reviewer
-  can verify both sides with concrete references.
+  YAML declares `before.evidence` and `after.files` slots so the
+  maintainer is nudged to cite file:line, log excerpts, or commit
+  hashes; a reviewer can verify both sides with concrete references.
+  The shape of the evidence is enforced by the parser (it must be a
+  list of strings), but the *quality* of the citations is not — see
+  §Limitations.
 - **Pros / Cons / Limitations visually distinct** in the rendered HTML
   (check / ballot-x / warn-glyph), so reviewers can scan the
   trade-off shape at a glance.
