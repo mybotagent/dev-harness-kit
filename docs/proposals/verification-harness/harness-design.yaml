@@ -1,0 +1,485 @@
+title: Unified Verification Harness for Long-Running Optimal Tasks
+status: ready-for-review
+date: 2026-08-06
+tags: [verification, harness, eval, rubric, long-running, loop-engineering, independent-review, evidence-based]
+sections:
+  - title: Problem
+    body: |
+      The verification harness is the critical piece for loop-engineering
+      automation, and today it is not in the loop.
+
+      - `lib/execute.py` marks a step `completed` on subprocess exit-0 alone.
+        The "3-cycle self-fix" (MUST-37) is prompt text only
+        (`execute.py:523`); on failure the runner marks `error` and stops —
+        no machine verification, no retry.
+      - Step files declare a "Verification & Status Update" section
+        (acceptance criteria + commands) that the runner never executes.
+      - Verification lives outside the loop as an advisory Stop hook
+        (`hooks/stop-verify.sh` + `lib/pre_completion_checklist.py`,
+        regex heuristics over the diff).
+      - The **same agent, same context, that wrote the code is the only
+        thing that ever judges it** — the sub-agent grades its own
+        "3-cycle self-fix" with no independent check. This is a known
+        failure mode, not a hunch — see Evidence base below.
+      - Quantitative eval is fragmented: two score scales coexist
+        (behavior_scorers 1-5 vs eval_runner 0-10), weights/axes are
+        duplicated between Python and YAML with "keep in sync" comments,
+        and 30% of the agent-behavior weighted mean (D5/D6/D7) is a
+        hardcoded neutral placeholder (issue #511).
+      - The `plan` dim rubric already exists (`spec_clarity`,
+        `step_atomicity`, `ac_executability`, `dependency_ordering` —
+        `lib/llm_judge.py:DIM_AXES["plan"]`, `eval/prompts/judge-plan.md`)
+        but is never run as a gate — it is a post-hoc eval dimension
+        nobody calls before build starts.
+      - `/dev-kit:status` promises "cumulative cycles" but no component
+        persists a cross-session cycle counter; no convergence metric,
+        no verifier-drift signal, exists anywhere.
+
+      Consequence: "done" means "the subprocess exited 0, and the same
+      agent that wrote it said so" — exactly the claims-not-evidence
+      failure mode the Iron Laws (L1/L3) exist to prevent, and the
+      single blocker for unattended long-running builds.
+  - title: Evidence base
+    body: |
+      Four external findings, cited per this repo's own citation
+      contract (`lib/research_engine.py:_CITATION_RE`,
+      `[src:URL;ts:DATE;type:primary]`), each mapped to a specific
+      design decision below.
+
+      1. Intrinsic self-correction — an LLM revising its own answer
+         using only its own judgment, no external signal — frequently
+         fails to fix errors and sometimes makes them worse.
+         [src:https://arxiv.org/abs/2310.01798;ts:2026-08-06;type:primary]
+         → **Decision**: self-review by the same context that generated
+         the change cannot be the completion gate. An independent,
+         separately-invoked verifier is mandatory before `completed`,
+         not optional.
+
+      2. LLM judges exhibit measurable self-preference bias — they favor
+         outputs statistically closer to their own distribution, and the
+         effect is *stronger* in larger, more capable judge models.
+         [src:https://arxiv.org/pdf/2410.21819;ts:2026-08-06;type:primary]
+         → **Decision**: a judge from the *same model family* as the
+         implementer is not a sufficient independent check. Cross-model
+         / cross-provider escalation (Codex) is required whenever the
+         stakes are non-trivial, not merely available as an opt-in.
+
+      3. Repo-wide context and execution are necessary for a reviewer to
+         catch real issues without drowning in false positives;
+         verification is a *distinct* capability from generation
+         ("falsifying a proposed change usually needs only targeted
+         hypothesis generation and checks" vs. generation's "broad
+         search"); precision is explicitly prioritized over recall to
+         keep the review signal actionable.
+         [src:https://alignment.openai.com/scaling-code-verification/;ts:2026-08-06;type:primary]
+         → **Decision**: the independent verifier gets the diff +
+         acceptance criteria + deterministic evidence, not a bare diff;
+         and it is invoked selectively (escalation-triggered), not on
+         every retry cycle, to keep signal-to-noise high.
+
+      4. As agent capability rises, *verification*, not generation,
+         becomes the harder problem; a static reward/verifier function
+         degrades over time (reward hacking, signal saturation) unless
+         it co-evolves with the generator, and no single verifier type
+         (test / rubric / user / agent) is sufficient alone.
+         [src:https://arxiv.org/html/2606.26300v1;ts:2026-08-06;type:primary]
+         → **Decision**: the harness needs more than one verifier type
+         (deterministic tests + rubric judge + cross-provider agent) and
+         a periodic re-audit of already-`completed` work to detect
+         drift — a static one-shot gate is not enough for long-running
+         unattended tasks.
+  - title: Design principles (derived from evidence)
+    body: |
+      1. **Deterministic execution is the floor, not the whole
+         building.** Exit codes and test counts remain the fast, cheap,
+         unbiased first gate — but passing them is necessary, not
+         sufficient (evidence #3).
+      2. **Self-review has a documented ceiling.** No step reaches
+         `completed` on the implementer's own say-so; an independent,
+         separately-spawned verifier call is mandatory (evidence #1).
+      3. **Same-family judging is not independence.** Escalation to a
+         different provider (Codex) is required, automatically, when
+         stakes are elevated — not left as a manual "you can if you
+         want to" option (evidence #2).
+      4. **Verification must co-evolve, not stay static.** Completed
+         work is periodically re-sampled and re-checked; drift between
+         the deterministic gate and the independent verifier is itself
+         a tracked metric (evidence #4).
+      5. **Precision over recall in the verifier.** Independent checks
+         run at decision points (step completion, PR-ready, disagreement),
+         not on every retry cycle — bounded cost, actionable signal
+         (evidence #3).
+      6. **Reuse the plan rubric that already exists.** `ac_executability`
+         et al. become a pre-build gate, not a dimension nobody
+         computes.
+  - title: Architecture — three-tier verification loop
+    body: |
+      Three tiers, each with a distinct job and a distinct failure mode
+      it closes. No step-lifecycle rewrite; two new small modules plus
+      the runner seam from the original design, plus two new modules
+      for tiers 1-2.
+
+      ## Tier 0 — Deterministic Execution Gate (unchanged core; fast, cheap, unbiased)
+
+      `lib/verify_harness.py` (new, pure functions):
+      - `parse_verification(step_meta, step_md_text) -> list[str]` —
+        `index.json` step field `verification` (`str | list[str]`, same
+        shape as `.dev-kit/round-thin-harness/meta.json`) wins over a
+        fenced block in step.md's "Verification & Status Update"
+        section. `[]` when undeclared.
+      - `run_verification(commands, cwd) -> VerifyResult` — runs each
+        command in the per-step worktree, no `shell=True`, commands
+        from repo-trusted files only.
+      - `verification_signature(result)` — delegates to
+        `repair_coordinator.failure_signature`.
+
+      `lib/evidence_ledger.py` (new, durable via `lib/atomic.py`):
+      per-step ledger `.dev-kit/verify/<phase>-step<N>.json`, append-only
+      `.dev-kit/verify/events.jsonl`, cumulative `verify` block in
+      `.dev-kit/state.json`.
+
+      Runner seam (`lib/execute.py`): `_verify_and_retry(...)` between
+      `_run_step_body`'s subprocess return and `_step_post_collect`'s
+      `completed` transition — bounded by `MAX_VERIFY_CYCLES` (default
+      3) and the `has_progress` no-progress guard. **Never an LLM.**
+      Decides retry vs. hand off to Tier 1. The prompt-text self-fix at
+      `execute.py:523` is deleted in the same PR — one retry owner.
+
+      ## Tier 1 — Independent Fresh-Context Verifier (NEW — closes evidence #1)
+
+      `lib/independent_verifier.py` (new). Once Tier 0 passes, **before**
+      `_step_post_collect` writes `completed`, spawn exactly one
+      stateless call that:
+      - Receives **only** a constructed evidence bundle — the diff, the
+        step's declared acceptance criteria, the plan-rubric axes
+        (`ac_executability`, `spec_clarity`, `step_atomicity`,
+        `dependency_ordering` — reused from `lib/llm_judge.py:DIM_AXES["plan"]`),
+        and the Tier 0 evidence summary. **Never** the implementer's
+        chat history or prior self-assessment.
+      - Runs as a genuinely fresh process — a new `claude -p` (or the
+        `eval_runner` judge path) invocation with no `--resume` / session
+        continuation. This is enforced *structurally*: the spawn call
+        is asserted to carry no session-resume flag, not merely trusted.
+      - Returns a structured verdict: `{agrees_with_tier0: bool,
+        concerns: [...], plan_axis_scores: {...}}`.
+      - **This one call is reused, not duplicated**, to produce the
+        D5/D6/D7 judge overlay scores (see Rubric section) — the same
+        evidence bundle answers both "does this diff satisfy intent"
+        and "score communication/robustness/trajectory," collapsing
+        what would otherwise be two LLM calls into one.
+
+      A Tier 1 disagreement (`agrees_with_tier0: false`) does not
+      silently override Tier 0 — it **forces Tier 2 escalation** before
+      the step can complete.
+
+      ## Tier 2 — Cross-Provider Escalation via Codex (NEW — closes evidence #2)
+
+      `lib/codex_review.py` (new, thin wrapper reusing the existing
+      `codex-cli-runtime` contract already used for
+      `DEV_KIT_BUILD_AGENT=codex` in `execute.py`'s `_agent_command` —
+      same subprocess pattern, review-mode prompt instead of a build
+      prompt). Triggered:
+      - **Automatically**, mid-loop, when Tier 1 disagrees with Tier 0,
+        or a step needed more than 1 verification retry cycle (signals
+        elevated risk).
+      - **Always**, at PR-ready — matching the team's existing
+        `implement → codex review → fix → push → babysit-pr` workflow;
+        this PR wires the mechanism, a dedicated `/dev-kit:codex-review`
+        slash entrypoint is an explicit follow-up, not in scope here —
+        the interim on-ramp is the already-installed `codex:rescue`
+        skill or the CLI wrapper called directly from `babysit-pr`.
+
+      ## Plan-Quality Pre-Build Gate (NEW — closes the "plan rubric is inert" gap)
+
+      A new pre-build check, parallel to `_intent_integrity_pre_build_gate`,
+      runs the **already-existing** `plan` dim judge
+      (`eval/prompts/judge-plan.md`, axes `spec_clarity` /
+      `step_atomicity` / `ac_executability` / `dependency_ordering`,
+      `lib/eval_runner.py` judge path) over a phase's step files *before*
+      `/dev-kit:build` starts executing them. `ac_executability` below
+      threshold — concretely, `parse_verification()` finds no
+      machine-executable command for a step — blocks build start with
+      an actionable message naming the step. This is the direct,
+      minimal-diff way to make an already-defined rubric axis mean
+      something instead of sitting unused.
+
+      ## Periodic Audit Loop (NEW — closes evidence #4, for long-running tasks)
+
+      Not an always-on daemon (avoids over-engineering an active
+      process). A CLI flag (`--audit-sample <pct>`, default 10%) on the
+      eval path re-runs Tier 1 (occasionally Tier 2) against a random
+      sample of already-`completed` steps, comparing the fresh verdict
+      against the ledger's recorded Tier 0 result. Disagreement feeds
+      V4 (false_completion_rate) and V5 (verifier_agreement) — the
+      concrete mechanism for detecting that the deterministic gate has
+      drifted from what the independent verifier considers correct,
+      which is exactly the "verification must co-evolve" risk evidence
+      #4 names.
+  - title: Rubric and metric design
+    body: |
+      **Canonical scale: 0-10.** Verdicts `OK >= 8.0 / DRIFT 5.0-7.9 /
+      ROT < 5.0`; `ESCALATED` when a deterministic dim crashes or falls
+      below the deterministic floor 5.0. The behavior_scorers 1-5 side
+      migrates; the 15 judge prompts stay 0-10.
+
+      **YAML as SSOT.** `eval/rubrics/*.yaml` weights + axes are
+      authoritative; Python loads them. The duplicated `WEIGHTS` dict
+      (`lib/behavior_scorers/__init__.py`) and hardcoded `DIM_AXES`
+      copies (`lib/llm_judge.py`) are deleted; a test asserts Python
+      holds no hardcoded copy and weights sum to 1.0.
+
+      **Verification-harness dims — deterministic, ledger-only (V1-V4, unchanged):**
+
+      | Dim | Measures | Formula (0-10) |
+      | --- | --- | --- |
+      | V1 evidence_quality | completions backed by passing declared verification vs bare exit-0 | `10 * steps_with_verification / total_steps` |
+      | V2 convergence_rate | steps completing within the cycle cap | `10 * steps_converged / total_steps` |
+      | V3 retry_efficiency | cycles that made progress | `10 * (1 - wasted_cycles / total_cycles)` |
+      | V4 false_completion_rate | completed steps failing verification on re-audit | `10 * (1 - false_completions / total_completions)` |
+
+      **New — independent-verification dims (V5-V7), deterministic/structural, closes evidence #1/#2/#4:**
+
+      | Dim | Measures | Formula / basis |
+      | --- | --- | --- |
+      | V5 verifier_agreement | Tier 1/Tier 2 agreement rate with Tier 0 over the audit sample | `10 * agreements / tier1_calls` — a drop signals the deterministic gate has drifted |
+      | V6 escalation_rate | fraction of steps needing Tier 2 | reported as a **trend indicator, excluded from the weighted verdict on purpose** — scoring it would create an incentive to never escalate, defeating its own diagnostic purpose |
+      | V7 context_isolation_compliance | fraction of Tier 1/Tier 2 calls verified fresh-context (no session-resume flag in the spawn args) | `10 * fresh_calls / total_calls` — structural check, not judged |
+
+      **Plan-quality axes — reused, now gate-wired, not just eval-time:**
+      `spec_clarity`, `step_atomicity`, `ac_executability`,
+      `dependency_ordering` (existing `DIM_AXES["plan"]`) are scored
+      pre-build by the Plan-Quality gate above; a low `ac_executability`
+      blocks build start rather than only showing up in a later report.
+
+      **D5/D6/D7 — deterministic base + the Tier 1 independent-verifier
+      call (not a separate judge call):**
+
+      - D3 efficiency — implement, deterministic only: the ledger
+        supplies the per-case baseline (cycles, retries) it was missing.
+      - D5 communication — deterministic structural check of the
+        sub-agent-handoff contract (STATUS + EVIDENCE `exit N` +
+        NEXT-ACTION) as the base, blended with the `plan_axis_scores`
+        already returned by the Tier 1 call. Final = `base * 0.7 +
+        tier1 * 0.3`.
+      - D6 robustness — deterministic proxy from the ledger (recovery
+        rate: failed cycles later converged; blocked-step handling) as
+        the base, blended with Tier 1's `concerns` signal. Final =
+        `base * 0.7 + tier1 * 0.3`. No fault-injection harness in this
+        effort.
+      - D7 trajectory — existing heuristic as the base, blended with
+        Tier 1 — lands the `heuristic * 0.7 + llm * 0.3` formula the
+        module docstring already promised
+        (`lib/behavior_scorers/trajectory.py`) without a second call.
+
+      One blend constant (`0.7 / 0.3`), defined once in the rubric YAML.
+      Tier 1 unavailable → base alone, `evidence.tier1 = "unavailable"`
+      — never a neutral 3, never a crash.
+  - title: Before and after
+    body: |
+      Grounded in the current code. Each row names the exact mechanism
+      that exists today and what replaces it.
+
+      ## 1. Step completion decision
+
+      **Before** (`lib/execute.py:_step_post_collect`):
+
+      ```python
+      if exit_code != 0:
+          update_step_status(root, phase, step_num, status="error", ...)
+          return exit_code
+      # ... commit ...
+      update_step_status(root, phase, step_num, status="completed")
+      ```
+
+      Exit-0 IS the completion decision — decided entirely by the same
+      agent that wrote the change.
+
+      **After**: `completed` requires Tier 0 (deterministic) **and**
+      Tier 1 (independent, fresh-context) agreement; a Tier 1
+      disagreement forces Tier 2 (cross-provider) before completion.
+
+      ## 2. Self-fix loop ownership
+
+      **Before** (`lib/execute.py:523`): `"AC: see step file. 3-cycle
+      self-fix max."` — a sentence in the prompt; whether self-fix
+      happened is invisible to the orchestrator.
+
+      **After**: the orchestrator owns Tier 0's bounded retry with
+      structured failure evidence per cycle; every cycle is a ledger
+      record, not a hope.
+
+      ## 3. Who verifies, and with what context
+
+      **Before**: no independent verifier exists. The only "check" is
+      an advisory Stop hook (`hooks/stop-verify.sh`) that regex-matches
+      claims *after* the runner already wrote `completed`.
+
+      **After**: Tier 1 is a categorically separate, stateless call —
+      never the implementer's own context — evaluated against evidence
+      #1 (self-correction without external signal is unreliable). The
+      Stop hook remains as the interactive-session safety net,
+      unchanged.
+
+      ## 4. Cross-model independence
+
+      **Before**: the only "second opinion" available is another call
+      to the same model family, when a human remembers to ask for one.
+
+      **After**: Tier 2 (Codex) escalates automatically on Tier 0/Tier 1
+      disagreement or elevated-risk steps (>1 retry), addressing
+      evidence #2 (same-family judges carry self-preference bias) —
+      not left as a manual option.
+
+      ## 5. Plan rubric utilization
+
+      **Before**: `spec_clarity` / `step_atomicity` / `ac_executability`
+      / `dependency_ordering` are defined in `lib/llm_judge.py` and
+      `eval/prompts/judge-plan.md` but nothing calls them before build
+      starts — they only ever appear in a post-hoc `/dev-kit:evaluate`
+      report, if that is even run.
+
+      **After**: the same rubric runs as a pre-build gate; a step
+      lacking a machine-executable AC is caught at plan time, not
+      discovered mid-build.
+
+      ## 6. Static vs. co-evolving verification
+
+      **Before**: nothing re-checks a step once it is marked
+      `completed`. If the deterministic gate is wrong, it stays wrong
+      silently forever.
+
+      **After**: the periodic audit loop (V4/V5) re-samples completed
+      work and tracks verifier-gate agreement over time — evidence #4's
+      "verification must co-evolve" made operational.
+
+      ## 7. D5/D6/D7 scoring
+
+      **Before** (`lib/behavior_scorers/communication.py`): hardcoded
+      `value=3`, `evidence={"status": "pending", ...}` — 30% of the
+      weighted mean carries no signal; the D7 module docstring promises
+      a `heuristic * 0.7 + llm * 0.3` blend that was never wired.
+
+      **After**: deterministic base blended with the Tier 1 call's
+      output — no neutral-3 path, no unused promised formula.
+
+      ## 8. Scales and weights
+
+      **Before**: 1-5 (behavior_scorers, `OK >= 4.0`) vs. 0-10
+      (eval_runner, `OK >= 8.0`); `WEIGHTS` and `DIM_AXES` each defined
+      twice with "keep in sync" comments.
+
+      **After**: one 0-10 scale, YAML as the only definition, a test
+      that makes drift impossible.
+  - title: Delivery plan — 7 PRs
+    body: |
+      Each PR: tests RED first (TDD), then `/dev-kit:review` + the
+      Tier-2 Codex escalation this proposal itself introduces, fix,
+      push, `/dev-kit:babysit-pr` until approved — the harness reviews
+      its own construction.
+
+      1. **PR 1 — lib/verify_harness.py** (Tier 0, no runner wiring).
+         `tests/test_verify_harness.py`; `verification` field documented
+         in `docs/skills/plan.md`.
+         Verify: `pytest tests/test_verify_harness.py -q`.
+      2. **PR 2 — lib/evidence_ledger.py** + `/dev-kit:status` wiring.
+         Atomic write/read/resume, cumulative counter across sessions,
+         corrupt-file tolerance.
+         Verify: `pytest tests/test_evidence_ledger.py -q`.
+      3. **PR 3 — Tier 0 verify-then-retry loop in the runner.**
+         `_verify_and_retry` in `lib/execute.py`; prompt-text self-fix
+         removed; regression guard proves undeclared-verification
+         behavior is unchanged.
+         Verify: `pytest tests/test_execute*.py tests/test_verify_harness.py -q`.
+      4. **PR 4 — rubric scale unification + YAML SSOT.** 0-10 canonical,
+         duplicated weights/axes deleted, drift-impossible test.
+         Verify: `pytest tests/test_behavior_scorers*.py tests/test_eval*.py -q`.
+      5. **PR 5 — lib/independent_verifier.py (Tier 1).** Fresh-context
+         spawn (structurally asserted no session-resume flag), evidence
+         bundle construction (diff + AC + plan axes + Tier 0 summary,
+         never chat history), wired into the runner between Tier 0 pass
+         and `completed`; disagreement sets an escalation flag consumed
+         by PR 7.
+         Tests: fresh-context enforcement, evidence-bundle exclusions
+         (no implementer history leaks in), verdict parsing, disagreement
+         → escalation flag.
+         Verify: `pytest tests/test_independent_verifier.py -q`.
+      6. **PR 6 — Plan-Quality Pre-Build Gate.** Reuses the existing
+         `plan` dim judge; wired parallel to
+         `_intent_integrity_pre_build_gate`; blocks on low
+         `ac_executability` with an actionable, step-naming message.
+         Verify: `pytest tests/test_plan_quality_gate.py -q`.
+      7. **PR 7 — lib/codex_review.py (Tier 2) + periodic audit +
+         V1-V7 + D3/D5/D6/D7.** Escalation triggers (Tier 1 disagreement,
+         >1 retry cycle) wired to the Codex wrapper; `--audit-sample`
+         CLI flag; `lib/behavior_scorers/verification.py` (V1-V7 from
+         the ledger); D3/D5/D6/D7 implemented per the Rubric section;
+         `/dev-kit:evaluate --harness-quality` returns real numbers,
+         no placeholder-3 path remains.
+         Verify: `pytest tests/test_behavior_scorers*.py -q` +
+         `/dev-kit:evaluate --harness-quality --dry-run`.
+
+      Sequencing: PR 1/2 either order -> PR 3 needs both. PR 4
+      independent. PR 5 needs PR 3 (the runner integration point). PR 6
+      needs PR 4 (unified rubric loader) and can land in parallel with
+      PR 5. PR 7 needs PR 4, PR 5, and PR 6.
+
+      Workflow after acceptance: `/dev-kit:linear` (register project +
+      issues) then `/dev-kit:plan` phase-by-phase — each generated step
+      declares its own `verification` commands, dogfooding PR 1's field
+      and getting scored by PR 6's gate before it can even start.
+  - title: Risks and non-goals
+    body: |
+      - **Bounded loops are mandatory everywhere.** Tier 0:
+        `MAX_VERIFY_CYCLES` cap + `has_progress` no-progress guard.
+        Tier 1/2: exactly one call per trigger, no retry-the-verifier
+        loop. The audit loop is a bounded sample, not a continuous
+        daemon. Unbounded anything is the worst outcome for unattended
+        runs.
+      - **No verification DSL** — plain shell command strings
+        (`round-thin-harness/meta.json` precedent).
+      - **Tier 0 never calls an LLM.** Exit codes and test counts only,
+        for V1-V4 and the retry/no-retry decision. LLM judgment is
+        strictly scoped to Tier 1/Tier 2 and the D5/D6/D7 blend.
+      - **V6 (escalation_rate) is deliberately excluded from the scored
+        verdict** — scoring it would reward never escalating, which is
+        exactly the reward-hacking failure mode evidence #4 warns
+        against. It is reported, not optimized.
+      - **Cost discipline**: Tier 1 fires once per step (after Tier 0
+        passes), not per retry cycle. Tier 2 fires only on disagreement,
+        elevated-risk steps, or PR-ready — not on every step. This is
+        evidence #3's "precision over recall" applied to the harness's
+        own cost.
+      - The prompt-text self-fix removal ships in the same PR as the
+        Tier 0 orchestrator loop — never separately.
+      - `docs/skills/plan.md` is updated so the machine gate (Tier 0 +
+        Tier 1 agreement) is the one `completed` decision; status
+        markers become advisory. No second SSOT.
+      - Non-goal: fault-injection scenario harness for D6 (separate
+        effort). Non-goal: rewriting the step lifecycle or statuses.
+        Non-goal: a dedicated `/dev-kit:codex-review` slash skill in
+        this delivery (PR 7 wires the mechanism; the skill entrypoint
+        is a follow-up).
+  - title: End-to-end verification
+    body: |
+      1. Full suite green at every PR: `pytest tests/ -q` (CI `ci.yml`
+         test + lint jobs).
+      2. Live loop test: a toy phase with a deliberately failing step
+         and a declared `verification` command; run the harness-runner;
+         observe Tier 0 cycle-2 convergence in
+         `.dev-kit/verify/<phase>-step1.json`, a Tier 1 call recorded
+         before `completed`, and the incremented `cumulative_cycles` in
+         `.dev-kit/state.json`.
+      3. Independence check: inspect the Tier 1 spawn call in a test —
+         assert no session-resume flag and no implementer-history
+         content in the constructed prompt (V7 = 10 on this fixture).
+      4. Disagreement check: force a Tier 1 `agrees_with_tier0: false`
+         fixture, confirm Tier 2 fires automatically before `completed`.
+      5. False-completion / drift check: corrupt a completed step's
+         worktree, run `--audit-sample`, confirm V4 drops and V5
+         reflects the Tier 0/Tier 1 disagreement.
+      6. Plan-gate check: author a step with no `verification` field and
+         no fenced verification block; confirm the Plan-Quality gate
+         blocks `/dev-kit:build` with a message naming that step.
+      7. `/dev-kit:evaluate --harness-quality --dry-run` returns real
+         V1-V7 numbers and D3/D5/D6/D7 with no placeholder-3 path — no
+         silent rc=1 (isolated fresh-context sub-agent test discipline).
