@@ -40,10 +40,9 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 
 | Skill | Alpha | Summary |
 |---|---|---|
-| [`bootstrap`](bootstrap.md) | `state` | First entry — generates minimal `CLAUDE.md` + `AGENTS.md` + `active-hooks.json` on a fresh repo. |
-| [`bootstrap`](bootstrap.md) | `state` | One-shot `bootstrap` + `ci-setup` — the new-project default. |
+| [`bootstrap`](bootstrap.md) | `state` | One-shot setup for new projects — generates `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`, then prompts for ci-setup (pass `--skip-ci` to decline or `--yes` to auto-accept). |
 | [`ci-setup`](ci-setup.md) | `enforcement` | Installs dev-kit's reusable CI workflow templates into a target project. |
-| [`config`](config.md) | `state` | Skill / MCP / hook / methodology picker. |
+| [`config`](config.md) | `state` | Skill / hook / methodology picker. |
 | [`linear`](linear.md) | `state` | Optional Linear task tracker — reconciling the current repo task with a canonical project + issue (auto-sync on every edit when configured). |
 
 ### Plan → Build

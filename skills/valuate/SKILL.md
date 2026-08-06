@@ -4,10 +4,10 @@ category: design
 description: Plan-value gate. Scores a plan on 6 axes via LLM judge and returns proceed / revise / hold / kill. Verdict envelope persists to .dev-kit/valuations/<plan-id>.json.
 alpha: enforcement
 when_to_use:
-  - User types /dev-kit:valuate <plan-file>
-  - Plan stage finishes and the user wants an automatic no-go verdict
-  - Reviewer wants to know whether the build stage will refuse this plan
-  - User wants the decision + per-axis rationale surfaced as one report
+  - Plan stage finishes and the operator wants an explicit proceed / revise / hold / kill verdict (model-invocable from /dev-kit:plan or other planning stages)
+  - Reviewer wants to know whether the build stage would refuse this plan
+  - Operator wants the 6-axis decision + per-axis rationale surfaced as one report
+  - Slash is hidden from user menu (user-invocable: false); the auto-gate that previously required it was removed in #463
 allowed-tools: Read Write Bash Grep
 disallowed-tools: WebFetch Edit
 model: opus
