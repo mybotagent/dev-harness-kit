@@ -59,7 +59,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 |---|---|---|
 | [`review`](review.md) | `analysis` | Parallel correctness + security + architecture review with a false-positive filter. |
 | [`security`](security.md) | `enforcement` | Full OWASP Top 10 2025 (A01–A10) fan-out with a verifier pass. |
-| [`audit`](audit.md) | `state` | 0-arg cross-cutting bulk slop + secret audit (read-only). |
 | [`inspect`](inspect.md) | `analysis` | 8-dimension read-only code-health audit. |
 | [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |
 | [`prune`](prune.md) | `analysis` | 4-phase deletion sweep: sweep → dependents → report → verify. |
@@ -121,9 +120,7 @@ step inside their parent skill's flow; you never type them directly.
 
 | Skill | Category | Alpha | Invocable |
 |---|---|---|---|
-| [`audit`](audit.md) | `audit` | `state` | human |
 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | human |
-| [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
 | [`build`](build.md) | `build` | `state` | human |
 | [`build-debug`](build-debug.md) | `build` | `enforcement` | model |

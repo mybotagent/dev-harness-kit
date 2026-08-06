@@ -44,11 +44,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # research-plan-build and the two PR-1 removals net to zero on this branch).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-<<<<<<< HEAD
-SKILL_COUNT = 40
-=======
 SKILL_COUNT = 38
->>>>>>> e8ed62e (test(smoke): bump SKILL_COUNT to 37 for PR-1 slim sweep)
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
