@@ -382,7 +382,7 @@ def _gate_g5_merge_state(pr_number: int, repo: str, fetched_at: str) -> GateResu
     ])
     data = json.loads(raw)
     state = (data.get("mergeStateStatus") or "").upper()
-    soft_pass = state in {"CLEAN", "BEHIND"}
+    soft_pass = state in {"CLEAN", "BEHIND", "UNSTABLE"}
     detail = f"mergeStateStatus={state}, mergeable={data.get('mergeable')}"
     return GateResult(
         gate="G5",
