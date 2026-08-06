@@ -12,7 +12,7 @@ allowed-tools: Read Write Bash Grep
 disallowed-tools: WebFetch Edit
 model: opus
 disable-model-invocation: true
-user-invocable: true
+user-invocable: false
 safety:
   safety_valve: 1
   convergence: decision != "hold"
