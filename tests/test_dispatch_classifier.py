@@ -345,12 +345,6 @@ class TestClassifyACFieldValidation(unittest.TestCase):
                          f"clean ACs should not trigger vague scope; got {d.mode!r}")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-
-
 class TestVagueScopeLogInjection(unittest.TestCase):
     """Regression: step number can be a string containing a newline.
 
@@ -376,3 +370,8 @@ class TestVagueScopeLogInjection(unittest.TestCase):
         # reason. The injected "[ERROR] fake log" is dropped.
         self.assertIn("1 ", d.reason)
         self.assertNotIn("[ERROR] fake log", d.reason)
+
+
+
+if __name__ == "__main__":
+    unittest.main()
