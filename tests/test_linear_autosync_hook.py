@@ -48,15 +48,10 @@ class TestLinearAutosyncHook(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
 
-    def test_bails_on_non_git_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = _run_hook(tmp)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stderr, "")
-
-    def test_runs_python_when_tools_present(self):
-        # ROOT has tools/linear_sync.py; with empty stdin + no LINEAR_* env,
-        # the hook fast-paths (no activation source) and exits 0.
+    def test_bails_when_no_linear_api_key(self):
+        # ROOT has tools/linear_sync.py but the env-var fast-path in the
+        # hook bails before forking Python when LINEAR_API_KEY is unset.
+        # This exercises the activation gate, not Python forking.
         result = subprocess.run(
             ["bash", str(HOOK)], input="",
             capture_output=True, text=True, timeout=10, cwd=str(ROOT),

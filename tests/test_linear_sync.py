@@ -251,70 +251,78 @@ class TestLinearSync(unittest.TestCase):
                 self.assertEqual(linear_sync.sync(), 0)  # does not raise
 
     def test_urlopen_timeout_is_non_blocking(self):
-        """Cold-start resilience (#583 followup): first urlopen call may
-        exceed timeout (DNS/TLS handshake). Subsequent calls in the same
-        round must still succeed — non-blocking contract means Edit is
-        never blocked by a flaky first request."""
+        """Cold-start resilience (#583 followup): a transport failure
+        (DNS/TLS handshake) must not block the Edit. Under the typed
+        LinearTransportError contract, sync() catches and bails
+        non-blocking per the #539 contract — the Edit is never blocked
+        by a flaky first request, but no handoff is written either
+        (the previous round-flow kept the stale handoff intact)."""
         with _fake_repo(linear_api_key="test-key",
                         handoff={"prompt": "implement x"}) as repo:
             call_count = {"n": 0}
 
             def flaky(req, timeout=15):  # noqa: ARG001
                 call_count["n"] += 1
-                if call_count["n"] == 1:
-                    raise TimeoutError("simulated cold start")
-                return _FakeResponse(json.dumps({"data": {
-                    "projects": {"nodes": [{"id": "proj-1", "name": "demo"}]},
-                    "projectCreate": {"project": {"id": "proj-1"}},
-                    "issues": {"nodes": []},
-                    "workflowStates": {"nodes": [
-                        {"id": "st-todo", "name": "Todo"},
-                    ]},
-                    "issueCreate": {"issue": {
-                        "id": "iss-1", "identifier": "DEMO-1",
-                        "state": {"name": "Todo"},
-                    }},
-                }}).encode("utf-8"))
+                raise urllib.error.URLError("simulated cold start")
 
             with mock.patch.object(linear_sync, "_resolve_prompt",
                                     return_value="implement x"), \
                  mock.patch("urllib.request.urlopen", flaky):
                 self.assertEqual(linear_sync.sync(), 0)
-            self.assertGreater(
+            # sync() bails after the first transport failure — no retry,
+            # no handoff rewrite. The Edit is unblocked, but stale handoff
+            # (if any) is left untouched for the next non-flaky round.
+            self.assertEqual(
                 call_count["n"], 1,
-                "expected sync() to retry after first TimeoutError",
+                "sync() should bail after the first transport failure",
             )
-            handoff = json.loads(
-                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(
-                    encoding="utf-8"
-                )
+            handoff_path = (
+                repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json"
             )
-            self.assertEqual(handoff["action"], "created")
-            self.assertEqual(handoff["state"], "Todo")
+            # The original handoff was created by _fake_repo; sync() must
+            # NOT have overwritten it with a 'created'/'updated' entry
+            # when transport failed.
+            self.assertTrue(handoff_path.exists())
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            self.assertNotIn(handoff.get("action"), ("created", "updated"))
 
-    def test_linear_query_transport_returns_empty_dict(self):
-        """#cold-start followup: transport errors (URLError/TimeoutError) must
-        return {} so the auto-sync round continues; HTTPError must still
-        raise RuntimeError. The contract split (transport=empty, HTTP=raise)
-        is the foundation of the non-blocking guarantee."""
+    def test_linear_query_transport_raises_linear_transport_error(self):
+        """#transport-catch contract: HTTPError/SSLError -> RuntimeError; other
+        transport errors (URLError/TimeoutError) -> LinearTransportError so the
+        auto-sync non-blocking flow can catch-and-continue; CLI surface flow
+        surfaces a real stderr diagnostic instead of the misleading 'no issues
+        match' empty-state message."""
         with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "test-key"}):
-            # 1) URLError -> {}
-            with mock.patch("urllib.request.urlopen",
-                            side_effect=urllib.error.URLError("dns down")):
-                self.assertEqual(linear_sync._linear_query("q", {}), {})
-            # 2) TimeoutError -> {}
-            with mock.patch("urllib.request.urlopen",
-                            side_effect=TimeoutError("socket.timeout")):
-                self.assertEqual(linear_sync._linear_query("q", {}), {})
-            # 3) HTTPError -> still RuntimeError (regression guard)
+            # 1) HTTPError -> RuntimeError (regression guard for TLS/auth codes)
             err = urllib.error.HTTPError(
                 "https://api.linear.app/graphql", 503, "Service Unavailable",
                 {"Content-Type": "application/json"},
                 io.BytesIO(b'{"err":"x"}'),
             )
             with mock.patch("urllib.request.urlopen", side_effect=err):
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(RuntimeError) as cm:
                     linear_sync._linear_query("q", {})
+                self.assertNotIsInstance(
+                    cm.exception, linear_sync.LinearTransportError
+                )
+            # 2) bare URLError -> LinearTransportError
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=urllib.error.URLError("dns down")):
+                with self.assertRaises(linear_sync.LinearTransportError):
+                    linear_sync._linear_query("q", {})
+            # 3) TimeoutError -> LinearTransportError
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=TimeoutError("socket.timeout")):
+                with self.assertRaises(linear_sync.LinearTransportError):
+                    linear_sync._linear_query("q", {})
+            # 4) SSLError wrapped in URLError -> RuntimeError (TLS preserved)
+            ssl_err = urllib.error.URLError(
+                reason=__import__("ssl").SSLError("certificate verify failed")
+            )
+            with mock.patch("urllib.request.urlopen", side_effect=ssl_err):
+                with self.assertRaises(RuntimeError) as cm:
+                    linear_sync._linear_query("q", {})
+                self.assertIn("TLS", str(cm.exception))
 
     def test_repo_name_falls_back_to_directory(self):
         """Canonical repo name = directory basename, matching #539's
