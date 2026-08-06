@@ -22,7 +22,9 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 2. `--html` -> after the markdown artifact, run
    `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
 3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-4. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
+4. `--secrets` -> run `hooks/secret-scan.sh` against `paths`; render findings as `dim="secret"` rows in the markdown report. Equivalent to old `/dev-kit:audit --secrets-only`.
+5. `--slop` -> run T1 phrase + T2 structure scan from `hooks/references/slop/{phrases,structures}.md`; render findings as `dim="slop"` rows. Equivalent to old `/dev-kit:audit --slop-only`.
+6. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
 ## Fan-out + verify
 
 Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, fix_hint`). Return a fenced `json` array. One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`; REJECTED are dropped.
