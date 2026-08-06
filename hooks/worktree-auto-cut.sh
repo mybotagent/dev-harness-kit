@@ -202,7 +202,7 @@ fi
 # or dir exists; preserve pre-existing branches on failure) matches
 # ``lib/execute.py`` and ``lib/acp_dispatch.py``. A future contract
 # change must therefore touch one place, not three. The hook-level
-# timeout (30s in hooks.json) bounds the whole operation; ``cut_worktree``
+# timeout (120s in hooks.json) bounds the whole operation; ``cut_worktree``
 # itself is normally <2s. Note: no ``timeout(1)`` wrapper because macOS
 # does not ship coreutils ``timeout`` by default — the wrapper would
 # rc=127 on every Mac.
