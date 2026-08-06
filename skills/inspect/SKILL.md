@@ -13,7 +13,7 @@ model: opus
 user-invocable: true
 ---
 > [← Skills index](../../README.md)
-Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
+Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. With `--secrets`, the skill passes `dimensions=["secret"]` (from the audit family) to the same engine; with `--slop`, `dimensions=["slop"]` (already in inspect family). Both bypass the inspect group default and run a single-dimension sweep. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
 
 ## Scope
 

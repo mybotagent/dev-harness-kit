@@ -179,7 +179,7 @@ Also install CI templates (ci-setup)? [Y/n]
 
 ### Y branch (default)
 
-Delegates to `lib/ci_setup.py:install_ci_config(force=True)` -- same code path as `/dev-kit:ci-setup --force`:
+Delegates to `lib/ci_setup.py:install_ci_config(force=<--force>)` -- the default is **idempotent** (re-runs on an already-installed repo are no-op). Pass `--force` to overwrite customized CI workflows and the pre-push hook (same code path as `/dev-kit:ci-setup --force`):
 
 - Phase 1.5 pre-flight probe (`gh` deps -> OK/WARN/INFO/SKIP, non-blocking)
 - 15 EXPECTED_PATHS installed (`.github/workflows/*.yml`)
