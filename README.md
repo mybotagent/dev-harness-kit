@@ -312,6 +312,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | [`/dev-kit:log`](docs/skills/log.md) | Turns session logging on/off. It's what feeds `token-analyzer`, `skill-usage`, and the session monitor. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | Shows which skills you actually use, and how much — useful for pruning. |
 | [`/dev-kit:sot-harness-writer`](docs/skills/sot-harness-writer.md) | Interview-based Single Source of Truth harness document writer — 5 rounds × 2–3 evidence-backed recommendations, hands off to `/dev-kit:plan`. |
+| [`/dev-kit:learn`](docs/skills/learn.md) | Distill source text (file, URL, prose, or session transcript) into a candidate `SKILL.md`, gated by deterministic G1–G5 checks + a per-candidate approval step. |
 
 For the complete, always-current list of every skill (there are more than the
 ones above), see [`docs/skills/README.md`](docs/skills/README.md). It's grouped by
