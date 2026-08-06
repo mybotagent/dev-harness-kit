@@ -24,7 +24,7 @@ If Y: also runs `lib/ci_setup.py:install_ci_config()` to install the 15 CI workf
 If N (or `--skip-ci`): prints the unavailable-features list below and exits with code 0. CI can be added later via `/dev-kit:ci-setup --force`.
 
 ## Iron Law (no exceptions)
-**0-arg default OK.** Hidden flags: `--target DIR`, `--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`, `--skip-ci` (skip ci-setup, equivalent to answering `n`), `--yes` (skip the prompt, default `Y`), `--force` (overwrite existing CI templates during ci-setup), `--skip-verify` (skip ci-setup Phase 3 verify).
+**0-arg default OK.** Hidden flags: `--target DIR` (all sub-stages — sanity, codebase-map, hook-matrix, write-claude-md, and the conditional ci-setup — operate on `<DIR>` instead of `$PWD`; pass `target=` to `install_ci_config()`), `--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`, `--skip-ci` (skip ci-setup, equivalent to answering `n`), `--yes` (skip the prompt, default `Y`), `--force` (overwrite existing CI templates during ci-setup), `--skip-verify` (skip ci-setup Phase 3 verify).
 
 ## 7-Step Orchestration (4 auto + 1 prompt + 1 ci-setup + 1 user review)
 
