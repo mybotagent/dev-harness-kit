@@ -148,15 +148,15 @@ def _move_selectable(rows: list[dict], cursor: int, delta: int) -> int:
     return sel[target]
 
 
-def _move(rows: list[dict], cursor: int, delta: int, mode: str
-          ) -> tuple[list[dict], int, str]:
+def _move(rows: list[dict], cursor: int, delta: int
+          ) -> tuple[list[dict], int]:
     """Shared move-with-key helper for both picker modes.
 
-    Returns ``(rows, cursor, mode)`` so the caller can rebind without
-    re-inspecting the key. ``mode`` is threaded through unchanged --
-    the only thing the helper decides is the new cursor position.
+    Returns ``(rows, cursor)`` so the caller can rebind without
+    re-inspecting the key. The new cursor is clamped onto a
+    selectable row.
     """
-    return rows, _move_selectable(rows, cursor, delta), mode
+    return rows, _move_selectable(rows, cursor, delta)
 
 
 def _clamp_cursor(rows: list[dict], cursor: int) -> int:
@@ -344,11 +344,11 @@ def _step_normal(
 
     # Move up.
     if key == b"\x1b[A" or key in (b"k", b"K"):
-        return _move(rows, cursor, -1, "NORMAL") + (buffer, "NORMAL", None, False)
+        return _move(rows, cursor, -1) + (buffer, "NORMAL", None, False)
 
     # Move down.
     if key == b"\x1b[B" or key in (b"j", b"J"):
-        return _move(rows, cursor, +1, "NORMAL") + (buffer, "NORMAL", None, False)
+        return _move(rows, cursor, +1) + (buffer, "NORMAL", None, False)
 
     # Enter edit mode (slash with no characters yet).
     if key == b"/":
@@ -431,9 +431,9 @@ def _step_editing(
 
     # Move up / down without touching the buffer.
     if key == b"\x1b[A" or key in (b"k", b"K"):
-        return _move(rows, cursor, -1, "EDITING") + (buffer, "EDITING", None, False)
+        return _move(rows, cursor, -1) + (buffer, "EDITING", None, False)
     if key == b"\x1b[B" or key in (b"j", b"J"):
-        return _move(rows, cursor, +1, "EDITING") + (buffer, "EDITING", None, False)
+        return _move(rows, cursor, +1) + (buffer, "EDITING", None, False)
 
     # Printable: append to the buffer (q/Q/slash are literal here so
     # the user can search for them), then rebuild.
