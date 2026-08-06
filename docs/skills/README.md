@@ -79,7 +79,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`ci-doctor`](ci-doctor.md) | `enforcement` | Read-only PASS/FAIL audit of CI readiness. |
 | [`ci-triage`](ci-triage.md) | `enforcement` | Triage failing GitHub Actions runs; dedupe against a persisted case store; every case carries a re-runnable repro + regression test. |
 | [`code-viz`](code-viz.md) | `state` | Generic plugin-architecture visualizer — multi-level views + domain pillar map + per-skill workflows to one self-contained HTML page. |
-| [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits stale docs and refreshes the README without recording volatile facts. |
+| [`docs-maintenance`](docs-maintenance.md) | `analysis` | Audits repository docs with the README as the highest-priority document; always audits and verifies the README, updates when needed. |
 | [`prune-propose`](prune-propose.md) | `state` | Usage-telemetry dump + per-skill delete proposal, user-approved. |
 | [`learn`](learn.md) | `state` | Distill source text (file path, URL, prose, or session transcript) into a candidate `skills/<name>/SKILL.md`, gated by deterministic G1–G5 checks + a per-candidate approval step. |
 

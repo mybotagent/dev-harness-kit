@@ -1,7 +1,7 @@
 ---
 name: docs-maintenance
 category: audit
-description: Audit repository documentation with the project README as the highest-priority document. The README is always updated AND checked every run.
+description: Audit repository documentation with the project README as the highest-priority document. The README is always audited AND verified every run, and updated when needed.
 alpha: analysis
 when_to_use: |
   - User types /dev-kit:docs-maintenance
@@ -20,14 +20,14 @@ user-invocable: true
 
 The project README is the most important document in any repository.
 
-This skill treats it as such: every run **always updates the README** to reflect the current source of truth and **always checks the README** for false-positive (claims that don't exist) and false-negative (capabilities the README misses) drift. It then audits the rest of the documentation, removes or marks superseded operational guidance, and keeps volatile inventory details out of prose. It is intended for documentation changes only; it must not silently change product behavior.
+This skill treats it as such: every run **always audits and verifies the README** for false-positive (claims that don't exist) and false-negative (capabilities the README misses) drift, and **updates the README when needed** to reflect the current source of truth. A correct no-change run still produces a per-entry `kept | updated | removed` audit trail — the audit is the deliverable, not a forced edit. It then audits the rest of the documentation, removes or marks superseded operational guidance, and keeps volatile inventory details out of prose. It is intended for documentation changes only; it must not silently change product behavior.
 
 ## Reusable meta prompt
 
 Use this prompt when delegating the same maintenance task to another agent:
 
 ```text
-Audit this repository's documentation against the current implementation. The project README is the highest-priority document — update it AND verify it every run.
+Audit this repository's documentation against the current implementation. The project README is the highest-priority document — always audit AND verify it every run, and update it when needed.
 
 1. README first (mandatory, every run):
    a. Update the README so its commands, paths, installation flow, cache-refresh workflow, and verification steps match the current source of truth (scripts, manifests, tests, recent commits).
