@@ -300,6 +300,7 @@ def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
 def _gate_g3_llm_verdicts(
     pr_number: int, repo: str, fetched_at: str = "",
     comments: tuple[dict, ...] | None = None,
+    pr_pushed_at: str = "",
 ) -> GateResult:
     """G3: latest LLM-judge verdict for review + security + maintenance
     is `Approve`. Parsed from the most recent claude[bot] comment
@@ -309,6 +310,11 @@ def _gate_g3_llm_verdicts(
     which shares one `gh api .../comments` round-trip across G3 and G4.
     The default-None fallback preserves the gate-level hermetic test
     API (passes when called directly without pre-fetched data).
+
+    `pr_pushed_at` is the ISO-8601 timestamp of the most recent push
+    to the PR's head. If the latest verdict comment is OLDER than
+    `pr_pushed_at`, the verdict is stale (a new commit has landed
+    since the verdict was emitted) and G3 returns STALE.
     """
     if not fetched_at:
         fetched_at = _now_iso()
@@ -321,10 +327,21 @@ def _gate_g3_llm_verdicts(
         ])
         comments = tuple(json.loads(raw))
     verdict, src = _parse_latest_llm_verdict(comments)
+
+    # M-2 stale-verdict guard: if the latest comment was created BEFORE
+    # the most recent push, it is no longer authoritative.
+    if verdict == "Approve" and pr_pushed_at and src:
+        # Find the source comment's created_at to compare.
+        src_comment = next((c for c in comments if c.get("id") == src), None)
+        src_created = (src_comment or {}).get("created_at") or (src_comment or {}).get("updated_at") or ""
+        if src_created and src_created < pr_pushed_at:
+            verdict = "STALE"
     passed = verdict == "Approve"
     detail = f"latest verdict: {verdict}"
     if src:
         detail += f"  (comment id={src})"
+    if verdict == "STALE":
+        detail += f"  (created_at < pushed_at={pr_pushed_at})"
     return GateResult(
         gate="G3",
         label="most recent LLM-judge verdict is Approve",
@@ -459,10 +476,19 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
         "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
     ])
     shared_comments: tuple[dict, ...] = tuple(json.loads(raw))
+    # Fetch pushed_at for M-2 stale-verdict guard (G3). Same API call
+    # as G1 but extracted separately to avoid coupling G1's return
+    # shape to G3's needs.
+    raw_pr = _run_gh([
+        "pr", "view", str(pr_number),
+        "--repo", repo,
+        "--json", "pushed_at",
+    ])
+    pr_pushed_at = json.loads(raw_pr).get("pushed_at", "")
     gates: list[GateResult] = [
         _gate_g1_pr_state(pr_number, repo),
         _gate_g2_ci_checks(pr_number, repo),
-        _gate_g3_llm_verdicts(pr_number, repo, comments=shared_comments),
+        _gate_g3_llm_verdicts(pr_number, repo, comments=shared_comments, pr_pushed_at=pr_pushed_at),
         _gate_g4_audit_no_failure_paired_with_approve(pr_number, repo, comments=shared_comments),
         _gate_g5_merge_state(pr_number, repo),
     ]

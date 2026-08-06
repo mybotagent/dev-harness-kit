@@ -367,6 +367,42 @@ class TestM6UnknownBucketFailsG2(unittest.TestCase):
 
 
 
+
+
+class TestM2StaleVerdictGuard(unittest.TestCase):
+    """Regression: a verdict emitted BEFORE the most recent push to the
+    PR head must NOT count as the latest authoritative verdict (M-2).
+    The verdict is marked STALE so the gate fails."""
+
+    def test_old_approve_with_new_push_is_stale(self):
+        # Comment created at 01-01, push at 01-02 — comment is stale.
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "id": "1"},
+        ])):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,  # forces the _run_gh fallback path
+                pr_pushed_at="2026-01-02T00:00:00Z",
+            )
+        self.assertFalse(g.passed)
+        self.assertIn("STALE", g.detail)
+
+    def test_recent_approve_with_no_push_is_fresh(self):
+        # Comment created AFTER push — fresh.
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-03T00:00:00Z", "updated_at": "2026-01-03T00:00:00Z", "id": "1"},
+        ])):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+            )
+        self.assertTrue(g.passed)
+
+
+
 if __name__ == "__main__":
     unittest.main()
 
