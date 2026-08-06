@@ -10,7 +10,8 @@ allowed-tools: Read Write Glob Bash AskUserQuestion
 disallowed-tools: Agent WebFetch
 model: opus
 disable-model-invocation: false
----> [← Skills index](../../README.md)
+---
+> [← Skills index](../../README.md)
 
 # /dev-kit:bootstrap — One-shot setup (CLAUDE.md + optional CI)
 
