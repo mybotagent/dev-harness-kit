@@ -304,7 +304,7 @@ FAMILY_DEFAULTS: Dict[str, Tuple[str, ...]] = {
     "security": tuple(sorted(n for n in REGISTRY if n.startswith("owasp-"))),
     "inspect": (
         "dead", "dup", "smell", "overeng", "overarch",
-        "cleancode", "tokenbudget", "slop",
+        "cleancode", "tokenbudget", "slop", "secret",
     ),
     "audit": ("slop", "secret"),
 }
