@@ -229,7 +229,7 @@ def classify(steps: Iterable[dict]) -> DispatchDecision:
     Priority order (first match wins):
       1. Dependency edge between any pair → sequential.
       2. Any step has vague scope → sequential.
-      3. Two steps share declared writes without partition → sequential.
+      3. Two steps share declared writes → sequential.
       4. N >= 4 AND every step has clean worktree isolation → parallel.
       5. Otherwise → sequential.
 
@@ -265,7 +265,7 @@ def classify(steps: Iterable[dict]) -> DispatchDecision:
     if _has_overlap(steps_list):
         return DispatchDecision(
             mode="sequential",
-            reason=f"{n} steps, overlapping writes without partition",
+            reason=f"{n} steps, overlapping writes",
         )
 
     # Rule 4 — clean isolation AND sufficient N.

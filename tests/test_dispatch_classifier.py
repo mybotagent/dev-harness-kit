@@ -4,7 +4,7 @@
 Covers the 5-rule classifier priority order + each rule's edge cases:
   1. Dependency edge → sequential
   2. Vague scope (TODO/FIXME/TBD/maybe/perhaps/either) → sequential
-  3. Overlapping writes without partition → sequential
+  3. Overlapping writes → sequential
   4. N >= 4 + clean isolation → parallel
   5. Default → sequential
 """
@@ -131,7 +131,7 @@ class TestClassifyVagueScope(unittest.TestCase):
 
 
 class TestClassifyOverlap(unittest.TestCase):
-    """Rule 3 — overlapping writes without partition → sequential."""
+    """Rule 3 — overlapping writes → sequential."""
 
     def test_shared_writes_without_partition_triggers_sequential(self):
         steps = [
@@ -270,7 +270,7 @@ class TestClassifyCanonicalMetadataFailClosed(unittest.TestCase):
         )
 
     def test_explicit_writes_but_missing_partition_is_sequential(self):
-        """Writes present without partition is not enough — partition
+        """Writes present but no explicit partition is not enough — partition
         documents intent for the shared-state. Without it, sequential."""
         steps = [
             _step(1, partition="api-routes", writes=["src/api/users.ts"]),

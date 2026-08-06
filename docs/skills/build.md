@@ -21,7 +21,7 @@ Once the pre-flight gate passes, `lib/execute.py:main` reads the phase index, fi
 **Classifier priority order** (first match wins):
 1. **Dependency edge** between any pair (`depends_on` / `consumes`) → sequential.
 2. **Vague scope** (TODO/FIXME/TBD/maybe/perhaps/either in preamble or AC) → sequential.
-3. **Overlapping writes** between two steps without partition → sequential.
+3. **Overlapping writes** between two steps → sequential.
 4. **N ≥ 4 eligible steps** AND clean worktree isolation → parallel.
 5. **Otherwise** → sequential.
 
@@ -64,7 +64,7 @@ Dispatch mode is auto-classified per batch (see "How it works"). There is no `--
 - `.dev-kit/hand-off/build→review.md`, written automatically.
 - A 2-commit protocol per successful step on its per-step branch: `feat({phase}): step {N} — {name}` and `chore({phase}): step {N} output`.
 
-Test evidence: 50 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics)). Plus 25 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, reason format, and the `?`-marker false-positive regressions.
+Test evidence: 50 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics)). Plus 27 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, reason format, and the `?`-marker false-positive regressions.
 
 ## Long-running session templates
 
@@ -92,7 +92,7 @@ Template behavior is validated by `tests/test_long_running_templates.py` (struct
 - `lib/execute.py` — the harness-runner engine this skill wraps.
 - `lib/dispatch_classifier.py` — pure-Python classifier that decides parallel vs sequential per batch (5-rule priority order, default sequential; replaces the legacy `--parallel` flag).
 - `tests/test_execute.py` — the 50 tests referenced above.
-- `tests/test_dispatch_classifier.py` — the 25 classifier tests covering all 5 rules, priority order, idempotency, reason format.
+- `tests/test_dispatch_classifier.py` — the 27 classifier tests covering all 5 rules, priority order, idempotency, reason format.
 
 ---
 *Source: [`skills/build/SKILL.md`](../../skills/build/SKILL.md)*
