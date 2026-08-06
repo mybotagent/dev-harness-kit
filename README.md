@@ -34,6 +34,10 @@ them.
 It works in both Claude Code and Codex, and the same commands mean the same thing
 in both.
 
+**MCP integration is intentionally out of scope.** This plugin ships slash commands,
+hooks, and library functions — no MCP server entry. See
+[docs/decisions/0001-no-mcp.md](docs/decisions/0001-no-mcp.md) for the rationale.
+
 **New here?** The friendliest starting point is
 [`docs/home/00-index.md`](docs/home/00-index.md)
 ([한국어](docs/home/00-index.ko.md)) — it explains *why* the system exists and
