@@ -27,10 +27,15 @@ this skill renders and writes the HTML.
 
 ## Workflow (BEFORE / AFTER)
 
-The skill enforces a **before-then-after** authoring discipline. A
+The skill **prescribes** a **before-then-after** authoring discipline. A
 proposal is a contract between the existing code and the change being
-proposed; both sides are encouraged to be present and citable, and the
-renderer renders each present section independently.
+proposed; reviewers benefit when both sides are present and citable.
+
+The renderer does NOT enforce this discipline — the parser accepts any
+proposal whose YAML matches the schema, including those that omit
+`before:` and `after:` entirely. The §Workflow describes the
+recommended discipline; §Limitations is honest about what the parser
+does and does not catch. Reviewers are the enforcement mechanism.
 
 **BEFORE** — analyze the existing code first. Read the file(s) the
 proposal will touch, capture concrete observations (file:line, commit

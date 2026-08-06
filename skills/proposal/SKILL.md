@@ -73,15 +73,21 @@ The render logic lives in `lib/render_proposal_html.py` (pure function) plus a
 
 ## Workflow (BEFORE / AFTER)
 
-The skill enforces a **before-then-after** authoring discipline. A proposal
-is a contract between the existing code and the change being proposed; both
-sides must be present and citable.
+The skill **prescribes** a **before-then-after** authoring discipline. A
+proposal is a contract between the existing code and the change being
+proposed; reviewers benefit when both sides are present and citable.
+
+The renderer does NOT enforce this discipline. The parser accepts any
+proposal whose YAML matches the schema — including proposals that omit
+`before:` and `after:` entirely. The §Workflow section below describes
+the recommended discipline; §Limitations is honest about what the
+parser does and does not catch. Reviewers are the enforcement mechanism.
 
 ### Before — analyze the existing code
 
-Before the YAML is written, the maintainer (or the model writing on the
-maintainer's behalf) MUST read the existing code that the proposal will
-touch and capture concrete observations:
+The maintainer (or the model writing on the maintainer's behalf) is
+**expected to** read the existing code that the proposal will touch
+and capture concrete observations before authoring the YAML:
 
 - Which file(s) currently implement the behavior the proposal changes?
 - What does that code do today, and where does it fall short?
