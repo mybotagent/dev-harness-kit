@@ -10,35 +10,44 @@ allowed-tools: Read Write Glob Bash AskUserQuestion
 disallowed-tools: Agent WebFetch
 model: opus
 disable-model-invocation: false
----
-> [← Skills index](../../README.md)
+---> [← Skills index](../../README.md)
 
-# /dev-kit:bootstrap — Minimal First-Run Setup
+# /dev-kit:bootstrap — One-shot setup (CLAUDE.md + optional CI)
 
 ## What it does
 
-Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) and then writes the project SSOT. On a fresh repo, exactly these files land on disk: `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. No sanity report file. No hand-off file. AGENTS.md is a 1-line pointer (`CLAUDE.md`) for CLIs that read AGENTS.md instead of CLAUDE.md. CLAUDE.md is a minimal pointer document — detailed content lives in the linked `index.md` files.
+Runs the deterministic bootstrap pipeline (sanity -> codebase-map -> hook-matrix -> write-claude-md), then prompts the operator for whether to also install CI. On a fresh repo, the unconditional bootstrap set lands on disk: `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. CI is opt-in via a single Y/n prompt (or `--skip-ci` / `--yes` flags).
+
+If Y: also runs `lib/ci_setup.py:install_ci_config()` to install the 15 CI workflow templates, pre-push hook, `.dev-kit/ci-config.json` marker, Phase 1.5 pre-flight probe, Phase 1.7 lint, and Phase 3 verify. End state on disk is identical to the legacy `/dev-kit:bootstrap-full` slash.
+
+If N (or `--skip-ci`): prints the unavailable-features list below and exits with code 0. CI can be added later via `/dev-kit:ci-setup --force`.
 
 ## Iron Law (no exceptions)
-**0-arg default OK.** Only hidden flags allowed (`--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`).
+**0-arg default OK.** Hidden flags: `--target DIR`, `--skip-sanity`, `--skip-map`, `--slim|--full`, `--team`, `--strict`, `--persist-audit`, `--skip-ci` (skip ci-setup, equivalent to answering `n`), `--yes` (skip the prompt, default `Y`), `--force` (overwrite existing CI templates during ci-setup), `--skip-verify` (skip ci-setup Phase 3 verify).
 
-## 6-Step Orchestration (4 auto + 1 user confirm + 1 exit)
+## 7-Step Orchestration (4 auto + 1 prompt + 1 ci-setup + 1 user review)
 
 ```
-[1] sanity                → stdout only (file only with --persist-audit)
-       ↓ (auto, deterministic regex + glob)
-[2] codebase-map          → §3 (lazy-loading index; consumed only by --full-claude-md)
-       ↓ (auto, Read + Glob + Bash; only consumed by --full-claude-md)
-[3] hook-matrix           → .dev-kit/.active-hooks.json (SSOT)
-       ↓ (auto)
-[4] write-claude-md lib/write_project_md.py → CLAUDE.md + AGENTS.md + 4 index.md files (atomic; CLAUDE.md is a slim pointer)
-       ↓ (auto)
-[5] user review 1x (HOTL, MUST-29)
-       ↓
-[6] exit → wait for /dev-kit:ci-setup --force call (no bootstrap→ci-setup hand-off file; §5 pointer is enough). Pass `--force` to refresh existing CI templates in target repo.
+[1] sanity                -> stdout only (file only with --persist-audit)
+       | (auto, deterministic regex + glob)
+[2] codebase-map          -> section 3 (lazy-loading index; consumed only by --full-claude-md)
+       | (auto, Read + Glob + Bash; only consumed by --full-claude-md)
+[3] hook-matrix           -> .dev-kit/.active-hooks.json (SSOT)
+       | (auto)
+[4] write-claude-md lib/write_project_md.py -> CLAUDE.md + AGENTS.md + 4 index.md files
+       | (auto)
+[5] ci-setup prompt       -> "Also install CI templates (ci-setup)? [Y/n]"
+       | (Y default; auto if --yes; skip if --skip-ci)
+[6] ci-setup              -> lib/ci_setup.py:install_ci_config() (only if Y/--yes)
+       |-- 1.5 pre-flight probe
+       |-- 15 EXPECTED_PATHS + .dev-kit/ci-config.json marker
+       |-- 1.7 lint pass (warnings non-fatal)
+       |-- 4 post-install checklist
+       | (skip if N; skip verify if --skip-verify)
+[7] exit -> HOTL review -> next: /dev-kit:build (or /dev-kit:plan for idea -> PRD.md synthesis)
 ```
 
-## Sub-stage 1 — sanity (deterministic, no LLM)
+## Sub-stage 1 -- sanity (deterministic, no LLM)
 
 **Iron Law:** never modify files. Read input directory only; emit result to `.dev-kit/sanity-report.md`.
 
@@ -48,7 +57,7 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
 |---|---|
 | **PASS** | All required preconditions pass |
 | **WARN** | 1~3 WARN (pass-through allowed) |
-| **FAIL** | 4+ WARN or 1+ critical — Plan entry ❌ |
+| **FAIL** | 4+ WARN or 1+ critical -- Plan entry ❌ |
 
 ### 7-check audit
 
@@ -56,16 +65,16 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
 |---|---|---|---|
 | 1 | `package.json` or `pyproject.toml` exists (manifest) | `Glob` | WARN |
 | 2 | `.git/` directory healthy (HEAD exists) | `Bash: git rev-parse --git-dir` | WARN |
-| 3 | `docs/` directory has 4 template placeholders (`ARCHITECTURE.md`, `PRD.md`, `ADR.md`, `DESIGN.md`) | `Glob` | WARN |
+| 3 | `docs/` directory has 4 template placeholders | `Glob` | WARN |
 | 4 | banned-phrase scan (slop-detector SSOT regex) | `Bash: slop-detector.sh` (read-only) | WARN |
 | 5 | secret-scan (credential pattern) | `Bash: secret-scan.sh` (read-only) | **CRITICAL FAIL** |
-| 6 | hook bypass detection (`DEV_KIT_HOOK_OFF=*` env) | `Bash: env \| grep` | WARN |
-| 7 | methodology lockfile (`lib/methodology.json` consistency) | `Read` | WARN |
+| 6 | hook bypass detection (DEV_KIT_HOOK_OFF env) | `Bash: env | grep` | WARN |
+| 7 | methodology lockfile (lib/methodology.json consistency) | `Read` | WARN |
 
 ### Sanity report format
 
 ```markdown
-# Sanity Report — dev-harness-kit
+# Sanity Report -- dev-harness-kit
 - scanned_at: ISO-8601 KST
 - target: <absolute path>
 - result: PASS / WARN / FAIL
@@ -81,7 +90,7 @@ Runs three deterministic sub-stages (sanity → codebase-map → hook-matrix) an
 
 **Rules:** read-only invariant; zero LLM calls; fail fast on 1 critical.
 
-## Sub-stage 2 — codebase map (deterministic, no LLM)
+## Sub-stage 2 -- codebase map (deterministic, no LLM)
 
 **Iron Law:** no guessing / padding. Only output from pre-validated tools (glob/cat/jq). On guess, append `STALE: guess` marker + wait for user input.
 
@@ -100,19 +109,19 @@ full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
 |---|---|---|
 | **Tree** | recursive os.walk (depth 4, exclude `node_modules` `.git` `dist` `__pycache__`) | `os.walk` + path sort |
 | **Manifest** | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` (whichever exists) | `Bash: jq` / `Read` |
-| **Deps** | lockfile (`pnpm-lock.yaml` / `package-lock.json` / `requirements.txt` / `Pipfile.lock`) top 10 | `Bash: head -10` |
+| **Deps** | lockfile top 10 | `Bash: head -10` |
 | **Conventions** | `.editorconfig` / `.eslintrc` / `.prettierrc` / `pyproject.toml [tool.*]` | `Read` |
 
 ### Modes
 
 | Mode | Output | Tokens |
 |---|---|---|
-| default | §3 = lazy-loading index in CLAUDE.md | ~100 tokens |
+| default | lazy-loading index in CLAUDE.md | ~100 tokens |
 | `--full-claude-md` (opt-in) | `docs/CODEBASE-MAP.md` written (4 sections) | 500~5000 tokens |
 
-**Rules:** determinism (same input → same output; `jq --sort-keys` + path stable sort); no lockfile mutation; secret mask for `password|token|key`; `STALE` marker on guess.
+**Rules:** determinism (same input -> same output; `jq --sort-keys` + path stable sort); no lockfile mutation; secret mask; `STALE` marker on guess.
 
-## Sub-stage 3 — hook matrix init (SSOT)
+## Sub-stage 3 -- hook matrix init (SSOT)
 
 **Iron Law:** all hook active states are decided in one place: `.dev-kit/.active-hooks.json`. `hooks/hooks.json` only registers the matrix reader.
 
@@ -123,13 +132,7 @@ full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
   "schema_version": "1.0.0",
   "updated_at": "2026-07-04T15:30:00Z",
   "matrix": {
-    "bootstrap": {
-      "tdd-guard": false,
-      "bash-guard": false,
-      "secret-scan": "read-only",
-      "slop-detector": false,
-      "stop-verify": false
-    },
+    "bootstrap": { "tdd-guard": false, "bash-guard": false, "secret-scan": "read-only", "slop-detector": false, "stop-verify": false },
     "plan":       { "tdd-guard": false, "bash-guard": false, "secret-scan": false, "slop-detector": false, "stop-verify": true },
     "design":     { "tdd-guard": false, "bash-guard": false, "secret-scan": false, "slop-detector": false, "stop-verify": true },
     "build":      { "tdd-guard": true,  "bash-guard": true,  "secret-scan": true,  "slop-detector": true,  "stop-verify": true },
@@ -137,10 +140,7 @@ full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
     "security":   { "tdd-guard": false, "bash-guard": false, "secret-scan": true,  "slop-detector": true,  "stop-verify": true },
     "ship":       { "tdd-guard": false, "bash-guard": false, "secret-scan": false, "slop-detector": false, "stop-verify": true }
   },
-  "override": {
-    "disabled_hooks": [],
-    "strict_mode": false
-  }
+  "override": { "disabled_hooks": [], "strict_mode": false }
 }
 ```
 
@@ -149,7 +149,7 @@ full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
 | Hook | Stage ON | Note |
 |---|---|---|
 | `tdd-guard` | build | active only when lib/methodology/tdd.py is loaded (MUST-48) |
-| `bash-guard` | build | patterns like `rm -rf`, `git push --force main` |
+| `bash-guard` | build | patterns like `rm -rf`, destructive git operations |
 | `secret-scan` | build / review / security | PostToolUse: credential pattern grep |
 | `slop-detector` | build / review / security | KO+EN banned phrases |
 | `stop-verify` | plan / design / build / review / security / ship | Stop event: AC claim verification |
@@ -168,14 +168,55 @@ full codebase map to `docs/CODEBASE-MAP.md` instead of relying on lazy reads.
 
 `active-hooks.json` SSOT auto-initialized (MUST-13). With `--strict` all hooks `exit 2`.
 
+## ci-setup prompt (sub-stage 5)
+
+After the unconditional bootstrap set lands on disk, the skill prompts:
+
+```
+Also install CI templates (ci-setup)? [Y/n]
+```
+
+### Y branch (default)
+
+Delegates to `lib/ci_setup.py:install_ci_config(force=True)` -- same code path as `/dev-kit:ci-setup --force`:
+
+- Phase 1.5 pre-flight probe (`gh` deps -> OK/WARN/INFO/SKIP, non-blocking)
+- 15 EXPECTED_PATHS installed (`.github/workflows/*.yml`)
+- `.dev-kit/ci-config.json` marker written
+- Phase 1.7 lint pass (warnings non-fatal)
+- Phase 4 post-install checklist
+
+If `--skip-verify` is passed, Phase 3 verify (bash -n, ast.parse, scripts/validate.py, scripts/ci-local.sh) is skipped.
+
+End state matches the legacy `/dev-kit:bootstrap-full` slash exactly.
+
+### n branch
+
+Skips `install_ci_config()`. Prints the unavailable-features list (below) and exits 0. Operators can add CI later via `/dev-kit:ci-setup --force`.
+
+Equivalent to passing `--skip-ci` (no prompt, assume `n`).
+
+## What is unavailable without ci-setup
+
+If you answer `n` (or pass `--skip-ci`), the following features are unavailable until ci-setup runs separately:
+
+- `/dev-kit:ci-doctor` (drift detection) -- requires `.dev-kit/ci-config.json` marker
+- `/dev-kit:bump` version-bump workflow -- requires pre-push hook
+- 15 CI workflow templates in `.github/workflows/` (`validate.yml`, `test.yml`, `auto-fix.yml`, etc.)
+- Pre-push hook (`.git/hooks/pre-push`)
+- `PreCompletionChecklistMiddleware` (PR-level cost flag aggregation)
+- `/dev-kit:evaluate` harness-quality gate (depends on ci-setup-installed workflows)
+
 ## Rules (no exceptions)
 
 - **0-arg UX (MUST-21)**: zero args. Branching via `when_to_use` auto-match.
-- **HOTL (MUST-29)**: steps 1~4 auto. §5 hand-off pointer auto-updated.
-- **YAGNI**: no extra option prompts ❌ (MUST-NOT-13). Only hidden flags like `--slim|--full`, `--persist-audit`.
+- **HOTL (MUST-29)**: steps 1~4 auto. Step 5 ci-setup prompt is a single Y/n with no further sub-prompts.
+- **YAGNI**: no extra option prompts (MUST-NOT-13). Only hidden flags.
 - **No-over-engineering (MUST-25)**: defaults handle 80%. Extra features require ADR.
-- **Minimal file footprint**: default run touches `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.json`, `iron-laws/index.md`, `guidelines/index.md`, `hooks/index.md`, plus `rules/index.md` if `rules/` exists. CLAUDE.md is a slim pointer to these index files; detailed content is lazy-loaded. Use `--persist-audit` to also write `.dev-kit/sanity-report.md`.
+- **Minimal file footprint**: unconditional set is 6~7 files (CLAUDE.md, AGENTS.md, `.dev-kit/.active-hooks.json`, 4 index.md). With ci-setup, +15 CI workflows + `.dev-kit/ci-config.json` + pre-push hook.
 
 ## Next step
 
-After bootstrap, call `/dev-kit:ci-setup --force` to install (or refresh) dev-kit's reusable GitHub Action review workflows + pre-push hook + local runner into the target repo. The `--force` flag overwrites existing installed files; omit it for idempotent re-runs. Pass `--target DIR` to install into a sibling project instead of the current directory. `/dev-kit:plan` is opt-in and only for idea → PRD.md synthesis — it is NOT the default next stage.
+After bootstrap + ci-setup (Y): run `/dev-kit:build <first-feature>` to start the canonical plan -> build loop. `/dev-kit:ci-doctor` is also available for post-install drift verification (issue #212-D1).
+
+After bootstrap (N): run `/dev-kit:ci-setup --force` whenever you are ready to add CI. `/dev-kit:plan` is opt-in and only for idea -> PRD.md synthesis -- it is NOT the default next stage.
