@@ -203,7 +203,7 @@ def classify(steps: Iterable[dict]) -> DispatchDecision:
         if _has_vague_scope(step):
             return DispatchDecision(
                 mode="sequential",
-                reason=f"step {step.get('step', i + 1)} has vague scope",
+                reason=f"step {str(step.get('step', i + 1)).splitlines()[0]} has vague scope",
             )
 
     # Rule 3 — overlap on shared writes.

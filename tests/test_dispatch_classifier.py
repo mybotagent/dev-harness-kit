@@ -241,10 +241,6 @@ class TestClassifyVagueScopeFalsePositives(unittest.TestCase):
                          "legitimate ? in a question must not trigger '?' as vague-scope")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestClassifyCanonicalMetadataFailClosed(unittest.TestCase):
     """PR #579 3-dim review round 8: missing metadata is treated as
     proof of clean isolation, causing four ordinary plan-generated
@@ -288,6 +284,9 @@ class TestClassifyCanonicalMetadataFailClosed(unittest.TestCase):
         d = classify(steps)
         self.assertEqual(d.mode, "sequential",
                          f"writes-without-partition must be sequential, not parallel; got {d.mode!r}")
+
+
+
 
 
 class TestClassifyACFieldValidation(unittest.TestCase):
@@ -344,3 +343,36 @@ class TestClassifyACFieldValidation(unittest.TestCase):
         d = classify(steps)
         self.assertEqual(d.mode, "parallel",
                          f"clean ACs should not trigger vague scope; got {d.mode!r}")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+
+
+class TestVagueScopeLogInjection(unittest.TestCase):
+    """Regression: step number can be a string containing a newline.
+
+    Without coercion, the reason spans multiple stderr lines and
+    could mislead a downstream log parser. The fix: coerce to a
+    single line via str().splitlines()[0].
+    """
+
+    def test_step_with_newline_in_value_is_single_line(self):
+        # A crafted phases/.../index.json with a step number that is
+        # a string containing a newline. The reason must be single-line.
+        steps = [
+            _step(1, partition="a", preamble="TODO: investigate"),
+            _step(2, partition="b"),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        # Override step[0] with a string containing a newline.
+        steps[0]["step"] = "1\n[ERROR] fake log"
+        d = classify(steps)
+        self.assertEqual(d.mode, "sequential")
+        # Coercion: only the first line of the step number is in the
+        # reason. The injected "[ERROR] fake log" is dropped.
+        self.assertIn("1 ", d.reason)
+        self.assertNotIn("[ERROR] fake log", d.reason)
