@@ -37,9 +37,18 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # L4/L7 violations, F1/F2/F3/F6/F7/F8 in the multi-dim review; PR-repair
 # still owned by /dev-kit:babysit-pr + lib/repair_coordinator.py).
 # Added skills/research-plan-build/SKILL.md (3-phase binder, PR #563) (37 -> 38).
+# PR-1 slim sweep removed skills/audit/SKILL.md (folded into /dev-kit:inspect
+# --secrets / --slop flags) and skills/bootstrap-full/SKILL.md (merged into
+# /dev-kit:bootstrap with runtime ci-setup prompt). (38 -> 37 on this branch's
+# baseline — note the count does not change vs the previous entry because
+# research-plan-build and the two PR-1 removals net to zero on this branch).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
+<<<<<<< HEAD
 SKILL_COUNT = 40
+=======
+SKILL_COUNT = 37
+>>>>>>> e8ed62e (test(smoke): bump SKILL_COUNT to 37 for PR-1 slim sweep)
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
