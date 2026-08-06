@@ -168,37 +168,72 @@ def _repo_root() -> Path:
 def _enabled() -> bool:
     """Return True iff Linear auto-sync is configured on for the current worktree.
 
-    Precedence:
-      1. Per-worktree `.dev-kit/linear-config.json` (set by `linear on`).
-      2. Env var `LINEAR_API_KEY` (presence = enabled). Falls back to
-         `.dev-kit/.env.linear` (untracked) if not in the shell env.
-      3. Legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}.
+    Precedence (first match wins):
+      1. Per-worktree `.dev-kit/linear-config.json:enabled` — requires
+         the API key to also be reachable.
+      2. `LINEAR_API_KEY` env var (presence = enabled).
+      3. Legacy `.dev-kit/.enabled.json:mcp.linear` in {`auto`, `on`}.
 
-    Returns True iff at least one of (1), (2), (3) is enabled AND
-    the API key is reachable.
+    A worktree config that exists without an `enabled` key falls
+    through to (2)/(3) (defensive: partial writes cannot accidentally
+    enable sync).
+
+    Under `LINEAR_DEBUG=1`, the activation decision + reason are
+    logged to stderr so silent failures (the original "sync doesn’t
+    work" symptom) become visible.
     """
     repo = _repo_root()
-    _load_env_file(repo)
+    debug = os.environ.get("LINEAR_DEBUG", "").strip() in ("1", "true", "yes")
+
+    def _log(decision: str, reason: str, key_state: str) -> None:
+        if debug:
+            print(
+                f"[linear-sync] _enabled()={decision} key={key_state} — {reason}",
+                file=sys.stderr,
+            )
+
+    # (1) Worktree config wins when it explicitly sets `enabled`.
     cfg = _read_worktree_config(repo)
-    if cfg is not None:
-        if not cfg.get("enabled", True):
+    if cfg is not None and "enabled" in cfg:
+        # Load env AFTER reading the config so a partial .env.linear
+        # (LINEAR_API_KEY=) cannot blank the env var the gate needs.
+        _load_env_file(repo)
+        key = os.environ.get("LINEAR_API_KEY", "").strip()
+        if not cfg.get("enabled"):
+            _log("False", "linear-config.json:enabled is false", "set" if key else "missing")
             return False
-        # Worktree config explicitly enables — but still need the API key.
-        return bool(os.environ.get("LINEAR_API_KEY", "").strip())
-    if os.environ.get("LINEAR_API_KEY", "").strip():
+        if not key:
+            _log("False", "linear-config.json:enabled=true but LINEAR_API_KEY missing", "missing")
+            return False
+        _log("True", "linear-config.json:enabled=true with API key", "set")
         return True
+
+    # (2)/(3) Without explicit worktree config, load env and fall through.
+    _load_env_file(repo)
+    key = os.environ.get("LINEAR_API_KEY", "").strip()
+    if key:
+        _log("True", "LINEAR_API_KEY present", "set")
+        return True
+
     enabled_path = repo / _ENABLED_REL
     if not enabled_path.is_file():
+        _log("False", "no activation source matched", "missing")
         return False
     try:
         legacy = json.loads(enabled_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        _log("False", "legacy .enabled.json unreadable", "missing")
         return False
     mcp = legacy.get("mcp") if isinstance(legacy, dict) else None
     if not isinstance(mcp, dict):
+        _log("False", "legacy .enabled.json has no mcp block", "missing")
         return False
     state = str(mcp.get("linear", "off")).lower()
-    return state in ("auto", "on")
+    if state not in ("auto", "on"):
+        _log("False", f"legacy .enabled.json:mcp.linear={state!r} (not auto/on)", "missing")
+        return False
+    _log("False", "legacy .enabled.json says enabled but LINEAR_API_KEY missing", "missing")
+    return False
 
 
 def _read_worktree_config(repo: Path) -> dict[str, Any] | None:
@@ -727,72 +762,263 @@ def _find_or_create_project(repo: Path, team_id: str | None) -> str:
     return str(data["projectCreate"]["project"]["id"])
 
 
-def _find_issue(project_id: str, scope_key: str) -> str | None:
-    """Return the issue id whose description starts with `scope_key`."""
+def _utc_now_iso() -> str:
+    """Current UTC time as ISO-8601 with `Z` suffix."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _extract_issue_id(issue_ref: str) -> str:
+    """Strip the `SHO-123 (uuid)` wrapper to its bare uuid.
+
+    `issue_ref` may be either a bare uuid, `SHO-123 (uuid)`, or the
+    same wrapped without a space. Centralizing the unwrap keeps
+    `_set_issue_state` / `_archive_issue` / `_update_issue` in sync.
+    """
+    s = issue_ref.strip()
+    if "(" in s and s.endswith(")"):
+        return s[s.rfind("(") + 1:-1].strip()
+    return s
+
+
+def _is_completion_signal(prompt: str) -> bool:
+    """Return True iff the prompt declares completion of the task.
+
+    A prompt qualifies when it contains a completion verb
+    (`done`, `finished`, `complete[d]?`, `shipped`, `merged`, `closed`).
+    Work-verb-wins was tried and dropped: phrases like "done with
+    the auth refactor" describe a completed task (where "refactor"
+    is a noun, not new work), and false-negatives were far more
+    common than false-positives in practice.
+    """
+    s = prompt.strip().lower()
+    if not s:
+        return False
+    completion = ("done", "finished", "completed", "complete",
+                  "shipped", "merged", "closed")
+    return any(re.search(rf"\b{v}\b", s) for v in completion)
+
+
+def _is_work_signal(prompt: str) -> bool:
+    """Return True iff the prompt looks like work is starting/continuing.
+
+    Subset of the work-verb list — `fix`, `update`, `remove`, `delete`
+    are intentionally excluded because they often apply to cleanup
+    after completion (e.g. "fix the leftover test") rather than new
+    starting work.
+    """
+    s = prompt.strip().lower()
+    if not s:
+        return False
+    starters = ("implement", "build", "wire", "integrate",
+                "start", "sync", "register", "track", "add", "create")
+    return any(re.search(rf"\b{v}\b", s) for v in starters)
+
+
+def _state_id(state_name: str) -> str | None:
+    """Resolve a workflow-state name (e.g. 'Todo', 'In Progress',
+    'Done') to its uuid for the configured team.
+
+    Mirrors `tools/linear_pr_sync.py::_state_id`. Returns None when
+    the team has no column with that name (custom workflows).
+    """
+    team_id = _resolve_team_id()
+    if not team_id:
+        return None
     query = (
-        "query($projectId: ID!) {"
-        "  issues(filter: { project: { id: { eq: $projectId } } }, first: 50) {"
-        "    nodes { id description }"
+        "query($teamId: ID!) {"
+        "  workflowStates(filter: { team: { id: { eq: $teamId } } }, first: 100) {"
+        "    nodes { id name }"
         "  }"
         "}"
     )
-    data = _linear_query(query, {"projectId": project_id})
-    for node in (data.get("issues") or {}).get("nodes") or []:
-        desc = str(node.get("description") or "")
-        if desc.startswith(f"<!-- scope:{scope_key} -->"):
+    try:
+        data = _linear_query(query, {"teamId": team_id})
+    except RuntimeError:
+        return None
+    target = state_name.strip().lower()
+    for node in ((data.get("workflowStates") or {}).get("nodes") or []):
+        if str(node.get("name") or "").strip().lower() == target:
             return str(node["id"])
     return None
 
 
-def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_key: str) -> str:
-    # Linear's `IssueCreateInput.{teamId, projectId}` are both `String`
-    # (NOT `ID!` as in the `issues(filter:)` input). Match the schema.
-    mutation = (
-        "mutation($teamId: String!, $projectId: String, $title: String!, $body: String!) {"
-        "  issueCreate(input: {"
-        "    teamId: $teamId"
-        "    projectId: $projectId"
-        "    title: $title"
-        "    description: $body"
-        "  }) { issue { id identifier } }"
-        "}"
-    )
-    full_body = f"<!-- scope:{scope_key} -->\n{body}"
-    data = _linear_query(mutation, {
-        "teamId": team_id,
-        "projectId": project_id,
-        "title": title,
-        "body": full_body,
-    })
-    issue = data["issueCreate"]["issue"]
-    return f"{issue['identifier']} ({issue['id']})"
+def _set_issue_state(issue_ref: str, state_name: str) -> bool:
+    """Transition an issue to the named state. Returns True on success
+    or when the issue is already in the target state.
 
-
-def _update_issue(issue_ref: str, body: str, project_id: str | None = None) -> None:
-    """Update the issue's description (and optionally its project).
-
-    `IssueUpdateInput` is `String!`-typed for the issue id and the
-    project id, just like `IssueCreateInput`. Keep these in sync.
+    Never raises (non-blocking per #539). Returns False on transport
+    failure or unknown state name.
     """
-    issue_id = issue_ref.split(" ", 1)[-1].strip("()")
-    if project_id is not None:
-        mutation = (
-            "mutation($id: String!, $body: String!, $projectId: String) {"
-            "  issueUpdate(id: $id, input: { description: $body, projectId: $projectId }) {"
-            "    issue { id identifier project { name } }"
-            "  }"
-            "}"
-        )
-        _linear_query(mutation, {"id": issue_id, "body": body, "projectId": project_id})
-        return
+    issue_id = _extract_issue_id(issue_ref)
+    state_id = _state_id(state_name)
+    if not state_id:
+        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+            print(f"[linear-sync] unknown state: {state_name!r}", file=sys.stderr)
+        return False
     mutation = (
-        "mutation($id: String!, $body: String!) {"
-        "  issueUpdate(id: $id, input: { description: $body }) {"
-        "    issue { id }"
+        "mutation($issueId: String!, $stateId: String!) {"
+        "  issueUpdate(id: $issueId, input: { stateId: $stateId }) {"
+        "    success issue { id identifier state { name } }"
         "  }"
         "}"
     )
-    _linear_query(mutation, {"id": issue_id, "body": body})
+    try:
+        data = _linear_query(mutation, {"issueId": issue_id, "stateId": state_id})
+    except RuntimeError:
+        return False
+    success = bool((data.get("issueUpdate") or {}).get("success"))
+    if not success and os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+        print(f"[linear-sync] set_state({state_name}) failed for {issue_id}", file=sys.stderr)
+    return success
+
+
+def _find_all_issues(project_id: str, scope_key: str) -> list[dict]:
+    """Return every open issue whose description starts with `scope_key`,
+    sorted newest-first by `updatedAt`.
+
+    Duplicates happen when the same scope resolves in two separate
+    auto-sync rounds (e.g. `linear off` + `linear on` cycles). The
+    caller archives older matches and keeps the newest.
+    """
+    query = (
+        "query($projectId: ID!) {"
+        "  issues(filter: { project: { id: { eq: $projectId } } }, first: 50) {"
+        "    nodes { id identifier description updatedAt state { name } }"
+        "  }"
+        "}"
+    )
+    try:
+        data = _linear_query(query, {"projectId": project_id})
+    except RuntimeError:
+        return []
+    nodes = (data.get("issues") or {}).get("nodes") or []
+    TERMINAL = ("Done", "Canceled")
+    matches = [
+        n for n in nodes
+        if str(n.get("description") or "").startswith(f"<!-- scope:{scope_key} -->")
+        and str((n.get("state") or {}).get("name") or "") not in TERMINAL
+    ]
+    matches.sort(key=lambda n: str(n.get("updatedAt") or ""), reverse=True)
+    return matches
+
+
+def _archive_issue(issue_ref: str) -> bool:
+    """Archive (Linear's soft-delete) an issue. Returns True on success.
+
+    Archive is preferred over `issueDelete`:
+      - reversible (Linear restores archived issues from the trash)
+      - idempotent (re-archiving returns success)
+
+    Used only by the auto-sync dedupe path. Never call from a
+    user-facing CLI to remove issues the operator explicitly created.
+    """
+    issue_id = _extract_issue_id(issue_ref)
+    mutation = (
+        "mutation($id: String!) {"
+        "  issueArchive(id: $id) {"
+        "    success entity { id identifier archivedAt }"
+        "  }"
+        "}"
+    )
+    try:
+        data = _linear_query(mutation, {"id": issue_id})
+    except RuntimeError:
+        return False
+    success = bool((data.get("issueArchive") or {}).get("success"))
+    if not success and os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+        print(f"[linear-sync] archive failed for {issue_id}", file=sys.stderr)
+    return success
+
+
+def _find_issue(project_id: str, scope_key: str) -> str | None:
+    """Return the issue id (newest match) whose description starts
+    with `scope_key`, or None when no open issue matches.
+
+    Kept for backward compatibility — the dedupe-aware auto-sync
+    calls `_find_all_issues` directly. This delegates to it.
+    """
+    matches = _find_all_issues(project_id, scope_key)
+    return str(matches[0]["id"]) if matches else None
+
+
+def _create_issue(project_id: str, team_id: str, title: str, body: str, scope_key: str,
+                  state_id: str | None = None) -> tuple[str, str | None]:
+    # Linear’s `IssueCreateInput.{teamId, projectId}` are both `String`
+    # (NOT `ID!` as in the `issues(filter:)` input). Match the schema.
+    full_body = f"<!-- scope:{scope_key} -->\n{body}"
+    if state_id:
+        mutation = (
+            "mutation($teamId: String!, $projectId: String, $title: String!, $body: String!, $stateId: String) {"
+            "  issueCreate(input: {"
+            "    teamId: $teamId"
+            "    projectId: $projectId"
+            "    title: $title"
+            "    description: $body"
+            "    stateId: $stateId"
+            "  }) { issue { id identifier state { name } } }"
+            "}"
+        )
+        data = _linear_query(mutation, {
+            "teamId": team_id,
+            "projectId": project_id,
+            "title": title,
+            "body": full_body,
+            "stateId": state_id,
+        })
+    else:
+        mutation = (
+            "mutation($teamId: String!, $projectId: String, $title: String!, $body: String!) {"
+            "  issueCreate(input: {"
+            "    teamId: $teamId"
+            "    projectId: $projectId"
+            "    title: $title"
+            "    description: $body"
+            "  }) { issue { id identifier } }"
+            "}"
+        )
+        data = _linear_query(mutation, {
+            "teamId": team_id,
+            "projectId": project_id,
+            "title": title,
+            "body": full_body,
+        })
+    issue = data["issueCreate"]["issue"]
+    issue_ref = f"{issue['identifier']} ({issue['id']})"
+    state_name = ((issue.get("state") or {}).get("name") if isinstance(issue.get("state"), dict) else None)
+    return issue_ref, state_name
+
+
+def _update_issue(issue_ref: str, body: str, project_id: str | None = None,
+                  state_id: str | None = None) -> None:
+    """Update the issue’s description (and optionally its project + state).
+
+    `IssueUpdateInput` is `String!`-typed for the issue id and the
+    project id, just like `IssueCreateInput`. Keep these in sync.
+    `state_id` is used by the auto-In-progress + auto-Done paths.
+    """
+    issue_id = _extract_issue_id(issue_ref)
+    fields = ["description: $body"]
+    payload: dict[str, Any] = {"id": issue_id, "body": body}
+    if project_id is not None:
+        fields.append("projectId: $projectId")
+        payload["projectId"] = project_id
+    if state_id is not None:
+        fields.append("stateId: $stateId")
+        payload["stateId"] = state_id
+    input_fields = ", ".join(fields)
+    var_decl = "$id: String!, $body: String!"
+    if project_id is not None:
+        var_decl += ", $projectId: String"
+    if state_id is not None:
+        var_decl += ", $stateId: String"
+    mutation = (
+        f"mutation({var_decl}) {{"
+        f"  issueUpdate(id: $id, input: {{ {input_fields} }}) {{"
+        f"    issue {{ id identifier state {{ name }} }}"
+        f"  }}"
+        f"}}"
+    )
+    _linear_query(mutation, payload)
 
 
 def _summarize_prompt(prompt: str) -> str:
@@ -989,10 +1215,26 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
 
 
 def sync() -> int:
-    """Entry point. Returns 0 always (non-blocking contract)."""
+    """Entry point. Returns 0 always (non-blocking contract).
+
+    Per-round flow (each step may be a no-op; failures never raise):
+
+      1. Activation gate — bail when not configured.
+      2. Resolve prompt, branch, scope. Skip read-only prompts.
+      3. Resolve project (find-or-create). Bail if no team.
+      4. **Auto-archive duplicates** — if >1 open issue share the
+         same scope-marker, archive the older ones and keep the
+         newest. Source-of-truth is the Linear API.
+      5. **Auto-Done** — if the prompt contains a completion verb
+         AND an issue already exists, transition it to Done and
+         exit without creating a new issue.
+      6. **Auto-open** — create the issue in the team’s `Todo`
+         state (falling back to `Backlog` when no Todo column).
+      7. **Auto-In-progress** — on subsequent edits (work signal),
+         transition the existing issue to `In Progress` (idempotent).
+      8. Update the handoff cache.
+    """
     if not _enabled():
-        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
-            print("linear_sync: disabled (no LINEAR_API_KEY, mcp.linear off)", file=sys.stderr)
         return 0
     repo = _repo_root()
     prompt = _resolve_prompt(repo)
@@ -1006,36 +1248,112 @@ def sync() -> int:
     try:
         team_id = _team_id_override(repo) or None
         project_id = _find_or_create_project(repo, team_id)
-        # Priority 1: the Linear API is the source of truth. The
-        # handoff file (priority 2) is never used to pick the
-        # target issue — only the API search by `<!-- scope:... -->`
-        # marker determines reuse vs. create.
-        existing = _find_issue(project_id, scope)
         summary = _summarize_prompt(prompt)
         body = _build_issue_body(prompt=prompt, branch=branch, repo=repo, scope=scope)
-        if existing:
-            _update_issue(existing, body)
-            # handoff.issue is a fallback for the (rare) case where
-            # the API returns a numeric id we cannot display. The
-            # API result is still authoritative for the next round.
-            issue_ref = handoff.get("issue") or existing
+
+        # Step 4 — dedupe. Keep the newest match; archive the rest.
+        matches = _find_all_issues(project_id, scope)
+        existing_issue_ref: str | None = None
+        if len(matches) > 1:
+            keep = matches[0]
+            archived_ids: list[str] = []
+            for dup in matches[1:]:
+                if _archive_issue(str(dup["id"])):
+                    archived_ids.append(str(dup["id"]))
+            if archived_ids and os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+                print(
+                    f"[linear-sync] archived {len(archived_ids)} duplicate(s) for "
+                    f"scope={scope}: {', '.join(archived_ids)}",
+                    file=sys.stderr,
+                )
+            existing_issue_ref = f"{keep['identifier']} ({keep['id']})"
+        elif len(matches) == 1:
+            existing_issue_ref = f"{matches[0]['identifier']} ({matches[0]['id']})"
+
+        # Resolve the API-fetched state once — it's the source of truth
+        # for both the auto-Done state guard and the auto-In-progress
+        # transition. The handoff cache can be stale or missing.
+        if matches:
+            api_state_name = str((matches[0].get("state") or {}).get("name") or "")
+
+                # Step 5 — auto-Done. Completion verb + existing issue -> Done.
+        # State guard: if the issue is already in a terminal state
+        # (Done / Canceled), do NOT resurrect it — the user may have
+        # moved it manually in the Linear UI.
+        if existing_issue_ref and _is_completion_signal(prompt):
+            if api_state_name in ("Done", "Canceled"):
+                current_state = api_state_name
+                _write_handoff(repo, {
+                    **(handoff if isinstance(handoff, dict) else {}),
+                    "issue": existing_issue_ref,
+                    "project": _project_name_override(repo) or _repo_name(repo),
+                    "branch": branch,
+                    "prompt": prompt,
+                    "scope": scope,
+                    "action": "noop_terminal",
+                    "state": current_state,
+                })
+                return 0
+            if _set_issue_state(existing_issue_ref, "Done"):
+                _write_handoff(repo, {
+                    **(handoff if isinstance(handoff, dict) else {}),
+                    "issue": existing_issue_ref,
+                    "project": _project_name_override(repo) or _repo_name(repo),
+                    "branch": branch,
+                    "prompt": prompt,
+                    "scope": scope,
+                    "action": "completed",
+                    "state": "Done",
+                    "completed_at": _utc_now_iso(),
+                })
+                if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+                    print(f"[linear-sync] done {existing_issue_ref} (scope={scope})", file=sys.stderr)
+            return 0
+
+        current_state: str | None = None
+        if existing_issue_ref:
+            # Step 7 — auto-In-progress on subsequent work signals.
+            # Use the API-fetched state (set above, source of truth).
+            current_state = api_state_name
+            if _is_work_signal(prompt) and current_state != "In Progress":
+                if _set_issue_state(existing_issue_ref, "In Progress"):
+                    current_state = "In Progress"
+                    if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+                        print(f"[linear-sync] in_progress {existing_issue_ref}", file=sys.stderr)
+            _update_issue(existing_issue_ref, body, state_id=None)
+            issue_ref = existing_issue_ref
             action = "updated"
         else:
+            # Step 6 — auto-open. Land in Todo, falling back to Backlog.
             title = f"[{branch}] {summary}"[:250]
             resolved_team = team_id or _resolve_team_id()
-            issue_ref = _create_issue(project_id, resolved_team, title, body, scope)
+            target_state_id = _state_id("Todo") or _state_id("Backlog")
+            issue_ref, returned_state = _create_issue(
+                project_id, resolved_team, title, body, scope,
+                state_id=target_state_id,
+            )
             action = "created"
-        _write_handoff(repo, {
+            # Use the actual returned state from the API so the handoff
+            # reflects the truth (Backlog fallback no longer records
+            # a misleading "Todo" label).
+            current_state = returned_state or ("Todo" if target_state_id else None)
+
+        handoff_payload: dict[str, Any] = {
             "issue": issue_ref,
             "project": _project_name_override(repo) or _repo_name(repo),
             "branch": branch,
             "prompt": prompt,
             "scope": scope,
             "action": action,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
+            "timestamp": _utc_now_iso(),
+        }
+        if current_state:
+            handoff_payload["state"] = current_state
+        if action == "created":
+            handoff_payload["created_at"] = _utc_now_iso()
+        _write_handoff(repo, handoff_payload)
         if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
-            print(f"linear_sync: {action} {issue_ref} (scope={scope})", file=sys.stderr)
+            print(f"linear_sync: {action} {issue_ref} (scope={scope}, state={current_state})", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001 — non-blocking per #539 design.
         print(f"linear_sync: skipped ({exc.__class__.__name__}: {exc})", file=sys.stderr)
     return 0

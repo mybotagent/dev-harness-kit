@@ -36,11 +36,22 @@ When Linear is configured (`LINEAR_API_KEY` env var OR user-scope `~/.config/dev
 1. Resolves the task description in priority order: the active hand-off's `prompt` field → the latest commit subject on the current branch → the branch name. The hand-off is keyed by worktree slug, so two parallel sessions in two worktrees never share or overwrite each other's state.
 2. Skips read-only / non-task prompts (`/`, `#`, `!`, `ls `, `cat `, `grep `, `git status`, and prompts that lack a work verb).
 3. Finds or creates the project named after the configured project-name (per-worktree override) or the repository basename.
-4. Searches for an open issue whose `description` starts with `<!-- scope:<branch>::<prompt-head> -->`.
-5. Updates the existing issue OR creates a new one with the same scope marker.
+4. Searches for **every** open issue whose `description` starts with `<!-- scope:<branch>::<prompt-head> -->`. When more than one match exists, the older ones are silently archived via Linear's `issueArchive` mutation and the newest is kept (see "Automatic transitions" below).
+5. Creates a new issue with the same scope marker when no match exists, landing it in the team's `Todo` state (falling back to `Backlog`); updates an existing match's description otherwise.
 6. Writes the updated handoff at `.dev-kit/hand-off/linear/<worktree-slug>.json` so the next edit reuses the same issue.
 
 The script always returns exit code 0. Transport errors, missing tokens, and GraphQL failures are logged to stderr and never block the edit (per #539: "Linear failures are non-blocking for implicit workflow calls."). Users without Linear configured are unaffected — the hook fast-paths on missing env var and config. Set `LINEAR_DEBUG=1` to surface every skip reason on stderr.
+
+### Automatic transitions
+
+Once a worktree has auto-sync enabled and a matching issue exists, the hook performs four transitions without any explicit user request. None of them block the edit (always exit 0, never raise):
+
+1. **Auto-open** — on the first Edit/Write that contains a work verb, the script creates a new issue in the team's `Todo` state (falling back to `Backlog` when no `Todo` column is configured). The scope-marker `<!-- scope:... -->` is prepended to the description so the next edit reuses the same issue.
+2. **Auto-In-progress** — on subsequent Edit/Write with a starting-verb (`implement`, `build`, `wire`, `integrate`, `start`, `sync`, `register`, `track`, `add`, `create`), the matching issue is transitioned to `In Progress`. The transition is idempotent (skipped when the handoff cache already records `In Progress`); the Linear API is the source of truth, so a manual state change on the issue is preserved.
+3. **Auto-Done** — when the prompt contains a completion verb (`done`, `finished`, `complete[d]?`, `shipped`, `merged`, `closed`), the matching issue is transitioned to `Done` and the sync round exits without further mutations. Already-terminal issues (Done / Canceled) are left alone — manual moves in the Linear UI always win.
+4. **Auto-archive duplicates** — when more than one open issue shares the same `<!-- scope:... -->` marker (typically from a `linear off` + `linear on` cycle), the older issues are archived via the `issueArchive` mutation. Archive is reversible + idempotent, never delete. Only the newest match survives and is used for subsequent updates.
+
+Set `LINEAR_DEBUG=1` to surface every activation decision, state transition, and archive event on stderr. Without the flag, silent no-ops are reported only on transport failures.
 
 ## Per-worktree CLI
 
