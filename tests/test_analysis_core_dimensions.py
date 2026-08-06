@@ -124,7 +124,7 @@ class TestDimensionRegistry(unittest.TestCase):
         self.assertEqual(
             names,
             {"dead", "dup", "smell", "overeng", "overarch",
-             "cleancode", "tokenbudget", "slop", "secret"},
+             "cleancode", "tokenbudget", "slop"},
         )
 
     def test_group_audit(self):

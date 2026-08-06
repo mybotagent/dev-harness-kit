@@ -20,7 +20,7 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 1. No positional arg -> whole project; `<path>` -> that subtree.
 2. `--html` -> after the markdown artifact, run
    `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
-3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop | secret`.
+3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
 4. `--secrets` / `--slop` -> aliases for `--dim secret` / `--dim slop` (lib/analysis_core/dimensions.py). Replaces the removed `/dev-kit:audit` slash.
 5. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
 ## Fan-out + verify
