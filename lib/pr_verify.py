@@ -317,6 +317,35 @@ _VERDICT_LINE = re.compile(
     re.MULTILINE,
 )
 
+def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]:
+    """Extract the most recent audit verdict PER JOB from the comment
+    stream. The audit comment line is the machine-recorded verdict
+    posted by the workflow's verdict-parser step:
+        `<!-- dev-kit-verdict-audit --> run=X job=Y status=Z verdict=W`
+
+    Returns: {job_name: verdict_word}. Jobs without any audit comment
+    are absent from the dict. This is the per-judge verdict source
+    used by G3 (M-3): review + security + maintenance must ALL
+    show `Approve` for the PR to be considered approved.
+    """
+    audit_re = re.compile(
+        r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
+        r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
+    )
+    latest_per_job: dict[str, tuple[str, str]] = {}
+    for c in comments:
+        body = c.get("body") or ""
+        m = audit_re.search(body)
+        if not m:
+            continue
+        _, job, _status, verdict = m.groups()
+        created_at = c.get("created_at") or ""
+        prior = latest_per_job.get(job)
+        if prior is None or created_at > prior[0]:
+            latest_per_job[job] = (created_at, verdict)
+    return {job: v[1] for job, v in latest_per_job.items()}
+
+
 # Exact-match trusted claude-bot GitHub App logins. A `startswith("claude")`
 # check would accept impersonator accounts (`claude-reviewer`,
 # `claude-bot-fork`, etc.) — the verifier must NOT be tricked into
@@ -392,31 +421,61 @@ def _gate_g3_llm_verdicts(
         except GhError as exc:
             return GateResult(
                 gate="G3",
-                label="most recent LLM-judge verdict is Approve",
+                label="every required LLM-judge per-job verdict is Approve",
                 passed=False,
                 detail=f"gh error: {exc}",
                 evidence={"error": str(exc), "exit_code": exc.exit_code},
                 fetched_at=fetched_at,
             )
-    verdict, src = _parse_latest_llm_verdict(comments)
+    # M-3 per-judge verdict: review + security + maintenance must ALL
+    # show Approve. The audit comment is the machine-recorded per-job
+    # verdict (the workflow's verdict-parser step posts it).
+    per_job = _latest_per_job_audit_verdicts(comments)
+    REQUIRED_JOBS = ("review", "security", "maintenance")
+    missing = [j for j in REQUIRED_JOBS if j not in per_job]
+    bad = {j: per_job[j] for j in REQUIRED_JOBS if j in per_job and per_job[j] != "Approve"}
+    verdict = "Approve"
+    src = ""
+    if missing:
+        verdict = "MISSING"
+        src = f"missing audit for jobs: {missing}"
+    elif bad:
+        verdict = "Blocked"  # first non-Approve wins
+        src = f"non-Approve jobs: {bad}"
+    # Stale-verdict guard (M-2): if we have a head verdict (from the
+    # claude[bot] comment) but the per-job audit disagrees, prefer the
+    # per-job audit as authoritative (matches maintenance_gate.py).
 
-    # M-2 stale-verdict guard: if the latest comment was created BEFORE
-    # the most recent push, it is no longer authoritative.
-    if verdict == "Approve" and pr_pushed_at and src:
-        # Find the source comment's created_at to compare.
-        src_comment = next((c for c in comments if c.get("id") == src), None)
-        src_created = (src_comment or {}).get("created_at") or (src_comment or {}).get("updated_at") or ""
-        if src_created and src_created < pr_pushed_at:
+    # M-2 stale-verdict guard (per-job): an Approve audit is stale if
+    # its created_at is BEFORE the PR's pushed_at (a new commit landed
+    # after the Approve was recorded).
+    if verdict == "Approve" and pr_pushed_at:
+        # Find the most recent audit comment across all jobs and compare.
+        audit_re = re.compile(
+            r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
+            r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
+        )
+        latest_audit_created = ""
+        for c in comments:
+            body = c.get("body") or ""
+            m = audit_re.search(body)
+            if not m:
+                continue
+            created_at = c.get("created_at") or ""
+            if created_at > latest_audit_created:
+                latest_audit_created = created_at
+        if latest_audit_created and latest_audit_created < pr_pushed_at:
             verdict = "STALE"
+            src = f"latest audit ({latest_audit_created}) < pushed_at ({pr_pushed_at})"
     passed = verdict == "Approve"
     detail = f"latest verdict: {verdict}"
     if src:
         detail += f"  (comment id={src})"
     if verdict == "STALE":
-        detail += f"  (created_at < pushed_at={pr_pushed_at})"
+        detail += f"  ({src})"
     return GateResult(
         gate="G3",
-        label="most recent LLM-judge verdict is Approve",
+        label="every required LLM-judge per-job verdict is Approve",
         passed=passed,
         detail=detail,
         evidence={

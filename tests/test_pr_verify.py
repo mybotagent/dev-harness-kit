@@ -136,7 +136,17 @@ class TestGatesHermetic(unittest.TestCase):
 
     def test_g3_latest_approve_passes(self):
         comments = [
-            {"user": "claude[bot]", "body": "**Verdict:** Approve", "updated_at": "2026-01-02T00:00:00Z", "id": "1"},
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "updated_at": "2026-01-02T00:00:00Z", "created_at": "2026-01-02T00:00:00Z", "id": "1"},
+            {"id": "audit-1", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve",
+             "created_at": "2026-01-02T00:00:00Z"},
+            {"id": "audit-2", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve",
+             "created_at": "2026-01-02T00:00:00Z"},
+            {"id": "audit-3", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve",
+             "created_at": "2026-01-02T00:00:00Z"},
         ]
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
             g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
@@ -259,8 +269,21 @@ def _ok_return(args):
             {"name": "test", "state": "COMPLETED", "conclusion": "success", "bucket": "pass"},
         ])
     if sub == "api":
+        # M-3 per-judge verdict: emit Approve audit comments for all
+        # 3 required jobs (review, security, maintenance) + a single
+        # claude[bot] comment (so M-2 stale-guard sees a head verdict).
         return json.dumps([
-            {"user": "claude[bot]", "body": "**Verdict:** Approve", "updated_at": "2026-01-01T00:00:00Z", "id": "1"},
+            {"id": "1", "user": "claude[bot]",
+             "body": "**Verdict:** Approve", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"},
+            {"id": "audit-review", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "audit-security", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "audit-maintenance", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
         ])
     return json.dumps({})
 
@@ -379,6 +402,15 @@ class TestM2StaleVerdictGuard(unittest.TestCase):
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
             {"user": "claude[bot]", "body": "**Verdict:** Approve",
              "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "id": "1"},
+            {"id": "audit-1", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "audit-2", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "audit-3", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
         ])):
             g = pr_verify._gate_g3_llm_verdicts(
                 584, "sh-ai-x/dev-harness-kit",
@@ -393,6 +425,15 @@ class TestM2StaleVerdictGuard(unittest.TestCase):
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
             {"user": "claude[bot]", "body": "**Verdict:** Approve",
              "created_at": "2026-01-03T00:00:00Z", "updated_at": "2026-01-03T00:00:00Z", "id": "1"},
+            {"id": "audit-1", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve",
+             "created_at": "2026-01-03T00:00:00Z"},
+            {"id": "audit-2", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve",
+             "created_at": "2026-01-03T00:00:00Z"},
+            {"id": "audit-3", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve",
+             "created_at": "2026-01-03T00:00:00Z"},
         ])):
             g = pr_verify._gate_g3_llm_verdicts(
                 584, "sh-ai-x/dev-harness-kit",
@@ -478,6 +519,73 @@ class TestCC8EdgeCaseFailures(unittest.TestCase):
         self.assertIn("G1", passed_gates)
         self.assertIn("G2", passed_gates)
         self.assertIn("G5", passed_gates)
+
+
+
+
+
+class TestM3PerJudgeVerdict(unittest.TestCase):
+    """M-3 regression: G3 must require Approve from each of review,
+    security, AND maintenance audit comments — not just the most
+    recent claude[bot] comment overall."""
+
+    def _make_audit(self, job: str, verdict: str) -> dict:
+        return {
+            "id": f"audit-{job}",
+            "user": "github-actions",
+            "body": f"<!-- dev-kit-verdict-audit --> run=1 job={job} status=success verdict={verdict}",
+            "created_at": "2026-01-02T00:00:00Z",
+        }
+
+    def test_all_three_jobs_approve_passes(self):
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-02T00:00:00Z", "id": "1"},
+            self._make_audit("review", "Approve"),
+            self._make_audit("security", "Approve"),
+            self._make_audit("maintenance", "Approve"),
+        ]
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
+            g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit")
+        self.assertTrue(g.passed)
+
+    def test_review_changes_requested_fails(self):
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-02T00:00:00Z", "id": "1"},
+            self._make_audit("review", "Changes Requested"),
+            self._make_audit("security", "Approve"),
+            self._make_audit("maintenance", "Approve"),
+        ]
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
+            g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("non-Approve", g.detail)
+
+    def test_missing_maintenance_audit_fails(self):
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-02T00:00:00Z", "id": "1"},
+            self._make_audit("review", "Approve"),
+            self._make_audit("security", "Approve"),
+            # maintenance audit absent
+        ]
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
+            g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("MISSING", g.detail)
+
+    def test_security_blocked_fails(self):
+        comments = [
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-02T00:00:00Z", "id": "1"},
+            self._make_audit("review", "Approve"),
+            self._make_audit("security", "Blocked"),
+            self._make_audit("maintenance", "Approve"),
+        ]
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
+            g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
 
 
 
