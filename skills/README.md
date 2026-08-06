@@ -6,11 +6,10 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 
 ## By category
 
-### `audit` (9)
+### `audit` (8)
 
 | Skill | α | Description |
 |---|---|---|
-| [`audit`](audit/SKILL.md) | `state` | 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY. |
 | [`ci-doctor`](ci-doctor/SKILL.md) | `enforcement` | Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?" |
 | [`ci-triage`](ci-triage/SKILL.md) | `enforcement` | Triage failing GitHub Actions runs across recent commits, dedupe against a persisted case store, judge new failures against a model/context/harness taxonomy with a required repro + regression test, and record them witho… |
 | [`code-viz`](code-viz/SKILL.md) | `state` | 0-arg generic plugin-architecture visualizer. Walks any target repo, emits self-contained HTML with multi-level views (architecture / code / skill / hook / tools-lib / external) + domain pillar map (DB · Cloud · API · M… |

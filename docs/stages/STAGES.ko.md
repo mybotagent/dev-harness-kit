@@ -198,14 +198,6 @@
 - **핸드오프 출력**: (터미널 — 이 게이트는 review/security와 함께
   머지 전 마지막 신호다)
 
-## 횡단 — Audit (`/dev-kit:inspect`)
-
-- **목표**: 슬롭 + 시크릿 일괄 감사.
-- **Must**: HIGH/MEDIUM/LOW 버킷으로 출력. 금지 문구 정규식 SSOT.
-- **Must-Not**: 파일 수정(읽기 전용).
-- **AC**: HIGH ≥ 5 = 경고. 발견사항 0개 = clean.
-- **활성 스킬**: `audit`(slop + secret + outdated가 인라인 모드)
-
 ## 횡단 — Inspect (`/dev-kit:inspect`)
 
 - **목표**: (PR별, diff별이 아닌) 전체 코드베이스 건강 감사, 6개

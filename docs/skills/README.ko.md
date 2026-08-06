@@ -37,7 +37,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | 스킬 | Alpha | 요약 |
 |---|---|---|
 | [`bootstrap`](bootstrap.md) | `state` | 최초 진입 — 새 저장소에 최소 `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`을 생성. |
-| [`bootstrap`](bootstrap.md) | `state` | `bootstrap` + `ci-setup` 원샷 — 신규 프로젝트 기본값. |
 | [`ci-setup`](ci-setup.md) | `enforcement` | dev-kit의 재사용 가능한 CI 워크플로 템플릿을 대상 프로젝트에 설치. |
 | [`config`](config.md) | `state` | 스킬 / MCP / 훅 / 방법론 선택기. |
 
@@ -54,7 +53,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 |---|---|---|
 | [`review`](review.md) | `analysis` | 오탐 필터가 있는 병렬 정확성 + 보안 + 아키텍처 리뷰. |
 | [`security`](security.md) | `enforcement` | 검증 패스가 있는 OWASP Top 10 2025 (A01–A10) 전체 팬아웃. |
-| [`audit`](audit.md) | `state` | 0-인자 횡단 일괄 슬롭 + 시크릿 감사 (읽기 전용). |
 | [`inspect`](inspect.md) | `analysis` | 8차원 읽기 전용 코드 건강 감사. |
 | [`refactor`](refactor.md) | `analysis` | 3단계 정리 체인: `inspect → build-refactor → review`. |
 | [`prune`](prune.md) | `analysis` | 4단계 삭제 스윕: sweep → dependents → report → verify. |
@@ -112,7 +110,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 
 | 스킬 | 카테고리 | Alpha | 호출 방식 |
 |---|---|---|---|
-| [`audit`](audit.md) | `audit` | `state` | 사용자 |
 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | 사용자 |
 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | 사용자 |
 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | 사용자 |
