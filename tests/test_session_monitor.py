@@ -1973,5 +1973,56 @@ class TestPickSessionFilterComposition(unittest.TestCase):
                          {"aaa-feat-x", "ccc-feat-x"})
 
 
+class TestStepMoveKeys(unittest.TestCase):
+    """``_step_normal`` / ``_step_editing`` must return a 6-tuple for arrow / j / k keys.
+
+    Regression coverage for the tuple-length bug where ``_move()`` used to
+    return ``(rows, cursor, mode)`` and the arrow branches concatenated
+    ``(buffer, mode, None, False)`` for a 7-tuple into the 6-slot unpack at
+    ``pick_session`` lines 509/513. After the fix each arrow handler
+    returns ``(rows, cursor, buffer, mode, None, False)`` in the right order.
+    """
+
+    def _model(self):
+        return [
+            sm.WorktreeInfo(
+                "alpha", "live", None,
+                [sm.Session(agg=_agg(session_id="a1"),
+                            worktree_state="live", status=sm.Status.IDLE),
+                 sm.Session(agg=_agg(session_id="a2"),
+                            worktree_state="live", status=sm.Status.IDLE)],
+            ),
+        ]
+
+    def _rows_cursor(self, original_model):
+        rows = sm.build_rows(original_model, now=NOW)
+        sel = sm._selectable_indices(rows)
+        self.assertTrue(sel, "fixture must produce at least one selectable row")
+        return rows, sel[0]
+
+    def test_arrow_up_unpacks_and_keeps_normal_mode(self):
+        original_model = self._model()
+        rows, cursor = self._rows_cursor(original_model)
+        result = sm._step_normal(b"\x1b[A", rows, cursor, "", list(original_model))
+        self.assertEqual(len(result), 6,
+                         f"_step_normal must return 6 items, got {len(result)}")
+        new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = result
+        self.assertIs(returned, None)
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "NORMAL")
+
+    def test_k_key_in_editing_unpacks_and_keeps_editing_mode(self):
+        original_model = self._model()
+        rows, cursor = self._rows_cursor(original_model)
+        result = sm._step_editing(b"k", rows, cursor, "ab", list(original_model))
+        self.assertEqual(len(result), 6,
+                         f"_step_editing must return 6 items, got {len(result)}")
+        new_rows, new_cursor, new_buffer, new_mode, returned, should_exit = result
+        self.assertIs(returned, None)
+        self.assertFalse(should_exit)
+        self.assertEqual(new_mode, "EDITING")
+
+
+
 if __name__ == "__main__":
     unittest.main()
