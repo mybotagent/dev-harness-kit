@@ -375,3 +375,44 @@ class TestVagueScopeLogInjection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWritesShapeNormalization(unittest.TestCase):
+    """Regression: _has_overlap and _has_clean_isolation must treat
+    scalar writes="src/shared.py" and list writes=["src/shared.py"]
+    as overlapping — both represent the same file.
+
+    Without normalization, set("src/shared.py") is a character set
+    (length 15) and set(["src/shared.py"]) is a one-element set of
+    a string (length 1). Their intersection is empty, so two agents
+    editing the same file would be authorized for parallel execution.
+    """
+
+    def test_scalar_and_list_writes_overlap(self):
+        # Two steps targeting the same file, one with scalar, one with list.
+        steps = [
+            _step(1, partition="a", writes="src/shared.py"),
+            _step(2, partition="b", writes=["src/shared.py"]),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        self.assertEqual(
+            d.mode, "sequential",
+            f"scalar and list writes for same file must be sequential; "
+            f"got mode={d.mode!r} reason={d.reason!r}",
+        )
+
+    def test_dot_slash_alias_writes_overlap(self):
+        # ./src/shared.py and src/shared.py are the same file.
+        steps = [
+            _step(1, partition="a", writes="./src/shared.py"),
+            _step(2, partition="b", writes=["src/shared.py"]),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        self.assertEqual(
+            d.mode, "sequential",
+            f"./src and src must normalize; got mode={d.mode!r} reason={d.reason!r}",
+        )

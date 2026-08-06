@@ -59,6 +59,42 @@ _VAGUE_SCOPE_MARKERS = (
 )
 
 
+def _normalize_writes(writes: object) -> frozenset[str] | None:
+    """Normalize the `writes` field to a frozenset of file paths.
+
+    Accepts: list[str], tuple[str], scalar str (treated as a 1-path
+    list), and None / empty (treated as "no declared writes").
+
+    Path normalization: strips leading "./" so "./src/x" and "src/x"
+    are treated as the same file. Does not resolve ".." or absolute
+    paths — that's a separate concern (the runner cd's into the worktree
+    first, so paths are relative to the worktree root by convention).
+
+    Returns None when the input is unsupported (e.g. a dict, int, list
+    of non-strings). Callers should treat None as a fail-closed signal:
+    when we can't normalize, we cannot prove isolation, so default to
+    sequential.
+    """
+    if writes is None:
+        return None
+    if isinstance(writes, str):
+        items = [writes]
+    elif isinstance(writes, (list, tuple)):
+        items = list(writes)
+    else:
+        return None
+    paths: list[str] = []
+    for x in items:
+        if not isinstance(x, str):
+            return None
+        # Strip leading "./" so "./src/x" and "src/x" are the same.
+        p = x
+        if p.startswith("./"):
+            p = p[2:]
+        paths.append(p)
+    return frozenset(paths)
+
+
 def _has_dependency_edge(steps: list[dict]) -> bool:
     """True if any step declares an explicit or implicit dependency edge.
 
@@ -131,14 +167,30 @@ def _has_overlap(steps: list[dict]) -> bool:
     region); overlap on writes is a *factual* collision. When both
     signals disagree, the factual collision wins — the user must split
     the writes or merge the steps before parallel is safe.
+
+    Each step's `writes` is normalized via `_normalize_writes` (handles
+    scalar / list / tuple / "./"-prefix shapes consistently). A
+    `None` return (unsupported shape) fails closed — when we cannot
+    normalize, we cannot prove isolation, so the gate defaults to
+    sequential.
     """
     n = len(steps)
     for i in range(n):
-        writes_i = set(steps[i].get("writes") or [])
+        writes_i = _normalize_writes(steps[i].get("writes"))
+        if writes_i is None:
+            # Unsupported shape or declared non-list — cannot prove
+            # isolation, fail closed.
+            if steps[i].get("writes") is not None:
+                return True
+            continue
         if not writes_i:
             continue
         for j in range(i + 1, n):
-            writes_j = set(steps[j].get("writes") or [])
+            writes_j = _normalize_writes(steps[j].get("writes"))
+            if writes_j is None:
+                if steps[j].get("writes") is not None:
+                    return True
+                continue
             if not writes_j:
                 continue
             if writes_i & writes_j:
@@ -159,7 +211,10 @@ def _has_clean_isolation(steps: list[dict]) -> bool:
     every step that wants to participate in the parallel gate.
     """
     for step in steps:
-        writes = step.get("writes") or []
+        writes = _normalize_writes(step.get("writes"))
+        # Fail-closed: unsupported shape = not clean.
+        if writes is None and step.get("writes") is not None:
+            return False
         partition = step.get("partition")
         if writes and not partition:
             return False
