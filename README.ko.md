@@ -165,6 +165,27 @@ flowchart TD
 GitHub의 `auto-fix-pr`은 같은 수정 상태로 들어가는 이벤트 어댑터일
 뿐, 별도의 사용자용 워크플로가 아니다.
 
+### 이식성 및 장기 실행 루프
+
+현재 계약은 두 개의 작은 CLI로 검증한다.
+
+```bash
+python3 tools/portability_check.py --json
+python3 tools/loop_engine.py iterate --feature-list feature_list.json
+python3 tools/loop_engine.py verify --feature-list feature_list.json
+```
+
+첫 번째 명령은 Claude/Codex manifest와 훅 이벤트·matcher·명령 parity,
+셸 문법을 읽기 전용으로 검사한다. 두 번째 명령은 의존성이 풀린
+`failing` feature 하나를 결정론적으로 골라 테스트하고
+`.dev-kit/loop-checkpoint.json`에 결과를 원자적으로 기록한다. 테스트가
+통과해도 feature 상태를 자동으로 바꾸지 않으므로, 검증되지 않은 완료
+주장이 생기지 않는다. 세 번째 명령은 새 세션에서 checkpoint와 feature
+목록의 일관성을 확인한다. `ci-setup`이 두 CLI를 소비자 저장소에도
+설치하므로 플러그인 checkout 경로에 의존하지 않는다.
+
+자세한 계약은 [`PORTABILITY-AND-LOOP.md`](docs/architecture/PORTABILITY-AND-LOOP.md)에 있다.
+
 > "새 저장소가 있다"의 풀 워크스루(저장소 생성 → 설치 → 부트스트랩 →
 > 첫 커밋)는 [최초 설정, 엔드투엔드](#최초-설정-엔드투엔드)를 참고한다.
 
