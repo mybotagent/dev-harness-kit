@@ -47,6 +47,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `bash-guard.sh` | PreToolUse (Bash) | Block destructive commands | advisory / `--strict` |
 | `git-guard.sh` | PreToolUse (Bash) | Branch strategy enforcement | hard-block |
 | `worktree-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | Block edits in main checkout | hard-block |
+| [`linear-autosync.sh`](linear-autosync.md) | PreToolUse (Write\|Edit\|MultiEdit) | Auto-sync every Edit into the user's Linear workspace via `tools/linear_sync.py` (silent-bail on non-dev-kit project dirs) | advisory (silent exit 0) |
 | `review-yml-isolation.sh` | PreToolUse (Bash) | Force `review.yml` changes into their own commit/PR | hard-block |
 | `worktree-auto-cut.sh` | UserPromptSubmit | Auto-cut a worktree for a new-task prompt in main | advisory (fails open) |
 | `session-start-check.sh` | SessionStart | Remind about the worktree rule | advisory |
@@ -90,6 +91,7 @@ inside a PreToolUse shell script). Each helper carries its own
 ## See also
 
 - [Hook coverage gaps](hook-coverage-gaps.md) — known gaps in this matrix and per-runtime wiring differences (Claude Code vs. Codex).
+- [`linear-autosync.sh`](linear-autosync.md) — per-edit Linear auto-sync hook (PROJECT_DIR guard, env fast-path, non-blocking contract).
 - [`rules/git-workflow.md`](../../rules/git-workflow.md) — the worktree + branch rules `worktree-guard` and `git-guard` enforce.
 - [`docs/architecture/RUNTIME-PORTABILITY.md`](../architecture/RUNTIME-PORTABILITY.md) — how the same hooks run under both Claude Code and Codex.
 - Main [`README.md`](../../README.md) — the short version, under "Under the hood".
