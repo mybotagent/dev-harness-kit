@@ -308,10 +308,12 @@ and a separate binary added indirection without adding capability.
 ## Pros of this skill
 
 - **Structured before/after analysis forces honest proposals.** The
-  YAML must declare `before.evidence` and `after.files`, so a reviewer
-  can verify both sides with concrete references. A proposal that
-  hand-waves "the code is currently broken" without a file:line or a
-  log excerpt cannot pass the lint.
+  YAML declares `before.evidence` and `after.files` slots so the
+  maintainer is nudged to cite file:line, log excerpts, or commit
+  hashes; a reviewer can verify both sides with concrete references.
+  The shape of the evidence is enforced by the parser (it must be a
+  list of strings), but the *quality* of the citations is not — see
+  §Limitations.
 - **Pros / Cons / Limitations are visually distinct in the rendered
   HTML.** The three lists use check (--ok), ballot-x (--bad), and
   warn-glyph (--warn) cues, so a reviewer can scan the trade-off shape
@@ -401,7 +403,7 @@ Next: open `docs/proposals/<main>/<sub>.html` in a browser, share the
 file with reviewers, then update the YAML's `status:` field as the proposal
 progresses through review.
 
-After a proposal is `accepted:`, the implementation work follows
+After a proposal moves to `status: accepted`, the implementation work follows
 `/dev-kit:plan` → `/dev-kit:build`. The proposal itself is the design record
 that closes the issue.
 

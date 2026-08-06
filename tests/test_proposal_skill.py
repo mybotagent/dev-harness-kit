@@ -783,13 +783,138 @@ class BeforeAfterFieldsTests(unittest.TestCase):
                 "sections: []\n"
             )
 
+    def test_pros_items_must_be_strings(self):
+        """Maintenance reviewer (PR #595): the parser must reject
+        non-string items instead of silently coercing via `str(...)`.
+        `pros: [123]` is malformed; the contract is `list[str]`."""
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "pros: [123]\n"
+                "sections: []\n"
+            )
+
+    def test_cons_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "cons: [false]\n"
+                "sections: []\n"
+            )
+
+    def test_limitations_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "limitations: [42]\n"
+                "sections: []\n"
+            )
+
+    def test_before_evidence_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "before:\n  summary: hi\n  evidence: [null]\n"
+                "sections: []\n"
+            )
+
+    def test_after_files_change_is_required(self):
+        """Maintenance reviewer: `after.files[].change` was silently
+        optional via `f.get('change', '')`. The contract is required;
+        an entry with only `path` is malformed."""
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "after:\n  summary: hi\n  files:\n    - path: hooks/lib/x.sh\n"
+                "sections: []\n"
+            )
+
+    def test_after_files_change_must_be_string(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "after:\n  summary: hi\n  files:\n    - path: a.py\n      change: 999\n"
+                "sections: []\n"
+            )
+
+    def test_cons_escape_regression(self):
+        """Symmetric to test_render_escapes_script_in_pros_item: a `<script>`
+        in `cons[]` must NOT survive unescaped into the rendered HTML."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "cons:\n  - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_limitations_escape_regression(self):
+        """Symmetric escape regression for `limitations[]` items."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "limitations:\n  - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_before_evidence_escape_regression(self):
+        """Symmetric escape regression for `before.evidence[]` items.
+        They flow through `_render_inline` and so share the pros/cons
+        escape contract — pin it explicitly so a future refactor that
+        routes evidence through a different path can't regress."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n"
+            "  summary: hi\n"
+            "  evidence:\n"
+            "    - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_after_summary_escape_regression(self):
+        """Symmetric escape regression for `after.summary` (block body)."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: '<script>alert(1)</script>'\n"
+            "  files: []\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_after_files_path_escape_regression(self):
+        """Symmetric escape regression for `after.files[].path`. It
+        flows through `html.escape` directly (not `_render_inline`),
+        so the contract is independent — pin it."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: hi\n"
+            "  files:\n"
+            "    - path: 'a<script>alert(1)</script>.py'\n"
+            "      change: 'change me'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
 
 class BeforeAfterRenderTests(unittest.TestCase):
     """Render the new fields as first-class sections.
 
     The HTML output must include:
-    - `<section class="ba-grid">` wrapping `<div class="before-card">` +
-      `<div class="after-card">` (when both before and after are present).
+    - `<section class="ba-section">` containing a `<div class="ba-grid">`
+      that wraps `<div class="before-card">` + `<div class="after-card">`
+      when both before and after are present.
     - `<h3>Before (current state)</h3>` + `<h3>After (proposed state)</h3>`.
     - `<ul class="pros-list">`, `<ul class="cons-list">`,
       `<ul class="limitations-list">` with distinct class hooks.
@@ -929,6 +1054,57 @@ class BeforeAfterRenderTests(unittest.TestCase):
         html = rph.render_from_yaml(text)
         self.assertNotIn("<script>alert(1)</script>", html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_legacy_output_has_no_double_divider_when_structured_empty(self):
+        """3-dim reviewer (PR #595): when none of `before`/`after`/
+        `pros`/`cons`/`limitations` are present, the body must emit
+        exactly ONE divider between the last section and the footer.
+        The earlier code emitted two consecutive dividers (one before
+        the empty structured block, one before the footer), which
+        violated the byte-compatibility claim. Pin the legacy shape."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "sections:\n  - title: S\n    body: hi\n"
+        )
+        html = rph.render_from_yaml(text)
+        # Count dividers strictly between the closing </section> region
+        # and the <footer>; expect exactly one.
+        body_start = html.index("<body>")
+        body = html[body_start:]
+        # The trailing divider is the one right before <footer>.
+        before_footer = body.rsplit("<footer>", 1)[0]
+        dividers_in_tail = before_footer.count('<hr class="section-divider">')
+        self.assertEqual(
+            dividers_in_tail, 1,
+            f"expected exactly 1 trailing divider, got {dividers_in_tail}",
+        )
+        # And the two-divider-back-to-back pattern must not appear.
+        self.assertNotIn(
+            '<hr class="section-divider">\n\n\n\n<hr class="section-divider">',
+            html,
+        )
+
+    def test_structured_section_emits_one_leading_divider(self):
+        """When the structured block IS present, exactly one divider
+        precedes it (between the last regular section and the
+        before/after block). Pin the symmetric side of the
+        divider-regression fix."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n  summary: hi\n  evidence: []\n"
+            "sections:\n  - title: S\n    body: hi\n"
+        )
+        html = rph.render_from_yaml(text)
+        body_start = html.index("<body>")
+        body = html[body_start:]
+        # The ba-section must be preceded by exactly one divider.
+        ba_idx = body.index('<section id="ba-section"')
+        preceding = body[:ba_idx]
+        dividers_before_ba = preceding.count('<hr class="section-divider">')
+        self.assertEqual(
+            dividers_before_ba, 1,
+            f"expected exactly 1 divider before ba-section, got {dividers_before_ba}",
+        )
 
 
 if __name__ == "__main__":

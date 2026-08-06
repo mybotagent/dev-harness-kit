@@ -442,7 +442,7 @@ def _parse_before(raw: object) -> Optional[BeforeState]:
     evidence_raw = raw.get("evidence", [])
     if not isinstance(evidence_raw, list):
         raise ValueError("`before.evidence` must be a list of strings")
-    evidence = [str(e) for e in evidence_raw]
+    evidence = _parse_string_items(evidence_raw, "before.evidence")
     return BeforeState(summary=summary, evidence=evidence)
 
 
@@ -463,11 +463,31 @@ def _parse_after(raw: object) -> Optional[AfterState]:
             raise ValueError(f"after.files[{i}] must be a mapping")
         if "path" not in f or not isinstance(f["path"], str):
             raise ValueError(f"after.files[{i}] must include a string `path`")
-        change = f.get("change", "")
+        if "change" not in f:
+            # Maintenance reviewer (PR #595): a file entry without a
+            # `change` body is malformed; reject instead of silently
+            # defaulting to empty string.
+            raise ValueError(f"after.files[{i}] must include a string `change`")
+        change = f["change"]
         if not isinstance(change, str):
             raise ValueError(f"after.files[{i}].change must be a string")
         files.append(CodeChange(path=f["path"], change=change))
     return AfterState(summary=summary, files=files)
+
+
+def _parse_string_items(raw: list, field_name: str) -> List[str]:
+    """Strict list[str] parser. Maintenance reviewer (PR #595):
+    silently coercing via `str(...)` accepts malformed inputs like
+    `pros: [123]` and produces nonsense. Reject non-string items."""
+    out: List[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"`{field_name}[{i}]` must be a string "
+                f"(got {type(item).__name__}: {item!r})"
+            )
+        out.append(item)
+    return out
 
 
 def _parse_string_list(raw: object, field_name: str) -> List[str]:
@@ -475,7 +495,7 @@ def _parse_string_list(raw: object, field_name: str) -> List[str]:
         return []
     if not isinstance(raw, list):
         raise ValueError(f"`{field_name}` must be a list of strings")
-    return [str(x) for x in raw]
+    return _parse_string_items(raw, field_name)
 
 
 # ----- Markdown-lite renderer -----------------------------------------------
@@ -967,6 +987,20 @@ def render(
         else ""
     )
 
+    # Structured before/after + pros/cons/limitations are emitted as
+    # one block, prefixed by exactly one divider. When both renderers
+    # return empty (legacy proposal with no new fields), NO divider is
+    # added here -- the trailing divider before the footer is the
+    # only one, matching the pre-extension byte shape. 3-dim reviewer
+    # (PR #595): the prior version emitted two consecutive dividers in
+    # the empty case, breaking byte-level backward compatibility.
+    structured_html = _render_before_after(p) + _render_pros_cons_limitations(p)
+    structured_prefix = (
+        "\n<hr class=\"section-divider\">\n\n" + structured_html
+        if structured_html
+        else ""
+    )
+
     return (
         "<!doctype html>\n"
         '<html lang="en">\n<head>\n'
@@ -981,9 +1015,7 @@ def render(
         f"{tags_html}\n"
         f"{_toc(p)}\n"
         + "\n<hr class=\"section-divider\">\n\n".join(sections_html)
-        + "\n\n<hr class=\"section-divider\">\n\n"
-        + _render_before_after(p)
-        + _render_pros_cons_limitations(p)
+        + structured_prefix
         + "\n\n<hr class=\"section-divider\">\n\n"
         f'<footer>Generated {now}{footer_issue} · render via '
         f'<code>/dev-kit:proposal</code></footer>\n'
