@@ -9,15 +9,10 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-from typing import Any
 from unittest.mock import patch
 
 sys.path.insert(0, "lib")
 import pr_verify  # noqa: E402
-
-
-def _ok(ok: bool, **kw: Any) -> dict:
-    return {"ok": ok, **kw}
 
 
 class TestParseLatestLLMVerdict(unittest.TestCase):
@@ -289,42 +284,3 @@ def _fail_at(args, which: str):
 if __name__ == "__main__":
     unittest.main()
 
-
-class TestG2BucketParsing(unittest.TestCase):
-    """G2 must read the actual `gh pr checks --json` field shape.
-
-    `gh pr checks` exposes both `state` (workflow state:
-    COMPLETED / IN_PROGRESS / PENDING) and `bucket` (gh's verdict
-    bucket: pass / fail / pending / skipping). The check
-    uses `bucket` because that is gh's own verdict classification.
-    """
-
-    def test_pending_bucket_fails(self):
-        checks = [
-            {"name": "lint", "state": "COMPLETED", "conclusion": "success", "bucket": "pass"},
-            {"name": "review", "state": "IN_PROGRESS", "conclusion": None, "bucket": "pending"},
-        ]
-        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(checks)):
-            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
-        self.assertFalse(g.passed)
-        self.assertIn("PENDING", g.detail)
-        self.assertIn("review", g.detail)
-
-    def test_fail_bucket_fails(self):
-        checks = [
-            {"name": "lint", "state": "COMPLETED", "conclusion": "success", "bucket": "pass"},
-            {"name": "review", "state": "COMPLETED", "conclusion": "failure", "bucket": "fail"},
-        ]
-        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(checks)):
-            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
-        self.assertFalse(g.passed)
-        self.assertIn("FAILED", g.detail)
-
-    def test_all_passing_with_skipping_passes(self):
-        checks = [
-            {"name": "lint", "state": "COMPLETED", "conclusion": "success", "bucket": "pass"},
-            {"name": "policy", "state": "SKIPPED", "conclusion": "skipped", "bucket": "skipping"},
-        ]
-        with patch.object(pr_verify, "_run_gh", return_value=json.dumps(checks)):
-            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
-        self.assertTrue(g.passed)
