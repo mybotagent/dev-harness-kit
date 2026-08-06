@@ -119,7 +119,7 @@ class TestNaming(unittest.TestCase):
         Single source of truth — the refactor dropped per-skill `version:`
         fields to avoid bureaucratic tax. Plugin-level is the only one
         maintained; if it goes stale the PR gate and the `audit --outdated`
-        mode (inlined into skills/audit/SKILL.md) both surface the drift.
+        mode (inlined into skills/inspect/SKILL.md (--secrets)) both surface the drift.
         """
         mp = PROJECT_ROOT / ".claude-plugin" / "plugin.json"
         if not mp.exists():

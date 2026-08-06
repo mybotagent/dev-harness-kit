@@ -1,6 +1,6 @@
 """ci_doctor.py — Read-only CI readiness audit for `/dev-kit:ci-doctor`.
 
-Issue #212-D1: after `/dev-kit:bootstrap (with ci-setup prompt)`, a consumer has no way to
+Issue #212-D1: after `/dev-kit:bootstrap + ci-setup`, a consumer has no way to
 answer "given my current secrets + files + workflow templates, would the
 CI on my next PR succeed?" This module answers that question with a
 deterministic, read-only check suite. Every probe is side-effect-free:
@@ -476,7 +476,7 @@ def _is_source_repo(target_dir: Path) -> bool:
     """True iff `target_dir` is the dev-kit plugin authoring source.
 
     Signal: `.claude-plugin/plugin.json` whose `name` is `dev-kit`. A
-    consumer that installed CI via `/dev-kit:bootstrap (with ci-setup prompt)` never authors
+    consumer that installed CI via `/dev-kit:bootstrap + ci-setup` never authors
     this manifest, so its presence uniquely identifies the source repo.
     Consumer-only artifacts (the `.dev-kit/ci-config.json` build marker,
     the `DEV_KIT_GITHUB_TOKEN` PAT) are not applicable here — the source

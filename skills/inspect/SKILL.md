@@ -1,7 +1,7 @@
 ---
 name: inspect
 category: audit
-description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
+description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) + --secrets/--slop aliases to the audit family (lib/analysis_core/dimensions.py).
 alpha: analysis
 when_to_use:
   - User types /dev-kit:inspect or /dev-kit:inspect --html

@@ -38,7 +38,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 |---|---|---|
 | [`bootstrap`](bootstrap.md) | `state` | 최초 진입 — 새 저장소에 최소 `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`을 생성. |
 | [`ci-setup`](ci-setup.md) | `enforcement` | dev-kit의 재사용 가능한 CI 워크플로 템플릿을 대상 프로젝트에 설치. |
-| [`config`](config.md) | `state` | 스킬 / MCP / 훅 / 방법론 선택기. |
+| [`config`](config.md) | `state` | 스킬 / 훅 / 방법론 선택기. |
 
 ### Plan → Build
 

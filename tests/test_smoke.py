@@ -39,9 +39,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Added skills/research-plan-build/SKILL.md (3-phase binder, PR #563) (37 -> 38).
 # PR-1 slim sweep removed skills/audit/SKILL.md (folded into /dev-kit:inspect
 # --secrets / --slop flags) and skills/bootstrap-full/SKILL.md (merged into
-# /dev-kit:bootstrap with runtime ci-setup prompt). (38 -> 37 on this branch's
-# baseline — note the count does not change vs the previous entry because
-# research-plan-build and the two PR-1 removals net to zero on this branch).
+# /dev-kit:bootstrap with runtime ci-setup prompt). (38 on this branch's baseline — PR-1 removes audit + bootstrap-full (-2); no new skills added.)
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
 SKILL_COUNT = 38
