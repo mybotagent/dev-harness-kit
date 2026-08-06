@@ -27,7 +27,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | Skill | α | Description |
 |---|---|---|
 | [`bootstrap`](bootstrap/SKILL.md) | `state` | 0-arg orchestrator. Writes minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default. |
-| [`bootstrap-full`](bootstrap-full/SKILL.md) | `state` | One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker. |
+| [`bootstrap`](bootstrap/SKILL.md) | `state` | One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker. |
 | [`ci-setup`](ci-setup/SKILL.md) | `enforcement` | Install dev-kit's reusable CI workflow templates into a target project. Idempotent via `.dev-kit/ci-config.json` presence, no version gate. Hand-off to /dev-kit:build. |
 
 ### `build` (8)
@@ -113,7 +113,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | 1 | [`audit`](audit/SKILL.md) | `audit` | `state` | human |
 | 2 | [`babysit-pr`](babysit-pr/SKILL.md) | `ship` | `state` | human |
 | 3 | [`bootstrap`](bootstrap/SKILL.md) | `bootstrap` | `state` | human |
-| 4 | [`bootstrap-full`](bootstrap-full/SKILL.md) | `bootstrap` | `state` | human |
+| 4 | [`bootstrap`](bootstrap/SKILL.md) | `bootstrap` | `state` | human |
 | 5 | [`build`](build/SKILL.md) | `build` | `state` | human |
 | 6 | [`build-debug`](build-debug/SKILL.md) | `build` | `enforcement` | model |
 | 7 | [`build-refactor`](build-refactor/SKILL.md) | `build` | `enforcement` | model |

@@ -242,7 +242,7 @@ easier and safer for almost everyone.
 
 **Also note:** `/dev-kit:build` refuses to run until `/dev-kit:ci-setup` has been
 run in the repo (it checks for `.dev-kit/ci-config.json`). If you're on a brand-new
-repo, run `/dev-kit:bootstrap-full` first — that does bootstrap and ci-setup in
+repo, run `/dev-kit:bootstrap (with ci-setup prompt)` first — that does bootstrap and ci-setup in
 one shot.
 
 There is no supported way to have Build write production code with no step file

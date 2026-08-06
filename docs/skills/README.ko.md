@@ -37,7 +37,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | 스킬 | Alpha | 요약 |
 |---|---|---|
 | [`bootstrap`](bootstrap.md) | `state` | 최초 진입 — 새 저장소에 최소 `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`을 생성. |
-| [`bootstrap-full`](bootstrap-full.md) | `state` | `bootstrap` + `ci-setup` 원샷 — 신규 프로젝트 기본값. |
+| [`bootstrap`](bootstrap.md) | `state` | `bootstrap` + `ci-setup` 원샷 — 신규 프로젝트 기본값. |
 | [`ci-setup`](ci-setup.md) | `enforcement` | dev-kit의 재사용 가능한 CI 워크플로 템플릿을 대상 프로젝트에 설치. |
 | [`config`](config.md) | `state` | 스킬 / MCP / 훅 / 방법론 선택기. |
 
@@ -115,7 +115,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`audit`](audit.md) | `audit` | `state` | 사용자 |
 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | 사용자 |
 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | 사용자 |
-| [`bootstrap-full`](bootstrap-full.md) | `bootstrap` | `state` | 사용자 |
+| [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | 사용자 |
 | [`build`](build.md) | `build` | `state` | 사용자 |
 | [`build-debug`](build-debug.md) | `build` | `enforcement` | 모델 |
 | [`build-refactor`](build-refactor.md) | `build` | `enforcement` | 모델 |

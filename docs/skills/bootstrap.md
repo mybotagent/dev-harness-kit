@@ -47,7 +47,7 @@ Three files on a fresh repo: `CLAUDE.md`, `AGENTS.md`, `.dev-kit/.active-hooks.j
 
 ## Related
 
-- [bootstrap-full](bootstrap-full.md) — composes this skill with `/dev-kit:ci-setup` into one call.
+- [bootstrap](bootstrap.md) — composes this skill with `/dev-kit:ci-setup` into one call.
 - [ci-setup](ci-setup.md) — the canonical next step (`/dev-kit:ci-setup --force`) after bootstrap.
 - `/dev-kit:plan` — opt-in idea → PRD.md synthesis; not the default next stage.
 
