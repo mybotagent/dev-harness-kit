@@ -80,15 +80,46 @@ def _has_dependency_edge(steps: list[dict]) -> bool:
     return False
 
 
+def _normalize_ac(ac: object) -> list[str]:
+    """Normalize the `ac` (acceptance-criteria) field to a list of strings.
+
+    The canonical plan/index contract permits three shapes:
+      - `str` (single criterion, joined word-by-word in some plan
+        outputs — see PR #579 3-dim review round 8)
+      - `list[str]` (preferred)
+      - `dict[str, str]` (some plan outputs; the values are the
+        criterion text, the keys are labels)
+
+    Other shapes fall back to empty list (safe default — no AC
+    evidence, treat as missing metadata per the fail-closed rule).
+    """
+    if ac is None:
+        return []
+    if isinstance(ac, str):
+        return [ac]
+    if isinstance(ac, list):
+        return [str(x) for x in ac if isinstance(x, (str, int, float))]
+    if isinstance(ac, dict):
+        return [str(v) for v in ac.values() if isinstance(v, (str, int, float))]
+    return []
+
+
 def _has_vague_scope(step: dict) -> bool:
     """True if the step's preamble contains a vague-scope marker.
 
-    Looks at `preamble` (string) and `ac` (acceptance criteria list) — if
-    either contains a marker, the scope is treated as ambiguous.
+    Looks at `preamble` (string) and `ac` (acceptance criteria, any
+    of: str / list / dict — see `_normalize_ac`). If either contains
+    a marker, the scope is treated as ambiguous.
+
+    Per the 3-dim review on PR #579 (round 8): unvalidated ac shapes
+    can bypass the safety rule. `ac="TODO: investigate"` is joined
+    character-by-character into "T O D O : ...", missing the `todo:`
+    marker. The fix is to normalize ac to a list of strings before
+    searching.
     """
     preamble = (step.get("preamble") or "").lower()
-    ac = " ".join(step.get("ac") or []).lower()
-    haystack = preamble + "\n" + ac
+    ac_haystack = " ".join(_normalize_ac(step.get("ac"))).lower()
+    haystack = preamble + "\n" + ac_haystack
     return any(marker in haystack for marker in _VAGUE_SCOPE_MARKERS)
 
 
@@ -116,14 +147,23 @@ def _has_overlap(steps: list[dict]) -> bool:
 
 
 def _has_clean_isolation(steps: list[dict]) -> bool:
-    """True if every step has either an empty `writes` set or an explicit partition.
+    """True if every step has BOTH an empty `writes` set AND an explicit
+    `partition`. This is the fail-closed default: missing `writes` OR
+    missing `partition` = not clean = sequential.
 
-    A step with non-empty `writes` and no `partition` is treated as
-    sharing the global worktree state — not clean.
+    Per the 3-dim review on PR #579 (round 8): the canonical
+    plan/index contract supplies only `step`/`name`/`status` (no
+    `writes`, no `partition`). Treating absent `writes` as empty is
+    equivalent to treating absent isolation as proof of isolation,
+    which fails open. The fix is to require explicit evidence for
+    every step that wants to participate in the parallel gate.
     """
     for step in steps:
         writes = step.get("writes") or []
-        if writes and not step.get("partition"):
+        partition = step.get("partition")
+        if writes and not partition:
+            return False
+        if not writes and not partition:
             return False
     return True
 
