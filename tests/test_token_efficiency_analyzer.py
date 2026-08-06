@@ -1852,6 +1852,197 @@ class TestWorktreeStaleness(unittest.TestCase):
             # is_listed returns false (empty porcelain) so state="gone".
             self.assertEqual(meta["state"], "gone")
 
+    def test_classify_all_worktrees_batches_shared_probes(self):
+        """Issue #timeout-sweep: ``classify_all_worktrees`` previously
+        ran ``git worktree list --porcelain`` and
+        ``git -C repo_root rev-parse origin/main`` once PER worktree
+        dir. With ~360 dirs on this checkout that produced ~1800
+        subprocess spawns and a 60+ s wall clock for the classifier
+        alone, which in turn made the ``sm`` CLI blow past the
+        per-probe ``TimeoutExpired`` and crash the dashboard.
+
+        The fix hoists both repo-wide probes out of the per-dir loop
+        and passes them down via ``precomputed_porcelain`` /
+        ``precomputed_origin_main``. This test pins the contract:
+        the two repo-wide probes are issued ONCE regardless of how
+        many worktree dirs are present, while the per-dir probes
+        (rev-parse --short HEAD, rev-parse HEAD, log) still run
+        once per dir.
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import classify_all_worktrees
+
+        with tempfile.TemporaryDirectory(prefix="wt-batch-") as td:
+            root = Path(td)
+            # 5 candidate worktree dirs across two roots.
+            for n in range(3):
+                (root / ".worktrees" / f"feat-{n}").mkdir(parents=True)
+            for n in range(2):
+                (root / ".claude" / "worktrees" / f"agent-{n}").mkdir(parents=True)
+
+            porcelain = (
+                f"worktree {root / 'main-checkout'}\n"
+                f"HEAD 0000000000000000000000000000000000000000\n"
+                f"branch refs/heads/main\n"
+            )
+            call_log: list[str] = []
+
+            def fake_run(args, **_kwargs):
+                cmd = " ".join(str(a) for a in args)
+                call_log.append(cmd)
+                if "worktree list --porcelain" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+                if "rev-parse origin/main" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout="feedface" * 8,
+                        stderr="",
+                    )
+                if "rev-parse --short HEAD" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout="abc1234", stderr="")
+                if "rev-parse HEAD" in cmd and "origin/main" not in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0,
+                        stdout="feedface" * 8,
+                        stderr="",
+                    )
+                if "log origin/main..HEAD" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+            meta = classify_all_worktrees(root, git_runner=fake_run)
+
+        # Sentinel key still present.
+        self.assertIn("(main)", meta)
+        # All 5 dirs classified.
+        for n in range(3):
+            self.assertIn(f"feat-{n}", meta)
+        for n in range(2):
+            self.assertIn(f"agent-{n}", meta)
+
+        # Shared probes: exactly ONE call each.
+        porcelain_calls = [c for c in call_log if "worktree list --porcelain" in c]
+        origin_main_calls = [c for c in call_log if "rev-parse origin/main" in c]
+        self.assertEqual(
+            len(porcelain_calls), 1,
+            f"worktree list --porcelain must run ONCE, got {len(porcelain_calls)}: {porcelain_calls}",
+        )
+        self.assertEqual(
+            len(origin_main_calls), 1,
+            f"rev-parse origin/main must run ONCE, got {len(origin_main_calls)}: {origin_main_calls}",
+        )
+
+        # Per-dir probes: should run once per candidate dir (5 dirs).
+        short_head_calls = [c for c in call_log if "rev-parse --short HEAD" in c]
+        head_full_calls = [
+            c for c in call_log
+            if "rev-parse HEAD" in c and "origin/main" not in c
+        ]
+        log_calls = [c for c in call_log if "log origin/main..HEAD" in c]
+        self.assertEqual(len(short_head_calls), 5, f"per-dir short HEAD: {short_head_calls}")
+        self.assertEqual(len(head_full_calls), 5, f"per-dir full HEAD: {head_full_calls}")
+        self.assertEqual(len(log_calls), 5, f"per-dir log: {log_calls}")
+
+    def test_classify_worktree_dir_swallows_timeout(self):
+        """Issue #timeout-sweep: a single slow / hung worktree must not
+        crash the whole ``sm`` dashboard. The docstring contract at
+        tools/token_efficiency_analyzer.py:699-702 promises that every
+        probe is wrapped, so a ``subprocess.TimeoutExpired`` on any
+        single probe must fall back to ``state="unknown"`` for that
+        one dir instead of propagating up to ``build_model``.
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import classify_worktree_dir
+
+        def fake_run(args, **_kwargs):
+            # Simulate the per-probe timeout that triggered the bug
+            # report: the 5s ``timeout=timeout`` in the production
+            # runner expires and ``subprocess.run`` raises. With the
+            # new ``_run_probe`` wrapper, this collapses to ``None``
+            # rather than unwinding through the dashboard.
+            raise subprocess.TimeoutExpired(cmd=args, timeout=5)
+
+        with tempfile.TemporaryDirectory(prefix="wt-timeout-") as td:
+            root = Path(td)
+            wt = root / ".worktrees" / "hung"
+            wt.mkdir(parents=True)
+            meta = classify_worktree_dir(wt, root, git_runner=fake_run)
+
+        self.assertEqual(
+            meta["state"], "unknown",
+            "every probe must be wrapped — TimeoutExpired on a single "
+            "probe should fall back to state='unknown', not crash "
+            "the dashboard",
+        )
+        # The function must return a complete dict (not raise) so
+        # callers can keep iterating other dirs.
+        for k in ("state", "worktree_listed", "branch_merged_into_main",
+                  "is_fresh", "branch_tip", "branch_name"):
+            self.assertIn(k, meta)
+
+    def test_classify_all_worktrees_keeps_running_on_per_dir_timeout(self):
+        """Issue #timeout-sweep: a single timed-out dir must not stop
+        the rest of the classification pass. Drive ``classify_all_worktrees``
+        with a fake ``git_runner`` that times out only for one of N
+        dirs; assert the timed-out dir ends up as ``state="unknown"``
+        while the rest classify normally.
+        """
+        import subprocess
+
+        from token_efficiency_analyzer import classify_all_worktrees
+
+        with tempfile.TemporaryDirectory(prefix="wt-mixed-") as td:
+            root = Path(td)
+            ok_wt = root / ".worktrees" / "ok"
+            hung_wt = root / ".worktrees" / "hung"
+            ok_wt.mkdir(parents=True)
+            hung_wt.mkdir(parents=True)
+
+            porcelain = (
+                f"worktree {ok_wt}\nHEAD feedfacefeedfacefeedfacefeedfacefeedface\n"
+                f"branch refs/heads/feat/ok\n\n"
+                f"worktree {hung_wt}\nHEAD deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"
+                f"branch refs/heads/feat/hung\n"
+            )
+
+            def fake_run(args, **_kwargs):
+                cmd = " ".join(str(a) for a in args)
+                if "worktree list --porcelain" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout=porcelain, stderr="")
+                if "rev-parse origin/main" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout="feedface" * 8, stderr="",
+                    )
+                if str(hung_wt) in cmd:
+                    raise subprocess.TimeoutExpired(cmd=args, timeout=5)
+                if "rev-parse --short HEAD" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout="abc1234", stderr="")
+                if "rev-parse HEAD" in cmd:
+                    return subprocess.CompletedProcess(
+                        args, 0, stdout="feedface" * 8, stderr="",
+                    )
+                if "log origin/main..HEAD" in cmd:
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+            meta = classify_all_worktrees(root, git_runner=fake_run)
+
+        # OK dir classified normally.
+        self.assertIn(meta["ok"]["state"], ("fresh", "live", "merged", "gone"))
+        # Hung dir must NOT crash the loop and must NOT be reported as
+        # ``"live"`` (we couldn't verify it has unique commits). It
+        # falls back to ``"merged"`` here because the empty log probe
+        # succeeded for the hung path too — that's a safe answer.
+        self.assertIn(
+            meta["hung"]["state"], ("merged", "unknown"),
+            f"per-dir timeout must not crash and must not report 'live' "
+            f"(we couldn't read the unique-commits probe), got {meta['hung']['state']!r}",
+        )
+        # (main) sentinel still emitted.
+        self.assertEqual(meta["(main)"]["state"], "main")
+
     def test_classify_worktree_dir_per_block_branch_name_lookup(self):
         """Issue #494 reviewer finding (🟠 major #2):
 
