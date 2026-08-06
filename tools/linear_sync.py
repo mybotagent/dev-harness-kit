@@ -53,6 +53,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -526,8 +528,11 @@ def _resolve_prompt(repo: Path) -> str:
 def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     """Execute a Linear GraphQL request and return the `data` payload.
 
-    Raises `RuntimeError` on transport / API failures; the caller
-    is responsible for translating that into a non-blocking no-op.
+    Returns the `data` payload on success. Raises RuntimeError on
+    HTTP/GraphQL errors. Returns `{}` on transport failure
+    (URLError/TimeoutError/OSError) so the auto-sync non-blocking
+    contract can fall through; CLI callers that need to surface
+    transport errors must inspect LINEAR_DEBUG=1 output.
     """
     api_key = os.environ.get("LINEAR_API_KEY", "").strip()
     if not api_key:
@@ -543,11 +548,28 @@ def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+        # 15s absorbs cold DNS/TLS (measured 5.82s on first call vs 3.67s warm
+        # on macOS). 5s ceiling was hitting on initial network setup; going
+        # higher (>30s) would block the Edit too long in a true outage.
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "ignore") if exc.fp else ""
         raise RuntimeError(f"linear http {exc.code}: {body[:300] or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        # URLError wraps both DNS failures and SSL errors. SSL errors
+        # can be a MITM signal — never silently swallow them. Re-raise
+        # so the autoload caller turns it into a noisy RuntimeError
+        # (the hook wrapper still exits 0 via the non-blocking gate).
+        if isinstance(exc.reason, ssl.SSLError):
+            raise RuntimeError(f"linear TLS: {exc.reason}") from exc
+        return {}
+    except (TimeoutError, socket.error):
+        # socket.timeout is a TimeoutError subclass, so both are caught.
+        # socket.error is the parent of network-layer OSErrors
+        # (ConnectionRefusedError, ConnectionResetError, etc.) while
+        # excluding filesystem OSErrors (FileNotFoundError, PermissionError).
+        return {}
     if "errors" in payload and payload["errors"]:
         first = payload["errors"][0]
         raise RuntimeError(f"linear graphql: {first.get('message', 'unknown')}")

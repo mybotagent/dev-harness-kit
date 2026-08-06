@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -248,6 +249,72 @@ class TestLinearSync(unittest.TestCase):
                 side_effect=OSError("network down"),
             ):
                 self.assertEqual(linear_sync.sync(), 0)  # does not raise
+
+    def test_urlopen_timeout_is_non_blocking(self):
+        """Cold-start resilience (#583 followup): first urlopen call may
+        exceed timeout (DNS/TLS handshake). Subsequent calls in the same
+        round must still succeed — non-blocking contract means Edit is
+        never blocked by a flaky first request."""
+        with _fake_repo(linear_api_key="test-key",
+                        handoff={"prompt": "implement x"}) as repo:
+            call_count = {"n": 0}
+
+            def flaky(req, timeout=15):  # noqa: ARG001
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise TimeoutError("simulated cold start")
+                return _FakeResponse(json.dumps({"data": {
+                    "projects": {"nodes": [{"id": "proj-1", "name": "demo"}]},
+                    "projectCreate": {"project": {"id": "proj-1"}},
+                    "issues": {"nodes": []},
+                    "workflowStates": {"nodes": [
+                        {"id": "st-todo", "name": "Todo"},
+                    ]},
+                    "issueCreate": {"issue": {
+                        "id": "iss-1", "identifier": "DEMO-1",
+                        "state": {"name": "Todo"},
+                    }},
+                }}).encode("utf-8"))
+
+            with mock.patch.object(linear_sync, "_resolve_prompt",
+                                    return_value="implement x"), \
+                 mock.patch("urllib.request.urlopen", flaky):
+                self.assertEqual(linear_sync.sync(), 0)
+            self.assertGreater(
+                call_count["n"], 1,
+                "expected sync() to retry after first TimeoutError",
+            )
+            handoff = json.loads(
+                (repo / ".dev-kit" / "hand-off" / "linear" / "fake-worktree.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(handoff["action"], "created")
+            self.assertEqual(handoff["state"], "Todo")
+
+    def test_linear_query_transport_returns_empty_dict(self):
+        """#cold-start followup: transport errors (URLError/TimeoutError) must
+        return {} so the auto-sync round continues; HTTPError must still
+        raise RuntimeError. The contract split (transport=empty, HTTP=raise)
+        is the foundation of the non-blocking guarantee."""
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "test-key"}):
+            # 1) URLError -> {}
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=urllib.error.URLError("dns down")):
+                self.assertEqual(linear_sync._linear_query("q", {}), {})
+            # 2) TimeoutError -> {}
+            with mock.patch("urllib.request.urlopen",
+                            side_effect=TimeoutError("socket.timeout")):
+                self.assertEqual(linear_sync._linear_query("q", {}), {})
+            # 3) HTTPError -> still RuntimeError (regression guard)
+            err = urllib.error.HTTPError(
+                "https://api.linear.app/graphql", 503, "Service Unavailable",
+                {"Content-Type": "application/json"},
+                io.BytesIO(b'{"err":"x"}'),
+            )
+            with mock.patch("urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(RuntimeError):
+                    linear_sync._linear_query("q", {})
 
     def test_repo_name_falls_back_to_directory(self):
         """Canonical repo name = directory basename, matching #539's
