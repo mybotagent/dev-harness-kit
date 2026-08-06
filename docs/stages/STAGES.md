@@ -121,7 +121,7 @@
 - **Hand-off out**: (terminal — the gate is the final pre-merge
   signal alongside review/security)
 
-## Cross-cutting — Audit (`/dev-kit:audit`)
+## Cross-cutting — Audit (`/dev-kit:inspect`)
 
 - **Goal**: Batch audit of slop + secrets.
 - **Must**: Output HIGH/MEDIUM/LOW buckets. Banned-phrase regex SSOT.
