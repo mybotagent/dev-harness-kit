@@ -47,7 +47,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 <<<<<<< HEAD
 SKILL_COUNT = 40
 =======
-SKILL_COUNT = 37
+SKILL_COUNT = 38
 >>>>>>> e8ed62e (test(smoke): bump SKILL_COUNT to 37 for PR-1 slim sweep)
 HOOK_SCRIPTS = {
     "tdd-guard.sh",

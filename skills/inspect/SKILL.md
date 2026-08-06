@@ -13,7 +13,6 @@ model: opus
 user-invocable: true
 ---
 > [← Skills index](../../README.md)
-
 Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
 
 ## Scope
@@ -22,9 +21,8 @@ Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analy
 2. `--html` -> after the markdown artifact, run
    `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
 3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-4. `--secrets` -> alias for `--dim secret` (lib/analysis_core/dimensions.py:secret — AWS/Anthropic/GitHub/Slack/PEM/embedded URI patterns). Equivalent to old `/dev-kit:audit --secrets-only`.
-5. `--slop` -> alias for `--dim slop` (lib/analysis_core/dimensions.py:slop — KO+EN banned phrases + structure bank). Equivalent to old `/dev-kit:audit --slop-only`.
-6. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
+4. `--secrets` / `--slop` -> aliases for `--dim secret` / `--dim slop` (lib/analysis_core/dimensions.py). Replaces the removed `/dev-kit:audit` slash.
+5. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
 ## Fan-out + verify
 
 Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, fix_hint`). Return a fenced `json` array. One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`; REJECTED are dropped.
