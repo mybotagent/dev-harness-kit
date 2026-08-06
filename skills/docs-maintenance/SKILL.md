@@ -57,7 +57,7 @@ Check both directions: every documented path/command/feature must exist (false-p
 
 ### 3. Refresh the README (mandatory)
 
-This step is not optional. If the README does not need changes, the run still recorded "no change" against each entry below — that is the audit trail, not a reason to skip.
+This step is not optional. If the README does not need changes, the run still records "no change" against each entry below — that is the audit trail, not a reason to skip.
 
 Keep the README answer-first and task-oriented. For cache updates, document the maintained updater script, its dry-run mode, environment overrides, the manifest/cache verification output, and the required client restart. Explain Claude and Codex paths separately when their commands or cache locations differ.
 
