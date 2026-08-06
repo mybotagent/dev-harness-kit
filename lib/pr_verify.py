@@ -157,8 +157,16 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> str:
     return res.stdout
 
 
-def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str) -> GateResult:
-    """G1: PR is OPEN (not closed, not merged, not draft)."""
+def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str = "") -> GateResult:
+    """G1: PR is OPEN (not closed, not merged, not draft).
+
+    `fetched_at` is the timestamp the caller wants stamped on the
+    gate. When empty (the verify_pr path), we stamp the moment the
+    gate's own fetch starts so the timestamp actually reflects the
+    fetch time.
+    """
+    if not fetched_at:
+        fetched_at = _now_iso()
     raw = _run_gh([
         "pr", "view", str(pr_number),
         "--repo", repo,
@@ -182,7 +190,7 @@ def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str) -> GateResult:
     )
 
 
-def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str) -> GateResult:
+def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str = "") -> GateResult:
     """G2: every CI check is in a terminal success state.
 
     "success" / "skipped" / "neutral" are terminal pass. "pending" /
@@ -190,6 +198,8 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str) -> GateResult
     claim pass; we report pending explicitly. "failure" / "timed_out"
     / "cancelled" / "action_required" are terminal fail.
     """
+    if not fetched_at:
+        fetched_at = _now_iso()
     raw = _run_gh([
         "pr", "checks", str(pr_number),
         "--repo", repo,
@@ -281,24 +291,29 @@ def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
     return (verdict, comment_id)
 
 
-def _gate_g3_llm_verdicts(pr_number: int, repo: str, fetched_at: str) -> GateResult:
+def _gate_g3_llm_verdicts(
+    pr_number: int, repo: str, fetched_at: str = "",
+    comments: tuple[dict, ...] | None = None,
+) -> GateResult:
     """G3: latest LLM-judge verdict for review + security + maintenance
     is `Approve`. Parsed from the most recent claude[bot] comment
     per workflow run; we pick the most recent across all judges.
 
-    The point: the previous babysit trusted the first `Approve` it
-    found. A second CI run (e.g. after a `git commit --allow-empty
-    -m "ci: re-trigger"`) posts a NEW comment; if THAT run is still
-    in progress, the most recent `**Verdict:**` is `MISSING`, and
-    the PR is not approved. We make that explicit.
+    `comments` is the pre-fetched comment tuple from `verify_pr`,
+    which shares one `gh api .../comments` round-trip across G3 and G4.
+    The default-None fallback preserves the gate-level hermetic test
+    API (passes when called directly without pre-fetched data).
     """
-    raw = _run_gh([
-        "api", f"repos/{repo}/issues/{pr_number}/comments",
-        "--paginate",
-        "--slurp",
-        "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
-    ])
-    comments = json.loads(raw)
+    if not fetched_at:
+        fetched_at = _now_iso()
+    if comments is None:
+        raw = _run_gh([
+            "api", f"repos/{repo}/issues/{pr_number}/comments",
+            "--paginate",
+            "--slurp",
+            "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
+        ])
+        comments = tuple(json.loads(raw))
     verdict, src = _parse_latest_llm_verdict(comments)
     passed = verdict == "Approve"
     detail = f"latest verdict: {verdict}"
@@ -322,7 +337,8 @@ def _gate_g3_llm_verdicts(pr_number: int, repo: str, fetched_at: str) -> GateRes
 
 
 def _gate_g4_audit_no_failure_paired_with_approve(
-    pr_number: int, repo: str, fetched_at: str
+    pr_number: int, repo: str, fetched_at: str = "",
+    comments: tuple[dict, ...] | None = None,
 ) -> GateResult:
     """G4: no `<!-- dev-kit-verdict-audit -->` comment records a
     workflow-run with `status=failure` paired with `verdict=Approve`.
@@ -341,13 +357,16 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     been fixed) become informational only. The semantic: "is the
     workflow currently producing this false-positive?"
     """
-    raw = _run_gh([
-        "api", f"repos/{repo}/issues/{pr_number}/comments",
-        "--paginate",
-        "--slurp",
-        "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
-    ])
-    comments = json.loads(raw)
+    if not fetched_at:
+        fetched_at = _now_iso()
+    if comments is None:
+        raw = _run_gh([
+            "api", f"repos/{repo}/issues/{pr_number}/comments",
+            "--paginate",
+            "--slurp",
+            "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
+        ])
+        comments = tuple(json.loads(raw))
     audit_re = re.compile(
         r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
         r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
@@ -390,11 +409,13 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     )
 
 
-def _gate_g5_merge_state(pr_number: int, repo: str, fetched_at: str) -> GateResult:
+def _gate_g5_merge_state(pr_number: int, repo: str, fetched_at: str = "") -> GateResult:
     """G5: mergeStateStatus is CLEAN or BEHIND (not BLOCKED / DIRTY /
     UNKNOWN). BEHIND is a soft warning (the branch needs a rebase
     but can still merge). BLOCKED / DIRTY / UNKNOWN are hard fails.
     """
+    if not fetched_at:
+        fetched_at = _now_iso()
     raw = _run_gh([
         "pr", "view", str(pr_number),
         "--repo", repo,
@@ -420,14 +441,28 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
     No cache, no in-process state. The report's `checked_at` is the
     single timestamp the caller should trust.
     """
-    checked_at = _now_iso()
+    # Single source of truth: fetch the comment stream ONCE and pass
+    # it to both G3 and G4. This addresses OE-5 (single source of truth).
+    # The fallback path (gates called standalone in tests) re-fetches.
+    # We pass `fetched_at=""` so each gate computes its OWN timestamp
+    # (per spec: per-gate `fetched_at` = "of the fetch that produced it").
+    raw = _run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/comments",
+        "--paginate",
+        "--slurp",
+        "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
+    ])
+    shared_comments: tuple[dict, ...] = tuple(json.loads(raw))
     gates: list[GateResult] = [
-        _gate_g1_pr_state(pr_number, repo, checked_at),
-        _gate_g2_ci_checks(pr_number, repo, checked_at),
-        _gate_g3_llm_verdicts(pr_number, repo, checked_at),
-        _gate_g4_audit_no_failure_paired_with_approve(pr_number, repo, checked_at),
-        _gate_g5_merge_state(pr_number, repo, checked_at),
+        _gate_g1_pr_state(pr_number, repo),
+        _gate_g2_ci_checks(pr_number, repo),
+        _gate_g3_llm_verdicts(pr_number, repo, comments=shared_comments),
+        _gate_g4_audit_no_failure_paired_with_approve(pr_number, repo, comments=shared_comments),
+        _gate_g5_merge_state(pr_number, repo),
     ]
+    # Overall report timestamp is the END of the verify run (not the
+    # pre-fetch time) — that's when all five gates have reported.
+    checked_at = _now_iso()
     return PRVerifyReport(
         pr_number=pr_number, repo=repo, checked_at=checked_at, gates=gates,
     )
