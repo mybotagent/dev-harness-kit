@@ -207,13 +207,20 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str) -> GateResult
         state = (ch.get("state") or "unknown").lower()
         by_bucket.setdefault(bucket, []).append(ch.get("name", "?"))
         by_state.setdefault(state, []).append(ch.get("name", "?"))
+    # Known terminal buckets are pass + fail; "pending" is still-running.
+    # Anything else ("unknown") means a workflow produced an unclassified
+    # state — fail closed so we don't claim pass on noise.
     pending = by_bucket.get("pending", [])
     failed = by_bucket.get("fail", [])
-    passed_check = not pending and not failed and bool(by_bucket)
+    unknown = by_bucket.get("unknown", [])
+    buckets_present = bool(by_bucket)
+    passed_check = buckets_present and not pending and not failed and not unknown
     if pending:
         detail = f"PENDING (still running): {', '.join(pending)}"
     elif failed:
         detail = f"FAILED: {', '.join(failed)}"
+    elif unknown:
+        detail = f"UNKNOWN bucket (workflow produced unclassified state): {', '.join(unknown)}"
     elif by_bucket:
         buckets = ", ".join(f"{b}={len(n)}" for b, n in by_bucket.items())
         detail = f"all terminal: {buckets}"
@@ -232,6 +239,13 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str) -> GateResult
 
 _VERDICT_LINE = re.compile(r"\*\*Verdict:\*\*\s+(Approve|Changes Requested|Blocked)")
 
+# Exact-match trusted claude-bot GitHub App logins. A `startswith("claude")`
+# check would accept impersonator accounts (`claude-reviewer`,
+# `claude-bot-fork`, etc.) — the verifier must NOT be tricked into
+# treating a non-claude account as authoritative. The set is module-level
+# so G3 evidence counting can use the same source of truth.
+TRUSTED_BOT_LOGINS = frozenset({"claude", "claude[bot]"})
+
 
 def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
     """Find the most recent claude[bot] comment whose body contains a
@@ -244,10 +258,14 @@ def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
     `reviewDecision` slot (that is the GitHub human-review slot,
     not the LLM-judge verdict).
     """
+    # Exact-match against the canonical claude[bot] GitHub App login.
+    # A `startswith("claude")` check would accept impersonator accounts
+    # (`claude-reviewer`, `claude-bot-fork`, etc.) — the verifier must
+    # NOT be tricked into treating a non-claude account as authoritative.
     candidates = []
     for c in comments:
         user = c.get("user") or ""
-        if not user.startswith("claude"):
+        if user not in TRUSTED_BOT_LOGINS:
             continue
         body = c.get("body") or ""
         m = _VERDICT_LINE.search(body)
@@ -277,7 +295,8 @@ def _gate_g3_llm_verdicts(pr_number: int, repo: str, fetched_at: str) -> GateRes
     raw = _run_gh([
         "api", f"repos/{repo}/issues/{pr_number}/comments",
         "--paginate",
-        "--jq", "[.[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
+        "--slurp",
+        "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
     ])
     comments = json.loads(raw)
     verdict, src = _parse_latest_llm_verdict(comments)
@@ -295,7 +314,7 @@ def _gate_g3_llm_verdicts(pr_number: int, repo: str, fetched_at: str) -> GateRes
             "source_comment_id": src,
             "n_claude_comments_scanned": sum(
                 1 for c in comments
-                if c.get("user", "").startswith("claude")
+                if (c.get("user") or "") in TRUSTED_BOT_LOGINS
             ),
         },
         fetched_at=fetched_at,
@@ -325,7 +344,8 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     raw = _run_gh([
         "api", f"repos/{repo}/issues/{pr_number}/comments",
         "--paginate",
-        "--jq", "[.[] | {id: .id, body: .body, created_at: .created_at}]",
+        "--slurp",
+        "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
     ])
     comments = json.loads(raw)
     audit_re = re.compile(
