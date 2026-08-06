@@ -189,7 +189,10 @@ class TestGatesHermetic(unittest.TestCase):
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps(comments)):
             g = pr_verify._gate_g4_audit_no_failure_paired_with_approve(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
         self.assertFalse(g.passed)
-        self.assertIn("status=failure verdict=Approve", g.detail)
+        bad = g.evidence["bad_pairs"][0]
+        self.assertEqual(bad["status"], "failure")
+        self.assertEqual(bad["verdict"], "Approve")
+        self.assertEqual(bad["job"], "review")
 
     def test_g5_clean_passes(self):
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps({

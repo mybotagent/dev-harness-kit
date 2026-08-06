@@ -207,7 +207,7 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str) -> GateResult
         state = (ch.get("state") or "unknown").lower()
         by_bucket.setdefault(bucket, []).append(ch.get("name", "?"))
         by_state.setdefault(state, []).append(ch.get("name", "?"))
-by_bucket.get("pending", [])
+    pending = by_bucket.get("pending", [])
     failed = by_bucket.get("fail", [])
     passed_check = not pending and not failed and bool(by_bucket)
     if pending:
@@ -315,9 +315,12 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     `verdict=Approve` even if the workflow's own exit code was
     `failure` (e.g. the workflow self-validated, the LLM API
     errored, or the verdict text was emitted in a comment but the
-    script's overall exit was non-zero). G4 reads the audit
-    comments directly and flags any `status=failure` + `verdict=Approve`
-    pair as a hard fail.
+    script's overall exit was non-zero).
+
+    G4 only flags the MOST RECENT run per job. Historical false-positive
+    audit comments (from transient LLM API errors that have since
+    been fixed) become informational only. The semantic: "is the
+    workflow currently producing this false-positive?"
     """
     raw = _run_gh([
         "api", f"repos/{repo}/issues/{pr_number}/comments",
@@ -329,28 +332,40 @@ def _gate_g4_audit_no_failure_paired_with_approve(
         r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
         r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
     )
-    bad_pairs: list[dict] = []
+    # Pick the most recent audit comment PER JOB. The semantic is
+    # "is THIS job currently producing a false-positive?" — an older
+    # false-positive that the workflow no longer produces is stale
+    # and should not block.
+    latest_per_job: dict[str, dict] = {}
     for c in comments:
         body = c.get("body") or ""
         m = audit_re.search(body)
         if not m:
             continue
         run_id, job, status, verdict = m.groups()
-        if status == "failure" and verdict == "Approve":
-            bad_pairs.append({
-                "run": run_id, "job": job, "status": status, "verdict": verdict,
-            })
+        created_at = c.get("created_at") or ""
+        prior = latest_per_job.get(job)
+        if prior is None or created_at > prior["created_at"]:
+            latest_per_job[job] = {
+                "run": run_id, "job": job, "status": status,
+                "verdict": verdict, "created_at": created_at,
+            }
+    bad_pairs = [
+        v for v in latest_per_job.values()
+        if v["status"] == "failure" and v["verdict"] == "Approve"
+    ]
     passed = not bad_pairs
     detail = (
-        "no false-positive pairs" if passed
-        else f"{len(bad_pairs)} audit comment(s) say status=failure verdict=Approve: {bad_pairs}"
+        "no false-positive pairs in most recent run per job"
+        if passed
+        else f"{len(bad_pairs)} job(s) have a false-positive audit in their most recent run: {[v['job'] for v in bad_pairs]}"
     )
     return GateResult(
         gate="G4",
-        label="no audit comment with status=failure + verdict=Approve",
+        label="no audit comment with status=failure + verdict=Approve (most recent per job)",
         passed=passed,
         detail=detail,
-        evidence={"bad_pairs": bad_pairs},
+        evidence={"bad_pairs": bad_pairs, "latest_per_job": latest_per_job},
         fetched_at=fetched_at,
     )
 
