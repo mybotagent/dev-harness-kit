@@ -403,6 +403,84 @@ class TestM2StaleVerdictGuard(unittest.TestCase):
 
 
 
+
+
+class TestCC8EdgeCaseFailures(unittest.TestCase):
+    """CC-8 regression: a single `gh` failure must NOT abort the
+    entire verify_pr — the offending gate returns a structured
+    fail-closed GateResult and the other gates still report."""
+
+    def test_gh_timeout_returns_fail_closed_gate(self):
+        from pr_verify import GhError
+        with patch.object(pr_verify, "_run_gh", side_effect=GhError(
+            "gh pr timed out after 30s", exit_code=None,
+        )):
+            g = pr_verify._gate_g1_pr_state(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("gh error", g.detail)
+
+    def test_gh_missing_binary_returns_fail_closed_gate(self):
+        from pr_verify import GhError
+        with patch.object(pr_verify, "_run_gh", side_effect=GhError(
+            "gh CLI not found on PATH", exit_code=None,
+        )):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("gh error", g.detail)
+
+    def test_malformed_json_returns_fail_closed_gate(self):
+        from pr_verify import GhError
+        with patch.object(pr_verify, "_run_gh", side_effect=GhError(
+            "gh returned malformed JSON: Unexpected token at line 1 col 5",
+        )):
+            g = pr_verify._gate_g3_llm_verdicts(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("gh error", g.detail)
+
+    def test_verify_pr_one_gate_fails_others_still_report(self):
+        """A single gate's failure must NOT abort verify_pr — the
+        other four gates still report. This is the core CC-8
+        regression."""
+        from pr_verify import GhError
+        # Make the SHARED COMMENTS fetch (used by G3 and G4) raise.
+        # verify_pr's try/except swallows it (shared_comments stays ()),
+        # then G3 and G4 fall back to per-gate _run_gh which ALSO raises
+        # (same side_effect is called). Each gate catches GhError and
+        # returns a fail-closed GateResult. G1, G2, G5 still report.
+        fail_api = {"on": True}
+
+        def side_effect(args, *a, **kw):
+            sub = args[0]
+            if sub == "api" and fail_api["on"]:
+                raise GhError("gh comments fetch injected failure", exit_code=1)
+            if sub == "pr" and len(args) > 1 and args[1] == "view":
+                return json.dumps({"state": "OPEN", "isDraft": False,
+                                   "mergeStateStatus": "CLEAN",
+                                   "mergeable": "MERGEABLE"})
+            if sub == "pr" and len(args) > 1 and args[1] == "checks":
+                return json.dumps([
+                    {"name": "lint", "state": "COMPLETED",
+                     "conclusion": "success", "bucket": "pass"},
+                ])
+            return json.dumps({})
+
+        with patch.object(pr_verify, "_run_gh", side_effect=side_effect):
+            report = pr_verify.verify_pr(584)
+        # report.passed is False because G3/G4 fail-closed
+        self.assertFalse(report.passed)
+        # The injected failure is reported as a blocker, not swallowed
+        blocker_text = " ".join(report.blockers)
+        self.assertIn("gh error", blocker_text)
+        # All 5 gates still produce a GateResult (no gate crashed)
+        self.assertEqual(len(report.gates), 5)
+        # G1, G2, G5 pass; G3, G4 fail
+        passed_gates = {g.gate for g in report.gates if g.passed}
+        self.assertIn("G1", passed_gates)
+        self.assertIn("G2", passed_gates)
+        self.assertIn("G5", passed_gates)
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

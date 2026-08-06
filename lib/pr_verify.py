@@ -145,16 +145,58 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class GhError(RuntimeError):
+    """Wraps subprocess failures (timeout, non-zero exit, missing CLI)
+    so a verifier caller can distinguish a `gh` outage from a
+    real gate verdict."""
+
+    def __init__(self, message: str, *, stderr: str = "", exit_code: int | None = None):
+        super().__init__(message)
+        self.stderr = stderr
+        self.exit_code = exit_code
+
+
 def _run_gh(args: list[str], *, timeout: int = 30) -> str:
-    """Run a `gh` command and return stdout. Raises on non-zero exit."""
-    res = subprocess.run(
-        ["gh", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=True,
-    )
+    """Run a `gh` command and return stdout. Raises `GhError` on any
+    subprocess failure (timeout, non-zero exit, missing binary). The
+    caller — typically one of the gate functions — is responsible for
+    catching `GhError` and returning a fail-closed `GateResult`."""
+    try:
+        res = subprocess.run(
+            ["gh", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise GhError(
+            f"gh CLI not found on PATH: {exc}",
+            exit_code=None,
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GhError(
+            f"gh {args[0] if args else '<empty>'} timed out after {timeout}s",
+            exit_code=None,
+        ) from exc
+    if res.returncode != 0:
+        raise GhError(
+            f"gh {args[0] if args else '<empty>'} exited {res.returncode}: {res.stderr.strip()[:200]}",
+            stderr=res.stderr,
+            exit_code=res.returncode,
+        )
     return res.stdout
+
+
+def _safe_json_loads(raw: str, *, context: str = "") -> object:
+    """Parse JSON with a fail-closed GhError. Never raises JSONDecodeError
+    out to a gate body — the gate catches GhError and returns a
+    fail-closed GateResult."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhError(
+            f"gh returned malformed JSON ({context}): {exc.msg} at line {exc.lineno} col {exc.colno}",
+        ) from exc
 
 
 def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str = "") -> GateResult:
@@ -167,12 +209,22 @@ def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str = "") -> GateRe
     """
     if not fetched_at:
         fetched_at = _now_iso()
-    raw = _run_gh([
-        "pr", "view", str(pr_number),
-        "--repo", repo,
-        "--json", "state,isDraft,mergeStateStatus",
-    ])
-    data = json.loads(raw)
+    try:
+        raw = _run_gh([
+            "pr", "view", str(pr_number),
+            "--repo", repo,
+            "--json", "state,isDraft,mergeStateStatus",
+        ])
+        data = _safe_json_loads(raw, context="G1 pr view")
+    except GhError as exc:
+        return GateResult(
+            gate="G1",
+            label="PR state is OPEN (not draft/closed/merged)",
+            passed=False,
+            detail=f"gh error: {exc}",
+            evidence={"error": str(exc), "exit_code": exc.exit_code},
+            fetched_at=fetched_at,
+        )
     state = data.get("state", "")
     is_draft = bool(data.get("isDraft", False))
     merge_state = data.get("mergeStateStatus", "")
@@ -200,12 +252,22 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str = "") -> GateR
     """
     if not fetched_at:
         fetched_at = _now_iso()
-    raw = _run_gh([
-        "pr", "checks", str(pr_number),
-        "--repo", repo,
-        "--json", "name,state,bucket,startedAt,link,workflow,completedAt",
-    ])
-    checks = json.loads(raw)
+    try:
+        raw = _run_gh([
+            "pr", "checks", str(pr_number),
+            "--repo", repo,
+            "--json", "name,state,bucket,startedAt,link,workflow,completedAt",
+        ])
+        checks = _safe_json_loads(raw, context="G2 pr checks")
+    except GhError as exc:
+        return GateResult(
+            gate="G2",
+            label="every CI check is in a terminal success state",
+            passed=False,
+            detail=f"gh error: {exc}",
+            evidence={"error": str(exc), "exit_code": exc.exit_code},
+            fetched_at=fetched_at,
+        )
     # gh pr checks --json bucket values: pass | fail | pending | skipping.
     # `pass` and `skipping` are terminal-pass, `pending` is still-running,
     # `fail` is fail. `state` is informational only; the bucket is the
@@ -319,13 +381,23 @@ def _gate_g3_llm_verdicts(
     if not fetched_at:
         fetched_at = _now_iso()
     if comments is None:
-        raw = _run_gh([
-            "api", f"repos/{repo}/issues/{pr_number}/comments",
-            "--paginate",
-            "--slurp",
-            "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
-        ])
-        comments = tuple(json.loads(raw))
+        try:
+            raw = _run_gh([
+                "api", f"repos/{repo}/issues/{pr_number}/comments",
+                "--paginate",
+                "--slurp",
+                "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
+            ])
+            comments = tuple(_safe_json_loads(raw, context="G3 fetch comments"))
+        except GhError as exc:
+            return GateResult(
+                gate="G3",
+                label="most recent LLM-judge verdict is Approve",
+                passed=False,
+                detail=f"gh error: {exc}",
+                evidence={"error": str(exc), "exit_code": exc.exit_code},
+                fetched_at=fetched_at,
+            )
     verdict, src = _parse_latest_llm_verdict(comments)
 
     # M-2 stale-verdict guard: if the latest comment was created BEFORE
@@ -383,13 +455,23 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     if not fetched_at:
         fetched_at = _now_iso()
     if comments is None:
-        raw = _run_gh([
-            "api", f"repos/{repo}/issues/{pr_number}/comments",
-            "--paginate",
-            "--slurp",
-            "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
-        ])
-        comments = tuple(json.loads(raw))
+        try:
+            raw = _run_gh([
+                "api", f"repos/{repo}/issues/{pr_number}/comments",
+                "--paginate",
+                "--slurp",
+                "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
+            ])
+            comments = tuple(_safe_json_loads(raw, context="G4 fetch comments"))
+        except GhError as exc:
+            return GateResult(
+                gate="G4",
+                label="no audit comment with status=failure + verdict=Approve (most recent per job)",
+                passed=False,
+                detail=f"gh error: {exc}",
+                evidence={"error": str(exc), "exit_code": exc.exit_code},
+                fetched_at=fetched_at,
+            )
     audit_re = re.compile(
         r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
         r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
@@ -439,12 +521,22 @@ def _gate_g5_merge_state(pr_number: int, repo: str, fetched_at: str = "") -> Gat
     """
     if not fetched_at:
         fetched_at = _now_iso()
-    raw = _run_gh([
-        "pr", "view", str(pr_number),
-        "--repo", repo,
-        "--json", "mergeStateStatus,mergeable",
-    ])
-    data = json.loads(raw)
+    try:
+        raw = _run_gh([
+            "pr", "view", str(pr_number),
+            "--repo", repo,
+            "--json", "mergeStateStatus,mergeable",
+        ])
+        data = _safe_json_loads(raw, context="G5 pr view")
+    except GhError as exc:
+        return GateResult(
+            gate="G5",
+            label="mergeStateStatus is CLEAN or BEHIND",
+            passed=False,
+            detail=f"gh error: {exc}",
+            evidence={"error": str(exc), "exit_code": exc.exit_code},
+            fetched_at=fetched_at,
+        )
     state = (data.get("mergeStateStatus") or "").upper()
     soft_pass = state in {"CLEAN", "BEHIND", "UNSTABLE"}
     detail = f"mergeStateStatus={state}, mergeable={data.get('mergeable')}"
@@ -466,25 +558,36 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
     """
     # Single source of truth: fetch the comment stream ONCE and pass
     # it to both G3 and G4. This addresses OE-5 (single source of truth).
-    # The fallback path (gates called standalone in tests) re-fetches.
-    # We pass `fetched_at=""` so each gate computes its OWN timestamp
-    # (per spec: per-gate `fetched_at` = "of the fetch that produced it").
-    raw = _run_gh([
-        "api", f"repos/{repo}/issues/{pr_number}/comments",
-        "--paginate",
-        "--slurp",
-        "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
-    ])
-    shared_comments: tuple[dict, ...] = tuple(json.loads(raw))
+    # Wrapped in try/except so a `gh` outage does NOT abort verify_pr —
+    # the gate-level fallbacks handle missing shared_comments.
+    shared_comments: tuple[dict, ...] | None = None
+    try:
+        raw = _run_gh([
+            "api", f"repos/{repo}/issues/{pr_number}/comments",
+            "--paginate",
+            "--slurp",
+            "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
+        ])
+        shared_comments = tuple(_safe_json_loads(raw, context="verify_pr shared comments"))
+    except GhError:
+        # Leave as None so G3/G4 take their per-gate fallback path
+        # (which itself catches GhError and returns fail-closed gate).
+        pass
     # Fetch pushed_at for M-2 stale-verdict guard (G3). Same API call
     # as G1 but extracted separately to avoid coupling G1's return
-    # shape to G3's needs.
-    raw_pr = _run_gh([
-        "pr", "view", str(pr_number),
-        "--repo", repo,
-        "--json", "pushed_at",
-    ])
-    pr_pushed_at = json.loads(raw_pr).get("pushed_at", "")
+    # shape to G3's needs. Wrapped in try/except so a `gh` outage here
+    # does NOT abort verify_pr — pushed_at just becomes "" and G3
+    # skips the stale-verdict guard (the rest of the report still runs).
+    pr_pushed_at = ""
+    try:
+        raw_pr = _run_gh([
+            "pr", "view", str(pr_number),
+            "--repo", repo,
+            "--json", "pushed_at",
+        ])
+        pr_pushed_at = _safe_json_loads(raw_pr, context="verify_pr pushed_at").get("pushed_at", "")
+    except GhError:
+        pass
     gates: list[GateResult] = [
         _gate_g1_pr_state(pr_number, repo),
         _gate_g2_ci_checks(pr_number, repo),
