@@ -52,11 +52,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/tdd-scope-judge.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/tdd-scope-judge.sh",
+            "timeout": 120
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-auto-cut.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-auto-cut.sh",
+            "timeout": 120
           }
         ]
       }
