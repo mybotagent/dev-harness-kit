@@ -202,6 +202,47 @@ def _safe_json_loads(raw: str, *, context: str = "") -> object:
         ) from exc
 
 
+def _extract_user_login(comment: dict) -> str:
+    """Extract the comment author's login, tolerating both:
+      - `{"user": {"login": "github-actions"}}` (real `gh api` shape)
+      - `{"user": "github-actions"}` (legacy / mock shape)
+      - `{"user": null}` / missing (returns "")
+    """
+    user = comment.get("user")
+    if isinstance(user, dict):
+        return user.get("login") or ""
+    return user or ""
+
+
+def _fetch_paginated_comments(pr_number: int, repo: str, *, context: str) -> list[dict]:
+    """Fetch ALL PR comments via `gh api --paginate --slurp`, returning
+    one flat list of comment dicts.
+
+    `gh api --jq` is incompatible with `--slurp` (gh exits 1 with
+    "the `--slurp` option is not supported with `--jq` or `--template`"),
+    so we cannot transform in the gh call. Instead, slurp the raw
+    pages and flatten/transform in Python. `--slurp` returns an
+    outer array of per-page arrays; we flatten one level.
+    """
+    raw = _run_gh([
+        "api", f"repos/{repo}/issues/{pr_number}/comments",
+        "--paginate",
+        "--slurp",
+    ])
+    pages = _safe_json_loads(raw, context=f"{context} slurp")
+    if not isinstance(pages, list):
+        raise GhError(
+            f"gh slurp returned non-list ({context}): {type(pages).__name__}",
+        )
+    flat: list[dict] = []
+    for page in pages:
+        if isinstance(page, list):
+            flat.extend(page)
+        elif isinstance(page, dict):
+            flat.append(page)
+    return flat
+
+
 def _gate_g1_pr_state(pr_number: int, repo: str, fetched_at: str = "") -> GateResult:
     """G1: PR is OPEN (not closed, not merged, not draft).
 
@@ -347,7 +388,7 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
         m = audit_re.search(body)
         if not m:
             continue
-        author = c.get("user") or ""
+        author = _extract_user_login(c)
         if author not in TRUSTED_AUDIT_LOGINS:
             continue
         _, job, _status, verdict = m.groups()
@@ -392,7 +433,7 @@ def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
     # NOT be tricked into treating a non-claude account as authoritative.
     candidates = []
     for c in comments:
-        user = c.get("user") or ""
+        user = _extract_user_login(c)
         if user not in TRUSTED_BOT_LOGINS:
             continue
         body = c.get("body") or ""
@@ -441,13 +482,9 @@ def _gate_g3_llm_verdicts(
         fetched_at = _now_iso()
     if comments is None:
         try:
-            raw = _run_gh([
-                "api", f"repos/{repo}/issues/{pr_number}/comments",
-                "--paginate",
-                "--slurp",
-                "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
-            ])
-            comments = tuple(_safe_json_loads(raw, context="G3 fetch comments"))
+            comments = tuple(
+                _fetch_paginated_comments(pr_number, repo, context="G3 fetch comments")
+            )
         except GhError as exc:
             return GateResult(
                 gate="G3",
@@ -495,7 +532,7 @@ def _gate_g3_llm_verdicts(
             m = audit_re.search(body)
             if not m:
                 continue
-            author = c.get("user") or ""
+            author = _extract_user_login(c)
             if author not in TRUSTED_AUDIT_LOGINS:
                 continue
             _, job, _status, _verdict = m.groups()
@@ -531,7 +568,7 @@ def _gate_g3_llm_verdicts(
             "source_comment_id": src,
             "n_claude_comments_scanned": sum(
                 1 for c in comments
-                if (c.get("user") or "") in TRUSTED_BOT_LOGINS
+                if _extract_user_login(c) in TRUSTED_BOT_LOGINS
             ),
         },
         fetched_at=fetched_at,
@@ -563,13 +600,9 @@ def _gate_g4_audit_no_failure_paired_with_approve(
         fetched_at = _now_iso()
     if comments is None:
         try:
-            raw = _run_gh([
-                "api", f"repos/{repo}/issues/{pr_number}/comments",
-                "--paginate",
-                "--slurp",
-                "--jq", "[.[] | .[] | {id: .id, body: .body, created_at: .created_at}]",
-            ])
-            comments = tuple(_safe_json_loads(raw, context="G4 fetch comments"))
+            comments = tuple(
+                _fetch_paginated_comments(pr_number, repo, context="G4 fetch comments")
+            )
         except GhError as exc:
             return GateResult(
                 gate="G4",
@@ -597,7 +630,7 @@ def _gate_g4_audit_no_failure_paired_with_approve(
         m = audit_re.search(body)
         if not m:
             continue
-        author = c.get("user") or ""
+        author = _extract_user_login(c)
         if author not in TRUSTED_AUDIT_LOGINS:
             untrusted_audits += 1
             continue
@@ -684,13 +717,9 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
     # the gate-level fallbacks handle missing shared_comments.
     shared_comments: tuple[dict, ...] | None = None
     try:
-        raw = _run_gh([
-            "api", f"repos/{repo}/issues/{pr_number}/comments",
-            "--paginate",
-            "--slurp",
-            "--jq", "[.[] | .[] | {id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}]",
-        ])
-        shared_comments = tuple(_safe_json_loads(raw, context="verify_pr shared comments"))
+        shared_comments = tuple(
+            _fetch_paginated_comments(pr_number, repo, context="verify_pr shared comments")
+        )
     except GhError:
         # Leave as None so G3/G4 take their per-gate fallback path
         # (which itself catches GhError and returns fail-closed gate).
