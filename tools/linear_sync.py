@@ -53,6 +53,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -62,8 +63,21 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+
+class LinearTransportError(RuntimeError):
+    """Raised by _linear_query when the transport layer (DNS, TLS handshake,
+    connection refused) fails. Distinct from RuntimeError so callers can
+    distinguish transport failure from API/GraphQL errors and surface the
+    right diagnostic. Auto-sync round flow catches and bails silently
+    (non-blocking per #539); CLI surface flow re-raises to stderr."""
+
+
 # Linear API endpoint (https://developers.linear.app/docs/graphql/working-with-the-graphql-api).
 _LINEAR_API_URL = "https://api.linear.app/graphql"
+# 15s absorbs cold DNS/TLS (measured 5.82s on first call vs 3.67s warm on macOS).
+# 5s ceiling was hitting on initial network setup; >30s would block the Edit too long
+# in a true outage.
+_LINEAR_HTTP_TIMEOUT_S = 15
 _HANDOFF_DIR = Path(".dev-kit") / "hand-off" / "linear"
 _CONFIG_REL = Path(".dev-kit") / "linear-config.json"
 _ENV_FILE_REL = Path(".dev-kit") / ".env.linear"
@@ -526,8 +540,12 @@ def _resolve_prompt(repo: Path) -> str:
 def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     """Execute a Linear GraphQL request and return the `data` payload.
 
-    Raises `RuntimeError` on transport / API failures; the caller
-    is responsible for translating that into a non-blocking no-op.
+    Returns the `data` payload on success. Raises RuntimeError on
+    HTTP/GraphQL errors and on TLS handshake failures (MITM signal).
+    Raises LinearTransportError on transport failure (DNS, connection
+    refused, socket timeout, etc.) so the auto-sync non-blocking
+    contract can catch-and-continue at the `sync()` boundary; CLI
+    callers let it propagate to surface a real stderr diagnostic.
     """
     api_key = os.environ.get("LINEAR_API_KEY", "").strip()
     if not api_key:
@@ -543,11 +561,31 @@ def _linear_query(query: str, variables: dict[str, Any]) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_LINEAR_HTTP_TIMEOUT_S) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "ignore") if exc.fp else ""
         raise RuntimeError(f"linear http {exc.code}: {body[:300] or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        # URLError wraps both DNS failures and SSL errors. SSL errors
+        # can be a MITM signal — never silently swallow them. Re-raise
+        # as a plain RuntimeError so the auto-sync gate still bails
+        # non-blocking; the diagnostic is preserved.
+        if isinstance(exc.reason, ssl.SSLError):
+            raise RuntimeError(f"linear TLS: {exc.reason}") from exc
+        # Other transport failures (DNS, connection refused) — surface
+        # as LinearTransportError so callers can distinguish transport
+        # from API errors. urllib.request.urlopen always wraps
+        # socket.timeout as URLError(reason=socket.timeout(...)) in
+        # production, but a raw TimeoutError can still leak through
+        # mock-driven test paths.
+        raise LinearTransportError(f"linear: {exc}") from exc
+    except TimeoutError as exc:
+        # Defensive catch for raw TimeoutError that bypasses urllib's
+        # URLError wrapping (e.g. when urlopen is replaced with a
+        # bare side_effect=TimeoutError in tests, or in unusual
+        # transport adapters).
+        raise LinearTransportError(f"linear: {exc}") from exc
     if "errors" in payload and payload["errors"]:
         first = payload["errors"][0]
         raise RuntimeError(f"linear graphql: {first.get('message', 'unknown')}")
@@ -1354,6 +1392,14 @@ def sync() -> int:
         _write_handoff(repo, handoff_payload)
         if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
             print(f"linear_sync: {action} {issue_ref} (scope={scope}, state={current_state})", file=sys.stderr)
+    except LinearTransportError as exc:
+        # Transport-layer failure (DNS, connection refused, socket timeout).
+        # Surface only under LINEAR_DEBUG=1 — otherwise stay silent to honor
+        # the non-blocking contract from #539: "Linear failures are non-blocking
+        # for implicit workflow calls." The Edit must not be blocked by a
+        # flaky first request.
+        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+            print(f"[linear-sync] transport: {exc}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001 — non-blocking per #539 design.
         print(f"linear_sync: skipped ({exc.__class__.__name__}: {exc})", file=sys.stderr)
     return 0

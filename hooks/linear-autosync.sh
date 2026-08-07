@@ -31,6 +31,13 @@ fi
 
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
+# PROJECT_DIR is reachable but doesn't look like a dev-harness-kit
+# checkout (no tools/linear_sync.py). Bail silently — other Claude Code
+# projects may share this hook and would otherwise emit "No such file".
+if [ ! -f "$PROJECT_DIR/tools/linear_sync.py" ]; then
+  exit 0
+fi
+
 # Fast-path: bail before forking Python only if NO activation
 # source is present. Mirrors `_load_env_file()` + `_enabled()` in
 # tools/linear_sync.py. Sources (priority order, first match wins):
