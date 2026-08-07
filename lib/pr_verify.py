@@ -29,12 +29,15 @@ Gates:
        skipped / neutral). Pending / queued / in_progress means
        "still running", not "passed" — the verifier does NOT
        claim pass on pending.
-  G3. The most recent LLM-judge verdict (per workflow run, parsed
-       from the claude[bot] comment posted by that run) is
-       `Approve` for the 3-dim review, the 10-dim security
-       review, and the maintenance judge. Any verdict of
-       `Changes Requested` or `Blocked` or `MISSING` (workflow
-       ran but didn't post a verdict) yields a fail.
+  G3. For each required LLM-judge job — review, security, and
+       maintenance — the most recent audit comment posted by that
+       job's workflow run carries `verdict=Approve`. The audit
+       comment is the machine-recorded verdict line
+       `<!-- dev-kit-verdict-audit --> run=… job=… status=…
+       verdict=…` posted by the workflow's verdict-parser step.
+       A per-job `Changes Requested` / `Blocked`, a missing audit
+       for any required job, or a stale audit (created BEFORE the
+       PR's most recent push) yields a fail.
   G4. No `<!-- dev-kit-verdict-audit -->` comment records a
        workflow-run whose `status=failure` was paired with a
        verdict of `Approve` — this is the failure mode that
@@ -358,7 +361,7 @@ TRUSTED_BOT_LOGINS = frozenset({"claude", "claude[bot]"})
 
 def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
     """Find the most recent claude[bot] comment whose body contains a
-    `**Verdict:**` line. Returns (verdict_word, source_run_id).
+    `**Verdict:**` line. Returns (verdict_word, source_comment_id).
 
     The verdict line is the only thing the LLM judges are trusted on.
     We do NOT trust audit lines (the ones that say
@@ -395,9 +398,11 @@ def _gate_g3_llm_verdicts(
     comments: tuple[dict, ...] | None = None,
     pr_pushed_at: str = "",
 ) -> GateResult:
-    """G3: latest LLM-judge verdict for review + security + maintenance
-    is `Approve`. Parsed from the most recent claude[bot] comment
-    per workflow run; we pick the most recent across all judges.
+    """G3: every required LLM-judge job — review, security, and
+    maintenance — has its most recent audit comment carrying
+    `verdict=Approve`. The audit comment is the machine-recorded
+    per-job verdict posted by the workflow's verdict-parser step
+    (`<!-- dev-kit-verdict-audit --> run=… job=… status=… verdict=…`).
 
     `comments` is the pre-fetched comment tuple from `verify_pr`,
     which shares one `gh api .../comments` round-trip across G3 and G4.
@@ -405,8 +410,8 @@ def _gate_g3_llm_verdicts(
     API (passes when called directly without pre-fetched data).
 
     `pr_pushed_at` is the ISO-8601 timestamp of the most recent push
-    to the PR's head. If the latest verdict comment is OLDER than
-    `pr_pushed_at`, the verdict is stale (a new commit has landed
+    to the PR's head. If any Approve audit is OLDER than
+    `pr_pushed_at`, that audit is stale (a new commit has landed
     since the verdict was emitted) and G3 returns STALE.
     """
     if not fetched_at:
