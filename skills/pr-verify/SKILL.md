@@ -8,7 +8,7 @@ when_to_use:
   - Before any claim that a PR is "ready to merge" / "all green" / "approved"
   - At the START of every babysit iteration, before reporting status
   - Whenever a previous babysit message said "all green" but the user suspects the data was stale
-allowed-tools: Read Write Bash Glob
+allowed-tools: Read Bash Glob
 disallowed-tools: Agent Edit
 model: sonnet
 disable-model-invocation: false
@@ -59,12 +59,14 @@ This skill is the deterministic answer:
      reads `gh pr checks --json bucket` directly so a still-running
      review never claims "approved".
 
-  **G3. The most recent LLM-judge verdict (parsed from the most
-     recent `claude[bot]` comment) is `Approve`.** The parser
-     picks the comment with the latest `updated_at` that contains
-     a `**Verdict:**` line. If the most recent run is still in
-     progress (no verdict yet), the gate reports `MISSING` and
-     fails.
+  **G3. Every required LLM-judge job — review, security, and
+     maintenance — has its most recent audit comment carrying
+     `verdict=Approve`.** The audit comment is the machine-recorded
+     per-job verdict posted by the workflow's verdict-parser step
+     (`<!-- dev-kit-verdict-audit --> run=… job=… status=…
+     verdict=…`). A per-job `Changes Requested` / `Blocked`, a
+     missing audit for any required job, or a stale audit (created
+     before the PR's most recent push) yields a fail.
 
   **G4. No `<!-- dev-kit-verdict-audit -->` comment records a
      workflow-run whose `status=failure` was paired with
@@ -76,7 +78,10 @@ This skill is the deterministic answer:
 
   **G5. The merge state is `CLEAN` or `BEHIND`.** BEHIND is a
      soft pass (the branch can merge after a rebase);
-     BLOCKED / DIRTY / UNKNOWN are hard fails.
+     BLOCKED / DIRTY / UNKNOWN / UNSTABLE are hard fails. UNSTABLE
+     means a required check is still being recomputed; collapsing
+     it into PASS re-opens the fail-open window this skill exists
+     to prevent.
 
 ## Usage
 
@@ -103,8 +108,8 @@ PR #579 (sh-ai-x/dev-harness-kit) — checked at 2026-08-06T01:07:08+00:00
 ```
 
 Exit code 0 if all five gates pass; 1 otherwise. The summary is
-emitted to stdout regardless; the blockers are emitted to stderr
-so they can be filtered separately.
+emitted to stdout. The `--help` banner and the no-PR-found error
+go to stderr so the verdict summary can be piped cleanly.
 
 ## Iron Law (L3 evidence)
 
@@ -123,17 +128,21 @@ caller can safely claim ready-to-merge.
 ## Implementation
 
 The verifier is a pure-Python module (`lib/pr_verify.py`) called
-via `python3 -m lib.pr_verify <pr-number>`. All `gh` calls are
-isolated behind a single `_run_gh` helper that does the
-subprocess.run with capture and check=True. The module is fully
-unit-tested (24 tests) with all `gh` calls mocked.
+via `python3 -m lib.pr_verify --pr N --repo owner/repo` (or with
+no args for current-branch discovery). All `gh` calls are isolated
+behind a single `_run_gh` helper that wraps
+`subprocess.run(capture_output=True, check=False, timeout=30)` and
+raises `GhError` on any failure; each gate catches `GhError` and
+returns a fail-closed `GateResult`. The module is fully
+unit-tested (50 tests) with all `gh` calls mocked.
 
 ## Related
 
 - `lib/pr_verify.py` — the implementation; 5 gates, structured
   output, no cache.
-- `tests/test_pr_verify.py` — 24 hermetic tests covering each gate
-  + the parser + the integration path.
+- `tests/test_pr_verify.py` — 50 hermetic tests covering each gate
+  + the parser + the integration path + CLI forms + edge-case
+  failure paths.
 - `lib/babysit_pr_cli.py` — the babysit skill; should call
   `lib.pr_verify.verify_pr` instead of inlining the freshness
   check. Tracked as a follow-up.
