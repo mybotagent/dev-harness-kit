@@ -380,11 +380,18 @@ def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
         if user not in TRUSTED_BOT_LOGINS:
             continue
         body = c.get("body") or ""
-        m = _VERDICT_LINE.search(body)
-        if not m:
+        # A05 hardening: use findall() and pick the FINAL verdict line
+        # in the comment body. `.search()` returns the first line-anchored
+        # match, which lets an earlier injected `Approve` win over a
+        # later authoritative `Changes Requested` in the same body.
+        # The last verdict in the comment is the most-recent editorial
+        # intent of the trusted bot.
+        matches = _VERDICT_LINE.findall(body)
+        if not matches:
             continue
+        verdict_word = matches[-1]
         updated = c.get("updated_at") or c.get("created_at") or ""
-        candidates.append((updated, m.group(1), c.get("id", ""), body[:200]))
+        candidates.append((updated, verdict_word, c.get("id", ""), body[:200]))
     if not candidates:
         return ("MISSING", "")
     # Pick the comment with the most-recent updated_at.
