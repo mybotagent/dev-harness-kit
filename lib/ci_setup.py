@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple
@@ -55,12 +56,10 @@ _TEMPLATES_ROOT = _PLUGIN_ROOT / "templates" / "ci"
 _HOOKS_ROOT = _PLUGIN_ROOT / "hooks"  # single source of truth for hook files
 _TOOLS_ROOT = _PLUGIN_ROOT / "tools"  # single source of truth for bundled CLI tools
 
-# Files installed into the target repo, relative to `target_dir`.
-# Order is preserved in reports (workflows first, then scripts, then
-# worktree-rule files). Adding a path here also requires the corresponding
-# source under templates/ci/ OR hooks/ (worktree-rule files live in the
-# latter — see `_resolve_template_source`).
-EXPECTED_PATHS: tuple[str, ...] = (
+# Consumer-specific files installed into the target repo. Hook files are
+# appended from the canonical `hooks/` tree below; do not hand-maintain a
+# second hook inventory here.
+_CI_PATHS_BEFORE_HOOKS: tuple[str, ...] = (
     # CI workflows + scripts
     ".github/workflows/ci.yml",
     ".github/workflows/auto-fix-pr.yml",
@@ -81,35 +80,12 @@ EXPECTED_PATHS: tuple[str, ...] = (
     # resurrect stale "Verdict: Changes Requested" comments from prior
     # pushes and re-introduce deterministic gate flapping).
     "scripts/extract-verdict.py",
-    # Worktree-rule enforcement (every task = new worktree + subagent handoff
-    # + new branch). Source is canonical rules/; destination remains
-    # .claude/rules/ for Claude Code discovery.
-    "hooks/worktree-guard.sh",
-    "hooks/session-start-check.sh",
-    "hooks/review-yml-isolation.sh",
-    # Shared stdin / JSON / content-extraction helper sourced by every PreToolUse
-    # + PostToolUse hook. `deny()` lives here so the 4 hook sites can emit a
-    # consistent PreToolUse deny envelope (issue #78 — extracted from inline
-    # payloads); missing from EXPECTED_PATHS was the bug at issue #273 where
-    # consumer repos shipped broken hooks that crashed with
-    # `deny: command not found` on first Edit.
-    "hooks/lib/payload-parse.sh",
-    # Shared worktree-detect helper sourced by every rule-hook so the
-    # `--git-dir`/`--git-common-dir` discriminator doesn't drift.
-    "hooks/lib/worktree-detect.sh",
-    # Shared hook preamble (issue #310 slice 314): `set -uo pipefail`,
-    # `INPUT=$(cat)`, worktree_detect dispatch, and the `::warning::jq
-    # missing` marker. Sourced by every PreToolUse + SessionStart +
-    # PostToolUse hook. Missing from EXPECTED_PATHS caused consumer
-    # repos to ship hooks that crashed with `hook-preamble.sh: No such
-    # file` on first tool call — same failure shape as #273 / #277.
-    "hooks/lib/hook-preamble.sh",
-    # Shared bash-ERE SSOT for credential regexes (issue #310 dup-4).
-    # Consumed by hooks/secret-scan.sh; the Python mirror lives in
-    # lib/analysis_core/runner.py::_SECRET_PATTERNS. Either both
-    # files update or the secret-dim audit silently misses a family.
-    "hooks/lib/secret-patterns.sh",
-    "hooks/hooks.json",
+)
+
+# Keep the hook payload between consumer files and the remaining canonical
+# assets. Named groups make the ordering boundary explicit without a fragile
+# numeric slice that could silently move when a template is added.
+_CI_PATHS_AFTER_HOOKS: tuple[str, ...] = (
     ".claude/rules/git-workflow.md",
     "tests/test_worktree_guard.py",
     "tests/test_review_yml_isolation.py",
@@ -134,23 +110,95 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "tools/loop_engine.py",
 )
 
+
+def _canonical_hook_paths() -> tuple[str, ...]:
+    """Return the complete hook tree from the plugin's canonical source.
+
+    `hooks/hooks.json` registers hook entrypoints while shared shell helpers
+    are sourced indirectly. Installing both the manifest and every `.sh`
+    file prevents a new hook/helper from being omitted from consumer repos.
+    """
+    manifest = _HOOKS_ROOT / "hooks.json"
+    if not manifest.is_file():
+        raise FileNotFoundError(f"hook manifest missing: {manifest}")
+    return tuple(
+        ["hooks/hooks.json"]
+        + [f"hooks/{path.relative_to(_HOOKS_ROOT).as_posix()}"
+           for path in sorted(_HOOKS_ROOT.rglob("*.sh"))]
+    )
+
+
+class _LazyTuple(Sequence):
+    """Tuple-like object that materializes its contents on first access.
+
+    Looks like a tuple (`for rel in EXPECTED_PATHS:`, `EXPECTED_PATHS[:5]`,
+    `len(EXPECTED_PATHS)`, `EXPECTED_PATHS[0]`, set membership) but the
+    storage is computed only when first accessed. After materialization the
+    result is cached, so subsequent accesses are O(1). The point is to
+    defer `_canonical_hook_paths()` past module import — the consumer-side
+    `from ci_setup import install_ci_config` must not raise `FileNotFoundError`
+    when `hooks/hooks.json` is absent, but the install path still needs the
+    full inventory at call time.
+    """
+    __slots__ = ("_builder", "_cached")
+
+    def __init__(self, builder):
+        self._builder = builder
+        self._cached: tuple[str, ...] | None = None
+
+    def _materialize(self) -> tuple[str, ...]:
+        if self._cached is None:
+            self._cached = tuple(self._builder())
+        return self._cached
+
+    def __iter__(self):
+        return iter(self._materialize())
+
+    def __len__(self) -> int:
+        return len(self._materialize())
+
+    def __getitem__(self, key):
+        return self._materialize()[key]
+
+    def __contains__(self, item) -> bool:
+        return item in self._materialize()
+
+    def __eq__(self, other) -> bool:
+        return self._materialize() == other
+
+    def __hash__(self):
+        return hash(self._materialize())
+
+    def __repr__(self) -> str:
+        return repr(self._materialize())
+
+    def __add__(self, other):
+        return self._materialize() + other
+
+    def __radd__(self, other):
+        return other + self._materialize()
+
+
+# One inventory drives copying, idempotency, marker hashes, and verification.
+EXPECTED_PATHS: _LazyTuple = _LazyTuple(
+    lambda: _CI_PATHS_BEFORE_HOOKS + _canonical_hook_paths() + _CI_PATHS_AFTER_HOOKS
+)
+
 # Files that need the executable bit after install.
-EXECUTABLE_PATHS: tuple[str, ...] = (
-    ".githooks/pre-push",
-    "scripts/test.sh",
-    "scripts/branch-policy.sh",
-    "scripts/ci-local.sh",
-    "scripts/extract-verdict.py",
-    "scripts/validate.py",
-    "hooks/worktree-guard.sh",
-    "hooks/session-start-check.sh",
-    "hooks/review-yml-isolation.sh",
-    "hooks/lib/payload-parse.sh",
-    "hooks/lib/hook-preamble.sh",
-    "hooks/lib/worktree-detect.sh",
-    "tools/skill_usage.py",
-    "tools/portability_check.py",
-    "tools/loop_engine.py",
+EXECUTABLE_PATHS: _LazyTuple = _LazyTuple(
+    lambda: (
+        ".githooks/pre-push",
+        "scripts/test.sh",
+        "scripts/branch-policy.sh",
+        "scripts/ci-local.sh",
+        "scripts/extract-verdict.py",
+        "scripts/validate.py",
+        "tools/skill_usage.py",
+        "tools/portability_check.py",
+        "tools/loop_engine.py",
+        *[path for path in EXPECTED_PATHS
+          if path.startswith("hooks/") and path.endswith(".sh")],
+    )
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
@@ -521,14 +569,7 @@ def _build_marker() -> dict:
             "scripts/ci-local.sh",
         ],
         "githooks": [".githooks/pre-push"],
-        "hooks": [
-            "hooks/worktree-guard.sh",
-            "hooks/session-start-check.sh",
-            "hooks/review-yml-isolation.sh",
-            "hooks/lib/payload-parse.sh",
-            "hooks/lib/worktree-detect.sh",
-            "hooks/hooks.json",
-        ],
+        "hooks": [path for path in EXPECTED_PATHS if path.startswith("hooks/")],
         "rules": [".claude/rules/git-workflow.md"],
         "tests": [
             "tests/test_worktree_guard.py",
@@ -945,11 +986,16 @@ def _self_test() -> int:
     expected = list(_TEMPLATES_ROOT.rglob("*"))
     files = [str(p.relative_to(_TEMPLATES_ROOT)) for p in expected if p.is_file()]
     print(f"  found {len(files)} template files")
-    missing = [r for r in EXPECTED_PATHS if not (_TEMPLATES_ROOT / r).exists()]
+    missing = []
+    for rel in EXPECTED_PATHS:
+        try:
+            _resolve_template_source(rel)
+        except FileNotFoundError:
+            missing.append(rel)
     if missing:
-        print(f"FAIL: missing templates: {missing}", file=sys.stderr)
+        print(f"FAIL: missing install sources: {missing}", file=sys.stderr)
         return 1
-    print("OK: all EXPECTED_PATHS present in templates/")
+    print("OK: all EXPECTED_PATHS have canonical install sources")
     return 0
 
 

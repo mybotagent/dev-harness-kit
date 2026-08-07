@@ -61,7 +61,10 @@ Run `/dev-kit:ci-setup` once per project, after `/dev-kit:bootstrap` and before 
 
 ## What gets installed
 
-The skill copies the `templates/ci/` source tree into the target project. Files installed:
+The skill copies the CI templates and the canonical hook source tree into the
+target project. Workflow/script files are explicit; `hooks/hooks.json` and all
+`hooks/**/*.sh` files are derived from the plugin source so hook code is not
+duplicated under `templates/ci/`.
 
 | Path | Purpose |
 |---|---|
@@ -73,10 +76,8 @@ The skill copies the `templates/ci/` source tree into the target project. Files 
 | `scripts/test.sh` | `pytest` wrapper (gracefully skips if no `tests/` directory) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
-| **`hooks/worktree-guard.sh`** | PreToolUse (Write\|Edit\|MultiEdit) — hard-block edits in the main checkout |
-| **`hooks/session-start-check.sh`** | SessionStart — gentle reminder about the worktree rule |
-| **`hooks/lib/worktree-detect.sh`** | Shared `--git-dir == --git-common-dir` discriminator for the 3 hooks above |
-| **`hooks/hooks.json`** | Wires all 3 worktree-rule hooks (plus the original 5) into Claude Code's hook events |
+| **`hooks/**/*.sh`** | Complete canonical hook implementation set, including shared helpers |
+| **`hooks/hooks.json`** | Canonical registration manifest copied with all hook sources |
 | **`rules/git-workflow.md`** | Canonical worktree rule; installed to `.claude/rules/git-workflow.md` for Claude Code discovery |
 | **`tests/test_worktree_guard.py`** | regression tests covering the worktree rule (blocks/allows/executable bits/etc.) |
 
@@ -111,9 +112,9 @@ This is the same set of checks GitHub Actions runs in `ci.yml`, but without requ
 ```
 === validate ===
 validate.py — repo_root=/path/to/repo
-  - installation complete OK (15 files)
+  - installation complete OK (CI files + canonical hooks)
   - ci-config marker OK
-  - bash syntax OK (5 scripts clean)
+  - bash syntax OK (scripts + canonical hooks clean)
   - test runner OK (bash -n clean)
 OK: CI installation valid
 

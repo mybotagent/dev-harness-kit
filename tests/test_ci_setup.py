@@ -238,6 +238,59 @@ class TestCiSetup(unittest.TestCase):
             f"missing from EXPECTED_PATHS: {expected_new - actual}",
         )
 
+    def test_hook_manifest_and_sources_are_installed_as_one_ssot(self):
+        """Every canonical hook source reaches consumers with its manifest.
+
+        This guards portability when a new hook/helper is added: ci-setup
+        must not require a second hand-maintained template entry.
+        """
+        import importlib.util
+        import json
+
+        expected = set(self.ci_setup.EXPECTED_PATHS)
+        source_hooks = {
+            f"hooks/{p.relative_to(PROJECT_ROOT / 'hooks').as_posix()}"
+            for p in (PROJECT_ROOT / "hooks").rglob("*.sh")
+        }
+        self.assertTrue(source_hooks.issubset(expected))
+        self.assertIn("hooks/hooks.json", expected)
+        manifest = json.loads((PROJECT_ROOT / "hooks" / "hooks.json").read_text())
+        commands = [
+            hook["command"]
+            for groups in manifest["hooks"].values()
+            for group in groups
+            for hook in group.get("hooks", [])
+            if "command" in hook
+        ]
+        validator_path = PROJECT_ROOT / "templates/ci/scripts/validate.py"
+        spec = importlib.util.spec_from_file_location("ci_validate", validator_path)
+        validator = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(validator)
+        referenced = {
+            f"hooks/{match}"
+            for command in commands
+            for match in validator.referenced_hook_scripts(command)
+        }
+        self.assertTrue(referenced.issubset(expected))
+
+    def test_validator_reports_current_canonical_hook_file_count(self):
+        """The validator output describes the complete installed hook tree."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            result = subprocess.run(
+                [sys.executable, "scripts/validate.py"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            hook_count = len(list((target / "hooks").rglob("*.sh")))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f"+ {hook_count} hooks", result.stdout)
+
     def test_worktree_hooks_have_executable_bit_in_target(self):
         """All 6 new .sh files end up executable in the installed target."""
         import stat
