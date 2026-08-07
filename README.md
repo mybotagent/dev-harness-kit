@@ -170,6 +170,25 @@ flowchart TD
 GitHub's `auto-fix-pr` is only an event adapter into the same repair state; it
 is not a second user-facing workflow.
 
+### Portability and long-running loop
+
+The live contract is deliberately small:
+
+```bash
+python3 tools/portability_check.py --json
+python3 tools/loop_engine.py iterate --feature-list feature_list.json
+python3 tools/loop_engine.py verify --feature-list feature_list.json
+```
+
+The first command read-only checks Claude/Codex manifest and hook parity plus
+shell syntax. The second deterministically selects one eligible failing feature,
+runs its test, and atomically records `.dev-kit/loop-checkpoint.json`. It never
+silently marks a feature complete: a green test is evidence, not approval.
+The third command validates the checkpoint at cold-context resume. `ci-setup`
+ships both CLIs to consumer repositories, so the loop is independent of the
+plugin checkout path. See
+[`PORTABILITY-AND-LOOP.md`](docs/architecture/PORTABILITY-AND-LOOP.md).
+
 > A full "I have a brand-new repo" walkthrough (create repo → install → bootstrap
 > → first commit) is at [First-time setup, end to end](#first-time-setup-end-to-end).
 

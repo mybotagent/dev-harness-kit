@@ -16,11 +16,16 @@
 
 `build` refuses to start if `.dev-kit/ci-config.json` is absent, telling the user to run `/dev-kit:ci-setup` (or `--force` to refresh stale templates) first. There is no version comparison gate — only presence of the marker file matters.
 
-Once the pre-flight gate passes, `lib/execute.py:main` parses arguments and branches on `--parallel N`:
+Once the pre-flight gate passes, `lib/execute.py:main` reads the phase index, filters to eligible (resumable, non-blocked) steps, calls `lib.dispatch_classifier.classify(...)` to decide parallel vs sequential, and logs the decision as the first build line (`dispatch: <mode> — <reason>`). There is no user-facing toggle — the harness reasons about dispatch from step metadata, and the user audits the emitted line.
 
-- `--parallel 0` (default) runs `_run_sequential`.
-- `--parallel 1` runs `_run_parallel` with a single slot, which is effectively sequential.
-- `--parallel N > 1` refuses with exit code 2 unless `--allow-parallel-build` is also set, because two concurrent `claude -p` steps can collide on shared files invisibly during the run and the collision only surfaces at merge time. The override exists for the narrow case where the steps' declared `writes:` are disjoint and no step consumes another's output.
+**Classifier priority order** (first match wins):
+1. **Dependency edge** between any pair (`depends_on` / `consumes`) → sequential.
+2. **Vague scope** (TODO/FIXME/TBD/maybe/perhaps/either in preamble or AC) → sequential.
+3. **Overlapping writes** between two steps → sequential.
+4. **N ≥ 4 eligible steps** AND clean worktree isolation → parallel.
+5. **Otherwise** → sequential.
+
+The previous `--parallel N` / `--allow-parallel-build` flags were removed in v0.3.214; argparse now rejects them. Sequential is the default; parallel only fires when steps are genuinely safe.
 
 `build` reads `phases/<name>/index.json`, which must contain a `worktree: "<branch-base>"` field emitted by `/dev-kit:plan` (e.g. `plan/plugin-harness-v3-0-mvp`). From that it derives the per-step branch (`<branch-base>-step<N>`) and worktree path (`<root>/.worktrees/<phase>-step<N>`); if the field is absent it falls back to `feat/<phase>` as a defense-in-depth measure, not as the intended contract.
 
@@ -43,17 +48,15 @@ During the build stage, the hook matrix is: `tdd-guard` ON when `methodology=tdd
 ## Usage
 
 ```bash
-/dev-kit:build [--parallel N] [--allow-parallel-build] [--skip-blocked] [--push]
+/dev-kit:build [--skip-blocked] [--push]
 ```
 
 | Flag | Effect |
 |---|---|
-| `--parallel 0` | Sequential execution (default). |
-| `--parallel 1` | Parallel runner with one slot — effectively sequential. |
-| `--parallel N > 1` | Refuses with exit 2 unless paired with `--allow-parallel-build`. |
-| `--allow-parallel-build` | Escape hatch permitting `--parallel N > 1` when steps' `writes:` are disjoint and none consumes another's output. |
 | `--skip-blocked` | Continue past `blocked` steps, running only `pending \| error \| in_progress`; skipped steps are recorded in the hand-off file. |
 | `--push` | Push the per-step branch to `origin` after a successful step. |
+
+Dispatch mode is auto-classified per batch (see "How it works"). There is no `--parallel` flag; the classifier decides.
 
 ## Output
 
@@ -61,7 +64,7 @@ During the build stage, the hook matrix is: `tdd-guard` ON when `methodology=tdd
 - `.dev-kit/hand-off/build→review.md`, written automatically.
 - A 2-commit protocol per successful step on its per-step branch: `feat({phase}): step {N} — {name}` and `chore({phase}): step {N} output`.
 
-Test evidence: 29 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`), plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics).
+Test evidence: 50 tests in `tests/test_execute.py` cover runner behavior (skippable-status skipping, blocked returning exit 2, pending steps creating a worktree and invoking `claude` with the preamble + acceptance-criteria guard, the 2-commit protocol, no commits on failure, push gated on `--push`, the new `TestMainDispatchDecision` class for the auto-classify contract, plus 10 state-machine tests for `update_step_status` (in-progress idempotency, duration rounding, reset semantics)). Plus 27 tests in `tests/test_dispatch_classifier.py` covering all 5 classifier rules, priority order, idempotency, reason format, and the `?`-marker false-positive regressions.
 
 ## Long-running session templates
 
@@ -87,7 +90,9 @@ Template behavior is validated by `tests/test_long_running_templates.py` (struct
 - [build-verify](build-verify.md) — enforces evidence before a "done" declaration.
 - `/dev-kit:review` and `/dev-kit:security`, then `/dev-kit:ship` — the next stages after `build` completes.
 - `lib/execute.py` — the harness-runner engine this skill wraps.
-- `tests/test_execute.py` — the 29 + 10 tests referenced above.
+- `lib/dispatch_classifier.py` — pure-Python classifier that decides parallel vs sequential per batch (5-rule priority order, default sequential; replaces the legacy `--parallel` flag).
+- `tests/test_execute.py` — the 50 tests referenced above.
+- `tests/test_dispatch_classifier.py` — the 27 classifier tests covering all 5 rules, priority order, idempotency, reason format.
 
 ---
 *Source: [`skills/build/SKILL.md`](../../skills/build/SKILL.md)*
