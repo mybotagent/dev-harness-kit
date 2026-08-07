@@ -70,7 +70,15 @@ def validate_installation_complete(repo_root: pathlib.Path) -> bool:
     if not manifest.is_file():
         _fail("installation: hook manifest missing")
         return False
-    manifest_text = manifest.read_text(encoding="utf-8")
+    try:
+        manifest_text = manifest.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as e:
+        # Guard the read so a permissions or decode error surfaces as a
+        # normal validator FAIL line instead of a Python traceback that
+        # would otherwise halt CI before the manifest-references check
+        # can flag the real culprit.
+        _fail(f"installation: hook manifest unreadable: {e}")
+        return False
     referenced = referenced_hook_scripts(manifest_text)
     missing_hooks = [hooks_dir / rel for rel in referenced if not (hooks_dir / rel).is_file()]
     if missing_hooks:

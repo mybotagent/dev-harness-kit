@@ -117,14 +117,29 @@ def _canonical_hook_paths() -> tuple[str, ...]:
     `hooks/hooks.json` registers hook entrypoints while shared shell helpers
     are sourced indirectly. Installing both the manifest and every `.sh`
     file prevents a new hook/helper from being omitted from consumer repos.
+
+    `hooks/references/**` is included alongside the `.sh` files because a
+    hook can depend on non-code data it reads at runtime — e.g.
+    `slop-detector.sh` reads `hooks/references/slop/{phrases,structures}.md`.
+    Shipping `.sh` files without their data banks is the same "manifest ships
+    without everything it needs" failure class as #273/#277/#310, one level
+    down: the hook file itself is present but silently degrades (or crashes)
+    because a file it reads was never installed.
     """
     manifest = _HOOKS_ROOT / "hooks.json"
     if not manifest.is_file():
         raise FileNotFoundError(f"hook manifest missing: {manifest}")
+    references_root = _HOOKS_ROOT / "references"
+    reference_paths = (
+        [f"hooks/{path.relative_to(_HOOKS_ROOT).as_posix()}"
+         for path in sorted(references_root.rglob("*")) if path.is_file()]
+        if references_root.is_dir() else []
+    )
     return tuple(
         ["hooks/hooks.json"]
         + [f"hooks/{path.relative_to(_HOOKS_ROOT).as_posix()}"
            for path in sorted(_HOOKS_ROOT.rglob("*.sh"))]
+        + reference_paths
     )
 
 

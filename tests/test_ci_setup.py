@@ -291,6 +291,35 @@ class TestCiSetup(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn(f"+ {hook_count} hooks", result.stdout)
 
+    def test_validator_handles_unreadable_hook_manifest(self):
+        """A hooks/hooks.json that fails UTF-8 decode returns False (no traceback).
+
+        Regression for the maintenance review finding that an unguarded
+        ``manifest.read_text(encoding='utf-8')`` produced a Python traceback
+        for non-UTF-8 manifest bytes, instead of the validator's normal FAIL
+        line. The guard at templates/ci/scripts/validate.py routes the
+        ``OSError``/``UnicodeError`` through ``_fail()`` so the validator's
+        exit code stays 1 and CI surfaces the real culprit cleanly.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            self.ci_setup.install_ci_config(target)
+            # Overwrite the manifest with bytes that are not valid UTF-8
+            # so ``read_text(encoding='utf-8')`` raises ``UnicodeDecodeError``.
+            manifest = target / "hooks" / "hooks.json"
+            manifest.write_bytes(b"\xff\xfe\x00\x01garbage")
+            result = subprocess.run(
+                [sys.executable, "scripts/validate.py"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("Traceback", result.stdout + result.stderr)
+            self.assertIn("FAIL", result.stdout)
+
     def test_worktree_hooks_have_executable_bit_in_target(self):
         """All 6 new .sh files end up executable in the installed target."""
         import stat
@@ -1096,6 +1125,43 @@ class TestCiSetup(unittest.TestCase):
             "or the test's own filter likely drifted; the structural guard "
             "would mask new regressions",
         )
+
+    def test_import_succeeds_without_hooks_manifest(self):
+        """Regression: consumer-side `from ci_setup import install_ci_config`
+        must not raise FileNotFoundError when hooks/hooks.json is absent.
+
+        `lib/install.sh` ships only `ci_setup.py` + `atomic.py` to a target
+        repo's `lib/` — no `hooks/` tree. A prior version of this module
+        called `_canonical_hook_paths()` eagerly at module level to build
+        EXPECTED_PATHS/EXECUTABLE_PATHS, so the bare import itself raised
+        FileNotFoundError before install_ci_config was ever called. The
+        `_LazyTuple` wrapper defers that call past import; this test pins
+        the deferral so a future rewrite back to a plain tuple concatenation
+        (which would silently reintroduce the crash) fails loudly here
+        instead of only on a real consumer's first install attempt.
+        """
+        import subprocess
+        import sys
+        import tempfile
+
+        plugin_root = Path(__file__).parent.parent
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "lib"
+            target.mkdir()
+            for name in ("ci_setup.py", "atomic.py"):
+                (target / name).write_bytes((plugin_root / "lib" / name).read_bytes())
+            result = subprocess.run(
+                [sys.executable, "-c", "from ci_setup import install_ci_config"],
+                cwd=target,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"bare import failed without hooks/hooks.json present:\n"
+                f"{result.stdout}{result.stderr}",
+            )
+            self.assertNotIn("FileNotFoundError", result.stderr)
 
 
 def tempfile_path(name: str):

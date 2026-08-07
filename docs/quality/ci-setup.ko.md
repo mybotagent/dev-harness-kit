@@ -146,9 +146,9 @@ bash scripts/ci-local.sh
 ```
 === validate ===
 validate.py — repo_root=/path/to/repo
-  - installation complete OK (CI 파일 + 정식 hook 전체)
+  - installation complete OK (CI 파일 8개 + hook 26개)
   - ci-config marker OK
-  - bash syntax OK (스크립트 + 정식 hook 전체)
+  - bash syntax OK (셸 파일 30개 정상)
   - test runner OK (bash -n clean)
 OK: CI installation valid
 
@@ -213,7 +213,7 @@ A: 아니오. `scripts/ci-local.sh`는 어떤 POSIX 호스트에서든 로컬로
 <https://nektos.act.dev>에서 설치한다.
 
 **Q: 어떻게 제거하는가?**
-A: `.dev-kit/ci-config.json`을 삭제한 다음, 설치된 15개 파일을
+A: `.dev-kit/ci-config.json`을 삭제한 다음, 설치된 파일들을
 `git rm`한다(대상 저장소가 새로 만들어졌고 아직 버전 관리하에 있지
 않다면 `rm -rf`도 가능). CI 템플릿은 의도적으로 깊게 통합되어 있지
 않다 — 당신이 소유하는 일반 파일이다.

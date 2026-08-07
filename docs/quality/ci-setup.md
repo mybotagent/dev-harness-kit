@@ -62,9 +62,21 @@ Run `/dev-kit:ci-setup` once per project, after `/dev-kit:bootstrap` and before 
 ## What gets installed
 
 The skill copies the CI templates and the canonical hook source tree into the
-target project. Workflow/script files are explicit; `hooks/hooks.json` and all
-`hooks/**/*.sh` files are derived from the plugin source so hook code is not
-duplicated under `templates/ci/`.
+target project. Workflow/script files are explicit; `hooks/hooks.json`, all
+`hooks/**/*.sh` files, and their non-code data (`hooks/references/**`, e.g.
+`slop-detector.sh`'s phrase/structure banks) are derived from the plugin
+source so hook code — and the data it depends on — is not duplicated under
+`templates/ci/`.
+
+This ships the **complete** hook tree (26 `.sh` files, 18 registered
+entrypoints as of this writing), not just the worktree-rule subset a prior
+version shipped. Several of these are dev-kit-internal hooks (e.g.
+`git-guard.sh`'s release-slot check, `linear-autosync.sh`) that fail open in a
+consumer repo when their dev-kit-specific preconditions (like
+`.claude-plugin/plugin.json` on `origin/main`) aren't present — but they do
+run. Deriving the full tree from source (instead of hand-curating a subset)
+is the fix for #273/#277/#310: a hand-maintained list silently drops newly
+added hooks and their helpers.
 
 | Path | Purpose |
 |---|---|
@@ -112,9 +124,9 @@ This is the same set of checks GitHub Actions runs in `ci.yml`, but without requ
 ```
 === validate ===
 validate.py — repo_root=/path/to/repo
-  - installation complete OK (CI files + canonical hooks)
+  - installation complete OK (8 CI files + 26 hooks)
   - ci-config marker OK
-  - bash syntax OK (scripts + canonical hooks clean)
+  - bash syntax OK (30 shell files clean)
   - test runner OK (bash -n clean)
 OK: CI installation valid
 
