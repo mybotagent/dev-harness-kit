@@ -332,6 +332,10 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
     are absent from the dict. This is the per-judge verdict source
     used by G3 (M-3): review + security + maintenance must ALL
     show `Approve` for the PR to be considered approved.
+
+    Only comments authored by `TRUSTED_AUDIT_LOGINS` are considered —
+    a forger cannot post an audit line that masquerades as a workflow
+    verdict-parser output.
     """
     audit_re = re.compile(
         r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
@@ -342,6 +346,9 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
         body = c.get("body") or ""
         m = audit_re.search(body)
         if not m:
+            continue
+        author = c.get("user") or ""
+        if author not in TRUSTED_AUDIT_LOGINS:
             continue
         _, job, _status, verdict = m.groups()
         created_at = c.get("created_at") or ""
@@ -357,6 +364,15 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
 # treating a non-claude account as authoritative. The set is module-level
 # so G3 evidence counting can use the same source of truth.
 TRUSTED_BOT_LOGINS = frozenset({"claude", "claude[bot]"})
+
+# Trusted audit-author logins for G4 (and G3 fallback). The audit
+# comment line `<!-- dev-kit-verdict-audit --> run=… job=… status=…
+# verdict=…` is posted by the workflow's verdict-parser step running
+# as `github-actions[bot]`. Binding the audit author prevents a
+# forger from posting an audit marker that bypasses G4's
+# false-positive detection. Note: G4 is deny-only — a forged audit
+# can only block approval, not grant it.
+TRUSTED_AUDIT_LOGINS = frozenset({"github-actions", "github-actions[bot]"})
 
 
 def _parse_latest_llm_verdict(comments: list[dict]) -> tuple[str, str]:
@@ -470,12 +486,17 @@ def _gate_g3_llm_verdicts(
             r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
             r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
         )
-        # Track the most recent audit created_at PER JOB.
+        # Track the most recent audit created_at PER JOB (filtered by
+        # trusted workflow author so a forger cannot inject an audit
+        # that masks a stale verdict).
         latest_per_job_created: dict[str, str] = {}
         for c in comments:
             body = c.get("body") or ""
             m = audit_re.search(body)
             if not m:
+                continue
+            author = c.get("user") or ""
+            if author not in TRUSTED_AUDIT_LOGINS:
                 continue
             _, job, _status, _verdict = m.groups()
             created_at = c.get("created_at") or ""
@@ -565,12 +586,20 @@ def _gate_g4_audit_no_failure_paired_with_approve(
     # Pick the most recent audit comment PER JOB. The semantic is
     # "is THIS job currently producing a false-positive?" — an older
     # false-positive that the workflow no longer produces is stale
-    # and should not block.
+    # and should not block. Bind the audit author to the trusted
+    # workflow bot identity so a forger cannot post an audit line
+    # that bypasses G4. (G4 is deny-only — a forged marker blocks
+    # approval rather than granting it.)
     latest_per_job: dict[str, dict] = {}
+    untrusted_audits = 0
     for c in comments:
         body = c.get("body") or ""
         m = audit_re.search(body)
         if not m:
+            continue
+        author = c.get("user") or ""
+        if author not in TRUSTED_AUDIT_LOGINS:
+            untrusted_audits += 1
             continue
         run_id, job, status, verdict = m.groups()
         created_at = c.get("created_at") or ""
@@ -579,6 +608,7 @@ def _gate_g4_audit_no_failure_paired_with_approve(
             latest_per_job[job] = {
                 "run": run_id, "job": job, "status": status,
                 "verdict": verdict, "created_at": created_at,
+                "author": author,
             }
     bad_pairs = [
         v for v in latest_per_job.values()
@@ -595,7 +625,8 @@ def _gate_g4_audit_no_failure_paired_with_approve(
         label="no audit comment with status=failure + verdict=Approve (most recent per job)",
         passed=passed,
         detail=detail,
-        evidence={"bad_pairs": bad_pairs, "latest_per_job": latest_per_job},
+        evidence={"bad_pairs": bad_pairs, "latest_per_job": latest_per_job,
+                  "untrusted_audits_ignored": untrusted_audits},
         fetched_at=fetched_at,
     )
 
