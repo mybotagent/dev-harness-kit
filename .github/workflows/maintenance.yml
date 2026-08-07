@@ -191,9 +191,9 @@ jobs:
           # extraction to the python helper so the same regex the unit
           # tests pin governs CI (no shell-only awk drift that collapses
           # "Changes Requested" to "Requested").
-          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --paginate \
-            --jq '[.[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*"))] | sort_by(.updated_at) | .[-1].body // ""')"
+          comment="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --paginate --slurp \
+            | jq -r '[.[] | .[] | select((.user.login // "") | startswith("claude")) | select(.body | test("\\*\\*Verdict:\\*\\*"))] | sort_by(.updated_at) | .[-1].body // ""')"
           verdict="$(printf '%s' "$comment" | python3 -m lib.maintenance_gate --extract-verdict-from-stdin)"
           echo "maintenance_verdict=${verdict:-<none>}"
           echo "verdict=${verdict:-}" >> "$GITHUB_OUTPUT"

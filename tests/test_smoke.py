@@ -40,9 +40,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # PR-1 slim sweep removed skills/audit/SKILL.md (folded into /dev-kit:inspect
 # --secrets / --slop flags) and skills/bootstrap-full/SKILL.md (merged into
 # /dev-kit:bootstrap with runtime ci-setup prompt). (38 on this branch's baseline — PR-1 removes audit + bootstrap-full (-2); no new skills added.)
+# Added skills/pr-verify/SKILL.md (deterministic 5-gate PR verifier, PR #588)
+# (38 -> 39).
 # On-disk `find . -path ./.worktrees -prune -o -name SKILL.md -print | wc -l`
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
-SKILL_COUNT = 38
+SKILL_COUNT = 39
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
