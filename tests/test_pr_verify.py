@@ -387,7 +387,8 @@ class TestM7VerdictRegexAnchored(unittest.TestCase):
 
 class TestM6UnknownBucketFailsG2(unittest.TestCase):
     """Regression: a workflow that emits an unclassified bucket must
-    fail G2 instead of silently passing."""
+    fail G2 instead of silently passing. The G2 allow-list is explicit:
+    only `pass` and `skipping` are terminal-pass."""
 
     def test_unknown_bucket_fails_g2(self):
         with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
@@ -396,7 +397,46 @@ class TestM6UnknownBucketFailsG2(unittest.TestCase):
         ])):
             g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
         self.assertFalse(g.passed)
-        self.assertIn("UNKNOWN", g.detail)
+        self.assertIn("UNEXPECTED bucket", g.detail)
+
+    def test_cancelled_bucket_fails_g2(self):
+        """`cancelled` is outside the {pass, skipping} allow-list."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"name": "lint", "state": "COMPLETED", "bucket": "pass"},
+            {"name": "build", "state": "COMPLETED", "bucket": "cancelled"},
+        ])):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("UNEXPECTED bucket", g.detail)
+
+    def test_timed_out_bucket_fails_g2(self):
+        """`timed_out` is outside the {pass, skipping} allow-list."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"name": "lint", "state": "COMPLETED", "bucket": "pass"},
+            {"name": "build", "state": "COMPLETED", "bucket": "timed_out"},
+        ])):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("UNEXPECTED bucket", g.detail)
+
+    def test_action_required_bucket_fails_g2(self):
+        """`action_required` is outside the {pass, skipping} allow-list."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"name": "lint", "state": "COMPLETED", "bucket": "pass"},
+            {"name": "deploy", "state": "COMPLETED", "bucket": "action_required"},
+        ])):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertFalse(g.passed)
+        self.assertIn("UNEXPECTED bucket", g.detail)
+
+    def test_skipping_bucket_passes_g2(self):
+        """`skipping` is the explicit allow-list pass bucket (skipped check)."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"name": "lint", "state": "COMPLETED", "bucket": "pass"},
+            {"name": "deploy", "state": "SKIPPED", "bucket": "skipping"},
+        ])):
+            g = pr_verify._gate_g2_ci_checks(584, "sh-ai-x/dev-harness-kit")
+        self.assertTrue(g.passed)
 
 
 

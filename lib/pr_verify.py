@@ -269,9 +269,10 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str = "") -> GateR
             fetched_at=fetched_at,
         )
     # gh pr checks --json bucket values: pass | fail | pending | skipping.
-    # `pass` and `skipping` are terminal-pass, `pending` is still-running,
-    # `fail` is fail. `state` is informational only; the bucket is the
-    # source of truth.
+    # The verifier enforces an EXPLICIT allow-list of terminal-pass
+    # buckets — anything else (cancelled, timed_out, action_required,
+    # an unknown future bucket) fails closed. `state` is informational
+    # only; the bucket is the source of truth.
     by_bucket: dict[str, list[str]] = {}
     by_state: dict[str, list[str]] = {}
     for ch in checks:
@@ -279,20 +280,21 @@ def _gate_g2_ci_checks(pr_number: int, repo: str, fetched_at: str = "") -> GateR
         state = (ch.get("state") or "unknown").lower()
         by_bucket.setdefault(bucket, []).append(ch.get("name", "?"))
         by_state.setdefault(state, []).append(ch.get("name", "?"))
-    # Known terminal buckets are pass + fail; "pending" is still-running.
-    # Anything else ("unknown") means a workflow produced an unclassified
-    # state — fail closed so we don't claim pass on noise.
+    PASS_BUCKETS = frozenset({"pass", "skipping"})
     pending = by_bucket.get("pending", [])
     failed = by_bucket.get("fail", [])
-    unknown = by_bucket.get("unknown", [])
+    unexpected = sorted(b for b in by_bucket if b not in PASS_BUCKETS)
     buckets_present = bool(by_bucket)
-    passed_check = buckets_present and not pending and not failed and not unknown
+    passed_check = buckets_present and not pending and not failed and not unexpected
     if pending:
         detail = f"PENDING (still running): {', '.join(pending)}"
     elif failed:
         detail = f"FAILED: {', '.join(failed)}"
-    elif unknown:
-        detail = f"UNKNOWN bucket (workflow produced unclassified state): {', '.join(unknown)}"
+    elif unexpected:
+        detail = (
+            f"UNEXPECTED bucket (outside {{pass, skipping}} allow-list): "
+            f"{', '.join(f'{b}={len(by_bucket[b])}' for b in unexpected)}"
+        )
     elif by_bucket:
         buckets = ", ".join(f"{b}={len(n)}" for b, n in by_bucket.items())
         detail = f"all terminal: {buckets}"
