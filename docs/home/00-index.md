@@ -109,10 +109,14 @@ That is the entire surface. Anything more specific is in the docs.
    state substrate required — direct `git show
    origin/main:.claude-plugin/plugin.json` + JSON parse.
 
-2. **Build no-go gate transparency.** `/dev-kit:valuate` writes the
-   verdict envelope (decision / rationale / blocking_findings) to
+2. **Build no-go gate transparency.** `valuate` (model-invocable since
+   PR #589; the user slash was removed) writes the verdict envelope
+   (`decision` / `rationale` / `blocking_findings`) to
    `.dev-kit/valuations/<plan-id>.json`. The envelope contract is
    pinned by `lib/valuation_engine.py:decision_is_canonical_envelope`.
+   `/dev-kit:plan` and other planning stages invoke the rubric; the
+   build proceeds regardless of the verdict since the #463 auto-gate
+   removal.
 
 3. **Pre-push intent check.** `.githooks/pre-push` runs the maintenance
    gate on every push; `hooks/worktree-guard.sh` denies Edit/Write in

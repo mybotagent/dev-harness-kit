@@ -194,18 +194,22 @@ section.
 
 ## Case 4: skipping the Valuate step
 
-`/dev-kit:valuate` scores a plan on six axes and returns a verdict —
+`valuate` scores a plan on six axes and returns a verdict —
 `proceed`, `revise`, `hold`, or `kill`. It's a sanity check on *whether the plan
 is worth building*, not a build step.
 
-**You can skip it, and nothing stops you.** Today Valuate is advisory:
+**Nothing stops the build if it returns `kill`.** Today Valuate is advisory:
 
+- As of PR #589 `valuate` is **model-invocable only** — `/dev-kit:plan` and other
+  planning stages call into the rubric; the slash is no longer in the user menu,
+  so there's nothing for you to run by hand.
 - `/dev-kit:build` does **not** require a Valuate verdict to run. There used to
   be an auto-gate that refused to build on a non-`proceed` verdict; it was removed
   in PR #463 along with the state substrate it depended on.
-- So "skipping Valuate" needs no special flag. You either don't run it, or you run
-  it, read the verdict, and decide by hand whether to heed a `hold` / `revise` /
-  `kill`. The build proceeds either way.
+- If the planning stage writes a `hold` / `revise` / `kill` envelope to
+  `.dev-kit/valuations/<plan-id>.json`, the build proceeds regardless. You (or a
+  reviewer) are expected to read the envelope by hand and decide whether to
+  heed it. No flag or override exists.
 
 **When it's still worth running:** for anything non-trivial, a `kill` or `hold`
 verdict is cheap insight before you spend build time. Skipping it is fine for

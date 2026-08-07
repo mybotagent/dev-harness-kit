@@ -97,9 +97,9 @@
 - **활성 훅**: `stop-verify`=ON. 나머지 OFF.
 - **핸드오프 출력**: `.dev-kit/valuations/<plan-id>.json`(build 단계가
   이 파일을 사전 점검 판정으로 읽는다; build-stage 자동 게이트는
-  #463에서 제거되었다 — 운영자가 `/dev-kit:valuate`를 명시적으로
-  실행하며, 비-PROCEED 판정을 플래그하지 않으면 build가 계속
-  진행된다).
+  #463에서 제거되었다. PR #589부터 `valuate`는 모델 호출 전용이며
+  사용자 메뉴에는 노출되지 않는다 — `/dev-kit:plan` 등 계획 단계가
+  루브릭을 호출하고, build는 판정과 무관하게 계속 진행된다).
 
 ## Stage 3 — Build (`/dev-kit:build`)
 
@@ -110,8 +110,9 @@
   (d) 2-커밋 프로토콜(feat + chore). 참고: `.dev-kit/valuations/<plan-id>.json`을
   읽고 비-PROCEED 판정을 거부하던 Phase 4 자동 게이트가 여기 있었지만
   #463까지였다; 그 게이트는 이제는 제거된 URI 서브스트레이트에
-  묶여 있었으므로 서브스트레이트와 함께 사라졌다. 운영자가
-  `/dev-kit:valuate`를 명시적으로 실행하며 build는 계속 진행된다.
+  묶여 있었으므로 서브스트레이트와 함께 사라졌다. PR #589부터
+  `valuate`는 모델 호출 전용이며 판정 봉투는 순수 권고로 동작한다 —
+  build는 판정과 무관하게 진행된다.
 - **Must-Not**: AC를 추측("동작할 것", "아마 괜찮을 것"). `output.json`
   삭제. 여러 변경을 배치로 묶기.
 - **AC**: 모든 스텝이 `status=completed`. `pytest`가 exit 0 + 개수
