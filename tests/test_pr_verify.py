@@ -715,7 +715,10 @@ class TestM6CLIForms(unittest.TestCase):
         if sub == "pr" and len(args) > 1 and args[1] == "view":
             return json.dumps({
                 "state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN",
-                "mergeable": "MERGEABLE", "pushed_at": "2026-08-06T00:00:00Z",
+                "mergeable": "MERGEABLE",
+                "commits": [
+                    {"oid": "abc123", "committedDate": "2026-08-06T00:00:00Z"},
+                ],
             })
         if sub == "pr" and len(args) > 1 and args[1] == "checks":
             return json.dumps([

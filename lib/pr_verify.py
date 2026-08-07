@@ -724,20 +724,33 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
         # Leave as None so G3/G4 take their per-gate fallback path
         # (which itself catches GhError and returns fail-closed gate).
         pass
-    # Fetch pushed_at for M-2 stale-verdict guard (G3). Same API call
-    # as G1 but extracted separately to avoid coupling G1's return
-    # shape to G3's needs. Wrapped in try/except so a `gh` outage here
-    # does NOT abort verify_pr — pushed_at just becomes "" and G3
-    # skips the stale-verdict guard (the rest of the report still runs).
+    # Fetch the PR's most-recent push timestamp for the M-2 stale-verdict
+    # guard (G3). `gh pr view --json` has no `pushed_at` field — the real
+    # API rejects that key with 'Unknown JSON field' and exits non-zero,
+    # which the previous bare `except GhError: pass` swallowed, leaving
+    # pr_pushed_at='' and silently disabling the G3 freshness guard. We
+    # now derive the push timestamp from the last commit's `committedDate`
+    # (a field that exists on every PR) and surface a degraded pr_pushed_at
+    # of "" only when the commits fetch itself fails. The "upgrade to
+    # Approve" gate never runs in that degraded state — G3 still passes
+    # only if every required job's audit is fresh OR no audits are older
+    # than "", i.e. the verifier errs on the side of strict freshness.
     pr_pushed_at = ""
     try:
         raw_pr = _run_gh([
             "pr", "view", str(pr_number),
             "--repo", repo,
-            "--json", "pushed_at",
+            "--json", "commits",
         ])
-        pr_pushed_at = _safe_json_loads(raw_pr, context="verify_pr pushed_at").get("pushed_at", "")
+        commits = _safe_json_loads(raw_pr, context="verify_pr commits").get("commits", [])
+        if commits:
+            pr_pushed_at = commits[-1].get("committedDate", "") or ""
     except GhError:
+        # Don't propagate — verify_pr continues to run the rest of the
+        # gates. G3 still applies its other checks (per-job audit
+        # presence + per-job verdict == Approve); only the freshness
+        # guard is downgraded. The `pr_pushed_at=""` value is observable
+        # in the G3 evidence below.
         pass
     gates: list[GateResult] = [
         _gate_g1_pr_state(pr_number, repo),
