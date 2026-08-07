@@ -222,6 +222,16 @@ class TestGatesHermetic(unittest.TestCase):
             g = pr_verify._gate_g5_merge_state(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
         self.assertFalse(g.passed)
 
+    def test_g5_unstable_fails(self):
+        """M-8: UNSTABLE means a required check is still being recomputed
+        or mergeability is being re-evaluated. Reverting the soft-pass to
+        only CLEAN/BEHIND closes the fail-open window."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps({
+            "mergeStateStatus": "UNSTABLE", "mergeable": "MERGEABLE",
+        })):
+            g = pr_verify._gate_g5_merge_state(584, "sh-ai-x/dev-harness-kit", "2026-08-06T00:00:00Z")
+        self.assertFalse(g.passed)
+
 
 class TestVerifyPRIntegration(unittest.TestCase):
     """End-to-end: a fully-passing fixture passes; a mixed fixture fails."""

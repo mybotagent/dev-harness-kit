@@ -597,7 +597,12 @@ def _gate_g5_merge_state(pr_number: int, repo: str, fetched_at: str = "") -> Gat
             fetched_at=fetched_at,
         )
     state = (data.get("mergeStateStatus") or "").upper()
-    soft_pass = state in {"CLEAN", "BEHIND", "UNSTABLE"}
+    # M-8: UNSTABLE means required checks are still being recomputed or
+    # mergeability is being re-evaluated — collapsing it into PASS re-opens
+    # the exact "still running" fail-open window the verifier exists to
+    # prevent. Only CLEAN and BEHIND are soft-pass; everything else is
+    # a hard fail (BLOCKED / DIRTY / UNKNOWN / UNSTABLE).
+    soft_pass = state in {"CLEAN", "BEHIND"}
     detail = f"mergeStateStatus={state}, mergeable={data.get('mergeable')}"
     return GateResult(
         gate="G5",
