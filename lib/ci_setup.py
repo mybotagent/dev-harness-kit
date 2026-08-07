@@ -128,6 +128,10 @@ EXPECTED_PATHS: tuple[str, ...] = (
     "tools/skill_usage.py",
     "tools/skill_usage_normalize.py",
     "tools/skill_usage_render.py",
+    # Read-only portability and long-running loop entrypoints. These are
+    # shipped with CI setup so a consumer does not need the plugin checkout.
+    "tools/portability_check.py",
+    "tools/loop_engine.py",
 )
 
 # Files that need the executable bit after install.
@@ -145,6 +149,8 @@ EXECUTABLE_PATHS: tuple[str, ...] = (
     "hooks/lib/hook-preamble.sh",
     "hooks/lib/worktree-detect.sh",
     "tools/skill_usage.py",
+    "tools/portability_check.py",
+    "tools/loop_engine.py",
 )
 
 MARKER_REL = ".dev-kit/ci-config.json"
@@ -532,6 +538,8 @@ def _build_marker() -> dict:
             "tools/skill_usage.py",
             "tools/skill_usage_normalize.py",
             "tools/skill_usage_render.py",
+            "tools/portability_check.py",
+            "tools/loop_engine.py",
         ],
     }
 
