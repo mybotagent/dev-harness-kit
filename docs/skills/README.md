@@ -63,6 +63,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |
 | [`prune`](prune.md) | `analysis` | 4-phase deletion sweep: sweep → dependents → report → verify. |
 | [`babysit-pr`](babysit-pr.md) | `state` | PR babysitter loop: poll CI, fix, commit, re-iterate to a green Approve. |
+| [`pr-verify`](pr-verify.md) | `enforcement` | Deterministic 5-gate PR verifier — fresh `gh` fetch per gate, structured verdict, no "stale CI" false positive. |
 | [`ship`](ship.md) | `state` | Release tag emit; gate check only. |
 | [`bump`](bump.md) | `state` | Explicit `plugin.json` version bump + push. |
 
@@ -148,6 +149,7 @@ step inside their parent skill's flow; you never type them directly.
 | [`proposal`](proposal.md) | `design` | `state` | human |
 | [`prune`](prune.md) | `build` | `analysis` | human |
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | human |
+| [`pr-verify`](pr-verify.md) | `ship` | `enforcement` | human |
 | [`refactor`](refactor.md) | `build` | `analysis` | human |
 | [`research`](research.md) | `design` | `enforcement` | human |
 | [`research-plan-build`](research-plan-build.md) | `build` | `state` | human |
