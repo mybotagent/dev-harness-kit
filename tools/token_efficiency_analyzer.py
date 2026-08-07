@@ -655,12 +655,32 @@ def probe_working_tree_clean(
     }
 
 
+def _run_probe(args, git_runner, timeout):
+    """Run a single git probe and swallow the failure modes that should
+    fall back to ``state="unknown"`` for one worktree.
+
+    The dashboard never wants a single slow / broken dir to crash the
+    whole run, so ``subprocess.TimeoutExpired``, ``CalledProcessError``,
+    and ``OSError`` (e.g. a deleted worktree dir between the iterdir
+    and the probe) all collapse to ``None``. Anything else — including
+    a non-zero ``returncode`` — is returned verbatim so the existing
+    branch logic can keep treating ``returncode != 0`` as a probe
+    failure (e.g. missing ``origin/main``).
+    """
+    try:
+        return git_runner(args, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
+        return None
+
+
 def classify_worktree_dir(
     wt_path: Path,
     repo_root: Path,
     *,
     git_runner=subprocess.run,
     timeout: int = 5,
+    precomputed_porcelain: tuple[str, bool] | None = None,
+    precomputed_origin_main: str | None = None,
 ) -> dict:
     """Classify one worktree dir as live / fresh / merged / gone / unknown.
 
@@ -684,6 +704,19 @@ def classify_worktree_dir(
     5. ``git -C <wt_path> log origin/main..HEAD --oneline`` — empty iff every
        commit on the branch is reachable from ``origin/main``.
 
+    Probes 1 and 4 are repo-wide (the porcelain result is the same for
+    every worktree, and ``origin/main`` is a single SHA). Callers that
+    iterate many worktrees — i.e. ``classify_all_worktrees`` — should
+    hoist those probes and pass them in via ``precomputed_porcelain`` /
+    ``precomputed_origin_main`` so they only run once per dashboard
+    rather than once per dir. Direct callers (single-dir, tests) can
+    leave them ``None`` and the function will run them itself.
+
+    ``precomputed_porcelain`` is a ``(stdout, is_ok)`` tuple where
+    ``is_ok`` is ``False`` when the upstream ``git worktree list`` call
+    itself failed (treat as "dir not listed"). ``precomputed_origin_main``
+    is the raw SHA string; pass ``""`` when the upstream call failed.
+
     Returned dict keys:
 
     - ``state``                   one of the 5 state strings above.
@@ -697,46 +730,77 @@ def classify_worktree_dir(
                                   the worktree is not in ``git worktree list``).
 
     The function never raises — every probe is wrapped so a missing
-    ``origin/main``, a timed-out ``git worktree list``, or a deleted
-    branch falls back to ``state="unknown"`` instead of crashing the
-    dashboard run.
+    ``origin/main``, a timed-out ``git worktree list``, a deleted
+    branch, or any other subprocess failure falls back to
+    ``state="unknown"`` instead of crashing the dashboard run.
     """
     # Issue #310: every probe below is REAL — was previously short-circuited
     # to ``state="live"`` because the cumulative subprocess spawn cost on
     # slow shared CI runners was blowing past the 30-second test budget.
     # Tests pin each branch with a fake ``git_runner`` (see
     # ``test_classify_worktree_dir_real_probes_for_each_state``).
+    # Issue #timeout-sweep: probes are now batched when this function is
+    # driven by ``classify_all_worktrees`` (see
+    # ``test_classify_all_worktrees_batches_shared_probes``) and every
+    # remaining probe is wrapped in ``_run_probe`` so a single slow dir
+    # can no longer crash the whole dashboard (see
+    # ``test_classify_worktree_dir_swallows_timeout``).
 
     # Probe 1: is the dir still registered as a git worktree?
-    porcelain_proc = git_runner(
-        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    is_listed = porcelain_proc.returncode == 0 and str(wt_path) in (porcelain_proc.stdout or "")
+    # Hoisted in classify_all_worktrees — only re-run when called directly.
+    if precomputed_porcelain is not None:
+        porcelain_stdout, porcelain_ok = precomputed_porcelain
+    else:
+        porcelain_proc = _run_probe(
+            ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
+            git_runner, timeout,
+        )
+        if porcelain_proc is None:
+            porcelain_stdout, porcelain_ok = "", False
+        else:
+            porcelain_stdout = porcelain_proc.stdout or ""
+            porcelain_ok = porcelain_proc.returncode == 0
+    is_listed = porcelain_ok and str(wt_path) in porcelain_stdout
 
     # Probe 2: branch tip short SHA (used for the ``branch_tip`` field).
-    tip_proc = git_runner(
+    tip_proc = _run_probe(
         ["git", "-C", str(wt_path), "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True, timeout=timeout,
+        git_runner, timeout,
     )
-    branch_tip = (tip_proc.stdout or "").strip() if tip_proc.returncode == 0 else ""
+    branch_tip = (tip_proc.stdout or "").strip() if tip_proc is not None and tip_proc.returncode == 0 else ""
 
     # Probe 3: full HEAD SHA — compared against origin/main for fresh detect.
-    head_proc = git_runner(
+    head_proc = _run_probe(
         ["git", "-C", str(wt_path), "rev-parse", "HEAD"],
-        capture_output=True, text=True, timeout=timeout,
+        git_runner, timeout,
     )
-    head_full = (head_proc.stdout or "").strip() if head_proc.returncode == 0 else ""
+    head_full = (head_proc.stdout or "").strip() if head_proc is not None and head_proc.returncode == 0 else ""
 
     # Probe 4: origin/main SHA — used for fresh detect AND merged detect.
-    main_proc = git_runner(
-        ["git", "-C", str(repo_root), "rev-parse", "origin/main"],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    main_full = (main_proc.stdout or "").strip() if main_proc.returncode == 0 else ""
-    if main_proc.returncode != 0:
-        # Cannot compare without origin/main — surface "unknown" so the
-        # dashboard can warn on stderr instead of silently mis-bucketing.
+    # Hoisted in classify_all_worktrees — only re-run when called directly
+    # (or when the upstream call failed, signalled by an empty string).
+    if precomputed_origin_main is not None:
+        main_full = precomputed_origin_main
+        main_ok = bool(precomputed_origin_main)
+    else:
+        main_proc = _run_probe(
+            ["git", "-C", str(repo_root), "rev-parse", "origin/main"],
+            git_runner, timeout,
+        )
+        if main_proc is None or main_proc.returncode != 0:
+            # Cannot compare without origin/main — surface "unknown" so the
+            # dashboard can warn on stderr instead of silently mis-bucketing.
+            return {
+                "state": "unknown",
+                "worktree_listed": is_listed,
+                "branch_merged_into_main": False,
+                "is_fresh": False,
+                "branch_tip": branch_tip,
+                "branch_name": "",
+            }
+        main_full = (main_proc.stdout or "").strip()
+        main_ok = True
+    if not main_ok:
         return {
             "state": "unknown",
             "worktree_listed": is_listed,
@@ -747,11 +811,15 @@ def classify_worktree_dir(
         }
 
     # Probe 5: commits on the branch not yet in origin/main.
-    log_proc = git_runner(
+    log_proc = _run_probe(
         ["git", "-C", str(wt_path), "log", "origin/main..HEAD", "--oneline"],
-        capture_output=True, text=True, timeout=timeout,
+        git_runner, timeout,
     )
-    unique_commits = (log_proc.stdout or "").strip() if log_proc.returncode == 0 else ""
+    unique_commits = (
+        (log_proc.stdout or "").strip()
+        if log_proc is not None and log_proc.returncode == 0
+        else ""
+    )
     branch_merged = not unique_commits
 
     # Derive branch_name from the worktree list porcelain (the
@@ -759,7 +827,7 @@ def classify_worktree_dir(
     # Issue #494 (PR review): the previous global scan always returned
     # the main checkout's branch — a per-block lookup is required.
     branch_name = _branch_name_for_porcelain_path(
-        porcelain_proc.stdout if is_listed else "", wt_path,
+        porcelain_stdout if is_listed else "", wt_path,
     )
 
     # Compute state from the probes. ``unknown`` only when HEAD could
@@ -829,6 +897,26 @@ def classify_all_worktrees(
             "branch_name": "",
         },
     }
+    # Hoist the two repo-wide probes out of the per-dir loop. With ~360
+    # worktrees on this checkout, the previous per-dir design spawned
+    # ~1800 git subprocesses; the porcelain + origin/main probes are
+    # identical for every dir, so they now run ONCE per dashboard.
+    porcelain_proc = _run_probe(
+        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
+        git_runner, timeout,
+    )
+    if porcelain_proc is not None and porcelain_proc.returncode == 0:
+        precomputed_porcelain = (porcelain_proc.stdout or "", True)
+    else:
+        precomputed_porcelain = ("", False)
+    main_proc = _run_probe(
+        ["git", "-C", str(repo_root), "rev-parse", "origin/main"],
+        git_runner, timeout,
+    )
+    if main_proc is not None and main_proc.returncode == 0:
+        precomputed_origin_main = (main_proc.stdout or "").strip()
+    else:
+        precomputed_origin_main = ""
     for root_name in WORKTREE_ROOT_NAMES:
         wt_root = Path(repo_root) / root_name
         if not wt_root.exists() or not wt_root.is_dir():
@@ -837,7 +925,10 @@ def classify_all_worktrees(
             if not child.is_dir():
                 continue
             meta[child.name] = classify_worktree_dir(
-                child, Path(repo_root), git_runner=git_runner, timeout=timeout
+                child, Path(repo_root),
+                git_runner=git_runner, timeout=timeout,
+                precomputed_porcelain=precomputed_porcelain,
+                precomputed_origin_main=precomputed_origin_main,
             )
     return meta
 
