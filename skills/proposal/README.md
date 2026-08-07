@@ -25,6 +25,37 @@ next to it. The HTML is:
 The skill does **not** edit the YAML. The user authors the proposal;
 this skill renders and writes the HTML.
 
+## Workflow (BEFORE / AFTER)
+
+The skill **prescribes** a **before-then-after** authoring discipline. A
+proposal is a contract between the existing code and the change being
+proposed; reviewers benefit when both sides are present and citable.
+
+The renderer does NOT enforce this discipline — the parser accepts any
+proposal whose YAML matches the schema, including those that omit
+`before:` and `after:` entirely. The §Workflow describes the
+recommended discipline; §Limitations is honest about what the parser
+does and does not catch. Reviewers are the enforcement mechanism.
+
+**BEFORE** — analyze the existing code first. Read the file(s) the
+proposal will touch, capture concrete observations (file:line, commit
+hash, log excerpt, test output), and write them into the YAML's
+`before:` block as `summary` + `evidence` items.
+
+**AFTER** — describe the proposed state. Write the `after:` block as
+`summary` + a `files` list. The `files` list is a reviewer commitment:
+anything not in it MUST NOT change.
+
+**PROS / CONS / LIMITATIONS** — capture in the same draft. Pros are
+cited strengths; cons are knowingly accepted weaknesses with a
+mitigation; limitations are what the design CANNOT do (out-of-scope by
+design, not "we didn't get to it").
+
+When any of `before:`, `after:`, `pros:`, `cons:`, `limitations:` are
+absent, the renderer emits no new section wrappers (only an extended
+inline-CSS block). Existing proposals render identically. See
+`skills/proposal/SKILL.md` §Workflow for the full rule.
+
 ## Why a separate skill (not a flag on `/dev-kit:report` or `/dev-kit:plan`)
 
 The user typed `/dev-kit:proposal` and got a single result. The flag-vs-slash
@@ -144,6 +175,29 @@ status: draft | design-discussion | ready-for-review | accepted | rejected | sup
 issue: <issue number, optional>
 date: YYYY-MM-DD
 tags: [<tag1>, <tag2>]
+
+# Structured before / after + pros / cons / limitations -- all optional.
+# See §Workflow for the discipline these enforce.
+before:
+  summary: |
+    Markdown-lite description of the code's CURRENT state.
+  evidence:
+    - 'file:line, log excerpt, or commit hash supporting the claim'
+after:
+  summary: |
+    Markdown-lite description of the code's PROPOSED state.
+  files:
+    - path: <repo-relative file path>
+      change: |
+        Markdown-lite description of what this file becomes.
+pros:
+  - 'Strength 1 with citation'
+  - 'Strength 2'
+cons:
+  - 'Weakness the proposal knowingly accepts + mitigation'
+limitations:
+  - 'What the design CANNOT do (out-of-scope-by-design)'
+
 sections:
   - title: <section 1>
     body: |
@@ -164,9 +218,12 @@ sections:
 ```
 
 Required top-level fields: `title`, `status`. Optional: `issue` (int),
-`date` (str), `tags` (list[str]), `sections` (list of `{title, body}`).
+`date` (str), `tags` (list[str]), `sections` (list of `{title, body}`),
+`before` (`{summary, evidence}`), `after` (`{summary, files}`), `pros`
+(list[str]), `cons` (list[str]), `limitations` (list[str]).
 Validation lives in `lib/render_proposal_html.py::parse_proposal_yaml`
-and `tests/test_proposal_skill.py::ParseYAMLTests`.
+and `tests/test_proposal_skill.py::ParseYAMLTests` and
+`::BeforeAfterFieldsTests`.
 
 ### Status field lifecycle
 
@@ -278,7 +335,7 @@ definition lists, footnotes):
 
 ## Hand-off
 
-After a proposal is `accepted:`, the implementation work follows
+After a proposal moves to `status: accepted`, the implementation work follows
 `/dev-kit:plan` → `/dev-kit:build`. The proposal HTML is the design record
 that closes the issue; the implementation PR references the proposal's
 `issue:` number for traceability.
@@ -311,3 +368,70 @@ plus the `status:` state machine plus the inline-CSS-only output is the
 single edit point: a maintainer edits YAML, regenerates HTML, and shares
 the file. The skill is intentionally narrow, deterministic, and filesystem-
 scoped so a silent vulnerability is impossible.
+
+## Pros of this skill
+
+- **Structured before/after analysis forces honest proposals.** The
+  YAML declares `before.evidence` and `after.files` slots so the
+  maintainer is nudged to cite file:line, log excerpts, or commit
+  hashes; a reviewer can verify both sides with concrete references.
+  The shape of the evidence is enforced by the parser (it must be a
+  list of strings), but the *quality* of the citations is not — see
+  §Limitations.
+- **Pros / Cons / Limitations visually distinct** in the rendered HTML
+  (check / ballot-x / warn-glyph), so reviewers can scan the
+  trade-off shape at a glance.
+- **Deterministic renderer.** `render(p, now=...)` is byte-identical
+  across runs. `atomic_write_text()` makes partial writes impossible.
+- **Inline-CSS-only output.** No `<script>`, no remote `<link>`, no
+  remote `<img>`. Safe to email, archive, or open from `file://`.
+  HTML-escape on every interpolated value keeps a `<script>` in YAML
+  from ever being executable in the browser.
+- **Backward compatible.** Existing proposals without the new fields
+  render exactly as before (only the inline-CSS block grows; no new
+  section wrappers are emitted).
+- **`after.files` is a reviewer commitment.** Anything not listed
+  MUST NOT change — prevents scope-creep PRs.
+
+## Cons of this skill
+
+- **Markdown-lite grammar is intentionally narrow.** No H4+, nested
+  lists, definition lists, footnotes, images, or HTML pass-through.
+  Adding a new construct requires editing
+  `lib/render_proposal_html.py::_is_block_start` and `render_body`,
+  plus a corresponding test in `tests/test_proposal_skill.py`.
+- **Higher authoring burden than a free-form document.** Early
+  `draft` proposals may feel like premature ceremony; the workaround
+  is to leave the new fields empty until status advances to
+  `design-discussion` or later.
+- **No diff between `before:` and `after:`.** Side-by-side rendering
+  only; reviewers read both halves and compare themselves.
+- **Single file per topic.** Supersedes-tracking is the `superseded`
+  status tag (hand-set), not a YAML-level relationship field.
+- **CLI driver lives in the lib's `__main__` block.** Deviates from
+  the project's typical `bin/dev-kit-*.py` pattern; new contributors
+  may look for a separate binary.
+
+## Limitations of this skill
+
+- **Cannot detect code-analysis shortcuts.** The lint enforces the
+  SHAPE of `before.evidence` (a list of strings), not the QUALITY of
+  the citations. Hand-waved evidence passes the lint; reviewers catch
+  shallow claims during acceptance.
+- **Cannot enforce that `after.files` matches the implementation PR.**
+  A proposal can list 2 files; the PR can touch 5. The hand-off
+  contract is the implementation PR body citing the proposal's
+  `issue:` number.
+- **Limitations list is decorative, not enforced.** The renderer draws
+  a warn-glyph; the lint does not check that implementation comments,
+  tests, or docs acknowledge the listed limitations.
+- **No versioning of the proposal itself.** A single YAML is the
+  SSOT; per-revision history is git history, not a structured
+  changelog. Round-by-round audit trail requires re-authoring into a
+  new sub-topic (`02-...`).
+- **Skill workflow cannot enforce that the maintainer ACTUALLY read
+  the existing code.** Render-only by design; the discipline is
+  documented in §Workflow and called out in PR review.
+- **Single-pass renderer.** No tree diff, no external link fetch, no
+  path-existence check on `after.files` paths. Future-work; honest
+  about the gap rather than papering over it.
