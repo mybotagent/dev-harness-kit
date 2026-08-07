@@ -45,7 +45,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 
 | Skill | α | Description |
 |---|---|---|
-| [`config`](config/SKILL.md) | `state` | skill + MCP + hook + methodology picker (multiSelect). |
+| [`config`](config/SKILL.md) | `state` | skill + hook + methodology picker (multiSelect). |
 | [`linear`](linear/SKILL.md) | `state` | Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured. |
 
 ### `design` (5)

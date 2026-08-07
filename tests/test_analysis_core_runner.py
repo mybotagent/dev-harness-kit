@@ -953,3 +953,26 @@ class TestBucketAssignmentIsSingleSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSecretSSOTComment(unittest.TestCase):
+    """Doc-contract: `lib/analysis_core/runner.py`'s secret-pattern SSOT
+    comment must NOT reference the deleted `skills/audit/SKILL.md`
+    (PR-589, review M3). The pattern set is the engine-side SSOT
+    required by the `secret` dimension charter; with `skills/audit/`
+    removed in favor of `/dev-kit:inspect --secrets/--slop`, the
+    comment should now point at the new inspection surface.
+    """
+
+    def test_runner_comment_does_not_reference_deleted_audit_skill(self):
+        runner = (PROJECT_ROOT / "lib/analysis_core/runner.py").read_text()
+        self.assertNotIn("skills/audit/SKILL.md", runner,
+                         "runner.py secret-SSOT comment must not cite the "
+                         "deleted skills/audit/SKILL.md (PR-589 review M3)")
+
+    def test_runner_comment_documents_new_inspect_surface(self):
+        runner = (PROJECT_ROOT / "lib/analysis_core/runner.py").read_text()
+        self.assertIn("skills/inspect/SKILL.md", runner,
+                      "runner.py secret-SSOT comment should point at "
+                      "skills/inspect/SKILL.md after PR-589 merge")
+

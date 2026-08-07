@@ -78,7 +78,7 @@ def _bucket_for(sev: Severity) -> str:
 # Well-known secret patterns that must be masked at the engine boundary
 # before any expert free-text hits the report or the suggested diff.
 # Pattern set is the SSOT required by the `secret` dimension charter
-# (lib/analysis_core/dimensions.py + skills/audit/SKILL.md). Adding a
+# (lib/analysis_core/dimensions.py + skills/inspect/SKILL.md). Adding a
 # new credential family means appending here, not editing call sites.
 _SECRET_PATTERNS = (
     re.compile(r"AKIA[0-9A-Z]{16}"),                  # AWS access key id

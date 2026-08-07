@@ -206,14 +206,6 @@ workflow, opt-in invocation pattern)</li>
 <li><strong>Hand-off out</strong>: (terminal — the gate is the final pre-merge
 signal alongside review/security)</li>
 </ul>
-<h2>Cross-cutting — Audit (<code>/dev-kit:audit</code>)</h2>
-<ul>
-<li><strong>Goal</strong>: Batch audit of slop + secrets.</li>
-<li><strong>Must</strong>: Output HIGH/MEDIUM/LOW buckets. Banned-phrase regex SSOT.</li>
-<li><strong>Must-Not</strong>: Modify files (read-only).</li>
-<li><strong>AC</strong>: HIGH ≥ 5 = warning. 0 findings = clean.</li>
-<li><strong>Active Skills</strong>: <code>audit</code> (slop + secret + outdated are inlined modes)</li>
-</ul>
 <h2>Cross-cutting — Inspect (<code>/dev-kit:inspect</code>)</h2>
 <ul>
 <li><strong>Goal</strong>: Whole-codebase (not per-PR, not per-diff) health audit
