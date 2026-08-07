@@ -371,10 +371,13 @@ repo's worktrees and hands you back the exact command to resume the right one.
 (This needs `/dev-kit:log` to have been on — that's what records the sessions.)
 See [Session monitor](#session-monitor) below for the flag reference.
 
-**You want to skip the Valuate step.** Go ahead — it's advisory. `/dev-kit:valuate`
-scores whether a plan is worth building, but nothing forces you to run it and the
-build proceeds either way (the old hard gate was removed in PR #463). Skip it for
-small obvious work; run it as a cheap gut check on bigger bets.
+**You want to skip the Valuate step.** Go ahead — the verdict is advisory.
+`valuate` scores whether a plan is worth building, but the build stage proceeds
+either way (the old hard gate was removed in PR #463). Note that as of PR #589
+`valuate` is **model-invocable only** — `/dev-kit:plan` and other planning stages
+call it; the slash no longer appears in the user menu. So "skipping" it just
+means letting those stages run without an explicit verdict call. Skip on small
+obvious work; rely on it as a sanity check on bigger bets.
 
 **You want to skip straight to Build without a full plan.** There is **no
 one-command bypass** today. Your honest options are to scope `/dev-kit:plan` very
@@ -770,7 +773,7 @@ gaps and per-runtime wiring differences are in
 | Skill | Stage | Reads | Writes |
 |---|---|---|---|
 | `/dev-kit:plan` | Plan | Operator prompt | `PRD.md`, `phases/<name>/step<N>.md`, `phases/<name>/index.json` |
-| `/dev-kit:valuate` | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
+| `/dev-kit:valuate` (internal) | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
 | `/dev-kit:build` | Build | `phases/<name>/index.json` + per-step file | per-step `output.json` |
 | `/dev-kit:review` | Review | PR diff | verdict (Approve / Changes Requested / Blocked) |
 | `/dev-kit:security` | Security | PR diff | per-OWASP verdict |

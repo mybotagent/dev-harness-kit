@@ -366,9 +366,13 @@ sequenceDiagram
 있어야 기록이 있다 — 아래 [세션 모니터](#세션-모니터) 참고).
 
 **Valuate 단계를 건너뛰고 싶다.** 그렇게 해도 된다 — 권고 단계일 뿐이다.
-`/dev-kit:valuate`는 계획이 빌드할 가치가 있는지 점수를 매기지만, 강제하지
-않으며 빌드는 어쨌든 진행된다(이전 하드 게이트는 PR #463에서 제거됨).
-작고 자명한 작업은 건너뛰고, 큰 베팅에는 싼 gut check 용으로 실행한다.
+`valuate`는 계획이 빌드할 가치가 있는지 점수를 매기지만, 빌드는 어쨌든
+진행된다(이전 하드 게이트는 PR #463에서 제거됨). 참고로 PR #589부터
+`valuate`는 **모델 호출 전용**이며 — `/dev-kit:plan` 등 계획 단계가
+내부적으로 루브릭을 호출한다. 슬래시는 사용자 메뉴에 더 이상
+노출되지 않는다. 따라서 "건너뛰기"는 그 단계들이 명시적 판정 호출 없이
+그냥 진행되도록 두는 것을 의미한다. 작고 자명한 작업은 건너뛰고,
+큰 베팅에는 sanity check 용으로 의존한다.
 
 **전체 계획 없이 Build로 직행하고 싶다.** 현재로는 **원커맨드 우회
 방법이 없다.** 정직한 선택지는 `/dev-kit:plan`을 매우 좁게 범위화하거나
@@ -728,7 +732,7 @@ classify_all_worktrees()` 경유) `live`/`unknown`에 한해 제거 후보만
 | 스킬 | 단계 | 읽기 | 쓰기 |
 |---|---|---|---|
 | `/dev-kit:plan` | Plan | 운영자 프롬프트 | `PRD.md`, `phases/<name>/step<N>.md`, `phases/<name>/index.json` |
-| `/dev-kit:valuate` | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
+| `/dev-kit:valuate` (내부) | Valuate | `.dev-kit/hand-off/plan*.md` | `.dev-kit/valuations/<plan-id>.json` |
 | `/dev-kit:build` | Build | `phases/<name>/index.json` + 단계별 파일 | 단계별 `output.json` |
 | `/dev-kit:review` | Review | PR diff | 판정 (Approve / Changes Requested / Blocked) |
 | `/dev-kit:security` | Security | PR diff | OWASP별 판정 |

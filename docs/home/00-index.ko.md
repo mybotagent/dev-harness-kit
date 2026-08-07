@@ -108,11 +108,13 @@ $ ls skills/   # 모든 /dev-kit:<skill> 이름과 그 SKILL.md
    서브스트레이트가 필요 없다 — 직접 `git show
    origin/main:.claude-plugin/plugin.json` + JSON 파싱.
 
-2. **빌드 진행/중단 게이트 투명성.** `/dev-kit:valuate`는 판정 봉투
-   (decision / rationale / blocking_findings)를
-   `.dev-kit/valuations/<plan-id>.json`에 쓴다. 봉투 계약은
-   `lib/valuation_engine.py:decision_is_canonical_envelope`에
-   고정되어 있다.
+2. **빌드 진행/중단 게이트 투명성.** `valuate`(PR #589부터 모델 호출
+   전용; 사용자 슬래시는 제거됨)는 판정 봉투(decision / rationale /
+   blocking_findings)를 `.dev-kit/valuations/<plan-id>.json`에 쓴다.
+   봉투 계약은 `lib/valuation_engine.py:decision_is_canonical_envelope`에
+   고정되어 있다. `/dev-kit:plan` 등 계획 단계가 루브릭을 호출하며,
+   #463에서 자동 게이트가 제거된 이후로는 판정과 무관하게 빌드가
+   진행된다.
 
 3. **Pre-push 의도 점검.** `.githooks/pre-push`는 모든 푸시에서
    유지보수 게이트를 실행한다; `hooks/worktree-guard.sh`는 메인

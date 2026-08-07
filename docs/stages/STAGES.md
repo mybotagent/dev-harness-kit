@@ -42,12 +42,12 @@
 - **AC**: `.dev-kit/valuations/<plan-id>.json` exists with the canonical envelope. `python3 -m lib.valuation_engine --plan PRD.md --dry-run` exits 0 with a valid envelope.
 - **Active Skills**: `valuate` (`alpha: enforcement` — the engine is deterministic)
 - **Active Hooks**: `stop-verify`=ON. Others OFF.
-- **Hand-off out**: `.dev-kit/valuations/<plan-id>.json` (the build stage reads this file as its pre-flight verdict; the build-stage auto-gate was removed in #463 — operators run `/dev-kit:valuate` explicitly and the build proceeds unless they flag a non-PROCEED verdict).
+- **Hand-off out**: `.dev-kit/valuations/<plan-id>.json` (the build stage reads this file as its pre-flight verdict; the build-stage auto-gate was removed in #463 — the verdict envelope is now advisory, and as of PR #589 `valuate` is model-invocable only; `/dev-kit:plan` and other planning stages call into the rubric, and the build proceeds regardless).
 
 ## Stage 3 — Build (`/dev-kit:build`)
 
 - **Goal**: Per-step code completion per `phases/<name>/step<N>.md` + regression GREEN.
-- **Must**: (a) Follow `phases/<name>/step<N>.md` exactly. (b) Run AC commands and quote output. (c) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (d) 2-commit protocol (feat + chore). Note: a Phase 4 auto-gate that read `.dev-kit/valuations/<plan-id>.json` and refused non-PROCEED verdicts lived here until #463; the gate was tied to a URI substrate that has since been dropped, so the auto-gate went with it. Operators run `/dev-kit:valuate` explicitly and the build proceeds.
+- **Must**: (a) Follow `phases/<name>/step<N>.md` exactly. (b) Run AC commands and quote output. (c) Bug → reproduce → root-cause → regression test → minimal fix (4-phase debug via `build-debug`). (d) 2-commit protocol (feat + chore). Note: a Phase 4 auto-gate that read `.dev-kit/valuations/<plan-id>.json` and refused non-PROCEED verdicts lived here until #463; the gate was tied to a URI substrate that has since been dropped, so the auto-gate went with it. As of PR #589 `valuate` is model-invocable only and the verdict envelope is purely advisory; the build proceeds regardless of any verdict.
 - **Must-Not**: Speculate on AC ("should work", "probably fine"). Delete `output.json`. Batch multiple changes.
 - **AC**: All steps `status=completed`. `pytest` exit code 0 + count quoted. 2-commit protocol followed.
 - **Active Skills**: `build-tdd`, `build-debug`, `build-verify`, `build-refactor` (the per-step harness runner + methodology selector live in `lib/execute.py` + `lib/methodology/`; prune's 3-pass sweep is inlined into `prune`)
