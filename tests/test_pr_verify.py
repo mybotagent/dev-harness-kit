@@ -512,6 +512,35 @@ class TestM2StaleVerdictGuard(unittest.TestCase):
             )
         self.assertTrue(g.passed)
 
+    def test_one_job_stale_others_fresh_fails(self):
+        """M-2 partial hardening: a single stale-job audit must fail
+        the gate even when other jobs are fresh. The OLD implementation
+        only compared the global latest audit against pushed_at and let
+        a stale review pass if maintenance was fresh."""
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps([
+            {"user": "claude[bot]", "body": "**Verdict:** Approve",
+             "created_at": "2026-01-03T00:00:00Z", "updated_at": "2026-01-03T00:00:00Z", "id": "1"},
+            # review audit: OLD (before push) -> stale
+            {"id": "audit-1", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve",
+             "created_at": "2026-01-01T00:00:00Z"},
+            # security + maintenance: FRESH (after push)
+            {"id": "audit-2", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve",
+             "created_at": "2026-01-03T00:00:00Z"},
+            {"id": "audit-3", "user": "github-actions",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve",
+             "created_at": "2026-01-03T00:00:00Z"},
+        ])):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+            )
+        self.assertFalse(g.passed)
+        self.assertIn("STALE", g.detail)
+        self.assertIn("review", g.detail)
+
 
 
 

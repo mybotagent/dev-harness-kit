@@ -460,27 +460,40 @@ def _gate_g3_llm_verdicts(
     # claude[bot] comment) but the per-job audit disagrees, prefer the
     # per-job audit as authoritative (matches maintenance_gate.py).
 
-    # M-2 stale-verdict guard (per-job): an Approve audit is stale if
-    # its created_at is BEFORE the PR's pushed_at (a new commit landed
-    # after the Approve was recorded).
+    # M-2 stale-verdict guard (truly per-job): for EACH required job,
+    # the most recent audit comment's created_at must NOT predate
+    # pr_pushed_at. If any job's latest audit is older than the push,
+    # that job's verdict is stale (a new commit landed after the
+    # Approve was recorded) and G3 fails STALE.
     if verdict == "Approve" and pr_pushed_at:
-        # Find the most recent audit comment across all jobs and compare.
         audit_re = re.compile(
             r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
             r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
         )
-        latest_audit_created = ""
+        # Track the most recent audit created_at PER JOB.
+        latest_per_job_created: dict[str, str] = {}
         for c in comments:
             body = c.get("body") or ""
             m = audit_re.search(body)
             if not m:
                 continue
+            _, job, _status, _verdict = m.groups()
             created_at = c.get("created_at") or ""
-            if created_at > latest_audit_created:
-                latest_audit_created = created_at
-        if latest_audit_created and latest_audit_created < pr_pushed_at:
+            prior = latest_per_job_created.get(job, "")
+            if created_at > prior:
+                latest_per_job_created[job] = created_at
+        # A required job is stale if its latest audit predates pushed_at.
+        stale_jobs = [
+            j for j in REQUIRED_JOBS
+            if latest_per_job_created.get(j, "") < pr_pushed_at
+            and latest_per_job_created.get(j) is not None
+        ]
+        if stale_jobs:
             verdict = "STALE"
-            src = f"latest audit ({latest_audit_created}) < pushed_at ({pr_pushed_at})"
+            src = (
+                f"stale audits for jobs {stale_jobs} "
+                f"(latest_per_job={latest_per_job_created}, pushed_at={pr_pushed_at})"
+            )
     passed = verdict == "Approve"
     detail = f"latest verdict: {verdict}"
     if src:
