@@ -666,5 +666,446 @@ class BackToIndexNavTests(unittest.TestCase):
             self.assertNotIn('<nav class="back-link">', out)
 
 
+# ----- Before / After + Pros / Cons / Limitations (structured fields) -------
+
+
+class BeforeAfterFieldsTests(unittest.TestCase):
+    """Top-level `before`, `after`, `pros`, `cons`, `limitations` fields.
+
+    The skill workflow is: read existing code first → author the YAML →
+    render. The renderer formalises this by exposing the analysis as
+    structured YAML fields so reviewers can verify the proposal against
+    cited evidence and stated trade-offs. All fields are optional and
+    backward compatible — a proposal with none of them renders as before.
+    """
+
+    def _yaml(self, **extra) -> str:
+        base = "title: T\nstatus: draft\n"
+        for k, v in extra.items():
+            if isinstance(v, str):
+                base += f"{k}: |\n  {v}\n"
+            else:
+                base += f"{k}: {v}\n"
+        return base + "sections: []\n"
+
+    def test_parse_before_state_summary_and_evidence(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n"
+            "  summary: |\n"
+            "    No doom-loop detection exists today.\n"
+            "  evidence:\n"
+            "    - '12-18% of long sessions have 3+ identical Bash calls'\n"
+            "    - 'See logs/claude-code/2026-07-*.jsonl for examples'\n"
+            "sections: []\n"
+        )
+        p = rph.parse_proposal_yaml(text)
+        self.assertIsNotNone(p.before)
+        self.assertIn("doom-loop detection", p.before.summary)
+        self.assertEqual(len(p.before.evidence), 2)
+        self.assertIn("identical Bash calls", p.before.evidence[0])
+
+    def test_parse_after_state_summary_and_files(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: |\n"
+            "    A new hook reads the last 10 entries.\n"
+            "  files:\n"
+            "    - path: hooks/lib/loop-detect.sh\n"
+            "      change: |\n"
+            "        Reads hand-off log; emits UserPromptSubmit injection.\n"
+            "    - path: hooks/index.md\n"
+            "      change: 'register loop-detect.sh in the matrix'\n"
+            "sections: []\n"
+        )
+        p = rph.parse_proposal_yaml(text)
+        self.assertIsNotNone(p.after)
+        self.assertIn("new hook", p.after.summary)
+        self.assertEqual(len(p.after.files), 2)
+        self.assertEqual(p.after.files[0].path, "hooks/lib/loop-detect.sh")
+        self.assertIn("hand-off log", p.after.files[0].change)
+
+    def test_parse_pros_cons_limitations(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "pros:\n"
+            "  - 'Catches silent doom loops'\n"
+            "  - 'Additive only'\n"
+            "cons:\n"
+            "  - 'False positives on legitimate retries'\n"
+            "limitations:\n"
+            "  - 'Cannot detect slow-think loops'\n"
+            "sections: []\n"
+        )
+        p = rph.parse_proposal_yaml(text)
+        self.assertEqual(p.pros, ["Catches silent doom loops", "Additive only"])
+        self.assertEqual(p.cons, ["False positives on legitimate retries"])
+        self.assertEqual(p.limitations, ["Cannot detect slow-think loops"])
+
+    def test_optional_fields_default_to_empty(self):
+        p = rph.parse_proposal_yaml("title: T\nstatus: draft\nsections: []\n")
+        self.assertIsNone(p.before)
+        self.assertIsNone(p.after)
+        self.assertEqual(p.pros, [])
+        self.assertEqual(p.cons, [])
+        self.assertEqual(p.limitations, [])
+
+    def test_before_summary_must_be_string(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "before:\n  summary: 123\n  evidence: []\n"
+                "sections: []\n"
+            )
+
+    def test_before_evidence_must_be_list(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "before:\n  summary: hi\n  evidence: 'not a list'\n"
+                "sections: []\n"
+            )
+
+    def test_after_files_must_have_path_and_change(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "after:\n  summary: hi\n  files:\n    - change: x\n"
+                "sections: []\n"
+            )
+
+    def test_pros_must_be_list_of_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "pros: 'not a list'\n"
+                "sections: []\n"
+            )
+
+    def test_pros_items_must_be_strings(self):
+        """Maintenance reviewer (PR #595): the parser must reject
+        non-string items instead of silently coercing via `str(...)`.
+        `pros: [123]` is malformed; the contract is `list[str]`."""
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "pros: [123]\n"
+                "sections: []\n"
+            )
+
+    def test_cons_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "cons: [false]\n"
+                "sections: []\n"
+            )
+
+    def test_limitations_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "limitations: [42]\n"
+                "sections: []\n"
+            )
+
+    def test_before_evidence_items_must_be_strings(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "before:\n  summary: hi\n  evidence: [null]\n"
+                "sections: []\n"
+            )
+
+    def test_after_files_change_is_required(self):
+        """Maintenance reviewer: `after.files[].change` was silently
+        optional via `f.get('change', '')`. The contract is required;
+        an entry with only `path` is malformed."""
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "after:\n  summary: hi\n  files:\n    - path: hooks/lib/x.sh\n"
+                "sections: []\n"
+            )
+
+    def test_after_files_change_must_be_string(self):
+        with self.assertRaises(ValueError):
+            rph.parse_proposal_yaml(
+                "title: T\nstatus: draft\n"
+                "after:\n  summary: hi\n  files:\n    - path: a.py\n      change: 999\n"
+                "sections: []\n"
+            )
+
+    def test_cons_escape_regression(self):
+        """Symmetric to test_render_escapes_script_in_pros_item: a `<script>`
+        in `cons[]` must NOT survive unescaped into the rendered HTML."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "cons:\n  - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_limitations_escape_regression(self):
+        """Symmetric escape regression for `limitations[]` items."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "limitations:\n  - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_before_evidence_escape_regression(self):
+        """Symmetric escape regression for `before.evidence[]` items.
+        They flow through `_render_inline` and so share the pros/cons
+        escape contract — pin it explicitly so a future refactor that
+        routes evidence through a different path can't regress."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n"
+            "  summary: hi\n"
+            "  evidence:\n"
+            "    - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_after_summary_escape_regression(self):
+        """Symmetric escape regression for `after.summary` (block body)."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: '<script>alert(1)</script>'\n"
+            "  files: []\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_after_files_path_escape_regression(self):
+        """Symmetric escape regression for `after.files[].path`. It
+        flows through `html.escape` directly (not `_render_inline`),
+        so the contract is independent — pin it."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: hi\n"
+            "  files:\n"
+            "    - path: 'a<script>alert(1)</script>.py'\n"
+            "      change: 'change me'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+
+class BeforeAfterRenderTests(unittest.TestCase):
+    """Render the new fields as first-class sections.
+
+    The HTML output must include:
+    - `<section class="ba-section">` containing a `<div class="ba-grid">`
+      that wraps `<div class="before-card">` + `<div class="after-card">`
+      when both before and after are present.
+    - `<h3>Before (current state)</h3>` + `<h3>After (proposed state)</h3>`.
+    - `<ul class="pros-list">`, `<ul class="cons-list">`,
+      `<ul class="limitations-list">` with distinct class hooks.
+    - Evidence items inside `.before-card` rendered as a `<ul>`.
+    - File changes inside `.after-card` rendered as a `<ul>` with file paths.
+    """
+
+    def _full_yaml(self) -> str:
+        return (
+            "title: Doom-loop detection\n"
+            "status: design-discussion\n"
+            "before:\n"
+            "  summary: |\n"
+            "    No doom-loop detection exists today.\n"
+            "  evidence:\n"
+            "    - '12-18% of long sessions have 3+ identical Bash calls'\n"
+            "    - 'See `logs/claude-code/*.jsonl`'\n"
+            "after:\n"
+            "  summary: |\n"
+            "    New hook reads last 10 entries; emits UserPromptSubmit.\n"
+            "  files:\n"
+            "    - path: hooks/lib/loop-detect.sh\n"
+            "      change: 'Reads hand-off log; emits injection.'\n"
+            "pros:\n"
+            "  - 'Catches silent doom loops'\n"
+            "  - 'Additive only'\n"
+            "cons:\n"
+            "  - 'False positives on legitimate retries'\n"
+            "limitations:\n"
+            "  - 'Cannot detect slow-think loops'\n"
+            "sections:\n"
+            "  - title: TL;DR\n"
+            "    body: 'Adds a hook.'\n"
+        )
+
+    def test_render_emits_before_after_grid(self):
+        html = rph.render_from_yaml(self._full_yaml())
+        self.assertIn('class="ba-grid"', html)
+        # Cards carry multiple classes (`.ba-card .before-card` / `.after-card`).
+        self.assertIn("before-card", html)
+        self.assertIn("after-card", html)
+        self.assertIn("Before (current state)", html)
+        self.assertIn("After (proposed state)", html)
+
+    def test_render_emits_pros_cons_limitations_lists(self):
+        html = rph.render_from_yaml(self._full_yaml())
+        self.assertIn('class="pros-list"', html)
+        self.assertIn('class="cons-list"', html)
+        self.assertIn('class="limitations-list"', html)
+        self.assertIn("Catches silent doom loops", html)
+        self.assertIn("False positives on legitimate retries", html)
+        self.assertIn("Cannot detect slow-think loops", html)
+
+    def test_render_includes_evidence_items(self):
+        html = rph.render_from_yaml(self._full_yaml())
+        # Evidence item that contains backticks should survive (inline code)
+        self.assertIn("12-18% of long sessions", html)
+        self.assertIn("logs/claude-code/*.jsonl", html)
+
+    def test_render_includes_file_paths(self):
+        html = rph.render_from_yaml(self._full_yaml())
+        self.assertIn("hooks/lib/loop-detect.sh", html)
+
+    def test_render_no_fields_emits_no_ba_sections(self):
+        """Backward compat: a proposal without before/after/pros/cons/
+        limitations must not emit any of the new section wrappers."""
+        text = (
+            "title: Plain\nstatus: draft\n"
+            "sections:\n  - title: S\n    body: hi\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn('class="ba-grid"', html)
+        self.assertNotIn('class="pros-list"', html)
+        self.assertNotIn('class="cons-list"', html)
+        self.assertNotIn('class="limitations-list"', html)
+
+    def test_render_before_only_emits_before_card(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n  summary: 'existing state only'\n  evidence: []\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        # Split off the inline-CSS block; the assertion must look at the
+        # rendered `<body>`, not the stylesheet (CSS rules are defined
+        # for every selector regardless of which cards are actually
+        # emitted).
+        body_start = html.index("<body>")
+        body = html[body_start:]
+        self.assertIn("before-card", body)
+        self.assertNotIn("after-card", body)
+        self.assertNotIn('class="pros-list"', body)
+
+    def test_render_pros_only_emits_only_pros_list(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "pros:\n  - 'one'\n  - 'two'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertIn('class="pros-list"', html)
+        self.assertNotIn('class="cons-list"', html)
+        self.assertNotIn('class="limitations-list"', html)
+
+    def test_render_escapes_script_in_before_summary(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n"
+            "  summary: '<script>alert(1)</script>'\n"
+            "  evidence: []\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_render_escapes_script_in_after_file_change(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "after:\n"
+            "  summary: 'x'\n"
+            "  files:\n"
+            "    - path: a.py\n"
+            "      change: '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_render_escapes_script_in_pros_item(self):
+        text = (
+            "title: T\nstatus: draft\n"
+            "pros:\n  - '<script>alert(1)</script>'\n"
+            "sections: []\n"
+        )
+        html = rph.render_from_yaml(text)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_legacy_output_has_no_double_divider_when_structured_empty(self):
+        """3-dim reviewer (PR #595): when none of `before`/`after`/
+        `pros`/`cons`/`limitations` are present, the body must emit
+        exactly ONE divider between the last section and the footer.
+        The earlier code emitted two consecutive dividers (one before
+        the empty structured block, one before the footer), which
+        violated the byte-compatibility claim. Pin the legacy shape."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "sections:\n  - title: S\n    body: hi\n"
+        )
+        html = rph.render_from_yaml(text)
+        # Count dividers strictly between the closing </section> region
+        # and the <footer>; expect exactly one.
+        body_start = html.index("<body>")
+        body = html[body_start:]
+        # The trailing divider is the one right before <footer>.
+        before_footer = body.rsplit("<footer>", 1)[0]
+        dividers_in_tail = before_footer.count('<hr class="section-divider">')
+        self.assertEqual(
+            dividers_in_tail, 1,
+            f"expected exactly 1 trailing divider, got {dividers_in_tail}",
+        )
+        # And the two-divider-back-to-back pattern must not appear.
+        self.assertNotIn(
+            '<hr class="section-divider">\n\n\n\n<hr class="section-divider">',
+            html,
+        )
+
+    def test_structured_section_emits_one_leading_divider(self):
+        """When the structured block IS present, exactly one divider
+        precedes it (between the last regular section and the
+        before/after block). Pin the symmetric side of the
+        divider-regression fix."""
+        text = (
+            "title: T\nstatus: draft\n"
+            "before:\n  summary: hi\n  evidence: []\n"
+            "sections:\n  - title: S\n    body: hi\n"
+        )
+        html = rph.render_from_yaml(text)
+        body_start = html.index("<body>")
+        body = html[body_start:]
+        # The ba-section must be preceded by exactly one divider.
+        ba_idx = body.index('<section id="ba-section"')
+        preceding = body[:ba_idx]
+        dividers_before_ba = preceding.count('<hr class="section-divider">')
+        self.assertEqual(
+            dividers_before_ba, 1,
+            f"expected exactly 1 divider before ba-section, got {dividers_before_ba}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

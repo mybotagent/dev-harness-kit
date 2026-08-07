@@ -213,6 +213,93 @@ blockquote {
 footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* ----- Before / After + Pros / Cons / Limitations ---------------------------
+ * Structured sections emitted when the YAML declares
+ * `before:`, `after:`, `pros:`, `cons:`, `limitations:`. See
+ * `skills/proposal/SKILL.md` §Workflow and `lib/render_proposal_html.py`
+ * `_render_before_after` / `_render_pros_cons_limitations`. Color cues
+ * reuse the existing --ok / --warn / --bad tokens so dark-mode parity
+ * is automatic. */
+.ba-section { margin: 2.5rem 0 1rem; }
+.ba-section h2 { margin-top: 0; }
+.ba-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  margin: 1.5rem 0;
+}
+@media (min-width: 880px) {
+  .ba-grid { grid-template-columns: 1fr 1fr; }
+}
+.ba-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.2rem 1.4rem;
+  box-shadow: var(--shadow);
+}
+.ba-card h3 {
+  margin: 0 0 0.7rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+.before-card { border-left: 4px solid var(--muted); }
+.after-card  { border-left: 4px solid var(--accent); }
+.before-card h3 { color: var(--muted); }
+.after-card h3  { color: var(--accent); }
+.evidence-list, .files-list { padding-left: 1.2rem; margin: 0.4rem 0 0.7rem; }
+.evidence-list li { margin: 0.25rem 0; }
+.files-list li { margin: 0.5rem 0; }
+.file-path {
+  display: inline-block;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--code-bg);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  margin-right: 0.4rem;
+}
+.pcl-section { margin: 2rem 0 1rem; }
+.pcl-section h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pros-list, .cons-list, .limitations-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.4rem 0 0.6rem;
+}
+.pros-list li, .cons-list li, .limitations-list li {
+  position: relative;
+  padding: 0.35rem 0 0.35rem 1.6rem;
+  margin: 0.2rem 0;
+}
+.pros-list li::before {
+  content: "\2713"; /* check */
+  position: absolute; left: 0;
+  color: var(--ok); font-weight: 700;
+}
+.cons-list li::before {
+  content: "\2717"; /* ballot x */
+  position: absolute; left: 0;
+  color: var(--bad); font-weight: 700;
+}
+.limitations-list li::before {
+  content: "!";      /* warn glyph */
+  position: absolute; left: 0;
+  width: 1.1rem; height: 1.1rem;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--bg);
+  font-weight: 700; font-size: 0.75rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pcl-pros h3    { color: var(--ok); }
+.pcl-cons h3    { color: var(--bad); }
+.pcl-limit h3   { color: var(--warn); }
 """
 
 
@@ -223,6 +310,50 @@ class ProposalSection:
 
 
 @dataclass(frozen=True)
+class BeforeState:
+    """Optional structured description of the code's *current* state.
+
+    `summary` is a markdown-lite body (same grammar as
+    `ProposalSection.body`). `evidence` is a list of cited observations
+    (strings). Each entry should point at a concrete file, log line, or
+    commit so the "before" claim is checkable by the reviewer. The
+    /dev-kit:proposal skill workflow requires this evidence be gathered
+    by reading the existing code BEFORE the proposal YAML is authored;
+    see `skills/proposal/SKILL.md` §Workflow.
+    """
+
+    summary: str
+    evidence: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CodeChange:
+    """One file's intended modification under `AfterState.files`.
+
+    `path` is repo-relative. `change` is a markdown-lite body describing
+    what will change and why. The list is a reviewer commitment —
+    anything not listed must NOT change.
+    """
+
+    path: str
+    change: str
+
+
+@dataclass(frozen=True)
+class AfterState:
+    """Optional structured description of the code's *proposed* state.
+
+    `summary` is a markdown-lite body. `files` lists the files the
+    proposal will touch (add/modify/delete). Keep the list narrow:
+    every entry is a reviewer commitment. Anything not in `files` must
+    NOT change.
+    """
+
+    summary: str
+    files: List[CodeChange] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Proposal:
     title: str
     status: str
@@ -230,6 +361,14 @@ class Proposal:
     date: str
     tags: List[str]
     sections: List[ProposalSection] = field(default_factory=list)
+    # Structured before/after + pros/cons/limitations. All optional.
+    # When all five are absent the rendered HTML is identical to the
+    # pre-extension shape, so existing proposals do not change.
+    before: Optional[BeforeState] = None
+    after: Optional[AfterState] = None
+    pros: List[str] = field(default_factory=list)
+    cons: List[str] = field(default_factory=list)
+    limitations: List[str] = field(default_factory=list)
 
     @property
     def status_class(self) -> str:
@@ -240,7 +379,9 @@ def parse_proposal_yaml(text: str) -> Proposal:
     """Parse a YAML proposal document into a `Proposal` value object.
 
     Required: title, status. Optional: issue (int), date (str), tags
-    (list[str]), sections (list of {title, body}).
+    (list[str]), sections (list of {title, body}), before
+    ({summary, evidence}), after ({summary, files}), pros
+    (list[str]), cons (list[str]), limitations (list[str]).
     """
     raw = yaml.safe_load(text)
     if not isinstance(raw, dict):
@@ -268,6 +409,13 @@ def parse_proposal_yaml(text: str) -> Proposal:
         if not isinstance(body, str):
             raise ValueError(f"sections[{i}].body must be a string")
         sections.append(ProposalSection(title=sec["title"], body=body))
+
+    before = _parse_before(raw.get("before"))
+    after = _parse_after(raw.get("after"))
+    pros = _parse_string_list(raw.get("pros"), "pros")
+    cons = _parse_string_list(raw.get("cons"), "cons")
+    limitations = _parse_string_list(raw.get("limitations"), "limitations")
+
     return Proposal(
         title=raw["title"],
         status=status,
@@ -275,7 +423,79 @@ def parse_proposal_yaml(text: str) -> Proposal:
         date=date,
         tags=tags,
         sections=sections,
+        before=before,
+        after=after,
+        pros=pros,
+        cons=cons,
+        limitations=limitations,
     )
+
+
+def _parse_before(raw: object) -> Optional[BeforeState]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("`before` must be a mapping with `summary` (and optional `evidence`)")
+    summary = raw.get("summary", "")
+    if not isinstance(summary, str):
+        raise ValueError("`before.summary` must be a string")
+    evidence_raw = raw.get("evidence", [])
+    if not isinstance(evidence_raw, list):
+        raise ValueError("`before.evidence` must be a list of strings")
+    evidence = _parse_string_items(evidence_raw, "before.evidence")
+    return BeforeState(summary=summary, evidence=evidence)
+
+
+def _parse_after(raw: object) -> Optional[AfterState]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("`after` must be a mapping with `summary` (and optional `files`)")
+    summary = raw.get("summary", "")
+    if not isinstance(summary, str):
+        raise ValueError("`after.summary` must be a string")
+    files_raw = raw.get("files", [])
+    if not isinstance(files_raw, list):
+        raise ValueError("`after.files` must be a list of {path, change} mappings")
+    files: List[CodeChange] = []
+    for i, f in enumerate(files_raw):
+        if not isinstance(f, dict):
+            raise ValueError(f"after.files[{i}] must be a mapping")
+        if "path" not in f or not isinstance(f["path"], str):
+            raise ValueError(f"after.files[{i}] must include a string `path`")
+        if "change" not in f:
+            # Maintenance reviewer (PR #595): a file entry without a
+            # `change` body is malformed; reject instead of silently
+            # defaulting to empty string.
+            raise ValueError(f"after.files[{i}] must include a string `change`")
+        change = f["change"]
+        if not isinstance(change, str):
+            raise ValueError(f"after.files[{i}].change must be a string")
+        files.append(CodeChange(path=f["path"], change=change))
+    return AfterState(summary=summary, files=files)
+
+
+def _parse_string_items(raw: list, field_name: str) -> List[str]:
+    """Strict list[str] parser. Maintenance reviewer (PR #595):
+    silently coercing via `str(...)` accepts malformed inputs like
+    `pros: [123]` and produces nonsense. Reject non-string items."""
+    out: List[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"`{field_name}[{i}]` must be a string "
+                f"(got {type(item).__name__}: {item!r})"
+            )
+        out.append(item)
+    return out
+
+
+def _parse_string_list(raw: object, field_name: str) -> List[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"`{field_name}` must be a list of strings")
+    return _parse_string_items(raw, field_name)
 
 
 # ----- Markdown-lite renderer -----------------------------------------------
@@ -594,16 +814,124 @@ def _meta_line(p: Proposal) -> str:
 
 
 def _toc(p: Proposal) -> str:
-    if not p.sections:
+    """Contents list.
+
+    Includes the structured sections (`Before / After`, `Pros`, `Cons`,
+    `Limitations`) when they are populated so reviewers can jump to them
+    directly. The anchor names are stable: `ba-section`, `pcl-pros`,
+    `pcl-cons`, `pcl-limit`.
+    """
+    items: List[str] = []
+    for i, s in enumerate(p.sections):
+        items.append(f'<li><a href="#sec-{i}">{html.escape(s.title)}</a></li>')
+    if p.before or p.after:
+        items.append('<li><a href="#ba-section">Before / After</a></li>')
+    if p.pros:
+        items.append('<li><a href="#pcl-pros">Pros</a></li>')
+    if p.cons:
+        items.append('<li><a href="#pcl-cons">Cons</a></li>')
+    if p.limitations:
+        items.append('<li><a href="#pcl-limit">Limitations</a></li>')
+    if not items:
         return ""
-    items = "".join(
-        f'<li><a href="#sec-{i}">{html.escape(s.title)}</a></li>'
-        for i, s in enumerate(p.sections)
-    )
     return (
         '<div class="toc"><strong>Contents</strong>'
-        f'<ol>{items}</ol></div>'
+        f'<ol>{"".join(items)}</ol></div>'
     )
+
+
+def _render_before_after(p: Proposal) -> str:
+    """Render the structured `before` / `after` blocks.
+
+    When both are present, they share a 2-column grid. When only one is
+    present it renders alone (no grid wrapper). The card border colour
+    encodes intent (muted = state-now, accent = state-after).
+    """
+    if not p.before and not p.after:
+        return ""
+    cards: List[str] = []
+    if p.before:
+        evidence_html = ""
+        if p.before.evidence:
+            evidence_items = "".join(
+                f"<li>{_render_inline(e)}</li>" for e in p.before.evidence
+            )
+            evidence_html = (
+                f'<h4 style="font-size:0.85rem;margin:0.8rem 0 0.3rem;'
+                f'color:var(--muted);">Evidence</h4>'
+                f'<ul class="evidence-list">{evidence_items}</ul>'
+            )
+        cards.append(
+            '<div class="ba-card before-card">'
+            f'<h3>Before (current state)</h3>'
+            f'{render_body(p.before.summary)}'
+            f'{evidence_html}'
+            '</div>'
+        )
+    if p.after:
+        files_html = ""
+        if p.after.files:
+            file_items = "".join(
+                f'<li><span class="file-path">{html.escape(f.path)}</span>'
+                f'{render_body(f.change)}</li>'
+                for f in p.after.files
+            )
+            files_html = (
+                '<h4 style="font-size:0.85rem;margin:0.8rem 0 0.3rem;'
+                'color:var(--accent);">Files</h4>'
+                f'<ul class="files-list">{file_items}</ul>'
+            )
+        cards.append(
+            '<div class="ba-card after-card">'
+            f'<h3>After (proposed state)</h3>'
+            f'{render_body(p.after.summary)}'
+            f'{files_html}'
+            '</div>'
+        )
+    grid_class = "ba-grid" if len(cards) == 2 else ""
+    inner = "".join(cards)
+    grid_html = f'<div class="{grid_class}">{inner}</div>' if grid_class else inner
+    return (
+        '<section id="ba-section" class="ba-section">'
+        '<h2>Before / After</h2>'
+        f'{grid_html}'
+        '</section>'
+    )
+
+
+def _render_pros_cons_limitations(p: Proposal) -> str:
+    """Render the three flat lists when present.
+
+    Each list gets its own anchor + h3 so the TOC and direct links work.
+    Order: Pros → Cons → Limitations (reviewer convention: strengths
+    first, weaknesses second, then what's known-not-solved).
+    """
+    parts: List[str] = []
+    if p.pros:
+        items = "".join(f"<li>{_render_inline(s)}</li>" for s in p.pros)
+        parts.append(
+            '<section id="pcl-pros" class="pcl-section pcl-pros">'
+            '<h3>Pros</h3>'
+            f'<ul class="pros-list">{items}</ul>'
+            '</section>'
+        )
+    if p.cons:
+        items = "".join(f"<li>{_render_inline(s)}</li>" for s in p.cons)
+        parts.append(
+            '<section id="pcl-cons" class="pcl-section pcl-cons">'
+            '<h3>Cons</h3>'
+            f'<ul class="cons-list">{items}</ul>'
+            '</section>'
+        )
+    if p.limitations:
+        items = "".join(f"<li>{_render_inline(s)}</li>" for s in p.limitations)
+        parts.append(
+            '<section id="pcl-limit" class="pcl-section pcl-limit">'
+            '<h3>Limitations</h3>'
+            f'<ul class="limitations-list">{items}</ul>'
+            '</section>'
+        )
+    return "".join(parts)
 
 
 def render(
@@ -659,6 +987,20 @@ def render(
         else ""
     )
 
+    # Structured before/after + pros/cons/limitations are emitted as
+    # one block, prefixed by exactly one divider. When both renderers
+    # return empty (legacy proposal with no new fields), NO divider is
+    # added here -- the trailing divider before the footer is the
+    # only one, matching the pre-extension byte shape. 3-dim reviewer
+    # (PR #595): the prior version emitted two consecutive dividers in
+    # the empty case, breaking byte-level backward compatibility.
+    structured_html = _render_before_after(p) + _render_pros_cons_limitations(p)
+    structured_prefix = (
+        "\n<hr class=\"section-divider\">\n\n" + structured_html
+        if structured_html
+        else ""
+    )
+
     return (
         "<!doctype html>\n"
         '<html lang="en">\n<head>\n'
@@ -673,6 +1015,7 @@ def render(
         f"{tags_html}\n"
         f"{_toc(p)}\n"
         + "\n<hr class=\"section-divider\">\n\n".join(sections_html)
+        + structured_prefix
         + "\n\n<hr class=\"section-divider\">\n\n"
         f'<footer>Generated {now}{footer_issue} · render via '
         f'<code>/dev-kit:proposal</code></footer>\n'
