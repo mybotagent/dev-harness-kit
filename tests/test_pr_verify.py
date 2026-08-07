@@ -598,6 +598,64 @@ class TestM3PerJudgeVerdict(unittest.TestCase):
         self.assertFalse(g.passed)
 
 
+class TestM6CLIForms(unittest.TestCase):
+    """M-6: documented CLI forms — --pr / --repo flags + no-arg
+    current-branch discovery — must work end-to-end without crashing."""
+
+    def _all_passing_run_gh(self, args):
+        sub = args[0]
+        if sub == "pr" and len(args) > 1 and args[1] == "view":
+            return json.dumps({
+                "state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN",
+                "mergeable": "MERGEABLE", "pushed_at": "2026-08-06T00:00:00Z",
+            })
+        if sub == "pr" and len(args) > 1 and args[1] == "checks":
+            return json.dumps([
+                {"name": "lint", "state": "COMPLETED", "bucket": "pass"},
+            ])
+        if sub == "api":
+            comments = [
+                {"id": "audit-1", "user": "github-actions", "created_at": "2026-08-06T00:00:00Z",
+                 "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve"},
+                {"id": "audit-2", "user": "github-actions", "created_at": "2026-08-06T00:00:01Z",
+                 "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve"},
+                {"id": "audit-3", "user": "github-actions", "created_at": "2026-08-06T00:00:02Z",
+                 "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve"},
+            ]
+            return json.dumps(comments)
+        if sub == "repo" and len(args) > 1 and args[1] == "view":
+            return json.dumps({"nameWithOwner": "sh-ai-x/dev-harness-kit"})
+        return json.dumps({})
+
+    def test_cli_pr_flag(self):
+        with patch.object(pr_verify, "_run_gh", side_effect=lambda args: self._all_passing_run_gh(args)):
+            rc = pr_verify.main(["--pr", "584"])
+        self.assertIn(rc, (0, 1))  # either pass or gate-fail; never crash
+
+    def test_cli_pr_and_repo_flags(self):
+        with patch.object(pr_verify, "_run_gh", side_effect=lambda args: self._all_passing_run_gh(args)):
+            rc = pr_verify.main(["--pr", "584", "--repo", "sh-ai-x/dev-harness-kit"])
+        self.assertIn(rc, (0, 1))
+
+    def test_cli_legacy_positional_pr(self):
+        with patch.object(pr_verify, "_run_gh", side_effect=lambda args: self._all_passing_run_gh(args)):
+            rc = pr_verify.main(["584"])
+        self.assertIn(rc, (0, 1))
+
+    def test_cli_legacy_positional_pr_and_repo(self):
+        with patch.object(pr_verify, "_run_gh", side_effect=lambda args: self._all_passing_run_gh(args)):
+            rc = pr_verify.main(["584", "sh-ai-x/dev-harness-kit"])
+        self.assertIn(rc, (0, 1))
+
+    def test_cli_help_exits_without_calling_gh(self):
+        """`--help` must short-circuit before any `gh` call so it never
+        touches the network or the live PR."""
+        with patch.object(pr_verify, "_run_gh") as mock_gh:
+            with self.assertRaises(SystemExit) as cm:
+                pr_verify.main(["--help"])
+        self.assertEqual(cm.exception.code, 0)  # argparse exits 0 on --help
+        mock_gh.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -667,13 +667,80 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
     )
 
 
+def _resolve_current_pr_number() -> int | None:
+    """Resolve the PR number for the current branch via `gh pr view`.
+
+    Returns None on failure (no upstream, gh error, no PR for the
+    branch) so the caller can fail closed with a usage hint instead of
+    silently verifying the wrong repository.
+    """
+    try:
+        raw = _run_gh([
+            "pr", "view", "--json", "number",
+            "--jq", ".number",
+        ])
+    except GhError:
+        return None
+    out = raw.strip()
+    if not out or not out.lstrip("-").isdigit():
+        return None
+    return int(out)
+
+
 def main(argv: list[str]) -> int:
-    """CLI entry: `python3 -m lib.pr_verify <pr-number> [<repo>]`."""
-    if not argv or argv[0] in ("-h", "--help"):
-        print("usage: python3 -m lib.pr_verify <pr-number> [<owner/repo>]", file=sys.stderr)
-        return 2
-    pr_number = int(argv[0])
-    repo = argv[1] if len(argv) > 1 else "sh-ai-x/dev-harness-kit"
+    """CLI entry. Supports both forms advertised by `commands/pr-verify.md`
+    and `skills/pr-verify/SKILL.md`:
+
+      python3 -m lib.pr_verify                            (current branch)
+      python3 -m lib.pr_verify --pr N                    (explicit PR)
+      python3 -m lib.pr_verify --pr N --repo owner/repo  (full)
+      python3 -m lib.pr_verify --help                    (usage)
+
+    Backward-compatible positional form is preserved:
+
+      python3 -m lib.pr_verify <pr-number> [<owner/repo>]
+    """
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="python3 -m lib.pr_verify",
+        description=(
+            "Deterministic 5-gate PR verifier. Returns 0 iff all gates pass."
+        ),
+    )
+    parser.add_argument("--pr", type=int, default=None,
+                        help="PR number to verify (default: current branch's PR).")
+    parser.add_argument("--repo", default=None,
+                        help="'owner/repo' (default: current branch's repo).")
+    parser.add_argument("pr_positional", nargs="?", type=int, default=None,
+                        help="(legacy) PR number positional.")
+    parser.add_argument("repo_positional", nargs="?", default=None,
+                        help="(legacy) 'owner/repo' positional.")
+    args = parser.parse_args(argv)
+
+    # Resolve PR number — explicit > positional > current branch.
+    pr_number = args.pr if args.pr is not None else args.pr_positional
+    if pr_number is None:
+        pr_number = _resolve_current_pr_number()
+        if pr_number is None:
+            print(
+                "error: could not resolve a PR number from the current branch. "
+                "Pass --pr N or run from a branch that has an open PR.",
+                file=sys.stderr,
+            )
+            return 2
+
+    # Resolve repo — explicit > positional > current branch.
+    repo = args.repo if args.repo is not None else args.repo_positional
+    if repo is None:
+        try:
+            raw = _run_gh([
+                "repo", "view", "--json", "nameWithOwner",
+                "--jq", ".nameWithOwner",
+            ])
+            repo = raw.strip()
+        except GhError:
+            repo = "sh-ai-x/dev-harness-kit"
+
     report = verify_pr(pr_number=pr_number, repo=repo)
     print(report.summary())
     return 0 if report.passed else 1
