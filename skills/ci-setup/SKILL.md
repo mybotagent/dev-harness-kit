@@ -47,8 +47,12 @@ sys.exit(0 if report.ok and not report.errors else 1)
 "
 ```
 
-2.1. `lib/ci_setup.py:install_ci_config()` resolves the plugin's `templates/ci/` tree (relative to its own `__file__`).
-2.2. For each of the 15 `EXPECTED_PATHS` (3 workflow .yml + 1 pre-push hook + 4 scripts + 5 hook files + 1 rules file + 1 test):
+2.1. `lib/ci_setup.py:install_ci_config()` resolves sources relative to its
+     own `__file__`: consumer templates from `templates/ci/`, hooks from the
+     canonical `hooks/` tree, tools from `tools/`, and the workflow rule from
+     `rules/`.
+2.2. For each path in the canonical `EXPECTED_PATHS` inventory (explicit CI
+     templates plus the complete `hooks/` source tree, rules, tests, and tools):
   - Skip if exists and `force=False` (idempotent).
   - Overwrite if exists and `force=True`.
   - `shutil.copy2` (preserves mtime for git diff stability).
@@ -135,7 +139,12 @@ The install is considered successful even if `gh secret set` fails — secrets a
 - `/dev-kit:build` refuses to start if this marker is absent — see `skills/build/SKILL.md` pre-flight gate.
 - For full usage docs: see `docs/quality/ci-setup.md`.
 
-## Files Installed (15 expected paths)
+## Files Installed (canonical inventory)
+
+The installer keeps the CI workflow list below explicit, but derives the
+complete `hooks/` payload from the canonical `hooks/hooks.json` + `hooks/**/*.sh`
+tree. This prevents a new hook or shared helper from being added twice (once
+to the source tree and once to `templates/ci/`) or omitted from consumers.
 
 | Path | Purpose |
 |---|---|
@@ -147,10 +156,8 @@ The install is considered successful even if `gh secret set` fails — secrets a
 | `scripts/test.sh` | Pytest wrapper (gracefully skips if no `tests/`) |
 | `scripts/branch-policy.sh` | Mirror of `pre-push` for CI script context |
 | `scripts/ci-local.sh` | Local-runner entrypoint: `validate.py` + `test.sh` + optional `act -l` |
-| `hooks/worktree-guard.sh` | PreToolUse Write/Edit block on main checkout (fails closed when jq missing) |
-| `hooks/session-start-check.sh` | SessionStart reminder when started in main checkout |
-| `hooks/lib/worktree-detect.sh` | Shared `--git-dir`/`--git-common-dir` discriminator for all rule hooks |
-| `hooks/hooks.json` | Wires the 4 hook files into the right event matchers |
+| `hooks/**/*.sh` | Complete canonical hook implementation set, including shared helpers |
+| `hooks/hooks.json` | Canonical hook registration manifest copied with every referenced source |
 | `.claude/rules/git-workflow.md` | Branch / worktree / PR conventions (Iron Law rule text) |
 | `tests/test_worktree_guard.py` | Regression tests for the 4 rule hooks + hooks.json wiring |
 | `tools/skill_usage.py` | `/dev-kit:skill-usage` CLI entrypoint (turns + invocations telemetry) |

@@ -213,8 +213,12 @@ _verify_slot() {
   # is in hooks/lib/slot-check.sh so the truth table is unit-tested
   # independently of this PreToolUse hook.
   local actual_claude="" actual_codex=""
-  actual_claude="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_claude=""
-  actual_codex="$(python3 -c "import json;print(json.load(open('.codex-plugin/plugin.json'))['version'])" 2>/dev/null)" || actual_codex=""
+  # Resolve manifests from the repository selected above. The hook process
+  # can start in the main checkout while the command targets a worktree via
+  # `git -C`; relative opens here previously reported the main checkout's
+  # release slot and falsely denied valid worktree pushes.
+  actual_claude="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$GIT_CWD/.claude-plugin/plugin.json" 2>/dev/null)" || actual_claude=""
+  actual_codex="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$GIT_CWD/.codex-plugin/plugin.json" 2>/dev/null)" || actual_codex=""
   if slot_should_deny "$actual_claude" "$actual_codex" "$expected"; then
     deny "GIT GUARD" "plugin.json versions are stale. claude=$actual_claude codex=${actual_codex:-<missing>} expected=$expected (origin/main). Rebase onto origin/main, re-pin BOTH .claude-plugin/plugin.json AND .codex-plugin/plugin.json to $expected, then push again."
   fi

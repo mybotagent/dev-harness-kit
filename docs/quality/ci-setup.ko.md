@@ -93,8 +93,9 @@ SessionStart 훅이 두 값이 어긋날 때 알린다.
 
 ## 무엇이 설치되는가
 
-스킬은 `templates/ci/` 소스 트리를 대상 프로젝트로 복사한다. 설치되는
-파일:
+스킬은 CI 템플릿과 canonical hook 소스 트리를 대상 프로젝트로 복사한다.
+`hooks/hooks.json`과 `hooks/**/*.sh`는 plugin 소스에서 자동 도출되므로
+`templates/ci/`에 hook 코드를 중복 작성하지 않는다. 설치되는 파일:
 
 | 경로 | 목적 |
 |---|---|
@@ -106,10 +107,8 @@ SessionStart 훅이 두 값이 어긋날 때 알린다.
 | `scripts/test.sh` | `pytest` 래퍼(`tests/` 디렉터리가 없으면 우아하게 건너뜀) |
 | `scripts/branch-policy.sh` | CI 스크립트 컨텍스트를 위한 `pre-push` 미러 |
 | `scripts/ci-local.sh` | 로컬 러너 진입점: `validate.py` + `test.sh` + 선택적 `act -l` |
-| **`hooks/worktree-guard.sh`** | PreToolUse(Write\|Edit\|MultiEdit) — 메인 체크아웃의 편집을 강제 차단 |
-| **`hooks/session-start-check.sh`** | SessionStart — 워크트리 규칙에 대한 부드러운 리마인더 |
-| **`hooks/lib/worktree-detect.sh`** | 위 3개 훅을 위한 공유 `--git-dir == --git-common-dir` 판별 기준 |
-| **`hooks/hooks.json`** | 3개 워크트리 규칙 훅(원래 5개 포함)을 모두 Claude Code의 훅 이벤트에 연결 |
+| **`hooks/**/*.sh`** | 공유 helper를 포함한 canonical hook 전체 구현 |
+| **`hooks/hooks.json`** | 모든 hook 소스와 함께 복사되는 canonical 등록 manifest |
 | **`rules/git-workflow.md`** | 정식 워크트리 규칙; Claude Code가 찾을 수 있도록 `.claude/rules/git-workflow.md`에 설치 |
 | **`tests/test_worktree_guard.py`** | 워크트리 규칙을 커버하는 회귀 테스트(차단/허용/실행 권한 비트 등) |
 
@@ -147,9 +146,9 @@ bash scripts/ci-local.sh
 ```
 === validate ===
 validate.py — repo_root=/path/to/repo
-  - installation complete OK (15 files)
+  - installation complete OK (CI 파일 8개 + hook 26개)
   - ci-config marker OK
-  - bash syntax OK (5 scripts clean)
+  - bash syntax OK (셸 파일 30개 정상)
   - test runner OK (bash -n clean)
 OK: CI installation valid
 
@@ -214,7 +213,7 @@ A: 아니오. `scripts/ci-local.sh`는 어떤 POSIX 호스트에서든 로컬로
 <https://nektos.act.dev>에서 설치한다.
 
 **Q: 어떻게 제거하는가?**
-A: `.dev-kit/ci-config.json`을 삭제한 다음, 설치된 15개 파일을
+A: `.dev-kit/ci-config.json`을 삭제한 다음, 설치된 파일들을
 `git rm`한다(대상 저장소가 새로 만들어졌고 아직 버전 관리하에 있지
 않다면 `rm -rf`도 가능). CI 템플릿은 의도적으로 깊게 통합되어 있지
 않다 — 당신이 소유하는 일반 파일이다.

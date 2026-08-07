@@ -9,7 +9,7 @@ Exit code 0 on success, 1 on any check failure. Output is line-oriented for
 GitHub Actions log readability.
 
 Checks performed (each prints `OK (...)` or `FAIL (...):`):
-1. validate_installation_complete — all 8 required files present
+1. validate_installation_complete — all required CI and hook files present
 2. validate_marker              — `.dev-kit/ci-config.json` shape
 3. validate_bash_syntax         — `bash -n` on every installed .sh + pre-push
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -30,6 +31,20 @@ REQUIRED_FILES = [
     "scripts/branch-policy.sh",
     "scripts/ci-local.sh",
 ]
+
+_HOOK_SCRIPT_REFERENCE = re.compile(
+    r"hooks/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.sh)"
+)
+
+
+def referenced_hook_scripts(manifest_text: str) -> set[str]:
+    """Return hook source paths referenced by a hook manifest.
+
+    The returned paths are relative to the installed ``hooks/`` directory.
+    Keep this helper in the shipped validator so consumer-side validation and
+    source-repo tests use the same parser without duplicating its regex.
+    """
+    return set(_HOOK_SCRIPT_REFERENCE.findall(manifest_text))
 
 
 def _ok(msg: str) -> None:
@@ -49,7 +64,27 @@ def validate_installation_complete(repo_root: pathlib.Path) -> bool:
     if missing:
         _fail(f"installation: missing {len(missing)} file(s): {missing}")
         return False
-    _ok(f"installation complete ({len(REQUIRED_FILES)} files)")
+    hooks_dir = repo_root / "hooks"
+    manifest = hooks_dir / "hooks.json"
+    hook_files = list(hooks_dir.rglob("*.sh")) if hooks_dir.is_dir() else []
+    if not manifest.is_file():
+        _fail("installation: hook manifest missing")
+        return False
+    try:
+        manifest_text = manifest.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as e:
+        # Guard the read so a permissions or decode error surfaces as a
+        # normal validator FAIL line instead of a Python traceback that
+        # would otherwise halt CI before the manifest-references check
+        # can flag the real culprit.
+        _fail(f"installation: hook manifest unreadable: {e}")
+        return False
+    referenced = referenced_hook_scripts(manifest_text)
+    missing_hooks = [hooks_dir / rel for rel in referenced if not (hooks_dir / rel).is_file()]
+    if missing_hooks:
+        _fail(f"installation: missing hook source(s): {missing_hooks}")
+        return False
+    _ok(f"installation complete ({len(REQUIRED_FILES)} CI files + {len(hook_files)} hooks)")
     return True
 
 
@@ -76,7 +111,11 @@ def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
     Covers `scripts/{test,branch-policy,ci-local}.sh` and the githook in one pass,
     so no separate `validate_test_runner` step is needed.
     """
-    sh_files = list((repo_root / "scripts").glob("*.sh")) + [repo_root / ".githooks" / "pre-push"]
+    sh_files = (
+        list((repo_root / "scripts").glob("*.sh"))
+        + list((repo_root / "hooks").rglob("*.sh"))
+        + [repo_root / ".githooks" / "pre-push"]
+    )
     failures = []
     for h in sh_files:
         if not h.exists():
@@ -87,7 +126,7 @@ def validate_bash_syntax(repo_root: pathlib.Path) -> bool:
     if failures:
         _fail(f"bash syntax: {len(failures)} file(s): {failures}")
         return False
-    _ok(f"bash syntax ({len(sh_files)} scripts clean)")
+    _ok(f"bash syntax ({len(sh_files)} shell files clean)")
     return True
 
 
