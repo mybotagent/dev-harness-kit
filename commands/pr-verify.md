@@ -50,5 +50,5 @@ exit-code-based, and downstream skills / humans should respect it.
 ## Related
 
 - `lib/pr_verify.py` — the implementation; 5 gates, structured output.
-- `tests/test_pr_verify.py` — 50 hermetic tests.
+- `tests/test_pr_verify.py` — 54 hermetic tests.
 - `skills/pr-verify/SKILL.md` — the spec.

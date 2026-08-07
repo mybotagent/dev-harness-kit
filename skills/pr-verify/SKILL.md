@@ -99,12 +99,12 @@ PR #579 (sh-ai-x/dev-harness-kit) — checked at 2026-08-06T01:07:08+00:00
   Verdict: NOT APPROVED
   [G1] PASS PR state is OPEN: state=OPEN, isDraft=False, mergeStateStatus=BEHIND
   [G2] FAIL every CI check is in a terminal success state: FAILED: severity gate (review + security)
-  [G3] FAIL most recent LLM-judge verdict is Approve: latest verdict: Changes Requested
+  [G3] FAIL every required LLM-judge per-job verdict is Approve: non-Approve jobs: {'review': 'Changes'}
   [G4] PASS no audit comment with status=failure + verdict=Approve: no false-positive pairs
   [G5] PASS mergeStateStatus is CLEAN or BEHIND: mergeStateStatus=BEHIND, mergeable=MERGEABLE
   Blockers:
     - [G2] every CI check is in a terminal success state: FAILED: severity gate (review + security)
-    - [G3] most recent LLM-judge verdict is Approve: latest verdict: Changes Requested
+    - [G3] every required LLM-judge per-job verdict is Approve: non-Approve jobs: {'review': 'Changes'}
 ```
 
 Exit code 0 if all five gates pass; 1 otherwise. The summary is
@@ -134,13 +134,13 @@ behind a single `_run_gh` helper that wraps
 `subprocess.run(capture_output=True, check=False, timeout=30)` and
 raises `GhError` on any failure; each gate catches `GhError` and
 returns a fail-closed `GateResult`. The module is fully
-unit-tested (50 tests) with all `gh` calls mocked.
+unit-tested (54 tests) with all `gh` calls mocked.
 
 ## Related
 
 - `lib/pr_verify.py` — the implementation; 5 gates, structured
   output, no cache.
-- `tests/test_pr_verify.py` — 50 hermetic tests covering each gate
+- `tests/test_pr_verify.py` — 54 hermetic tests covering each gate
   + the parser + the integration path + CLI forms + edge-case
   failure paths.
 - `lib/babysit_pr_cli.py` — the babysit skill; should call

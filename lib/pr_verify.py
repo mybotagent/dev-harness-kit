@@ -816,7 +816,10 @@ def main(argv: list[str]) -> int:
             )
             return 2
 
-    # Resolve repo — explicit > positional > current branch.
+    # Resolve repo — explicit > positional > current branch. Fail closed
+    # (exit 2 + stderr hint) rather than silently defaulting to a
+    # hardcoded repo — a hardcoded fallback would silently verify the
+    # wrong repo's PR number when run from an unrelated checkout.
     repo = args.repo if args.repo is not None else args.repo_positional
     if repo is None:
         try:
@@ -826,7 +829,13 @@ def main(argv: list[str]) -> int:
             ])
             repo = raw.strip()
         except GhError:
-            repo = "sh-ai-x/dev-harness-kit"
+            print(
+                "error: could not resolve 'owner/repo' from the current "
+                "directory. Pass --repo owner/repo or run from a git "
+                "checkout with a GitHub remote.",
+                file=sys.stderr,
+            )
+            return 2
 
     report = verify_pr(pr_number=pr_number, repo=repo)
     print(report.summary())

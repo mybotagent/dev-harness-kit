@@ -764,6 +764,26 @@ class TestM6CLIForms(unittest.TestCase):
         self.assertEqual(cm.exception.code, 0)  # argparse exits 0 on --help
         mock_gh.assert_not_called()
 
+    def test_cli_repo_resolution_failure_fails_closed(self):
+        """Regression: when --repo is absent and `gh repo view` errors
+        (e.g. run outside a GitHub-remote checkout), main() must fail
+        closed (exit 2 + stderr hint) rather than silently defaulting
+        to a hardcoded repo. A hardcoded fallback would silently verify
+        the wrong repo's PR number when invoked from an unrelated
+        checkout — the same 'trust stale/wrong state' failure mode
+        this verifier exists to eliminate.
+        """
+        def _repo_view_fails(args):
+            if args[0] == "repo" and len(args) > 1 and args[1] == "view":
+                raise pr_verify.GhError("gh repo view failed: not a git repository")
+            return self._all_passing_run_gh(args)
+
+        with patch.object(pr_verify, "_run_gh", side_effect=_repo_view_fails):
+            rc = pr_verify.main(["--pr", "584"])
+        self.assertEqual(rc, 2,
+                         "must fail closed (exit 2) when repo cannot be resolved, "
+                         "not silently default to a hardcoded repo")
+
 
 if __name__ == "__main__":
     unittest.main()
