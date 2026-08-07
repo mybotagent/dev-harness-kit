@@ -214,6 +214,26 @@ def _extract_user_login(comment: dict) -> str:
     return user or ""
 
 
+def _run_head_sha(run_id: str, repo: str) -> str | None:
+    """Fetch the head SHA a GitHub Actions run was triggered against.
+
+    Returns None on ANY failure — `gh` error, malformed JSON, or a
+    missing `headSha` field. Callers MUST treat None as "provenance
+    unverifiable" and fail closed (never treat it as a match); this is
+    what binds a job's `verdict=Approve` audit to the PR's CURRENT
+    head instead of trusting the audit comment's timestamp alone.
+    """
+    try:
+        raw = _run_gh(["run", "view", run_id, "--repo", repo, "--json", "headSha"])
+        data = _safe_json_loads(raw, context=f"run view {run_id}")
+    except GhError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    sha = data.get("headSha")
+    return sha if isinstance(sha, str) and sha else None
+
+
 def _fetch_paginated_comments(pr_number: int, repo: str, *, context: str) -> list[dict]:
     """Fetch ALL PR comments via `gh api --paginate --slurp`, returning
     one flat list of comment dicts.
@@ -363,16 +383,17 @@ _VERDICT_LINE = re.compile(
     re.MULTILINE,
 )
 
-def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]:
-    """Extract the most recent audit verdict PER JOB from the comment
-    stream. The audit comment line is the machine-recorded verdict
-    posted by the workflow's verdict-parser step:
+def _latest_per_job_audits(comments: tuple[dict, ...]) -> dict[str, dict]:
+    """Extract the most recent trusted audit record PER JOB from the
+    comment stream. The audit comment line is the machine-recorded
+    verdict posted by the workflow's verdict-parser step:
         `<!-- dev-kit-verdict-audit --> run=X job=Y status=Z verdict=W`
 
-    Returns: {job_name: verdict_word}. Jobs without any audit comment
-    are absent from the dict. This is the per-judge verdict source
-    used by G3 (M-3): review + security + maintenance must ALL
-    show `Approve` for the PR to be considered approved.
+    Returns: {job_name: {"run_id": str, "verdict": str, "created_at": str}}.
+    Jobs without any audit comment are absent from the dict. The
+    `run_id` is kept (not discarded) so callers can bind the verdict
+    to a specific GitHub Actions run — see `_run_head_sha` — instead
+    of trusting the audit comment's `created_at` timestamp alone.
 
     Only comments authored by `TRUSTED_AUDIT_LOGINS` are considered —
     a forger cannot post an audit line that masquerades as a workflow
@@ -382,7 +403,7 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
         r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
         r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
     )
-    latest_per_job: dict[str, tuple[str, str]] = {}
+    latest_per_job: dict[str, dict] = {}
     for c in comments:
         body = c.get("body") or ""
         m = audit_re.search(body)
@@ -391,12 +412,20 @@ def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]
         author = _extract_user_login(c)
         if author not in TRUSTED_AUDIT_LOGINS:
             continue
-        _, job, _status, verdict = m.groups()
+        run_id, job, _status, verdict = m.groups()
         created_at = c.get("created_at") or ""
         prior = latest_per_job.get(job)
-        if prior is None or created_at > prior[0]:
-            latest_per_job[job] = (created_at, verdict)
-    return {job: v[1] for job, v in latest_per_job.items()}
+        if prior is None or created_at > prior["created_at"]:
+            latest_per_job[job] = {
+                "run_id": run_id, "verdict": verdict, "created_at": created_at,
+            }
+    return latest_per_job
+
+
+def _latest_per_job_audit_verdicts(comments: tuple[dict, ...]) -> dict[str, str]:
+    """Thin verdict-only view over `_latest_per_job_audits`, kept for
+    callers that only need the verdict word (not run provenance)."""
+    return {job: rec["verdict"] for job, rec in _latest_per_job_audits(comments).items()}
 
 
 # Exact-match trusted claude-bot GitHub App logins. A `startswith("claude")`
@@ -461,6 +490,7 @@ def _gate_g3_llm_verdicts(
     pr_number: int, repo: str, fetched_at: str = "",
     comments: tuple[dict, ...] | None = None,
     pr_pushed_at: str = "",
+    pr_head_sha: str = "",
 ) -> GateResult:
     """G3: every required LLM-judge job — review, security, and
     maintenance — has its most recent audit comment carrying
@@ -473,10 +503,21 @@ def _gate_g3_llm_verdicts(
     The default-None fallback preserves the gate-level hermetic test
     API (passes when called directly without pre-fetched data).
 
+    `pr_head_sha` is the PR's CURRENT head commit SHA. When present,
+    each required job's Approve audit is bound to a GitHub Actions
+    run (`gh run view <run_id> --json headSha`) and that run's headSha
+    must equal `pr_head_sha`. This closes a gap that a timestamp-only
+    freshness check cannot: a workflow run for a PREVIOUS head can
+    finish and post its trusted audit AFTER a new push lands, and the
+    audit's `created_at` would still be >= `pr_pushed_at` even though
+    the run itself executed against the OLD head. A `gh run view`
+    fetch failure is treated as a mismatch (fail closed).
+
     `pr_pushed_at` is the ISO-8601 timestamp of the most recent push
-    to the PR's head. If any Approve audit is OLDER than
-    `pr_pushed_at`, that audit is stale (a new commit has landed
-    since the verdict was emitted) and G3 returns STALE.
+    to the PR's head, used only as a DEGRADED fallback when
+    `pr_head_sha` is unavailable (its own fetch failed upstream). If
+    any Approve audit is OLDER than `pr_pushed_at`, that audit is
+    stale and G3 returns STALE.
     """
     if not fetched_at:
         fetched_at = _now_iso()
@@ -497,7 +538,8 @@ def _gate_g3_llm_verdicts(
     # M-3 per-judge verdict: review + security + maintenance must ALL
     # show Approve. The audit comment is the machine-recorded per-job
     # verdict (the workflow's verdict-parser step posts it).
-    per_job = _latest_per_job_audit_verdicts(comments)
+    audits = _latest_per_job_audits(comments)
+    per_job = {job: rec["verdict"] for job, rec in audits.items()}
     REQUIRED_JOBS = ("review", "security", "maintenance")
     missing = [j for j in REQUIRED_JOBS if j not in per_job]
     bad = {j: per_job[j] for j in REQUIRED_JOBS if j in per_job and per_job[j] != "Approve"}
@@ -509,38 +551,33 @@ def _gate_g3_llm_verdicts(
     elif bad:
         verdict = "Blocked"  # first non-Approve wins
         src = f"non-Approve jobs: {bad}"
-    # Stale-verdict guard (M-2): if we have a head verdict (from the
-    # claude[bot] comment) but the per-job audit disagrees, prefer the
-    # per-job audit as authoritative (matches maintenance_gate.py).
 
-    # M-2 stale-verdict guard (truly per-job): for EACH required job,
-    # the most recent audit comment's created_at must NOT predate
-    # pr_pushed_at. If any job's latest audit is older than the push,
-    # that job's verdict is stale (a new commit landed after the
-    # Approve was recorded) and G3 fails STALE.
-    if verdict == "Approve" and pr_pushed_at:
-        audit_re = re.compile(
-            r"<!--\s*dev-kit-verdict-audit\s*-->\s*"
-            r"run=(\d+)\s+job=(\w+)\s+status=(\w+)\s+verdict=(\S+)"
-        )
-        # Track the most recent audit created_at PER JOB (filtered by
-        # trusted workflow author so a forger cannot inject an audit
-        # that masks a stale verdict).
-        latest_per_job_created: dict[str, str] = {}
-        for c in comments:
-            body = c.get("body") or ""
-            m = audit_re.search(body)
-            if not m:
-                continue
-            author = _extract_user_login(c)
-            if author not in TRUSTED_AUDIT_LOGINS:
-                continue
-            _, job, _status, _verdict = m.groups()
-            created_at = c.get("created_at") or ""
-            prior = latest_per_job_created.get(job, "")
-            if created_at > prior:
-                latest_per_job_created[job] = created_at
-        # A required job is stale if its latest audit predates pushed_at.
+    if verdict == "Approve" and pr_head_sha:
+        # Head-SHA provenance: bind each required job's Approve to a
+        # GitHub Actions run whose headSha equals the PR's CURRENT
+        # head. Dedupe by run_id — required jobs commonly share one
+        # workflow run. A fetch failure (None) is treated as a
+        # mismatch, never assumed to be a match.
+        run_sha_cache: dict[str, str | None] = {}
+        mismatched_jobs = []
+        for j in REQUIRED_JOBS:
+            run_id = audits[j]["run_id"]
+            if run_id not in run_sha_cache:
+                run_sha_cache[run_id] = _run_head_sha(run_id, repo)
+            if run_sha_cache[run_id] != pr_head_sha:
+                mismatched_jobs.append(j)
+        if mismatched_jobs:
+            verdict = "STALE"
+            src = (
+                f"head-SHA provenance mismatch for jobs {mismatched_jobs} "
+                f"(pr_head_sha={pr_head_sha}, run_shas={run_sha_cache})"
+            )
+    elif verdict == "Approve" and pr_pushed_at:
+        # Degraded fallback: only reached when pr_head_sha is
+        # unavailable. Weaker than SHA provenance (a stale run posting
+        # after a new push defeats it — see docstring) but still
+        # better than no freshness check.
+        latest_per_job_created = {job: rec["created_at"] for job, rec in audits.items()}
         stale_jobs = [
             j for j in REQUIRED_JOBS
             if latest_per_job_created.get(j, "") < pr_pushed_at
@@ -566,6 +603,7 @@ def _gate_g3_llm_verdicts(
         evidence={
             "latest_verdict": verdict,
             "source_comment_id": src,
+            "pr_head_sha": pr_head_sha,
             "n_claude_comments_scanned": sum(
                 1 for c in comments
                 if _extract_user_login(c) in TRUSTED_BOT_LOGINS
@@ -735,27 +773,43 @@ def verify_pr(pr_number: int, repo: str = "sh-ai-x/dev-harness-kit") -> PRVerify
     # Approve" gate never runs in that degraded state — G3 still passes
     # only if every required job's audit is fresh OR no audits are older
     # than "", i.e. the verifier errs on the side of strict freshness.
+    # Also fetch the PR's CURRENT head SHA (`headRefOid`) in the same
+    # call — G3's head-SHA provenance check needs it to bind each
+    # required job's Approve audit to a workflow run for the CURRENT
+    # head, not just a run whose audit comment happens to postdate the
+    # push (see `_gate_g3_llm_verdicts` docstring).
     pr_pushed_at = ""
+    pr_head_sha = ""
     try:
         raw_pr = _run_gh([
             "pr", "view", str(pr_number),
             "--repo", repo,
-            "--json", "commits",
+            "--json", "commits,headRefOid",
         ])
-        commits = _safe_json_loads(raw_pr, context="verify_pr commits").get("commits", [])
+        pr_data = _safe_json_loads(raw_pr, context="verify_pr commits")
+        if not isinstance(pr_data, dict):
+            raise GhError(
+                f"gh pr view returned non-dict JSON (verify_pr commits): "
+                f"{type(pr_data).__name__}",
+            )
+        commits = pr_data.get("commits", [])
         if commits:
             pr_pushed_at = commits[-1].get("committedDate", "") or ""
+        pr_head_sha = pr_data.get("headRefOid", "") or ""
     except GhError:
         # Don't propagate — verify_pr continues to run the rest of the
         # gates. G3 still applies its other checks (per-job audit
         # presence + per-job verdict == Approve); only the freshness
-        # guard is downgraded. The `pr_pushed_at=""` value is observable
-        # in the G3 evidence below.
+        # guard is downgraded. The `pr_pushed_at=""` / `pr_head_sha=""`
+        # values are observable in the G3 evidence below.
         pass
     gates: list[GateResult] = [
         _gate_g1_pr_state(pr_number, repo),
         _gate_g2_ci_checks(pr_number, repo),
-        _gate_g3_llm_verdicts(pr_number, repo, comments=shared_comments, pr_pushed_at=pr_pushed_at),
+        _gate_g3_llm_verdicts(
+            pr_number, repo, comments=shared_comments,
+            pr_pushed_at=pr_pushed_at, pr_head_sha=pr_head_sha,
+        ),
         _gate_g4_audit_no_failure_paired_with_approve(pr_number, repo, comments=shared_comments),
         _gate_g5_merge_state(pr_number, repo),
     ]

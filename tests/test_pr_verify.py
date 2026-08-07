@@ -279,6 +279,24 @@ class TestVerifyPRIntegration(unittest.TestCase):
         self.assertIn("APPROVED", text)
         self.assertIn("checked at", text)
 
+    def test_verify_pr_non_dict_pr_view_response_fails_closed(self):
+        """CC-7 regression (flagged by the maintenance judge on PR #588):
+        `gh pr view --json commits,headRefOid` returning a non-dict JSON
+        body (e.g. a bare list or null — a malformed/edge-case gh
+        response) must NOT crash verify_pr with an uncaught
+        AttributeError from `.get()` on a non-dict. The freshness /
+        provenance fetch degrades (pr_pushed_at='', pr_head_sha='') and
+        the rest of the report is still produced.
+        """
+        def fake_gh(args):
+            if (args[0] == "pr" and len(args) > 1 and args[1] == "view"
+                    and "commits,headRefOid" in args):
+                return "null"
+            return _ok_return(args)
+        with patch.object(pr_verify, "_run_gh", side_effect=fake_gh):
+            report = pr_verify.verify_pr(584)  # must not raise
+        self.assertEqual(len(report.gates), 5)
+
 
 # ---------- helpers for the integration test ----------
 
@@ -786,6 +804,143 @@ class TestM6CLIForms(unittest.TestCase):
         self.assertEqual(rc, 2,
                          "must fail closed (exit 2) when repo cannot be resolved, "
                          "not silently default to a hardcoded repo")
+
+
+class TestRunHeadSha(unittest.TestCase):
+    """`_run_head_sha` fetches the head SHA a GitHub Actions run was
+    triggered against. Must fail closed (return None) on any error —
+    callers treat None as an unverifiable provenance, never a match."""
+
+    def test_returns_head_sha_on_success(self):
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps({"headSha": "abc123"})):
+            sha = pr_verify._run_head_sha("42", "sh-ai-x/dev-harness-kit")
+        self.assertEqual(sha, "abc123")
+
+    def test_returns_none_on_gh_error(self):
+        with patch.object(pr_verify, "_run_gh", side_effect=pr_verify.GhError("gh run view failed")):
+            sha = pr_verify._run_head_sha("42", "sh-ai-x/dev-harness-kit")
+        self.assertIsNone(sha)
+
+    def test_returns_none_on_malformed_json(self):
+        with patch.object(pr_verify, "_run_gh", return_value="not json"):
+            sha = pr_verify._run_head_sha("42", "sh-ai-x/dev-harness-kit")
+        self.assertIsNone(sha)
+
+    def test_returns_none_on_missing_field(self):
+        with patch.object(pr_verify, "_run_gh", return_value=json.dumps({})):
+            sha = pr_verify._run_head_sha("42", "sh-ai-x/dev-harness-kit")
+        self.assertIsNone(sha)
+
+
+class TestG3HeadShaProvenance(unittest.TestCase):
+    """Regression for the security review's headline finding on PR #588:
+    a workflow run for a PREVIOUS head can post its trusted audit AFTER
+    a new push lands. Timestamp-only freshness (created_at >=
+    pr_pushed_at) cannot detect this — the stale run's audit comment is
+    created AFTER the push even though the run itself executed against
+    the OLD head. G3 must bind each required job's audit `run=` to a
+    workflow run whose headSha equals the PR's CURRENT head."""
+
+    _COMMENTS = json.dumps([
+        {"id": "audit-1", "user": "github-actions", "created_at": "2026-01-03T00:00:00Z",
+         "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve"},
+        {"id": "audit-2", "user": "github-actions", "created_at": "2026-01-03T00:00:00Z",
+         "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve"},
+        {"id": "audit-3", "user": "github-actions", "created_at": "2026-01-03T00:00:00Z",
+         "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve"},
+    ])
+
+    def test_matching_head_sha_passes(self):
+        def fake_gh(args):
+            if args[0] == "run" and args[1] == "view":
+                return json.dumps({"headSha": "newsha"})
+            return self._COMMENTS
+        with patch.object(pr_verify, "_run_gh", side_effect=fake_gh):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+                pr_head_sha="newsha",
+            )
+        self.assertTrue(g.passed)
+
+    def test_old_head_run_posts_after_new_push_fails(self):
+        """The exact scenario from the security review: run=1 executed
+        against the OLD head ('oldsha'), but its audit comment was
+        created AFTER the new push (2026-01-03 > pushed_at 2026-01-02).
+        A timestamp-only guard would wrongly call this fresh. The
+        head-SHA check must catch it."""
+        def fake_gh(args):
+            if args[0] == "run" and args[1] == "view":
+                return json.dumps({"headSha": "oldsha"})
+            return self._COMMENTS
+        with patch.object(pr_verify, "_run_gh", side_effect=fake_gh):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+                pr_head_sha="newsha",
+            )
+        self.assertFalse(g.passed, "stale-head run must not count as current-head approval")
+        self.assertIn("STALE", g.detail)
+
+    def test_run_view_fetch_failure_fails_closed(self):
+        """If `gh run view` itself fails, provenance is unverifiable —
+        must NOT silently pass."""
+        def fake_gh(args):
+            if args[0] == "run" and args[1] == "view":
+                raise pr_verify.GhError("gh run view failed: rate limited")
+            return self._COMMENTS
+        with patch.object(pr_verify, "_run_gh", side_effect=fake_gh):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+                pr_head_sha="newsha",
+            )
+        self.assertFalse(g.passed)
+
+    def test_shared_run_id_dedupes_fetch(self):
+        """All three required jobs share run=1 in the fixture comments —
+        `_run_head_sha` must be called at most once per unique run id,
+        not once per job."""
+        call_count = {"n": 0}
+        def fake_gh(args):
+            if args[0] == "run" and args[1] == "view":
+                call_count["n"] += 1
+                return json.dumps({"headSha": "newsha"})
+            return self._COMMENTS
+        with patch.object(pr_verify, "_run_gh", side_effect=fake_gh):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+                pr_head_sha="newsha",
+            )
+        self.assertTrue(g.passed)
+        self.assertEqual(call_count["n"], 1)
+
+    def test_no_head_sha_falls_back_to_timestamp_guard(self):
+        """When pr_head_sha is unavailable (empty), G3 must fall back
+        to the pre-existing timestamp-based freshness guard rather than
+        skip freshness checking entirely."""
+        stale_comments = json.dumps([
+            {"id": "audit-1", "user": "github-actions", "created_at": "2026-01-01T00:00:00Z",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=review status=success verdict=Approve"},
+            {"id": "audit-2", "user": "github-actions", "created_at": "2026-01-01T00:00:00Z",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=security status=success verdict=Approve"},
+            {"id": "audit-3", "user": "github-actions", "created_at": "2026-01-01T00:00:00Z",
+             "body": "<!-- dev-kit-verdict-audit --> run=1 job=maintenance status=success verdict=Approve"},
+        ])
+        with patch.object(pr_verify, "_run_gh", return_value=stale_comments):
+            g = pr_verify._gate_g3_llm_verdicts(
+                584, "sh-ai-x/dev-harness-kit",
+                comments=None,
+                pr_pushed_at="2026-01-02T00:00:00Z",
+                pr_head_sha="",
+            )
+        self.assertFalse(g.passed)
+        self.assertIn("STALE", g.detail)
 
 
 if __name__ == "__main__":
