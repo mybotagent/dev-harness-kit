@@ -6,7 +6,7 @@ alpha: enforcement
 when_to_use:
   - User types /dev-kit:ci-doctor
   - User asks "is my CI set up correctly?" / "would the next PR be green?"
-  - After /dev-kit:ci-setup or /dev-kit:bootstrap-full to verify readiness
+  - After /dev-kit:ci-setup or /dev-kit:bootstrap + ci-setup to verify readiness
   - Pre-PR sanity check before opening the first dev-kit PR
 allowed-tools: Read Glob Bash
 disallowed-tools: Edit Write Agent WebFetch
@@ -20,7 +20,7 @@ user-invocable: true
 
 ## Iron Law
 
-**0-arg. Read-only. Never mutates target files; never writes secrets; never opens PRs.** Issue #212-D1: a consumer who just ran `/dev-kit:bootstrap-full` has no way to ask "is my CI ready?" until the next PR turns red. This skill answers that question in one call.
+**0-arg. Read-only. Never mutates target files; never writes secrets; never opens PRs.** Issue #212-D1: a consumer who just ran `/dev-kit:bootstrap + ci-setup` has no way to ask "is my CI ready?" until the next PR turns red. This skill answers that question in one call.
 
 ## What it does
 
@@ -105,7 +105,7 @@ When a FAIL row is present, also print a one-line "next step" pointing the user 
 - **Read-only**: no Edit / Write / Agent tools. Even mutations to the user's `.env` are off-limits; the audit answers questions, it doesn't fix them.
 - **Single hand-off**: succeeds → exit 0. Fails → exit 1 + remediation hints. No automated fixing.
 - **No secrets in output**: secrets are read via `gh secret list` (returns names, not values). The audit NEVER prints a secret value, even when present.
-- **`/dev-kit:bootstrap-full` should run this skill next**: it is the canonical post-install verification (issue #212-D1 / D2).
+- **`/dev-kit:bootstrap + ci-setup` should run this skill next**: it is the canonical post-install verification (issue #212-D1 / D2).
 
 ## Files installed
 

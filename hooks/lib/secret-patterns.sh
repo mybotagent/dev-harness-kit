@@ -10,7 +10,7 @@
 #   secret-scan.sh's main loop. When a credential family is added or
 #   tightened, BOTH files MUST be updated together — adding to only
 #   one creates a coverage gap that the secret-dimension audit will
-#   flag (see lib/analysis_core/dimensions.py + skills/audit/SKILL.md).
+#   flag (see lib/analysis_core/dimensions.py + skills/inspect/SKILL.md (--secrets)).
 #
 # Public API:
 #   SECRET_PATTERNS   bash array of ERE strings, one credential family

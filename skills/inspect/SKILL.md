@@ -1,7 +1,7 @@
 ---
 name: inspect
 category: audit
-description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) -> markdown report.
+description: 0-arg read-only code health audit. 8-dim fan-out (dead, dup, smell, overeng, overarch, cleancode, tokenbudget, slop) + --secrets/--slop aliases to the audit family (lib/analysis_core/dimensions.py).
 alpha: analysis
 when_to_use:
   - User types /dev-kit:inspect or /dev-kit:inspect --html
@@ -13,16 +13,16 @@ model: opus
 user-invocable: true
 ---
 > [← Skills index](../../README.md)
-
-Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
-
+Read-only whole-codebase health sweep. Delegates to `lib.analysis_core.run_analysis(dimensions=group("inspect"), mode="read-only", paths=...)`. With `--secrets`, the skill passes `dimensions=["secret"]` (from the audit family) to the same engine; with `--slop`, `dimensions=["slop"]` (already in inspect family). Both bypass the inspect group default and run a single-dimension sweep. Engine owns registry, evidence schema, FP filter, verifier, renderer; this skill owns the parallel Agent fan-out and the markdown wrapper. **Iron Law.** Read-only. `disallowed-tools: Write Edit`.
 ## Scope
 
 1. No positional arg -> whole project; `<path>` -> that subtree.
 2. `--html` -> after the markdown artifact, run
    `python3 bin/dev-kit-report.py --project-root .` to render `.dev-kit/report.html`.
 3. `--dim <name>` -> `dead | dup | smell | overeng | overarch | cleancode | tokenbudget | slop`.
-4. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, lockfiles, and generated min/pb files.
+4. `--secrets` / `--slop` -> aliases for `--dim secret` / `--dim slop` (lib/analysis_core/dimensions.py). Replaces the removed `/dev-kit:audit` slash.
+5. Empty source set -> stop. >~40 files -> narrow with positional arg. Skip `.git/`, `node_modules/`, `dist/`, and generated min/pb files.
+6. With `--secrets` (or `--dim secret`): do NOT apply the lockfile/generated-artifact exclusions — credential patterns can appear in lockfiles (private-registry URLs with embedded tokens) and generated artifacts. The secret scan must inspect every file.
 ## Fan-out + verify
 
 Issue all Agent calls inside ONE assistant message so they run concurrently. Each: `subagent_type: "general-purpose"`, `model: "sonnet"`. Pass each expert its charter from `lib.analysis_core.dimensions` + the shared contract (`file, line, severity, confidence, failure_scenario, title, tldr, fix_hint`). Return a fenced `json` array. One verifier Agent returns `[{id, verdict: CONFIRMED|PLAUSIBLE|REJECTED, reason}]`; REJECTED are dropped.

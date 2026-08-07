@@ -34,6 +34,10 @@ them.
 It works in both Claude Code and Codex, and the same commands mean the same thing
 in both.
 
+**MCP integration is intentionally out of scope.** This plugin ships slash commands,
+hooks, and library functions — no MCP server entry. See
+[docs/decisions/0001-no-mcp.md](docs/decisions/0001-no-mcp.md) for the rationale.
+
 **New here?** The friendliest starting point is
 [`docs/home/00-index.md`](docs/home/00-index.md)
 ([한국어](docs/home/00-index.ko.md)) — it explains *why* the system exists and
@@ -97,13 +101,10 @@ alias claude-dev='claude --plugin-dir /path/to/dev-harness-kit'
 On a brand-new repo, one command does all the first-time setup:
 
 ```bash
-/dev-kit:bootstrap-full
+/dev-kit:bootstrap
 ```
 
-That writes three project files (`CLAUDE.md`, `AGENTS.md`, and the hook
-configuration) **and** installs the CI templates, in a single shot. It is exactly
-`/dev-kit:bootstrap` followed by `/dev-kit:ci-setup` — run them separately if you
-only want one half.
+This command now prompts you for ci-setup (the prompt defaults to Y; pass `--skip-ci` to decline or `--yes` to auto-accept). With Y, it writes three project files (`CLAUDE.md`, `AGENTS.md`, and the hook configuration) **and** installs the CI templates, in a single shot — matching the legacy `/dev-kit:bootstrap-full` behavior. Run `/dev-kit:bootstrap --skip-ci` or `/dev-kit:ci-setup --force` separately if you only want one half.
 
 From there, the everyday loop is three commands:
 
@@ -300,7 +301,7 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 | Command | What it does |
 |---|---|
 | [`/dev-kit:bootstrap`](docs/skills/bootstrap.md) | First entry on a fresh repo — writes `CLAUDE.md`, `AGENTS.md`, and the hook config. |
-| [`/dev-kit:bootstrap-full`](docs/skills/bootstrap-full.md) | `bootstrap` **and** `ci-setup` in one shot. The usual new-project starting point. |
+| [`/dev-kit:bootstrap (with ci-setup prompt)`](docs/skills/bootstrap.md) | `bootstrap` **and** `ci-setup` in one shot. The usual new-project starting point. |
 | [`/dev-kit:ci-setup`](docs/skills/ci-setup.md) | Installs dev-kit's CI workflows and hooks into your repo so PRs run the same checks. |
 | [`/dev-kit:ci-doctor`](docs/skills/ci-doctor.md) | Read-only check that answers "is my CI set up right — would the next PR pass?" |
 
@@ -447,7 +448,7 @@ claude plugin install dev-kit
 # (live source instead: claude --plugin-dir /path/to/dev-harness-kit)
 
 # 3. One-shot setup: CLAUDE.md + AGENTS.md + hook config + CI templates
-/dev-kit:bootstrap-full
+/dev-kit:bootstrap (with ci-setup prompt)
 
 # 4. First commit + push
 git add -A && git commit -m "chore: bootstrap dev-kit"
@@ -455,7 +456,7 @@ git push -u origin main
 ```
 
 **Use `--force` on the very first install** (`/dev-kit:ci-setup --force`, which
-`bootstrap-full` runs for you). On a fresh repo the result is identical to a
+`bootstrap` runs for you). On a fresh repo the result is identical to a
 plain install, but `--force` is robust against a half-finished earlier attempt or
 a stale plugin cache. You also re-run with `--force` later to pull updated
 templates — see [Consumer CI install](#consumer-ci-install) for the details.

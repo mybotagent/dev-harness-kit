@@ -40,10 +40,9 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 
 | Skill | Alpha | Summary |
 |---|---|---|
-| [`bootstrap`](bootstrap.md) | `state` | First entry — generates minimal `CLAUDE.md` + `AGENTS.md` + `active-hooks.json` on a fresh repo. |
-| [`bootstrap-full`](bootstrap-full.md) | `state` | One-shot `bootstrap` + `ci-setup` — the new-project default. |
+| [`bootstrap`](bootstrap.md) | `state` | One-shot setup for new projects — generates `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`, then prompts for ci-setup (pass `--skip-ci` to decline or `--yes` to auto-accept). |
 | [`ci-setup`](ci-setup.md) | `enforcement` | Installs dev-kit's reusable CI workflow templates into a target project. |
-| [`config`](config.md) | `state` | Skill / MCP / hook / methodology picker. |
+| [`config`](config.md) | `state` | Skill / hook / methodology picker. |
 | [`linear`](linear.md) | `state` | Optional Linear task tracker — reconciling the current repo task with a canonical project + issue (auto-sync on every edit when configured). |
 
 ### Plan → Build
@@ -60,7 +59,6 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 |---|---|---|
 | [`review`](review.md) | `analysis` | Parallel correctness + security + architecture review with a false-positive filter. |
 | [`security`](security.md) | `enforcement` | Full OWASP Top 10 2025 (A01–A10) fan-out with a verifier pass. |
-| [`audit`](audit.md) | `state` | 0-arg cross-cutting bulk slop + secret audit (read-only). |
 | [`inspect`](inspect.md) | `analysis` | 8-dimension read-only code-health audit. |
 | [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |
 | [`prune`](prune.md) | `analysis` | 4-phase deletion sweep: sweep → dependents → report → verify. |
@@ -122,10 +120,8 @@ step inside their parent skill's flow; you never type them directly.
 
 | Skill | Category | Alpha | Invocable |
 |---|---|---|---|
-| [`audit`](audit.md) | `audit` | `state` | human |
 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | human |
 | [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | human |
-| [`bootstrap-full`](bootstrap-full.md) | `bootstrap` | `state` | human |
 | [`build`](build.md) | `build` | `state` | human |
 | [`build-debug`](build-debug.md) | `build` | `enforcement` | model |
 | [`build-refactor`](build-refactor.md) | `build` | `enforcement` | model |

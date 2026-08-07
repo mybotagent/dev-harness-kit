@@ -909,8 +909,8 @@ class TestCiSetup(unittest.TestCase):
     # commands/skill-usage.md shells out to a bare relative path
     # (`python3 tools/skill_usage.py`). ${CLAUDE_PLUGIN_ROOT} does not
     # expand inside command markdown bodies (anthropics/claude-code#9354),
-    # so any consumer that only ran ci-setup/bootstrap-full (never cloned
-    # dev-harness-kit itself) got "No such file or directory". These 3
+    # so any consumer that only ran ci-setup or bootstrap — and never cloned
+    # dev-harness-kit itself — got "No such file or directory". These 3
     # files must ship the same way hooks/*.sh already do.
 
     def test_skill_usage_files_in_expected_paths(self):

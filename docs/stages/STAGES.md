@@ -121,14 +121,6 @@
 - **Hand-off out**: (terminal — the gate is the final pre-merge
   signal alongside review/security)
 
-## Cross-cutting — Audit (`/dev-kit:audit`)
-
-- **Goal**: Batch audit of slop + secrets.
-- **Must**: Output HIGH/MEDIUM/LOW buckets. Banned-phrase regex SSOT.
-- **Must-Not**: Modify files (read-only).
-- **AC**: HIGH ≥ 5 = warning. 0 findings = clean.
-- **Active Skills**: `audit` (slop + secret + outdated are inlined modes)
-
 ## Cross-cutting — Inspect (`/dev-kit:inspect`)
 
 - **Goal**: Whole-codebase (not per-PR, not per-diff) health audit

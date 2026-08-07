@@ -2,7 +2,7 @@
 #
 # Loaded as `grep -oE -f <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' structures.md)`.
 # Each pattern catches a *shape* — not just a phrase. Severity is medium by default;
-# the `audit --slop-only` mode (inlined into skills/audit/SKILL.md) re-weights them.
+# the `audit --slop-only` mode (inlined into skills/inspect/SKILL.md (--slop)) re-weights them.
 #
 # Categories mirror hardikpandya/stop-slop reference (MIT).
 

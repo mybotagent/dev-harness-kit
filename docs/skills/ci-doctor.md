@@ -4,13 +4,13 @@
 
 **Category:** `audit` · **Alpha:** `enforcement` · **Invocation:** `/dev-kit:ci-doctor` (human-invoked)
 
-`ci-doctor` is a read-only CI readiness audit that answers, in a single call, "would CI succeed on my next PR?" It was added for issue #212-D1: a consumer who just ran `/dev-kit:bootstrap-full` had no way to check CI readiness until the next PR turned red. The skill prints one flat PASS/FAIL summary across workflow files, the build marker, the provider file, required secrets, and `gh` auth state.
+`ci-doctor` is a read-only CI readiness audit that answers, in a single call, "would CI succeed on my next PR?" It was added for issue #212-D1: a consumer who just ran `/dev-kit:bootstrap (with ci-setup prompt)` had no way to check CI readiness until the next PR turned red. The skill prints one flat PASS/FAIL summary across workflow files, the build marker, the provider file, required secrets, and `gh` auth state.
 
 ## When to use it
 
 - The user types `/dev-kit:ci-doctor`.
 - The user asks "is my CI set up correctly?" or "would the next PR be green?"
-- The user just ran `/dev-kit:ci-setup` or `/dev-kit:bootstrap-full` and wants to verify readiness.
+- The user just ran `/dev-kit:ci-setup` or `/dev-kit:bootstrap (with ci-setup prompt)` and wants to verify readiness.
 - The user wants a pre-PR sanity check before opening the first dev-kit PR.
 
 ## How it works

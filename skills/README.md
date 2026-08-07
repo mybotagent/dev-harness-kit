@@ -2,15 +2,14 @@
 
 This index lists every skill shipped by the `dev-kit` plugin. Click into any skill to read its full `SKILL.md`; every `SKILL.md` has a back-link at the top to return here.
 
-**40 skills** across 12 categories (35 human-invocable, 5 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
+**38 skills** across 12 categories (34 human-invocable, 4 model-invoked). The full path of each entry is `skills/<dir>/SKILL.md`. Use `find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l` to confirm.
 
 ## By category
 
-### `audit` (11)
+### `audit` (9)
 
 | Skill | α | Description |
 |---|---|---|
-| [`audit`](audit/SKILL.md) | `state` | 0-arg cross-cutting. Bulk slop + secret audit. READ-ONLY. |
 | [`ci-doctor`](ci-doctor/SKILL.md) | `enforcement` | Read-only CI readiness audit. Prints one PASS/FAIL summary across files, marker, provider file, secrets, and gh auth. Hand-off answer to "would CI succeed on my next PR?" |
 | [`ci-triage`](ci-triage/SKILL.md) | `enforcement` | Triage failing GitHub Actions runs across recent commits, dedupe against a persisted case store, judge new failures against a model/context/harness taxonomy with a required repro + regression test, and record them witho… |
 | [`code-viz`](code-viz/SKILL.md) | `state` | 0-arg generic plugin-architecture visualizer. Walks any target repo, emits self-contained HTML with multi-level views (architecture / code / skill / hook / tools-lib / external) + domain pillar map (DB · Cloud · API · M… |
@@ -27,7 +26,6 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | Skill | α | Description |
 |---|---|---|
 | [`bootstrap`](bootstrap/SKILL.md) | `state` | 0-arg orchestrator. Writes minimal CLAUDE.md + AGENTS.md + active-hooks.json on a fresh repo. No noise files by default. |
-| [`bootstrap-full`](bootstrap-full/SKILL.md) | `state` | One-shot setup for new projects. Runs /dev-kit:bootstrap + /dev-kit:ci-setup in a single call — writes CLAUDE.md + AGENTS.md + active-hooks.json, then installs the 15 CI templates + pre-push hook + marker. |
 | [`ci-setup`](ci-setup/SKILL.md) | `enforcement` | Install dev-kit's reusable CI workflow templates into a target project. Idempotent via `.dev-kit/ci-config.json` presence, no version gate. Hand-off to /dev-kit:build. |
 
 ### `build` (8)
@@ -47,7 +45,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 
 | Skill | α | Description |
 |---|---|---|
-| [`config`](config/SKILL.md) | `state` | skill + MCP + hook + methodology picker (multiSelect). |
+| [`config`](config/SKILL.md) | `state` | skill + hook + methodology picker (multiSelect). |
 | [`linear`](linear/SKILL.md) | `state` | Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured. |
 
 ### `design` (5)
@@ -110,44 +108,41 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 
 | # | Skill | Category | α | Invocable |
 |---|---|---|---|---|
-| 1 | [`audit`](audit/SKILL.md) | `audit` | `state` | human |
-| 2 | [`babysit-pr`](babysit-pr/SKILL.md) | `ship` | `state` | human |
-| 3 | [`bootstrap`](bootstrap/SKILL.md) | `bootstrap` | `state` | human |
-| 4 | [`bootstrap-full`](bootstrap-full/SKILL.md) | `bootstrap` | `state` | human |
-| 5 | [`build`](build/SKILL.md) | `build` | `state` | human |
-| 6 | [`build-debug`](build-debug/SKILL.md) | `build` | `enforcement` | model |
-| 7 | [`build-refactor`](build-refactor/SKILL.md) | `build` | `enforcement` | model |
-| 8 | [`build-tdd`](build-tdd/SKILL.md) | `build` | `enforcement` | model |
-| 9 | [`build-verify`](build-verify/SKILL.md) | `build` | `enforcement` | model |
-| 10 | [`bump`](bump/SKILL.md) | `ship` | `state` | human |
-| 11 | [`ci-doctor`](ci-doctor/SKILL.md) | `audit` | `enforcement` | human |
-| 12 | [`ci-setup`](ci-setup/SKILL.md) | `bootstrap` | `enforcement` | human |
-| 13 | [`ci-triage`](ci-triage/SKILL.md) | `audit` | `enforcement` | human |
-| 14 | [`code-viz`](code-viz/SKILL.md) | `audit` | `state` | human |
-| 15 | [`codex-cache-update`](codex-cache-update/SKILL.md) | `shortcuts` | `analysis` | human |
-| 16 | [`config`](config/SKILL.md) | `config` | `state` | human |
-| 17 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
-| 18 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
-| 19 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
-| 20 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
-| 21 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
-| 22 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
-| 23 | [`learn`](learn/SKILL.md) | `audit` | `state` | human |
-| 24 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
-| 25 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
-| 26 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
-| 27 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
-| 28 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
-| 29 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
-| 30 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
-| 31 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
-| 32 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
-| 33 | [`research-plan-build`](research-plan-build/SKILL.md) | `build` | `state` | human |
-| 34 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
-| 35 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
-| 36 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
-| 37 | [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `design` | `state` | human |
-| 38 | [`status`](status/SKILL.md) | `status` | `state` | human |
-| 39 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
-| 40 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | human |
+| 1 | [`babysit-pr`](babysit-pr/SKILL.md) | `ship` | `state` | human |
+| 2 | [`bootstrap`](bootstrap/SKILL.md) | `bootstrap` | `state` | human |
+| 3 | [`build`](build/SKILL.md) | `build` | `state` | human |
+| 4 | [`build-debug`](build-debug/SKILL.md) | `build` | `enforcement` | model |
+| 5 | [`build-refactor`](build-refactor/SKILL.md) | `build` | `enforcement` | model |
+| 6 | [`build-tdd`](build-tdd/SKILL.md) | `build` | `enforcement` | model |
+| 7 | [`build-verify`](build-verify/SKILL.md) | `build` | `enforcement` | model |
+| 8 | [`bump`](bump/SKILL.md) | `ship` | `state` | human |
+| 9 | [`ci-doctor`](ci-doctor/SKILL.md) | `audit` | `enforcement` | human |
+| 10 | [`ci-setup`](ci-setup/SKILL.md) | `bootstrap` | `enforcement` | human |
+| 11 | [`ci-triage`](ci-triage/SKILL.md) | `audit` | `enforcement` | human |
+| 12 | [`code-viz`](code-viz/SKILL.md) | `audit` | `state` | human |
+| 13 | [`codex-cache-update`](codex-cache-update/SKILL.md) | `shortcuts` | `analysis` | human |
+| 14 | [`config`](config/SKILL.md) | `config` | `state` | human |
+| 15 | [`cost-gate`](cost-gate/SKILL.md) | `audit` | `enforcement` | human |
+| 16 | [`docs-maintenance`](docs-maintenance/SKILL.md) | `audit` | `analysis` | human |
+| 17 | [`evaluate`](evaluate/SKILL.md) | `eval` | `enforcement` | human |
+| 18 | [`hook-doctor`](hook-doctor/SKILL.md) | `audit` | `enforcement` | model |
+| 19 | [`inspect`](inspect/SKILL.md) | `audit` | `analysis` | human |
+| 20 | [`interview`](interview/SKILL.md) | `design` | `enforcement` | human |
+| 21 | [`linear`](linear/SKILL.md) | `config` | `state` | human |
+| 22 | [`llm-refresh`](llm-refresh/SKILL.md) | `shortcuts` | `analysis` | human |
+| 23 | [`log`](log/SKILL.md) | `shortcuts` | `state` | human |
+| 24 | [`plan`](plan/SKILL.md) | `plan` | `state` | human |
+| 25 | [`proposal`](proposal/SKILL.md) | `design` | `state` | human |
+| 26 | [`prune`](prune/SKILL.md) | `build` | `analysis` | human |
+| 27 | [`prune-propose`](prune-propose/SKILL.md) | `audit` | `state` | human |
+| 28 | [`refactor`](refactor/SKILL.md) | `build` | `analysis` | human |
+| 29 | [`research`](research/SKILL.md) | `design` | `enforcement` | human |
+| 30 | [`research-plan-build`](research-plan-build/SKILL.md) | `build` | `state` | human |
+| 31 | [`review`](review/SKILL.md) | `review` | `analysis` | human |
+| 32 | [`security`](security/SKILL.md) | `security` | `enforcement` | human |
+| 33 | [`ship`](ship/SKILL.md) | `ship` | `state` | human |
+| 34 | [`sot-harness-writer`](sot-harness-writer/SKILL.md) | `design` | `state` | human |
+| 35 | [`status`](status/SKILL.md) | `status` | `state` | human |
+| 36 | [`token-analyzer`](token-analyzer/SKILL.md) | `audit` | `analysis` | human |
+| 37 | [`valuate`](valuate/SKILL.md) | `design` | `enforcement` | model |
 

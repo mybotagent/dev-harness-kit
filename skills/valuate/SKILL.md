@@ -4,15 +4,15 @@ category: design
 description: Plan-value gate. Scores a plan on 6 axes via LLM judge and returns proceed / revise / hold / kill. Verdict envelope persists to .dev-kit/valuations/<plan-id>.json.
 alpha: enforcement
 when_to_use:
-  - User types /dev-kit:valuate <plan-file>
-  - Plan stage finishes and the user wants an automatic no-go verdict
-  - Reviewer wants to know whether the build stage will refuse this plan
-  - User wants the decision + per-axis rationale surfaced as one report
+  - Plan stage finishes and wants an explicit proceed / revise / hold / kill verdict (called by /dev-kit:plan or other model-invoked planning stages)
+  - Reviewer wants to know whether the build stage would refuse this plan
+  - Operator wants the 6-axis decision + per-axis rationale surfaced as one report
+  - Slash is hidden from the user menu (user-invocable: false); the auto-gate that previously required it was removed in #463
 allowed-tools: Read Write Bash Grep
 disallowed-tools: WebFetch Edit
 model: opus
-disable-model-invocation: true
-user-invocable: true
+disable-model-invocation: false
+user-invocable: false
 safety:
   safety_valve: 1
   convergence: decision != "hold"
@@ -24,16 +24,16 @@ safety:
 # /dev-kit:valuate — Plan-value no-go gate (Phase 4, issues #369-#373)
 
 The plan-value gate. The `/dev-kit:plan` stage reduces ambiguity;
-`/dev-kit:valuate` answers the next question: **is this plan worth
-building?** The gate is deterministic — the LLM scores six rubric axes,
-then `lib/valuation_engine.py:decide()` collapses them to one of four
-verdicts. The verdict envelope persists to
-`.dev-kit/valuations/<plan-id>.json`.
+the gate answers the next question: **is this plan worth building?**
+The rubric is deterministic — the LLM scores six axes, then
+`lib/valuation_engine.py:decide()` collapses them to one of four
+verdicts. The verdict envelope persists to `.dev-kit/valuations/<plan-id>.json`.
 
-> The build stage's hard auto-gate (refuse-on-non-PROCEED) was tied to
-> the LCS substrate and was removed in #463. Operators now run
-> `/dev-kit:valuate` explicitly; the verdict envelope is the operator's
-> signal to proceed or halt — `build` no longer reads it automatically.
+> Model-invocable only (user-invocable: false; disable-model-invocation:
+> false). `/dev-kit:plan` or other planning stages call the rubric. The
+> build stage's hard auto-gate (refuse-on-non-PROCEED) was tied to the
+> LCS substrate and was removed in #463; the verdict envelope is now
+> advisory.
 
 ## What it does
 
@@ -125,7 +125,7 @@ pinned by `lib/valuation_engine.py:decision_is_canonical_envelope`.
 
 - On `proceed` → `/dev-kit:build` runs.
 - On `revise` → back to `/dev-kit:plan` to regenerate the PRD.
-- On `hold` → archive the verdict; user re-invokes `/dev-kit:valuate`
+- On `hold` → archive the verdict; model re-invokes the gate
   after the wait period.
 - On `kill` → archive as no-go; `/dev-kit:plan` should not be re-run
   for the same idea without a substantial pivot.
