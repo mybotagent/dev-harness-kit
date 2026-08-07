@@ -12,7 +12,7 @@ Adds:
                                        ↘ blocked → pending (human unblock)
     completed → pending (manual reset)
 - per-step timing: started_at set on in_progress; completed_at + duration_seconds on completed
-- --parallel mode (worktree, N-step concurrent)
+- dispatch mode auto-classified via lib.dispatch_classifier (parallel/sequential decision logged as the first build line)
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic import atomic_write_json, now_iso  # noqa: E402
+from dispatch_classifier import classify  # noqa: E402 — top-level (no cycle)
 from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 SCHEMA_VERSION = "1.0.0"
@@ -91,6 +92,16 @@ VALID_STATUSES = (
 RESUMABLE_STATUSES = ("pending", "error", "in_progress")
 # Statuses the runner SKIPS without doing anything.
 SKIPPABLE_STATUSES = ("completed", "unimplemented")
+
+# Upper bound on concurrent sub-agents in _run_parallel. The auto-classifier
+# defaults to sequential and only opens the parallel gate for N >= 4
+# eligible steps, but does NOT cap the upper end. A 50-step phase that
+# clears the parallel gate would otherwise fork 50 concurrent `claude -p`
+# subprocesses, each holding its own worktree + Popen — fork-bomb risk
+# on small CI runners. 8 was chosen as a balance: large enough to
+# parallelize typical multi-file work, small enough to bound the OS
+# process / file-descriptor / memory footprint on a 4-vCPU runner.
+_PARALLEL_MAX_CONCURRENT = 8
 
 
 # ---------- Phase / Step readers ----------
@@ -333,46 +344,32 @@ def _commit_step(wt: Path, msg: str) -> bool:
 
 # ---------- CLI ----------
 
-_PARALLEL_BUILD_WARN = (
-    "ERROR: --parallel N > 1 is rarely correct for /dev-kit:build.\n"
-    "\n"
-    "Two concurrent `claude -p` steps WILL collide on shared files\n"
-    "(config, imports, types, schema). The collision is invisible during\n"
-    "the run — both commits land cleanly in their own per-step worktrees.\n"
-    "The damage surfaces only when both branches are merged into main.\n"
-    "\n"
-    "Use parallel build only when each step's declared writes are disjoint\n"
-    "AND no step consumes another step's output. To override this gate,\n"
-    "re-run with --allow-parallel-build.\n"
-)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="dev-harness-kit harness-runner")
     parser.add_argument("phase", help="phase alias (e.g., 0-mvp)")
     parser.add_argument("--project-root", default=".", help="project root directory")
     parser.add_argument("--push", action="store_true", help="git push after each step")
-    parser.add_argument("--parallel", type=int, default=0, metavar="N", help="run N steps in parallel worktrees")
-    parser.add_argument("--allow-parallel-build", action="store_true",
-                        help="Required when --parallel > 1; confirms understanding that "
-                             "parallel builds collide on shared files and the conflict "
-                             "surfaces at merge time. Without this flag, --parallel > 1 is refused.")
     parser.add_argument("--skip-blocked", action="store_true",
                         help="continue past steps with status='blocked' instead of bailing; "
                              "skipped steps are listed in .dev-kit/hand-off/build→review.md")
     args = parser.parse_args()
-    # Gate: --parallel > 1 must require explicit acknowledgment (issue #175).
-    # Two concurrent writers WILL collide on shared files; conflict surfaces
-    # only at merge time, so a silent acceptance is an active damage vector.
-    if args.parallel > 1 and not args.allow_parallel_build:
-        print(_PARALLEL_BUILD_WARN, file=sys.stderr)
-        return 2
     root = Path(args.project_root).resolve()
-    # The Phase 4 /dev-kit:valuate no-go gate was removed in #463 along with
-    # the LCS substrate. Operators run /dev-kit:valuate explicitly; the build
-    # stage no longer auto-blocks on missing verdict.
-    if args.parallel > 0:
-        return _run_parallel(root, args.phase, args.parallel, args.push, args.skip_blocked)
+    idx_path = root / "phases" / args.phase / "index.json"
+    steps = parse_step_index(idx_path)
+    # Filter to the same eligible-step projection the runners use. The
+    # classifier must see only steps that will actually run; counting
+    # SKIPPABLE_STATUSES (completed/unimplemented) would inflate N past
+    # the parallel threshold and log a decision that doesn't match what
+    # executes.
+    eligible = [s for s in steps if s.get("status") in RESUMABLE_STATUSES
+                and s.get("status") != "blocked"]
+    # Auto-classify dispatch mode via lib.dispatch_classifier. Replaces the
+    # legacy --parallel flag. Decision + reason logged as the first build
+    # line so the user can audit why parallelism was rejected.
+    decision = classify(eligible)
+    print(f"dispatch: {decision.mode} — {decision.reason}", file=sys.stderr)
+    if decision.mode == "parallel":
+        return _run_parallel(root, args.phase, len(eligible), args.push, args.skip_blocked)
     return _run_sequential(root, args.phase, args.push, args.skip_blocked)
 
 
@@ -712,7 +709,8 @@ def _run_parallel(root: Path, phase: str, n: int, push: bool, skip_blocked: bool
         if len(eligible) >= n:
             break
 
-    slots = [_SlotRunner(root, phase, worktree_branch, push) for _ in range(min(n, len(eligible)))]
+    slot_count = min(_PARALLEL_MAX_CONCURRENT, n, len(eligible))
+    slots = [_SlotRunner(root, phase, worktree_branch, push) for _ in range(slot_count)]
     if not slots:
         return 0
 

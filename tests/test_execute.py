@@ -748,8 +748,16 @@ class TestRunParallel(unittest.TestCase):
             self.assertGreaterEqual(len(wt_add_calls), 1)
 
     def test_parallel_returns_nonzero_on_slot_failure(self):
+        slot_instances: list[int] = []
+        original_slot_runner = execute._SlotRunner
+
+        def counting_slot_runner(*args, **kwargs):
+            slot_instances.append(1)
+            return original_slot_runner(*args, **kwargs)
+
         with patch.object(execute.subprocess, "run") as mr_run, \
-             patch.object(execute.subprocess, "Popen") as mr_popen:
+             patch.object(execute.subprocess, "Popen") as mr_popen, \
+             patch.object(execute, "_SlotRunner", side_effect=counting_slot_runner):
             mr_run.return_value = self._fake_proc()
             proc_mock = MagicMock()
             proc_mock.poll.return_value = 1
@@ -760,69 +768,66 @@ class TestRunParallel(unittest.TestCase):
 
 
 
-class TestParallelWarnLoud(unittest.TestCase):
-    """Issue #175: --parallel > 1 must warn-and-refuse without --allow-parallel-build.
 
-    Two concurrent `claude -p` steps collide on shared files; the collision
-    is invisible during the run and surfaces only at merge time. The
-    dangerous path must require explicit acknowledgment.
-    """
+    def test_parallel_caps_concurrent_slots(self):
+        """Regression: _PARALLEL_MAX_CONCURRENT caps slot creation.
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        # Stub out the runner entry points so main() never reaches the real
-        # subprocess pipeline; we only want to test the CLI gate here.
-        self._patches = [
-            patch.object(execute, "_run_sequential", return_value=0),
-            patch.object(execute, "_run_parallel", return_value=0),
-        ]
-        for p in self._patches:
-            p.start()
-            self.addCleanup(p.stop)
+        Fork-bomb risk: a 20-step phase would otherwise spawn 20 concurrent
+        `claude -p` subprocesses. The auto-classifier opens the parallel
+        gate for N >= 4 but does NOT cap the upper end; the constant is
+        the cap.
+        """
+        # Rebuild a phase with 20 eligible pending steps.
+        idx_path = self.root / "phases" / "0-mvp" / "index.json"
+        steps = [{"step": n, "name": f"s{n}", "status": "pending"} for n in range(1, 21)]
+        for n in range(1, 21):
+            (self.root / "phases" / "0-mvp" / f"step{n}.md").write_text(f"# Step {n}\n", encoding="utf-8")
+        idx_path.write_text(json.dumps({
+            "project": "p", "phase": "0-mvp", "worktree": "feat/par", "steps": steps,
+        }), encoding="utf-8")
 
-    def tearDown(self):
-        self.tmp.cleanup()
+        slot_instances: list[int] = []
+        original_slot_runner = execute._SlotRunner
 
-    def _run_main(self, argv):
-        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
-            buf = io.StringIO()
-            with redirect_stderr(buf):
-                try:
-                    rc = execute.main()
-                except SystemExit as e:
-                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
-            return rc, buf.getvalue()
+        def counting_slot_runner(*args, **kwargs):
+            slot_instances.append(1)
+            return original_slot_runner(*args, **kwargs)
 
-    def test_parallel_above_1_refuses_without_override(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "3"])
-        self.assertEqual(rc, 2, f"--parallel 3 without --allow-parallel-build must refuse with exit 2, got {rc}")
-        self.assertIn("parallel", stderr.lower(), f"warning must mention 'parallel'; stderr was: {stderr!r}")
-        self.assertIn("merge", stderr.lower(), f"warning must explain the merge-conflict risk; stderr was: {stderr!r}")
-        self.assertIn("--allow-parallel-build", stderr,
-                      f"warning must tell the user the override flag; stderr was: {stderr!r}")
-
-    def test_parallel_above_1_proceeds_with_override(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "3", "--allow-parallel-build"])
-        self.assertNotEqual(rc, 2, f"--parallel 3 --allow-parallel-build must NOT be refused; got rc={rc}, stderr={stderr!r}")
-        self.assertNotIn("--allow-parallel-build", stderr,
-                         f"no warning expected when override is given; stderr was: {stderr!r}")
-
-    def test_parallel_zero_default_unchanged(self):
-        rc, stderr = self._run_main(["0-mvp"])
-        self.assertEqual(rc, 0, f"default --parallel 0 must remain unchanged, got rc={rc}")
-        self.assertNotIn("merge", stderr.lower(),
-                         f"no merge-conflict warning expected for --parallel 0; stderr was: {stderr!r}")
-
-    def test_parallel_one_unchanged(self):
-        rc, stderr = self._run_main(["0-mvp", "--parallel", "1"])
-        self.assertEqual(rc, 0, f"--parallel 1 must remain unchanged (effectively sequential), got rc={rc}")
-        self.assertNotIn("merge", stderr.lower(),
-                         f"no merge-conflict warning expected for --parallel 1; stderr was: {stderr!r}")
-
-
-# --- regression tests (issue #79) ---------------------------------------
-
+        with patch.object(execute.subprocess, "run") as mr_run, \
+             patch.object(execute.subprocess, "Popen") as mr_popen, \
+             patch.object(execute, "_SlotRunner", side_effect=counting_slot_runner):
+            mr_run.return_value = self._fake_proc()
+            proc_mock = MagicMock()
+            proc_mock.poll.return_value = 0
+            proc_mock.returncode = 0
+            proc_mock.communicate.return_value = ("ok", "")
+            mr_popen.return_value = proc_mock
+            rc = execute._run_parallel(self.root, "0-mvp", n=20, push=False)
+            self.assertEqual(rc, 0)
+            # The cap is on CONCURRENT slots, not total Popen calls.
+            # Each slot may be re-launched after it finishes; total Popens
+            # can be > cap (the runner processes all eligible steps).
+            # The guarantee is that no more than `_PARALLEL_MAX_CONCURRENT`
+            # slots are alive at any moment, which is enforced by the
+            # initial `slots = [...]` construction.
+            # The cap is the number of _SlotRunner instances created in
+            # the initial slots = [...] construction. A refactor that
+            # drops the `min(_PARALLEL_MAX_CONCURRENT, ...)` bound would
+            # push the initial count to len(eligible) = 20 and fail.
+            self.assertGreater(
+                len(slot_instances), 0,
+                "fixture error: no _SlotRunner instances were created",
+            )
+            self.assertLessEqual(
+                len(slot_instances), execute._PARALLEL_MAX_CONCURRENT,
+                f"slot construction count {len(slot_instances)} exceeded "
+                f"cap {execute._PARALLEL_MAX_CONCURRENT}",
+            )
+            self.assertEqual(
+                len(slot_instances), execute._PARALLEL_MAX_CONCURRENT,
+                f"slot construction should be exactly the cap when "
+                f"len(eligible)=20 > cap; got {len(slot_instances)}",
+            )
 class TestRunStepBody(unittest.TestCase):
     """_run_step_body is the shared body for sequential and parallel runners.
 
@@ -998,6 +1003,126 @@ class TestStatusTransitionsTable(unittest.TestCase):
             params = list(sig.parameters.keys())
             self.assertGreaterEqual(len(params), 2,
                                     f"transition {status!r} has < 2 params")
+
+class TestMainDispatchDecision(unittest.TestCase):
+    """Regression: main() emits dispatch decision via lib.dispatch_classifier.
+
+    Replaces legacy --parallel flag with auto-classification. The decision
+    + reason must appear in stderr as the first build-log line.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        # Two steps, default sequential (below N>=4 threshold)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        (self.root / "phases" / "0-mvp" / "step1.md").write_text("# Step 1\n", encoding="utf-8")
+        (self.root / "phases" / "0-mvp" / "step2.md").write_text("# Step 2\n", encoding="utf-8")
+        idx = {
+            "phase": "0-mvp",
+            "worktree": "feat/x",
+            "steps": [
+                {"step": 1, "name": "a", "status": "pending"},
+                {"step": 2, "name": "b", "status": "pending"},
+            ],
+        }
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+        # Stub the runners; we only care about the dispatch decision logging.
+        self._patches = [
+            patch.object(execute, "_run_sequential", return_value=0),
+            patch.object(execute, "_run_parallel", return_value=0),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_main(self, argv):
+        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    rc = execute.main()
+                except SystemExit as e:
+                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
+            return rc, buf.getvalue()
+
+    def test_main_emits_dispatch_decision_line(self):
+        """main() must emit 'dispatch: <mode> — <reason>' as the first stderr line."""
+        rc, stderr = self._run_main(["0-mvp"])
+        self.assertEqual(rc, 0)
+        self.assertIn("dispatch:", stderr,
+                      f"main() must emit dispatch decision; stderr was: {stderr!r}")
+        # Two steps (below N>=4) → sequential.
+        self.assertIn("sequential", stderr,
+                      f"2 steps should classify as sequential; stderr was: {stderr!r}")
+
+    def test_main_no_longer_accepts_parallel_flag(self):
+        """Legacy --parallel flag is removed; argparse rejects it."""
+        rc, stderr = self._run_main(["0-mvp", "--parallel", "3"])
+        # argparse error → SystemExit(2). Stderr should mention --parallel.
+        self.assertNotEqual(rc, 0, f"--parallel flag must be removed; got rc={rc}")
+        self.assertIn("--parallel", stderr,
+                      f"argparse error must mention --parallel; stderr was: {stderr!r}")
+
+
+class TestMainDispatchEligibleStepsOnly(unittest.TestCase):
+    """Regression: classify() must see only eligible (resumable, non-blocked) steps.
+
+    Otherwise a phase with N=4 steps where 1 is completed + 3 are pending
+    would log 'parallel' but only run 3 steps, while stale metadata can
+    force sequential dispatch by inflating N past the threshold.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "phases" / "0-mvp").mkdir(parents=True, exist_ok=True)
+        # 4 steps total: 1 completed, 1 unimplemented, 2 pending.
+        # Eligible = 2 (just the pending). Should classify as sequential
+        # because N=2 < threshold.
+        idx = {
+            "phase": "0-mvp",
+            "worktree": "feat/x",
+            "steps": [
+                {"step": 1, "name": "done", "status": "completed"},
+                {"step": 2, "name": "stub", "status": "unimplemented"},
+                {"step": 3, "name": "a", "status": "pending"},
+                {"step": 4, "name": "b", "status": "pending"},
+            ],
+        }
+        (self.root / "phases" / "0-mvp" / "index.json").write_text(json.dumps(idx), encoding="utf-8")
+        self._patches = [
+            patch.object(execute, "_run_sequential", return_value=0),
+            patch.object(execute, "_run_parallel", return_value=0),
+        ]
+        for p in self._patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run_main(self, argv):
+        with patch.object(sys, "argv", ["execute.py", "--project-root", str(self.root)] + argv):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    rc = execute.main()
+                except SystemExit as e:
+                    return e.code if isinstance(e.code, int) else 1, buf.getvalue()
+            return rc, buf.getvalue()
+
+    def test_classify_sees_only_eligible_steps(self):
+        rc, stderr = self._run_main(["0-mvp"])
+        self.assertEqual(rc, 0)
+        # 2 eligible steps; threshold is 4. Must be sequential.
+        self.assertIn("sequential", stderr,
+                      f"classifier must only count eligible steps; stderr was: {stderr!r}")
+        self.assertIn("2 steps", stderr,
+                      f"classifier must report eligible step count (2), not total (4); stderr was: {stderr!r}")
 
 
 if __name__ == "__main__":
