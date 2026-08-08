@@ -1,0 +1,13 @@
+title: "Langfuse 장단점 매트릭스 — SUPERSEDED"
+status: superseded
+date: 2026-08-09
+superseded_by: "https://github.com/sh-ai-x/dev-harness-kit/issues/509"
+superseded_reason: "overengineering 진단 결과 — 현재 규모에서 도입 가치 < 비용"
+parent: "00-index.yaml"
+sections:
+  - title: 결정
+    body: |
+      본 파일은 Langfuse 도입 권고의 일부였으나 GitHub issue #509 결정으로
+      superseded 상태로 전환됨. 원본 분석은
+      `.worktrees/langfuse-integration` (branch `proposal/langfuse-integration`)
+      에서 조회 가능.
