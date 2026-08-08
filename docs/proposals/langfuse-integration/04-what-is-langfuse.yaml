@@ -1,9 +1,7 @@
 title: "Langfuse란 무엇인가 — SUPERSEDED"
 status: superseded
 date: 2026-08-09
-superseded_by: "https://github.com/sh-ai-x/dev-harness-kit/issues/509"
-superseded_reason: "도입 결정 자체가 보류 — 백그라운드 문서는 reference 보존 (미포함)"
-parent: "00-index.yaml"
+tags: [langfuse, observability, eval, superseded]
 sections:
   - title: 결정
     body: |

@@ -1,9 +1,7 @@
 title: "Langfuse 아키텍처 (emit/score/store) — SUPERSEDED"
 status: superseded
 date: 2026-08-09
-superseded_by: "https://github.com/sh-ai-x/dev-harness-kit/issues/509"
-superseded_reason: "overengineering 진단 결과 — Langfuse 미도입"
-parent: "00-index.yaml"
+tags: [langfuse, observability, eval, superseded]
 sections:
   - title: 결정
     body: |

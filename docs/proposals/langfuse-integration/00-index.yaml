@@ -1,8 +1,6 @@
 title: "Langfuse 도입 제안 — SUPERSEDED (2026-07-31 결정)"
 status: superseded
 date: 2026-08-09
-superseded_by: "https://github.com/sh-ai-x/dev-harness-kit/issues/509"
-superseded_reason: "현재 규모(12 case × nightly × 팀 ~3명)에서 overengineering. JSONL trace + 07-agent-behavior-rubric로 동등 가치 달성."
 tags: [langfuse, observability, eval, superseded, governance]
 sections:
   - title: 결정
@@ -34,6 +32,5 @@ sections:
       - 팀 > 5 contributors
       - API spend > $1k/mo
       - multi-tenant eval infra 필요
-      - production telemetry � eval correlation 필요
+      - production telemetry ↔ eval correlation 필요
       - human feedback aggregation 요구
-
