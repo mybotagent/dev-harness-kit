@@ -10,16 +10,21 @@ sections:
       GitHub issue #509 (2026-07-31 분석)에 따라 **Langfuse 도입 보류**.
       상세 사유는 issue 본문 참조.
 
-  - title: Superseded 파일 목록
+  - title: Superseded 범위
     body: |
-      본 디렉토리의 `01-pros-and-cons.yaml` ~ `04-what-is-langfuse.yaml`은
-      원래 Langfuse 도입을 권고하던 proposal이었으나, 본 결정으로 모두
-      `superseded` 상태로 전환됨. 다음 항목만 reference로 보존:
+      본 proposal이 권고했던 도입안 (장단점 매트릭스 / 아키텍처 / 단계별
+      rollout / Langfuse 자체 소개) — 즉, **01–04 파일이 다루던 영역** —
+      은 모두 superseded. 도입 결정 자체가 보류되었으므로 권고문은 더 이상
+      적용 대상이 아님.
 
-      - `05-overengineering-check.yaml` — 비용/효용 분석
-      - `06-api-mode-revisit.yaml` — API only 환경 재평가
-      - `07-agent-behavior-rubric.yaml` — **즉시 채택** (Langfuse 무관)
-      - `08-rubric-improvements.yaml` — 07 루브릭 개선 로드맵
+      본 디렉토리의 `01-pros-and-cons.yaml`, `02-architecture.yaml`,
+      `03-rollout-and-decision.yaml`, `04-what-is-langfuse.yaml` 4개 파일이
+      각각 superseded 스텁으로 남아 있어, 본 proposal의 권고 영역이 무엇이었는지
+      1-depth 인덱스 역할을 한다. 각 스텁은 GitHub issue #509로 회귀한다.
+
+      본 디렉토리에는 `05-` 이후 파일이 존재하지 **않는다** (그 분석들은
+      별도 proposal에 속한다). 본 디렉토리 외부에서 "05-overengineering-check
+      또는 07-agent-behavior-rubric" 같은 이름을 찾지 말 것.
 
   - title: 재평가 트리거 (분기별 점검)
     body: |
@@ -29,5 +34,5 @@ sections:
       - 팀 > 5 contributors
       - API spend > $1k/mo
       - multi-tenant eval infra 필요
-      - production telemetry ↔ eval correlation 필요
+      - production telemetry � eval correlation 필요
       - human feedback aggregation 요구

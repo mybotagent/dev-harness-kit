@@ -8,6 +8,4 @@ sections:
   - title: 결정
     body: |
       본 파일은 Langfuse 도입 권고의 일부였으나 GitHub issue #509 결정으로
-      superseded 상태로 전환됨. 원본 분석은
-      `.worktrees/langfuse-integration` (branch `proposal/langfuse-integration`)
-      에서 조회 가능.
+      superseded 상태로 전환됨. 자세한 분석 근거는 issue 본문 참조.
