@@ -1,31 +1,24 @@
-
-
-# Runtime Portability
-
-**Language:** English · [한국어](RUNTIME-PORTABILITY.ko.md)
-
-> **Status: ARCHIVAL — substrate deleted in PR-G (commit `6a00288`).**
->
-> `lib/runtime_adapters/`, `tests/test_portability.py`, and
-> `.github/workflows/test-portability.yml` no longer exist. The opening
-> sections below (TL;DR, Neutrality matrix, Common patterns) describe the
-> adapter package as if it were live. Treat them as **design history**,
-> not as a contract — there is no current cross-runtime adapter to
-> import from.
->
-> **Today's portable-by-convention contract** (post-retraction):
-> runtime detection is `os.environ.get("CLAUDECODE")` /
-> `os.environ.get("CODEX_CLI")` (each runtime sets its own signal).
-> Any code that wants normalized token/session data must read the
-> runtime-native transcript directly (no shared dataclass). The CI
-> enforcement section ("CI enforcement (retracted in PR-G…)") further
-> down records what was removed.
-
----
-
 # Runtime Portability (런타임 이식성)
 
 **언어:** [English](RUNTIME-PORTABILITY.md) · 한국어
+
+> **상태: 아카이브 — PR-G(커밋 `6a00288`)에서 하위 구조가 삭제됨.**
+>
+> `lib/runtime_adapters/`, `tests/test_portability.py`,
+> `.github/workflows/test-portability.yml`은 더 이상 존재하지 않는다.
+> 아래의 시작 섹션들(요약, 중립성 매트릭스, 흔한 패턴)은 어댑터
+> 패키지가 마치 살아있는 것처럼 서술한다. 이를 **계약이 아니라 설계
+> 역사**로 취급할 것 — 지금 임포트할 수 있는 크로스-런타임 어댑터는
+> 없다.
+>
+> **오늘의 관례상-이식성 계약**(철회 이후): 런타임 감지는
+> `os.environ.get("CLAUDECODE")` / `os.environ.get("CODEX_CLI")`다(각
+> 런타임이 자신만의 신호를 설정한다). 정규화된 토큰/세션 데이터를
+> 원하는 코드는 런타임-고유 트랜스크립트를 직접 읽어야 한다(공유
+> dataclass 없음). 더 아래의 CI 시행 섹션("CI 시행(PR-G에서 철회…)")이
+> 제거된 것을 기록한다.
+
+---
 
 이 문서는 `lib/runtime_adapters/`의 모든 공개 API를 **중립성**
 기준으로 분류한 정식 자료다: 계약의 어떤 부분이 Claude Code와 Codex
