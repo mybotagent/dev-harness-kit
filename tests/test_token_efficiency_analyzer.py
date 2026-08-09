@@ -649,7 +649,7 @@ class TestEndToEndDashboard(unittest.TestCase):
     def test_html_contains_every_new_section(self):
         rc = main([
             "--repo", "fixture-repo",
-            "--days", "30",
+            "--days", "3650",
             "--logs-dir", str(self.tmpdir / "logs"),
             "--out", str(self.out_html),
         ])
@@ -709,7 +709,7 @@ class TestEndToEndDashboard(unittest.TestCase):
 
         rc = main([
             "--repo", "fixture-repo",
-            "--days", "30",
+            "--days", "3650",
             "--logs-dir", str(self.tmpdir / "logs"),
             "--no-include-worktree-logs",
             "--out", str(self.out_html),
@@ -736,7 +736,7 @@ class TestEndToEndDashboard(unittest.TestCase):
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--no-include-worktree-logs",
                 "--json",
@@ -760,7 +760,7 @@ class TestEndToEndDashboard(unittest.TestCase):
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--out", str(self.out_html),
             ])
@@ -791,14 +791,14 @@ class TestJsonOutput(unittest.TestCase):
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--json",
             ])
         self.assertEqual(rc, 0)
         data = json.loads(stdout_buf.getvalue())
         self.assertEqual(data["repo"], "fixture-repo")
-        self.assertEqual(data["days"], 30)
+        self.assertEqual(data["days"], 3650)
         self.assertEqual(data["sessions"], 6)
         self.assertEqual(data["branch"], "")
         self.assertFalse(data["branch_filter_active"])
@@ -821,7 +821,7 @@ class TestJsonOutput(unittest.TestCase):
     def test_json_exit_code_3_on_bad_gate(self):
         rc = main([
             "--repo", "fixture-repo",
-            "--days", "30",
+            "--days", "3650",
             "--logs-dir", str(self.tmpdir / "logs"),
             "--cost-gate-tokens", "1000",   # every session will breach
             "--json",
@@ -843,7 +843,7 @@ class TestJsonOutput(unittest.TestCase):
         with contextlib.redirect_stdout(stdout_buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--json",
             ])
@@ -860,7 +860,6 @@ class TestJsonOutput(unittest.TestCase):
         # returns 0 instead of the expected "empty → 2".
         rc = main([
             "--repo", "fixture-repo",
-            "--days", "30",
             "--logs-dir", str(empty),
             "--no-include-worktree-logs",
             "--json",
@@ -1026,7 +1025,7 @@ class TestBranchAwareness(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--branch", "feature",
                 "--json",
@@ -1048,7 +1047,7 @@ class TestBranchAwareness(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = main([
                 "--repo", "fixture-repo",
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--json",
             ])
@@ -1353,7 +1352,7 @@ class TestWorktreeAwareness(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 rc = main([
                     "--repo", "",
-                    "--days", "30",
+                    "--days", "3650",
                     "--logs-dir", str(td_path / "logs"),
                     "--worktree", "feat",
                     # Scope the walk to the test's tempdir; without this the
@@ -1401,11 +1400,11 @@ class TestWorktreeAwareness(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 rc = main([
                     "--repo", "dev-harness-kit",
-                    "--days", "30",
+                    "--days", "3650",
                     "--logs-dir", str(td_path / "logs"),
                 ])
             self.assertEqual(rc, 0)
-            html_path = Path("token-dashboard-dev-harness-kit-30d.html")
+            html_path = Path("token-dashboard-dev-harness-kit-3650d.html")
             try:
                 src = html_path.read_text()
                 self.assertIn("Cost by Worktree", src)
@@ -1462,7 +1461,7 @@ class TestWorktreeAwareness(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 rc = main([
                     "--repo", "",
-                    "--days", "30",
+                    "--days", "3650",
                     "--logs-dir", str(td_path / "logs"),
                     "--no-include-worktree-logs",
                     "--json",
@@ -1572,7 +1571,7 @@ class TestCacheTtlMixEmpty(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = main([
                 "--repo", repo,
-                "--days", "30",
+                "--days", "3650",
                 "--logs-dir", str(td_path / "logs"),
                 "--out", str(out_html),
             ])
@@ -2449,7 +2448,7 @@ class TestWorktreeStaleness(unittest.TestCase):
                 with contextlib.redirect_stdout(buf):
                     rc = main([
                         "--repo", "dev-harness-kit",
-                        "--days", "30",
+                        "--days", "3650",
                         "--logs-dir", str(td_path / "logs"),
                         "--no-include-worktree-logs",
                         "--out", str(td_path / "dash.html"),
@@ -2505,7 +2504,7 @@ class TestWorktreeStaleness(unittest.TestCase):
                 with contextlib.redirect_stdout(buf):
                     rc = main([
                         "--repo", "dev-harness-kit",
-                        "--days", "30",
+                        "--days", "3650",
                         "--logs-dir", str(td_path / "logs"),
                         "--no-include-worktree-logs",
                         "--json",
@@ -2719,7 +2718,7 @@ class TestZeroTurnSessionSuppressed(unittest.TestCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             old_argv = sys.argv
             sys.argv = ["analyzer", "--repo", "dev-harness-kit",
-                        "--days", "30", "--logs-dir", str(self.tmpdir / "logs"),
+                        "--days", "3650", "--logs-dir", str(self.tmpdir / "logs"),
                         "--out", str(self.tmpdir / "dash.html")]
             try:
                 rc = main()
@@ -3212,7 +3211,7 @@ class TestSnapshotBuilder(unittest.TestCase):
         json_buf = StringIO()
         with contextlib.redirect_stdout(json_buf):
             rc = main([
-                "--repo", "parity-repo", "--days", "30",
+                "--repo", "parity-repo", "--days", "3650",
                 "--logs-dir", str(self.tmpdir / "logs"),
                 "--branch", "feat/x", "--json",
             ])
@@ -3222,7 +3221,7 @@ class TestSnapshotBuilder(unittest.TestCase):
         # Now HTML run with the same args.
         out_html = self.tmpdir / "parity.html"
         rc = main([
-            "--repo", "parity-repo", "--days", "30",
+            "--repo", "parity-repo", "--days", "3650",
             "--logs-dir", str(self.tmpdir / "logs"),
             "--branch", "feat/x",
             "--out", str(out_html),
