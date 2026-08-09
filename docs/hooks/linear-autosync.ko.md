@@ -47,4 +47,4 @@ non-blocking 계약이다.
   페이지.
 - [tools/linear_sync.py](../../tools/linear_sync.py) — Python 구현(훅은
   호출만 함; 모든 행동은 여기에 산다).
-- [HOOK-REFERENCE.md](./HOOK-REFERENCE.md) — 훅 인덱스.
+- [HOOK-REFERENCE.ko.md](./HOOK-REFERENCE.ko.md) — 훅 인덱스.

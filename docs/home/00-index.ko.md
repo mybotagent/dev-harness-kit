@@ -136,7 +136,7 @@ $ ls skills/   # 모든 /dev-kit:<skill> 이름과 그 SKILL.md
 - [`../../README.md`](../../README.ko.md) — 저장소 `dev-harness-kit`
   > 저장소 수준 개요: 설치, Plan/Build/Review/Ship 루프, 명령
   > 레퍼런스, 전체 스킬 목록.
-- [STAGES — 단계별 하네스 스펙](../stages/STAGES.md)
+- [STAGES — 단계별 하네스 스펙](../stages/STAGES.ko.md)
   > 루프의 각 단계(bootstrap → plan → build → review → ship)에서
   > 무엇이 일어나고 어떤 스킬이 어떤 단계를 소유하는지.
 
@@ -151,5 +151,5 @@ $ ls skills/   # 모든 /dev-kit:<skill> 이름과 그 SKILL.md
 
 ### 훅과 시행
 
-- [훅 커버리지 갭](../hooks/hook-coverage-gaps.md) — 무엇이 시행되고
+- [훅 커버리지 갭](../hooks/hook-coverage-gaps.ko.md) — 무엇이 시행되고
   있고, 무엇이 안 되어 있으며, 다음 시행 후보는 무엇인지.

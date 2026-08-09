@@ -304,5 +304,5 @@ python3 -c "from lib.research_engine import enforce_citations; print(enforce_cit
 
 - `lib/research_engine.py` — escalate / verify / enforce_citations.
 - `lib/llm_judge.py` — `research_source` + `research_claim` 축.
-- [`plan`](../skills/plan.md) — 인용 시행 산문 핸드오프 대상.
+- [`plan`](../skills/plan.ko.md) — 인용 시행 산문 핸드오프 대상.
 - [`review`](../skills/review.md) — 인용 시행 후 리뷰 패스.

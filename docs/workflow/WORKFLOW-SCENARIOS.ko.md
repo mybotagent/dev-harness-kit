@@ -248,10 +248,10 @@ Build가 단계 파일도 없이 프로덕션 코드를 쓰는 지원되는 방�
 
 ## 더 보기
 
-- [`docs/stages/STAGES.md`](../stages/STAGES.md) — 단계별 전체 명세
+- [`docs/stages/STAGES.md`](../stages/STAGES.ko.md) — 단계별 전체 명세
   (bootstrap / plan / valuate / build / review / security / ship이 각각
   무엇을 해야 하는지).
-- [`docs/skills/build.md`](../skills/build.md) — Build 스킬 상세.
+- [`docs/skills/build.md`](../skills/build.ko.md) — Build 스킬 상세.
 - [`commands/adapt.md`](../../commands/adapt.md) — 정확한 `adapt` 메커니즘.
 - [`docs/skills/log.md`](../skills/log.md) — 세션 모니터가 데이터를 가질
   수 있도록 세션 로깅 켜기.

@@ -39,8 +39,8 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 
 | 스킬 | Alpha | 요약 |
 |---|---|---|
-| [`bootstrap`](bootstrap.md) | `state` | 최초 진입 — 새 저장소에 최소 `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`을 생성. |
-| [`ci-setup`](ci-setup.md) | `enforcement` | dev-kit의 재사용 가능한 CI 워크플로 템플릿을 대상 프로젝트에 설치. |
+| [`bootstrap`](bootstrap.ko.md) | `state` | 최초 진입 — 새 저장소에 최소 `CLAUDE.md` + `AGENTS.md` + `active-hooks.json`을 생성. |
+| [`ci-setup`](ci-setup.ko.md) | `enforcement` | dev-kit의 재사용 가능한 CI 워크플로 템플릿을 대상 프로젝트에 설치. |
 | [`config`](config.md) | `state` | 스킬 / 훅 / 방법론 선택기. |
 | [`linear`](linear.md) | `state` | 선택적 Linear 태스크 트래커 — 현재 저장소 태스크를 정식 프로젝트 + 이슈와 조정(설정 시 모든 편집마다 자동 동기화). |
 
@@ -48,8 +48,8 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 
 | 스킬 | Alpha | 요약 |
 |---|---|---|
-| [`plan`](plan.md) | `state` | 아이디어 → 5-게이트 루프를 거쳐 `PRD.md` + `phases/<name>/`. |
-| [`build`](build.md) | `state` | TDD + 자동 수정 루프가 통합된 스텝별 서브에이전트 위임. |
+| [`plan`](plan.ko.md) | `state` | 아이디어 → 5-게이트 루프를 거쳐 `PRD.md` + `phases/<name>/`. |
+| [`build`](build.ko.md) | `state` | TDD + 자동 수정 루프가 통합된 스텝별 서브에이전트 위임. |
 | [`research-plan-build`](research-plan-build.md) | `state` | 3단계 바인더(research → plan → implement) — 여러 세션/여러 파일 작업을 위한 건너뛸 수 없는 파이프라인. |
 
 ### Review → Ship
@@ -121,15 +121,15 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | 스킬 | 카테고리 | Alpha | 호출 방식 |
 |---|---|---|---|
 | [`babysit-pr`](babysit-pr.md) | `ship` | `state` | 사용자 |
-| [`bootstrap`](bootstrap.md) | `bootstrap` | `state` | 사용자 |
-| [`build`](build.md) | `build` | `state` | 사용자 |
+| [`bootstrap`](bootstrap.ko.md) | `bootstrap` | `state` | 사용자 |
+| [`build`](build.ko.md) | `build` | `state` | 사용자 |
 | [`build-debug`](build-debug.md) | `build` | `enforcement` | 모델 |
 | [`build-refactor`](build-refactor.md) | `build` | `enforcement` | 모델 |
 | [`build-tdd`](build-tdd.md) | `build` | `enforcement` | 모델 |
 | [`build-verify`](build-verify.md) | `build` | `enforcement` | 모델 |
 | [`bump`](bump.md) | `ship` | `state` | 사용자 |
 | [`ci-doctor`](ci-doctor.md) | `audit` | `enforcement` | 사용자 |
-| [`ci-setup`](ci-setup.md) | `bootstrap` | `enforcement` | 사용자 |
+| [`ci-setup`](ci-setup.ko.md) | `bootstrap` | `enforcement` | 사용자 |
 | [`ci-triage`](ci-triage.md) | `audit` | `enforcement` | 사용자 |
 | [`code-viz`](code-viz.md) | `audit` | `state` | 사용자 |
 | [`codex-cache-update`](codex-cache-update.md) | `shortcuts` | `analysis` | 사용자 |
@@ -144,7 +144,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`linear`](linear.md) | `config` | `state` | 사용자 |
 | [`llm-refresh`](llm-refresh.md) | `shortcuts` | `analysis` | 사용자 |
 | [`log`](log.md) | `shortcuts` | `state` | 사용자 |
-| [`plan`](plan.md) | `plan` | `state` | 사용자 |
+| [`plan`](plan.ko.md) | `plan` | `state` | 사용자 |
 | [`proposal`](proposal.md) | `design` | `state` | 사용자 |
 | [`prune`](prune.md) | `build` | `analysis` | 사용자 |
 | [`prune-propose`](prune-propose.md) | `audit` | `state` | 사용자 |
