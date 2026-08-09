@@ -1,0 +1,9 @@
+title: "Langfuse 아키텍처 (emit/score/store) — SUPERSEDED"
+status: superseded
+date: 2026-08-09
+tags: [langfuse, observability, eval, superseded]
+sections:
+  - title: 결정
+    body: |
+      본 파일은 Langfuse 도입 권고의 일부였으나 GitHub issue #509 결정으로
+      superseded 상태로 전환됨. 자세한 분석 근거는 issue 본문 참조.
