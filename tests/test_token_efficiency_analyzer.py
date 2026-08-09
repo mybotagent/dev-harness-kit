@@ -15,12 +15,13 @@ Tests:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
 import unittest
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -58,6 +59,32 @@ from token_efficiency_analyzer import (  # noqa: E402
 )
 
 FIXTURE_LOGS = PROJECT_ROOT / "fixtures" / "logs" / "claude-code"
+
+# Canonical fixture timestamps are static (``2026-07-09T10:00:00Z`` and the
+# inline ``sample`` in ``test_other_repo_sessions_excluded`` adds
+# ``:00:01.000Z``) so the committed fixtures stay byte-stable across runs.
+# The analyzer's default ``--days 30`` window filters sessions older than
+# that cutoff, which ages out the fixtures as wall-clock time advances.
+# The two setUp()s below copy the canonical fixtures into a tmpdir and
+# then rewrite every ``2026-07-09T10:00:`` prefix to a fresh timestamp so
+# the window stays populated regardless of when the test runs.
+_FIXTURE_BASE_TS_RE = re.compile(r"2026-07-09T10:00:")
+
+
+def _refresh_fixture_timestamps(target_dir: Path, *, days_ago: int = 1) -> None:
+    """Rewrite every ``2026-07-09T10:00:`` (canonical fixture base-time
+    prefix) in jsonl files under ``target_dir`` to ``now - days_ago``'s
+    ``YYYY-MM-DDTHH:MM:`` form (UTC). Sub-second offsets and the trailing
+    ``Z`` stay attached to the replacement, so any per-line variations
+    like ``:00:00.001Z`` keep their ordering. Recurses into nested
+    subdirs so synthetic sessions written under ``logs/claude-code/<sub>/``
+    also get refreshed.
+    """
+    fresh = (
+        datetime.now(timezone.utc) - timedelta(days=days_ago)
+    ).strftime("%Y-%m-%dT%H:%M:")
+    for p in target_dir.rglob("*.jsonl"):
+        p.write_text(_FIXTURE_BASE_TS_RE.sub(fresh, p.read_text()))
 
 
 def _make_session(**overrides) -> dict:
@@ -611,6 +638,9 @@ class TestEndToEndDashboard(unittest.TestCase):
         target.mkdir(parents=True)
         for f in FIXTURE_LOGS.glob("*.jsonl"):
             shutil.copy(f, target / f.name)
+        # Rewrite the canonical 2026-07-09 timestamps to now-1d so the
+        # analyzer's default --days 30 window stays populated.
+        _refresh_fixture_timestamps(target)
         self.out_html = self.tmpdir / "dashboard.html"
 
     def tearDown(self):
@@ -671,6 +701,11 @@ class TestEndToEndDashboard(unittest.TestCase):
         # Also drop the same other-project file into the main logs dir so
         # aggregate_session() can pick it up in the same scan run.
         (target / "other-project.jsonl").write_text(sample)
+        # The inline sample reuses the canonical 2026-07-09 base timestamp;
+        # refresh it (and the freshly-added files) so the 30-day window
+        # still matches.
+        _refresh_fixture_timestamps(other_dir)
+        _refresh_fixture_timestamps(target)
 
         rc = main([
             "--repo", "fixture-repo",
@@ -744,6 +779,7 @@ class TestJsonOutput(unittest.TestCase):
         target.mkdir(parents=True)
         for f in FIXTURE_LOGS.glob("*.jsonl"):
             shutil.copy(f, target / f.name)
+        _refresh_fixture_timestamps(target)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -866,11 +902,16 @@ class TestBranchAwareness(unittest.TestCase):
         """Write one minimal session record under logs/claude-code/<subdir>/."""
         d = self.tmpdir / "logs" / "claude-code" / subdir
         d.mkdir(parents=True, exist_ok=True)
+        # Use a fresh timestamp (now - 1d) so the analyzer's default
+        # ``--days 30`` window still includes the synthetic session.
+        ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
         rec = {
             "type": "assistant",
             "sessionId": sid,
             "cwd": cwd,
-            "timestamp": "2026-07-09T10:00:00.000Z",
+            "timestamp": ts,
             "gitBranch": branch,
             "message": {
                 "role": "assistant",
@@ -1279,6 +1320,11 @@ class TestWorktreeAwareness(unittest.TestCase):
         from io import StringIO
         with tempfile.TemporaryDirectory(prefix="wt-main-json-") as td:
             td_path = Path(td)
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
+            ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z")
             # Two sessions: one in main checkout, one in a worktree.
             # Use --repo="" (no repo filter) because a worktree session's
             # ``cwd`` basename IS the worktree dir, not the project root.
@@ -1293,7 +1339,7 @@ class TestWorktreeAwareness(unittest.TestCase):
                     "sessionId": sid,
                     "cwd": cwd,
                     "gitBranch": "main",
-                    "timestamp": "2026-07-09T10:00:00.000Z",
+                    "timestamp": ts,
                     "message": {"role": "assistant", "model": "claude-sonnet-5",
                                 "content": [{"type": "text", "text": "ok"}],
                                 "usage": {"input_tokens": 100, "output_tokens": 10,
@@ -1333,12 +1379,17 @@ class TestWorktreeAwareness(unittest.TestCase):
             td_path = Path(td)
             d = td_path / "logs" / "claude-code" / "main"
             d.mkdir(parents=True)
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
+            ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z")
             rec = {
                 "type": "assistant",
                 "sessionId": "s-r",
                 "cwd": "/Users/sanghee/dev/dev-harness-kit",
                 "gitBranch": "main",
-                "timestamp": "2026-07-09T10:00:00.000Z",
+                "timestamp": ts,
                 "message": {"role": "assistant", "model": "claude-sonnet-5",
                             "content": [{"type": "text", "text": "ok"}],
                             "usage": {"input_tokens": 100, "output_tokens": 10,
@@ -1538,7 +1589,11 @@ class TestCacheTtlMixEmpty(unittest.TestCase):
             "sessionId": sid,
             "cwd": cwd,
             "gitBranch": git_branch,
-            "timestamp": "2026-07-09T10:00:00.000Z",
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z"),
             "message": {
                 "role": "assistant",
                 "model": "claude-sonnet-5",
@@ -2361,11 +2416,15 @@ class TestWorktreeStaleness(unittest.TestCase):
             d = td_path / "logs" / "claude-code" / "main"
             d.mkdir(parents=True)
             # one main-checkout session, cost ~$0.001
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
             rec = {
                 "type": "assistant", "sessionId": "s-stale",
                 "cwd": "/Users/sanghee/dev/dev-harness-kit",
                 "gitBranch": "main",
-                "timestamp": "2026-07-09T10:00:00.000Z",
+                "timestamp": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                    timespec="milliseconds"
+                ).replace("+00:00", "Z"),
                 "message": {
                     "role": "assistant", "model": "claude-sonnet-5",
                     "content": [{"type": "text", "text": "ok"}],
@@ -2414,11 +2473,16 @@ class TestWorktreeStaleness(unittest.TestCase):
             td_path = Path(td)
             d = td_path / "logs" / "claude-code" / "main"
             d.mkdir(parents=True)
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
+            ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z")
             rec = {
                 "type": "assistant", "sessionId": "s-j",
                 "cwd": "/Users/sanghee/dev/dev-harness-kit",
                 "gitBranch": "main",
-                "timestamp": "2026-07-09T10:00:00.000Z",
+                "timestamp": ts,
                 "message": {
                     "role": "assistant", "model": "claude-sonnet-5",
                     "content": [{"type": "text", "text": "ok"}],
