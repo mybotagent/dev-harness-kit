@@ -38,6 +38,11 @@ Claude Code와 Codex 둘 다에서 작동하며, 같은 명령은 양쪽에서 �
 설명하고 60초 투어를 제공한다. 이 README는 설치, 가장 많이 쓰는 명령,
 흐름이 일직선으로 흐르지 않을 때 무엇을 해야 하는지를 다룬다.
 
+**MCP 통합은 의도적으로 범위 밖이다.** 이 플러그인은 슬래시 명령, 훅,
+라이브러리 함수를 출하하며 MCP 서버 엔트리는 포함하지 않는다. 근거는
+[docs/decisions/0001-no-mcp.ko.md](docs/decisions/0001-no-mcp.ko.md)에
+있다.
+
 ---
 
 ## 설치
@@ -98,10 +103,12 @@ alias claude-dev='claude --plugin-dir /path/to/dev-harness-kit'
 /dev-kit:bootstrap
 ```
 
-이 명령은 프로젝트 파일 세 개(`CLAUDE.md`, `AGENTS.md`, 훅 설정)를
-**작성함과 동시에** CI 템플릿까지 설치한다. 정확히
-`/dev-kit:bootstrap` 다음 `/dev-kit:ci-setup`을 실행한 것과 같다 —
-절반만 필요하면 각각 따로 실행한다.
+이 명령은 이제 ci-setup을 묻는다 (프롬프트의 기본값은 Y; 거절하려면
+`--skip-ci`, 자동 수락하려면 `--yes`). Y인 경우 프로젝트 파일 세 개
+(`CLAUDE.md`, `AGENTS.md`, 훅 설정)를 **작성함과 동시에** CI 템플릿을
+설치한다 — 기존 `/dev-kit:bootstrap-full` 동작과 일치. 절반만 필요하면
+`/dev-kit:bootstrap --skip-ci` 또는 `/dev-kit:ci-setup --force`를 따로
+실행한다.
 
 여기서부터 평상시 루프는 세 명령이다:
 
@@ -308,18 +315,25 @@ sequenceDiagram
 |---|---|
 | [`/dev-kit:plan`](docs/skills/plan.md) | 아이디어를 `PRD.md` + 단계별 빌드 체크리스트로 바꾼다. |
 | [`/dev-kit:build`](docs/skills/build.md) | 체크리스트를 한 단계씩 처리하며 테스트와 코드를 작성하고 각 단계를 검증. |
+| [`/dev-kit:research-plan-build`](docs/skills/research-plan-build.md) | 3단계 바인더 (research → plan → implement) — 다중 세션 또는 다중 파일 작업의 건너뛸 수 없는 파이프라인. |
+| [`/dev-kit:proposal`](docs/skills/proposal.md) | `docs/proposals/<main>/<sub>.yaml`을 before/after 구조 + 장단점/한계를 포함한 자기 완결 HTML 페이지로 렌더링해 구현 전에 리뷰할 수 있게 한다. |
 
 ### PR 통과시키기
 
 | 명령 | 하는 일 |
 |---|---|
 | [`/dev-kit:babysit-pr`](docs/skills/babysit-pr.md) | 열린 PR을 감시해 실패한 검사를 고치고 푸시하며, CI 통과 + 리뷰 승인까지 반복. |
+| [`/dev-kit:pr-verify`](docs/skills/pr-verify.md) | 결정론적 5게이트 PR 검증기 — 게이트마다 신선한 `gh` 상태를 페치해 "오래된 CI" / "LLM-judge 진행 중" 허위 양성을 잡아낸다. |
+| [`/dev-kit:bump`](docs/skills/bump.md) | 명시적인 로컬 `plugin.json` 버전 범프 + `chore/bump-vX.Y.Z` 푸시 — 레이스 복구 및 PR 전 명시적 범프용. |
 
 ### 프로젝트 건강 유지
 
 | 명령 | 하는 일 |
 |---|---|
 | [`/dev-kit:inspect`](docs/skills/inspect.md) | 읽기 전용 전체 코드베이스 건강 스캔(죽은 코드, 중복, 스멜) → 리포트 1부. |
+| [`/dev-kit:refactor`](docs/skills/refactor.md) | 3단계 정리 체인 — `inspect → build-refactor → review` 각 게이트 사이에 종료 코드 인용. |
+| [`/dev-kit:prune`](docs/skills/prune.md) | 슬롭 제거 체인 — `inspect → 3회차 삭제 스윕 → review`. AI 슬롭이나 죽은 기능을 (리팩터가 아니라) 제거하고 싶을 때 손을 댄다. |
+| [`/dev-kit:status`](docs/skills/status.md) | HOTL 시각화 — 현재 루프 진행도, 누적 사이클, 핸드오프 체인, 평가 점수를 한 화면에. |
 | [`/dev-kit:code-viz`](docs/skills/code-viz.md) | 범용 플러그인 아키텍처 시각화 — 다중 레벨 뷰 + 도메인 필러 맵 + 스킬별 워크플로를 자기 완결 HTML 1페이지로. |
 | [`/dev-kit:token-analyzer`](docs/skills/token-analyzer.md) | Claude Code / Codex 토큰 비용이 어디로 가는지를 HTML 대시보드로 보여준다. |
 | [`/dev-kit:research`](docs/skills/research.md) | 모든 사실 주장에 출처를 붙이거나 제거한다. |
@@ -327,6 +341,8 @@ sequenceDiagram
 | [`/dev-kit:ci-triage`](docs/skills/ci-triage.md) | 최근 커밋의 실패한 GitHub Actions 런을 분류하고 영속화된 케이스 저장소와 중복 제거 후 모델/컨텍스트/하네스 분류로 새 실패를 판정 — 모든 케이스는 재현 가능한 repro + 실행 가능한 회귀 테스트를 가져야 한다. |
 | [`/dev-kit:log`](docs/skills/log.md) | 세션 로깅을 켜고 끈다. `token-analyzer`, `skill-usage`, 세션 모니터가 데이터로 쓸 수 있게 한다. |
 | [`/dev-kit:skill-usage`](commands/skill-usage.md) | 어떤 스킬을 실제로 얼마나 쓰는지 보여준다 — 가지치기에 유용. |
+| [`/dev-kit:sot-harness-writer`](docs/skills/sot-harness-writer.md) | 5라운드 × 2–3개의 증거 기반 추천을 인터뷰하는 Single Source of Truth 하네스 문서 작성기 — `/dev-kit:plan`으로 핸드오프한다. |
+| [`/dev-kit:learn`](docs/skills/learn.md) | 소스 텍스트(파일, URL, 산문, 또는 세션 트랜스크립트)를 후보 `SKILL.md`로 증류 — 결정론적 G1–G5 검사 + 후보별 승인 단계를 거친다. |
 
 위 목록을 넘어서는 전체 스킬의 최신 목록은
 [`docs/skills/README.md`](docs/skills/README.md)를 참고한다. 카테고리별로
