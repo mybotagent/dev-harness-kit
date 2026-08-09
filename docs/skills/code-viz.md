@@ -6,7 +6,7 @@
 
 `code-viz` is a **generic** plugin-architecture visualizer: it walks **any target repo** (Claude Code plugin, MCP server, microservice, monorepo, framework) and emits one self-contained HTML page with **multi-level views**, **a domain pillar map**, and **per-skill workflow diagrams (including loop-back detection)**. All classification is filename/path heuristic — no hardcoded skill names, pipeline stages, or module roles.
 
-**Header**: stat tiles per surface (`39 skills · 2 commands · 14 hooks · 7 GH actions · 26 lib · 2 bin · 21 tools · 0 MCP`) **+** stat tiles per domain pillar (`Test=290 · Storage=196 · LLM=158 · Skill=127 · Build=67 · Hook=58 · Security=17 · DB=14`).
+**Header**: stat tiles per surface (skills / commands / hooks / GH actions / lib / bin / tools / MCP — counts change as the repo evolves, run `/dev-kit:code-viz` to see the live numbers) **+** stat tiles per domain pillar (`DB · Cloud · API · MCP · Skill · Hook · Network · Security · Build · Test · Storage · LLM` — same caveat, see the rendered HTML for the live values).
 
 **Then** 4 inventory tables: skills (with `pillars` column), commands, hook scripts (event × matcher × script), GitHub Actions (file / triggers / jobs).
 
@@ -73,9 +73,9 @@ Skills that actually loop get a **dotted, labeled back-edge** on their per-skill
 
 ```text
 [code-viz] target=<abs path>
-[code-viz] discovered: 39 skills, 2 commands, 14 hooks, 7 GH workflows, 26 lib, 2 bin, 21 tools, 0 MCP
-[code-viz] workflows visualized: 14 / 20 top skills; 6 linear (listed as text)
-[code-viz] pillar map: Test=290 Storage=196 LLM=158 Skill=127 general=107 Build=67 Hook=58 Security=17 DB=14 Cloud=1
+[code-viz] discovered: <N> skills, <M> commands, <H> hooks, <W> GH workflows, <L> lib, <B> bin, <T> tools, 0 MCP
+[code-viz] workflows visualized: <V> / <top-skills> top skills; <R> linear (listed as text)
+[code-viz] pillar map: <per-pillar counts> (see rendered HTML for current values)
 [code-viz] wrote /tmp/code-viz.html (X bytes, E mermaid diagrams)
 [code-viz] exported N PNGs into <screenshots dir>
 [code-viz] validation: 0 'Syntax error in text' | E/E svgs rendered | 0 pageerror | modal click OK
