@@ -1380,12 +1380,17 @@ class TestWorktreeAwareness(unittest.TestCase):
             td_path = Path(td)
             d = td_path / "logs" / "claude-code" / "main"
             d.mkdir(parents=True)
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
+            ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z")
             rec = {
                 "type": "assistant",
                 "sessionId": "s-r",
                 "cwd": "/Users/sanghee/dev/dev-harness-kit",
                 "gitBranch": "main",
-                "timestamp": "2026-07-09T10:00:00.000Z",
+                "timestamp": ts,
                 "message": {"role": "assistant", "model": "claude-sonnet-5",
                             "content": [{"type": "text", "text": "ok"}],
                             "usage": {"input_tokens": 100, "output_tokens": 10,
@@ -2412,11 +2417,15 @@ class TestWorktreeStaleness(unittest.TestCase):
             d = td_path / "logs" / "claude-code" / "main"
             d.mkdir(parents=True)
             # one main-checkout session, cost ~$0.001
+            # Fresh timestamp (now - 1d) so the analyzer's default
+            # ``--days 30`` window still includes the synthetic session.
             rec = {
                 "type": "assistant", "sessionId": "s-stale",
                 "cwd": "/Users/sanghee/dev/dev-harness-kit",
                 "gitBranch": "main",
-                "timestamp": "2026-07-09T10:00:00.000Z",
+                "timestamp": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+                    timespec="milliseconds"
+                ).replace("+00:00", "Z"),
                 "message": {
                     "role": "assistant", "model": "claude-sonnet-5",
                     "content": [{"type": "text", "text": "ok"}],
