@@ -18,7 +18,7 @@
 `/dev-kit:review`, `/dev-kit:ship` 등), 훅 기반 시행 매트릭스
 (`worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`,
 `secret-scan`, `slop-detector`, `stop-verify` 등 — 현재 전체 목록은
-루트 [`README.md` → 시행 훅](../../README.ko.md#시행-훅-변치-않는-해자)에서
+루트 [`README.md` → 작동 원리](../../README.ko.md#작동-원리)에서
 확인), 그리고 어떤 스킬이 어떤 단계를 소유하고 그 완료 기준이
 무엇인지 고정하는 단계별 스펙(`docs/stages/STAGES.md`)과 함께
 배포된다.
@@ -96,7 +96,7 @@ $ ls skills/   # 모든 /dev-kit:<skill> 이름과 그 SKILL.md
 
 | 지표 | 값 | 상세 |
 |---|---|---|
-| 배포된 훅 | [시행 훅](../../README.ko.md#시행-훅-변치-않는-해자) 참고 | `worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` 등 — 해당 표가 현재 유지관리되는 목록 |
+| 배포된 훅 | [작동 원리](../../README.ko.md#작동-원리) 참고 | `worktree-guard`, `git-guard`, `tdd-guard`, `bash-guard`, `secret-scan`, `slop-detector`, `stop-verify` 등 — 해당 표가 현재 유지관리되는 목록 |
 | 단계 소유자 | **7개** | bootstrap, plan, valuate, build, review, security, ship |
 | Eval-Repair 루프 | **2차원** | harness-quality + os-quality |
 | 반환 형태 | **단계당 1개** | `docs/stages/STAGES.md`에 고정된 타입 봉투 계약 |
@@ -142,7 +142,7 @@ $ ls skills/   # 모든 /dev-kit:<skill> 이름과 그 SKILL.md
 
 ### 카테고리별 그 밖의 모든 문서
 
-루트 [`README.md` → 문서 맵](../../README.ko.md#문서-맵-분류별)이
+루트 [`README.md` → 문서 맵](../../README.ko.md#문서-맵)이
 저장소의 모든 주제 문서, ADR, 스킬 레퍼런스(아키텍처, 네이밍, CI
 설치, 비용/리스크, 팀 도입, 훅 커버리지, 스킬 인덱스)를 분류한 단일
 인덱스이며, 각 행마다 HTML/Markdown/한국어 버전이 링크되어 있다. 이
