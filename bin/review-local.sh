@@ -212,21 +212,38 @@ PR_JSON="$(gh pr view "$PR_NUMBER" --json number,state,title,reviewDecision,body
   --jq '{number, state, title, reviewDecision, body, files: [.files[].path]}' \
   2>/dev/null)" || die "gh pr view $PR_NUMBER failed (is gh authenticated? is the PR open?)"
 
-# One python call returns all five fields -- cheaper than five separate
-# `python3 -c` startups and avoids quote-handling per call.
-read_pr_field() {
+# One python call returns all five fields (newline-separated) so the
+# five callers below each capture one line of stdout. Single python
+# startup vs five.
+read_pr_fields() {
   python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
-key = sys.argv[1]
-print(d.get(key) if key != 'files' else '\n'.join(d.get('files', [])))
-" "$1"
+print(d.get('state') or '')
+print(d.get('title') or '')
+print(d.get('reviewDecision') or '')
+print(d.get('body') or '')
+print('\n'.join(d.get('files') or []))
+"
 }
-PR_STATE="$(printf '%s' "$PR_JSON" | read_pr_field state)"
-PR_TITLE="$(printf '%s' "$PR_JSON" | read_pr_field title)"
-PR_DECISION="$(printf '%s' "$PR_JSON" | read_pr_field reviewDecision)"
-PR_BODY="$(printf '%s' "$PR_JSON" | read_pr_field body)"
-PR_FILES="$(printf '%s' "$PR_JSON" | read_pr_field files)"
+# Portable read loop (no `mapfile` -- bash 3.2 /bin/bash on macOS
+# lacks it). Appends to PR_FIELDS array -- but ONLY the FIRST five
+# non-empty lines, so the loop exits when the array is full instead
+# of waiting for stdin EOF (which can drop the last line under bash
+# 3.2's process-substitution buffering).
+PR_FIELDS=()
+while IFS= read -r line && [ "${#PR_FIELDS[@]}" -lt 5 ]; do
+  PR_FIELDS+=("$line")
+done < <(printf '%s' "$PR_JSON" | read_pr_fields)
+# Pad to 5 if python returned fewer lines.
+while [ "${#PR_FIELDS[@]}" -lt 5 ]; do
+  PR_FIELDS+=("")
+done
+PR_STATE="${PR_FIELDS[0]:-}"
+PR_TITLE="${PR_FIELDS[1]:-}"
+PR_DECISION="${PR_FIELDS[2]:-}"
+PR_BODY="${PR_FIELDS[3]:-}"
+PR_FILES="${PR_FIELDS[4]:-}"
 
 if [ "$PR_STATE" != "OPEN" ]; then
   die "PR #$PR_NUMBER is $PR_STATE (must be OPEN)"
@@ -353,24 +370,21 @@ log "verdicts: review='${REVIEW_V:-<missing>}' security='${SECURITY_V:-<missing>
 # This is the lenient workflow policy; the stricter --auto-approve gate
 # below refuses on any missing verdict rather than synthesising one.
 # Default missing verdicts to Approve + warning (mirrors review.yml:521-522).
-# This is the lenient workflow policy; the stricter --auto-approve gate
-# below refuses on any missing verdict rather than synthesising one.
-# The check + replacement go through `verdict_default_for` so the
+# Lenient workflow policy; the stricter --auto-approve gate below
+# refuses on any missing verdict rather than synthesising one. The
+# check + replacement go through `verdict_default_for` so the
 # canonical contract (empty → default-to-Approve) lives in one place
 # (lib/review_local_lib.sh), hermetically tested in
 # tests/test_review_local_lib.py::TestVerdictDefaultFor.
-if [ "$(verdict_default_for "${REVIEW_V:-}")" = "yes" ]; then
-  log "warning: review verdict missing; defaulting to Approve"
-  REVIEW_V="Approve"
-fi
-if [ "$(verdict_default_for "${SECURITY_V:-}")" = "yes" ]; then
-  log "warning: security verdict missing; defaulting to Approve"
-  SECURITY_V="Approve"
-fi
-if [ "$(verdict_default_for "${MAINTENANCE_V:-}")" = "yes" ]; then
-  log "warning: maintenance verdict missing; defaulting to Approve"
-  MAINTENANCE_V="Approve"
-fi
+for _judge in REVIEW_V SECURITY_V MAINTENANCE_V; do
+  # Indirect expansion must NOT use the :- form (bash rejects it).
+  # eval a temp variable, fall back to empty when unset.
+  _current="$(eval "printf '%s' \"\${$_judge:-}\"")"
+  if [ "$(verdict_default_for "$_current")" = "yes" ]; then
+    log "warning: $(printf '%s' "$_judge" | tr '[:upper:]' '[:lower:]' | tr -d '_') verdict missing; defaulting to Approve"
+    eval "$_judge='Approve'"
+  fi
+done
 
 # PARSE_FAILED → hard fail (mirrors review.yml:528-536).
 if [ "$REVIEW_V" = "PARSE_FAILED" ] || [ "$SECURITY_V" = "PARSE_FAILED" ] || [ "$MAINTENANCE_V" = "PARSE_FAILED" ]; then
@@ -408,8 +422,7 @@ elif [ "$TOUCH_PROBE" = "1" ]; then
   TOUCHES_PROD="$(printf '%s\n' "$PR_FILES" | grep -E '^(bin|commands|lib|tools|hooks|skills|\.githooks|\.claude|\.codex|\.github)/' || true)"
 fi
 if [ -n "$TOUCHES_PROD" ]; then
-  L3_PATTERN='[0-9]+ (passed|failed)(, [0-9]+ (skipped|xfailed|xpassed))? in [0-9.]+s'
-  if printf '%s' "$PR_BODY" | grep -qE "$L3_PATTERN"; then
+  if [ "$(extract_pytest_tail "$PR_BODY")" = "yes" ]; then
     log "L3 evidence: pytest tail line found in PR body"
   else
     L3_OK=0

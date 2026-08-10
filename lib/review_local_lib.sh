@@ -26,6 +26,8 @@
 #   provider_env_for <provider>
 #       Print `KEY=VAL` lines (one per line, no `export`) for the
 #       provider's ANTHROPIC_* mapping. Empty for anthropic (default).
+#       Reads the base-URL / model block from `provider_config` so
+#       adding a new provider is a one-line edit in `provider_config`.
 #
 #   verdict_default_for <verdict_var>
 #       Print "yes" if the variable is empty/unset (i.e. the lenient
@@ -33,13 +35,13 @@
 #       review.yml:521-522.
 #
 #   provider_config <provider>
-#       Print a single line: `<api_key_env_name>|<base_url>|<model>`.
-#       Empty fields denote "no override" (anthropic has no base URL
-#       or model override; api_key_env_name is always set so the
-#       caller knows which env var to read). Mirrors the three near-
-#       identical `case "$PROVIDER"` blocks that review.yml embeds
-#       inline; collapsing them into one helper keeps the workflow
-#       and the local script aligned.
+#       Single source of truth for per-provider config. The output is a
+#       pipe-separated tuple: `<api_key_env_name>|<base_url>|<sonnet_model>`.
+#       The first field is always set (every provider has a key env
+#       name); the second is empty for anthropic (uses default base
+#       URL); the third is the model id (empty for anthropic -- lets
+#       the Claude CLI pick the default model). `provider_env_for`
+#       reads from this helper so the two paths cannot drift.
 
 # Guard against double-sourcing in test runners.
 if [ -n "${REVIEW_LOCAL_LIB_SOURCED:-}" ]; then
@@ -73,30 +75,22 @@ extract_pytest_tail() {
 }
 
 provider_env_for() {
-  case "$1" in
-    minimax)
-      printf '%s\n' \
-        "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic" \
-        "ANTHROPIC_MODEL=MiniMax-M3[1m]" \
-        "ANTHROPIC_DEFAULT_SONNET_MODEL=MiniMax-M3[1m]" \
-        "ANTHROPIC_DEFAULT_OPUS_MODEL=MiniMax-M3[1m]" \
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL=MiniMax-M3[1m]"
-      ;;
-    deepseek)
-      printf '%s\n' \
-        "ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic" \
-        "ANTHROPIC_MODEL=deepseek-v4-pro" \
-        "ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash" \
-        "ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro" \
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash"
-      ;;
-    anthropic)
-      : # Default Anthropic base URL; no override needed.
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  # Reads from `provider_config` so adding a new provider is a
+  # one-line edit in one place. anthropic returns empty (no overrides
+  # needed); other providers emit 5 ANTHROPIC_* lines.
+  local cfg base model
+  cfg="$(provider_config "$1")" || return 1
+  base="${cfg#*|}"; base="${base%%|*}"
+  model="${cfg##*|}"
+  if [ -z "$base" ] && [ -z "$model" ]; then
+    return 0
+  fi
+  printf '%s\n' \
+    "ANTHROPIC_BASE_URL=$base" \
+    "ANTHROPIC_MODEL=$model" \
+    "ANTHROPIC_DEFAULT_SONNET_MODEL=$model" \
+    "ANTHROPIC_DEFAULT_OPUS_MODEL=$model" \
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL=$model"
 }
 
 verdict_default_for() {
@@ -108,15 +102,16 @@ verdict_default_for() {
 }
 
 # Single source of truth for per-provider config. The output is a pipe-
-# separated triple: `<api_key_env_name>|<base_url>|<model>`. The first
-# field is always set (every provider has a key env name); the second
-# and third are empty for anthropic (which uses its default base URL
-# and lets the Claude CLI pick the default model).
+# separated triple: `<api_key_env_name>|<base_url>|<sonnet_model>`. The
+# first field is always set (every provider has a key env name); the
+# second is empty for anthropic (uses default base URL); the third is
+# the model id (empty for anthropic -- lets the Claude CLI pick the
+# default model). `provider_env_for` reads from this helper so the two
+# paths cannot drift.
 #
-# Callers that want the base-URL / model block should source
-# `provider_env_for` (which reads from this helper so the two paths
-# can never drift). Callers that want the API-key env name should
-# capture field 1 of this helper's output.
+# Callers that want the API-key env name should capture field 1 of this
+# helper's output. Callers that want the base-URL / model block should
+# source `provider_env_for`.
 provider_config() {
   case "$1" in
     minimax)   printf '%s|%s|%s\n' "MINIMAX_API_KEY" "https://api.minimax.io/anthropic" "MiniMax-M3[1m]" ;;
