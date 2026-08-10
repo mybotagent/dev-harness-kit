@@ -1,6 +1,6 @@
 """babysit_pr_reliability.py -- reliability helpers for /dev-kit:babysit-pr.
 
-Two pure-function primitives consumed by the babysit-pr skill
+Pure-function primitives consumed by the babysit-pr skill
 (`skills/babysit-pr/SKILL.md`):
 
   is_stale_lock(path, ttl_seconds=LOCK_TTL_SECONDS)
@@ -33,7 +33,25 @@ Two pure-function primitives consumed by the babysit-pr skill
       The function never raises: malformed inputs return "pending" (the
       most conservative non-alarming default).
 
-Both helpers are deterministic (no time-of-day randomness -- callers
+  build_check_state(checks)
+      Reduce a `gh pr checks --json name,conclusion,databaseId` listing
+      to a compact {name: {conclusion, databaseId}} snapshot, suitable
+      for persisting to `.dev-kit/babysit-checks.json` between
+      iterations.
+
+  diff_check_states(prev_state, curr_checks)
+      Compare a cached build_check_state() snapshot against a fresh
+      `gh pr checks` listing. Returns {"changed": [...], "unchanged":
+      [...]} check names (sorted). A check is "changed" when it is new
+      or its conclusion/databaseId moved since the cache; "unchanged"
+      means the check is in the exact same state as last iteration.
+      babysit-pr's FETCH LOGS step (§Algorithm step 5) skips re-fetching
+      a failing check's log when it comes back "unchanged" -- the log
+      content would be identical to what was already diagnosed, so
+      re-fetching wastes a `gh run view --log-failed` round-trip per
+      iteration.
+
+All helpers are deterministic (no time-of-day randomness -- callers
 pass `now_epoch`) so regression tests can reproduce ghost / fresh-lock
 states without sleeping.
 
@@ -54,7 +72,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Iterable, Mapping, Union
 
 PathLike = Union[str, os.PathLike]
 
@@ -263,3 +281,58 @@ def classify_check(
     if age > ghost_threshold_seconds:
         return "ghost"
     return "pending"
+
+
+def build_check_state(checks: Iterable[Any]) -> dict[str, dict[str, Any]]:
+    """Reduce a `gh pr checks` listing to a {name: {conclusion,
+    databaseId}} snapshot for change-detection across babysit-pr
+    iterations.
+
+    Entries that are not a mapping, or have no usable (non-empty
+    string) `name`, are skipped -- they cannot be diffed by name.
+    """
+    state: dict[str, dict[str, Any]] = {}
+    for c in checks:
+        if not isinstance(c, Mapping):
+            continue
+        name = c.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        state[name] = {
+            "conclusion": c.get("conclusion"),
+            "databaseId": c.get("databaseId"),
+        }
+    return state
+
+
+def diff_check_states(
+    prev_state: Mapping[str, Mapping[str, Any]],
+    curr_checks: Iterable[Any],
+) -> dict[str, list[str]]:
+    """Classify each check in `curr_checks` as "changed" or "unchanged"
+    relative to a cached `build_check_state()` snapshot.
+
+    A check is "changed" when it is new (absent from `prev_state`), or
+    its `conclusion` or `databaseId` differs from the cached value --
+    i.e. the workflow actually re-ran or resolved since the last
+    snapshot. A check is "unchanged" when both fields are identical to
+    the cache.
+
+    Returns {"changed": [...], "unchanged": [...]}, both sorted.
+    """
+    curr_state = build_check_state(curr_checks)
+    changed: list[str] = []
+    unchanged: list[str] = []
+    for name, cur in curr_state.items():
+        prev = prev_state.get(name)
+        if prev is None:
+            changed.append(name)
+            continue
+        if (
+            prev.get("conclusion") != cur.get("conclusion")
+            or prev.get("databaseId") != cur.get("databaseId")
+        ):
+            changed.append(name)
+        else:
+            unchanged.append(name)
+    return {"changed": sorted(changed), "unchanged": sorted(unchanged)}

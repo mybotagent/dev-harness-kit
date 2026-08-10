@@ -189,7 +189,13 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                           sys.exit(0)   # human-gate fallback
                       elif rc == bpc.EXIT_RATIONALE_REQUIRED:
                           sys.exit(2)
-  1. SNAPSHOT   — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS (single gh call)
+  1. SNAPSHOT   — fetch PR_NUMBER, REVIEW_VERDICT, CHECKS (single gh call).
+                    Load the prior iteration's check-state cache from
+                    `.dev-kit/babysit-checks.json` (absent on iter 1 —
+                    treat as `{}`). Diff it against the fresh CHECKS via
+                    `lib/babysit_pr_reliability.py::diff_check_states(prev, curr)`
+                    (see §Check-state caching below). The `changed` /
+                    `unchanged` split feeds step 5.
   2. TERMINATE  — if REVIEW_VERDICT == "APPROVED"
                     AND every check.conclusion ∈ {success, skipped, neutral}
                     → print "✅ PR #<n> approved — done" + iterate count
@@ -201,25 +207,71 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                     D) Review required (REVIEW_VERDICT == "REVIEW_REQUIRED" or "")
                        → print "waiting for human review" + exit 0 (cannot self-approve)
   4. WAIT       — if any check is pending and no failures, sleep 30s, continue
-  5. FETCH LOGS — for each failing check:
+  5. FETCH LOGS — for each failing check IN `changed` (per step 1's diff):
                     `gh run view <run-id> --log-failed`  (via checks databaseId)
-                    truncate to last 200 lines; capture exit code + first error
-  6. DIAGNOSE   — per failing check, identify ONE root cause:
+                    truncate to last 200 lines; capture exit code + first error.
+                    For a failing check in `unchanged`, its log is byte-
+                    identical to what a prior iteration already diagnosed
+                    and fixed-for — re-fetching wastes a network round-trip
+                    for no new information. Reuse the cached diagnosis from
+                    `.dev-kit/babysit.log` instead (see §Check-state caching).
+  6. DIAGNOSE   — per failing check IN `changed`, identify ONE root cause:
                     - test failure       → re-read test + source, write the fix
                     - lint/format        → run formatter, commit
                     - type-check         → fix types
                     - secret detected    → abort (NEVER auto-remove secrets; user must decide)
                     - review feedback    → read review comments, apply reviewer-requested change
   7. APPLY FIX  — modify code (Edit/Write). One logical change per iteration.
-  8. VERIFY LOCAL — re-run the same failing command locally; quote exit code + test count
+  8. VERIFY LOCAL — HARD GATE, re-run the same failing command locally;
+                    quote exit code + test count.
+                    - Local verify PASSES → proceed to step 9 (COMMIT).
+                    - Local verify FAILS  → do NOT commit or push. A push
+                      that still fails locally will fail the same way in
+                      CI ~1-10 min later (pytest/lint run, or the ~3-5 min
+                      LLM review+security pair) — pushing it anyway just
+                      burns a full CI cycle to relearn what step 8 already
+                      knows. Instead: go back to step 6 (DIAGNOSE) with the
+                      new local failure output and retry within the SAME
+                      iteration. This retry-in-place does NOT increment
+                      `iter` on its own; it counts toward the 3-consecutive-
+                      no-progress guard the same way a pushed-and-still-
+                      failing CI run would.
   9. COMMIT     — `git add <specific paths>` of the file(s) just modified (NEVER `git add -p` — interactive, hangs without TTY; the skill runs unattended) + conventional commit
   10. PUSH     — `git push origin HEAD`
   11. LOG     — append one line to `.dev-kit/babysit.log`:
                   `<ISO-8601> iter=<n> check=<name> fix=<one-line> exit=<code>`
   12. SLEEP    — `gh pr checks --watch` or sleep 20s for CI to pick up
-  13. INCREMENT — `iter = iter + 1`; if `iter > MAX_ITERS`, fall through to
+  13. SAVE STATE — overwrite `.dev-kit/babysit-checks.json` with
+                  `build_check_state(CHECKS)` from the fresh snapshot just
+                  polled, so the next iteration's step 1 diffs against it.
+  14. INCREMENT — `iter = iter + 1`; if `iter > MAX_ITERS`, fall through to
                   the cap-fallback below; otherwise `goto 1`.
 ```
+
+### Check-state caching (efficiency)
+
+Every iteration used to re-poll and re-diagnose every check from scratch,
+even checks whose failure was already fixed-for in a prior iteration and
+are simply waiting on a slow CI runner. `lib/babysit_pr_reliability.py`
+exposes two pure helpers for this:
+
+- `build_check_state(checks)` — reduces a `gh pr checks --json
+  name,conclusion,databaseId` listing to `{name: {conclusion,
+  databaseId}}`.
+- `diff_check_states(prev_state, curr_checks)` — classifies each current
+  check as `"changed"` (new, or its conclusion/databaseId moved since the
+  cache) or `"unchanged"` (identical to the cache).
+
+The cache file `.dev-kit/babysit-checks.json` (gitignored, same directory
+as `babysit.lock`) holds the previous iteration's `build_check_state()`
+output. Step 5 (FETCH LOGS) and step 6 (DIAGNOSE) only do real work for
+checks in `changed` — a check whose databaseId AND conclusion are both
+unchanged since the last snapshot has nothing new to diagnose; the
+earlier iteration's fix attempt (or the WAIT branch) is still the correct
+action. This does not skip CI itself — GitHub still re-runs every
+workflow on every push, which is unavoidable — it only avoids redundant
+local polling, log-fetching, and re-diagnosis work inside the babysit-pr
+loop for checks whose state has not moved.
 
 ### Bounded repair PR policy
 

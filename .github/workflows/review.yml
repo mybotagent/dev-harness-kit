@@ -61,10 +61,48 @@ on:
         type: string
 
 jobs:
+  scope:
+    name: scope (touches production code?)
+    runs-on: ubuntu-latest
+    # Single source of truth for "does this PR touch production code?",
+    # consumed by `review`/`security` (skip the LLM judges entirely on
+    # docs/test-only diffs — they're the most expensive gates, ~3-5 min
+    # each) and by `gate` (L3-evidence-advisory + auto-approve eligibility).
+    # Previously this logic was duplicated inline in `gate`'s touch_probe
+    # step; extracted here so review/security can gate on it too instead
+    # of unconditionally running on every PR regardless of what it touches.
+    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    outputs:
+      touches_prod: ${{ steps.touch_probe.outputs.touches_prod }}
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Touch-probe (does this PR touch production code?)
+        id: touch_probe
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          TOUCHES="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+              --json files --jq '.files[].path' 2>/dev/null \
+            | grep -E '^(lib|tools|hooks|skills|\.githooks|\.claude|\.codex|\.github)/' \
+            || true)"
+          if [ -n "$TOUCHES" ]; then
+            echo "touches_prod=true" >> "$GITHUB_OUTPUT"
+            echo "Touched production roots:"
+            printf '  %s\n' $TOUCHES | head -10
+          else
+            echo "touches_prod=false" >> "$GITHUB_OUTPUT"
+            echo "docs/infra-only PR (no lib/tools/hooks/skills/.githooks/.claude/.codex/.github changes)"
+          fi
+
   review:
     name: /dev-kit:review (3-dim)
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    needs: scope
     # Skip on bump-PRs (title is `chore(release): bump dev-kit to vX.Y.Z`).
     # The bump content is version-bump.yml-generated and merged by a
     # human (auto-merge is disabled by policy). Running /dev-kit:review
@@ -72,7 +110,16 @@ jobs:
     # reviewable change. Replaces the previous `[skip ci]` literal that
     # globally suppressed ALL workflows on the bump commit (which broke
     # the round-trip — see version-bump.yml).
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    #
+    # Also skip when the PR doesn't touch production code (docs/tests-only):
+    # the auto-approve step in `gate` already refuses to approve such PRs
+    # (touches_prod must be true), so running the ~3-5 min LLM review here
+    # today buys nothing but CI minutes — the human-gate hand-off is
+    # unaffected either way. `workflow_dispatch` always runs regardless
+    # (explicit manual override intent).
+    if: |
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v') &&
+      (github.event_name == 'workflow_dispatch' || needs.scope.outputs.touches_prod == 'true')
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -230,8 +277,11 @@ jobs:
     name: /dev-kit:security (10-dim OWASP)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    # Skip on bump-PRs — same rationale as `review:` above.
-    if: "!startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')"
+    needs: scope
+    # Skip on bump-PRs and docs/tests-only PRs — same rationale as `review:` above.
+    if: |
+      !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v') &&
+      (github.event_name == 'workflow_dispatch' || needs.scope.outputs.touches_prod == 'true')
     outputs:
       verdict: ${{ steps.extract_verdict.outputs.verdict }}
     permissions:
@@ -375,13 +425,15 @@ jobs:
   gate:
     name: severity gate (review + security)
     runs-on: ubuntu-latest
-    needs: [review, security]
+    needs: [scope, review, security]
     # Skip on bump-PRs: `review` and `security` are skipped via their own
-    # `if:` filters above; `needs: [review, security]` with `if: always()`
-    # would still cause gate to run. Mirror the skip here so the entire
-    # job chain is silenced in one logical place for bump PRs. The `if:`
-    # is wrapped in `always() && ...` so the gate still runs on partial
-    # upstream failures for non-bump PRs.
+    # `if:` filters above (bump PRs, and now also docs/tests-only PRs —
+    # see `scope`); `needs: [...]` with `if: always()` would still cause
+    # gate to run regardless of whether upstream jobs ran or were skipped.
+    # Mirror the skip here so the entire job chain is silenced in one
+    # logical place for bump PRs. The `if:` is wrapped in `always() && ...`
+    # so the gate still runs on partial upstream failures/skips for
+    # non-bump PRs.
     if: |
       always() &&
       !startsWith(github.event.pull_request.title, 'chore(release): bump dev-kit to v')
@@ -411,33 +463,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Touch-probe (does this PR touch production code?)
-        id: touch_probe
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # The L3 evidence gate below only enforces the pytest tail when
-          # this PR actually exercises tests. For docs/infra-only PRs (a
-          # README typo, a workflow tweak, a rules-file add) pytest is not
-          # the right evidence — accept the PR with a non-blocking note.
-          #
-          # Logic: re-list the PR's touched files via `gh api` and check
-          # whether any of them lives under a production root. If yes,
-          # touch_probe.touches_prod = 'true' and the gate below stays in
-          # force. If no, the verdict + human-gate owns approval.
-          TOUCHES="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
-              --json files --jq '.files[].path' 2>/dev/null \
-            | grep -E '^(lib|tools|hooks|skills|\.githooks|\.claude|\.codex|\.github)/' \
-            || true)"
-          if [ -n "$TOUCHES" ]; then
-            echo "touches_prod=true"
-            echo "touches_prod=true" >> "$GITHUB_OUTPUT"
-            echo "Touched production roots:"
-            printf '  %s\n' $TOUCHES | head -10
-          else
-            echo "touches_prod=false (docs/infra-only PR; L3 evidence advisory only)"
-          fi
 
       - name: L3 evidence gate (PR body must quote test count)
         # Per iron-laws/index.md L3: "No completion claim without quoted exit
@@ -453,7 +478,7 @@ jobs:
         # advisory — it logs ::notice:: but does NOT fail the gate. The
         # human + verdict-gate still owns approval.
         env:
-          TOUCHES_PROD: ${{ steps.touch_probe.outputs.touches_prod || '' }}
+          TOUCHES_PROD: ${{ needs.scope.outputs.touches_prod || '' }}
         run: |
           set -uo pipefail
           PR_BODY="$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json body --jq '.body // ""')"
@@ -591,7 +616,7 @@ jobs:
         if: |
           success() &&
           steps.combined_verdict.outputs.verdict == 'Approve' &&
-          steps.touch_probe.outputs.touches_prod == 'true' &&
+          needs.scope.outputs.touches_prod == 'true' &&
           steps.combined_verdict.outputs.raw_review != '' &&
           steps.combined_verdict.outputs.raw_security != ''
         run: |

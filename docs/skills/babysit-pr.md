@@ -32,25 +32,30 @@ On start: `mkdir -p .dev-kit`; if `.dev-kit/babysit.lock` exists, check stalenes
 
 `gh pr checks` may report a check whose underlying workflow file was deleted server-side, staying pending indefinitely. `lib/babysit_pr_reliability.py:classify_check(check_dict, now_epoch, ghost_threshold_seconds=300)` classifies a check as a "ghost" when it has no `databaseId` (regardless of state or age), or when it has a `databaseId` but its `startedAt`/`updatedAt` is older than 300s (5 min). A check with a `databaseId` but no `startedAt`/`updatedAt` at all has no elapsed time to measure against the threshold, so it classifies as "pending" instead of "ghost" — this covers a freshly-requested check (age zero) right after a push, which would otherwise be ghosted immediately and trigger unnecessary recovery/retry logic. It still ghosts out once it ages past the threshold, because by then it carries a stale `startedAt`/`updatedAt`. This replaces the plain wait-and-retry with a surfaced "recovery-required" message instead of spinning to `MAX_ITERS`.
 
-### Algorithm (13-step loop, plus a pre-loop opt-out check)
+### Algorithm (14-step loop, plus a pre-loop opt-out check)
 
 **Step 0 — opt-out check**: if `--operator-is-only-human` was passed, this runs *before* step 1's snapshot (see "Single-operator bypass" below).
 
-1. **SNAPSHOT** — one `gh` call fetches `PR_NUMBER`, `REVIEW_VERDICT`, `CHECKS`.
+1. **SNAPSHOT** — one `gh` call fetches `PR_NUMBER`, `REVIEW_VERDICT`, `CHECKS`, then diffs it against the prior iteration's cached check-state (`.dev-kit/babysit-checks.json`) via `diff_check_states()` — see "Check-state caching" below.
 2. **TERMINATE** — if `REVIEW_VERDICT == APPROVED` and every check's conclusion is in `{success, skipped, neutral}`, print "PR approved" and exit 0.
 3. **CLASSIFY** — bucket blockers into (A) CI failing, (B) CI pending → wait, (C) review `CHANGES_REQUESTED`, (D) `REVIEW_REQUIRED`/empty → print "waiting for human review" and exit 0 (the skill cannot self-approve).
 4. **WAIT** — if any check is pending with no failures, sleep 30s and continue.
-5. **FETCH LOGS** — `gh run view <run-id> --log-failed` per failing check; truncate to the last 200 lines; capture exit code and first error.
-6. **DIAGNOSE** — one root cause per failing check: test failure, lint/format, type-check, secret detected (abort — never auto-remove), or review feedback.
+5. **FETCH LOGS** — `gh run view <run-id> --log-failed` per failing check *whose state changed* since the last snapshot; truncate to the last 200 lines; capture exit code and first error. A failing check that is `unchanged` (same databaseId + conclusion as last iteration) is skipped — its log is already diagnosed.
+6. **DIAGNOSE** — one root cause per `changed` failing check: test failure, lint/format, type-check, secret detected (abort — never auto-remove), or review feedback.
 7. **APPLY FIX** — Edit/Write, one logical change per iteration.
-8. **VERIFY LOCAL** — re-run the failing command; quote the result in the exact format `local:  <command> → <result> (exit <code>)`.
+8. **VERIFY LOCAL** (hard gate) — re-run the failing command; quote the result in the exact format `local:  <command> → <result> (exit <code>)`. On failure, do NOT commit/push — loop back to DIAGNOSE within the same iteration instead of pushing a fix that would just fail CI again ~1-10 minutes later.
 9. **COMMIT** — `git add <specific paths>` of the just-modified file(s); never `git add -p` (interactive, hangs without a TTY).
 10. **PUSH** — pushes the branch (`push origin HEAD`).
 11. **LOG** — appends one line to `.dev-kit/babysit.log`: `<ISO-8601> iter=<n> check=<name> fix=<one-line> exit=<code>`.
 12. **SLEEP** — `gh pr checks --watch` or a 20s sleep.
-13. **INCREMENT** — `iter += 1`; on exceeding `MAX_ITERS`, falls through to the cap-fallback (print the unresolved blocker list, exit 1 — never silently retries past the cap).
+13. **SAVE STATE** — overwrites `.dev-kit/babysit-checks.json` with the fresh check-state snapshot for the next iteration's diff.
+14. **INCREMENT** — `iter += 1`; on exceeding `MAX_ITERS`, falls through to the cap-fallback (print the unresolved blocker list, exit 1 — never silently retries past the cap).
 
 **Termination conditions**: approved + green → exit 0; `REVIEW_REQUIRED` → exit 0 ("waiting for human review"); `CHANGES_REQUESTED` → apply and iterate; 3 consecutive iterations with no progress → exit 1 with the blocker list (this guard fires before the full 1000-iteration budget is exhausted).
+
+### Check-state caching (efficiency)
+
+`lib/babysit_pr_reliability.py::build_check_state()` / `diff_check_states()` are pure helpers that classify each `gh pr checks` entry as `changed` or `unchanged` relative to the prior iteration's cached snapshot. Only `changed` checks get re-fetched and re-diagnosed (steps 5-6) — an `unchanged` failing check has nothing new to learn from, so re-fetching its log wastes a `gh run view --log-failed` round-trip. This does not skip CI itself (GitHub still re-runs every workflow on every push); it only avoids redundant local polling/diagnosis work inside the babysit-pr loop. Separately, `.github/workflows/review.yml` now skips the ~3-5 min LLM review + security jobs entirely on docs/tests-only PRs (a new `scope` job gates them on whether the PR touches `lib/`, `tools/`, `hooks/`, `skills/`, `.githooks/`, `.claude/`, `.codex/`, or `.github/`) — those PRs already require a human hand-off regardless (`gate`'s auto-approve step only fires when `touches_prod == true`), so running the LLM judges on them bought nothing but CI minutes.
 
 ### Single-operator bypass (`--operator-is-only-human`)
 
