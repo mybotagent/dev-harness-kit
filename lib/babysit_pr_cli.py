@@ -136,6 +136,35 @@ def parse_babysit_args(argv: Sequence[str]) -> argparse.Namespace:
             "--operator-is-only-human is set; quoted into the PR comment."
         ),
     )
+    parser.add_argument(
+        "--local-verify",
+        action="store_true",
+        help=(
+            "Optional local-only mode (additive; default behavior unchanged). "
+            "After applying a fix in the skill's §Algorithm loop, run "
+            "--local-test-cmd (default: 'pytest -q') inside the worktree "
+            "BEFORE the commit + push. If the test command exits non-zero, "
+            "abort the iteration -- no git commit, no git push, no "
+            "GH-Actions run consumed. Lets operators gate iteration on "
+            "local test passage without burning GH-Actions minutes on a "
+            "known-failing commit. The §Algorithm step 8 'VERIFY LOCAL' "
+            "(re-run the specific failing check) is preserved alongside; "
+            "this flag adds a *broader* pre-commit check, not a replacement."
+        ),
+    )
+    parser.add_argument(
+        "--local-test-cmd",
+        default="pytest -q",
+        metavar="CMD",
+        help=(
+            "Shell command to run inside the worktree when "
+            "--local-verify is set. Defaults to 'pytest -q'. "
+            "The command's stdout+stderr MUST include a pytest-style "
+            "tail line ('<N> passed in <Ns>s' or '<N> failed in <Ns>s') "
+            "per MUST-L3; the MUST-L3 quoted-evidence contract is "
+            "enforced by the skill body, not by this helper."
+        ),
+    )
     ns = parser.parse_args(list(argv))
 
     # The rationale-required check lives in `run_babysit_once` rather

@@ -109,6 +109,53 @@ class TestParseBabysitArgs(unittest.TestCase):
         with self.assertRaises(SystemExit):
             bpc.parse_babysit_args(["--no-such-flag"])
 
+    # --- T22-T24: --local-verify / --local-test-cmd (additive flags) ---------
+    # Issue: gate babysit-pr iterations on local test passage without
+    # burning GH-Actions minutes. parse_babysit_args() gains two new
+    # fields; run_babysit_once() is unchanged (the runtime logic lives
+    # in the SKILL.md algorithm body, not here).
+    def test_local_verify_default_off(self) -> None:
+        """T22: --local-verify absent -> local_verify=False (regression
+        guard; the additive flag must NOT change existing defaults).
+        """
+        ns = bpc.parse_babysit_args([])
+        self.assertFalse(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "pytest -q")
+
+    def test_local_verify_sets_flag(self) -> None:
+        """T23: --local-verify -> local_verify=True.
+        """
+        ns = bpc.parse_babysit_args(["--local-verify"])
+        self.assertTrue(ns.local_verify)
+
+    def test_local_test_cmd_override(self) -> None:
+        """T24: --local-test-cmd captures the override verbatim. The
+        skill body runs the command via subprocess; the helper only
+        stores it (pure-function contract preserved).
+        """
+        ns = bpc.parse_babysit_args([
+            "--local-verify",
+            "--local-test-cmd", "pytest -x tests/",
+        ])
+        self.assertTrue(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "pytest -x tests/")
+
+    def test_local_verify_compatible_with_other_flags(self) -> None:
+        """--local-verify coexists with --pr and --operator-is-only-human /
+        --rationale; nothing in the parser mutually excludes them. The
+        skill's runtime still applies the human-gate-priority contract
+        (--operator-is-only-human runs first), so the two flags are
+        orthogonal at the parser level.
+        """
+        ns = bpc.parse_babysit_args([
+            "--pr", "42",
+            "--local-verify",
+            "--local-test-cmd", "make test",
+        ])
+        self.assertEqual(ns.pr, 42)
+        self.assertTrue(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "make test")
+
 
 class TestParseCodeowners(unittest.TestCase):
     def setUp(self) -> None:
