@@ -193,6 +193,52 @@ class TestVerdictDefaultFor(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "no"))
 
 
+class TestProviderConfig(unittest.TestCase):
+    def test_minimax_returns_three_field_pipe_tuple(self) -> None:
+        r = _bash("source lib/review_local_lib.sh; provider_config minimax")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout.strip(),
+            "MINIMAX_API_KEY|https://api.minimax.io/anthropic|MiniMax-M3[1m]",
+        )
+
+    def test_anthropic_returns_empty_base_and_model(self) -> None:
+        r = _bash("source lib/review_local_lib.sh; provider_config anthropic")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout.strip(),
+            "ANTHROPIC_API_KEY||",
+        )
+
+    def test_deepseek_returns_pipe_tuple_with_deepseek_model(self) -> None:
+        r = _bash("source lib/review_local_lib.sh; provider_config deepseek")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout.strip(),
+            "DEEPSEEK_API_KEY|https://api.deepseek.com/anthropic|deepseek-v4-pro",
+        )
+
+    def test_unknown_provider_exits_nonzero(self) -> None:
+        r = _bash("source lib/review_local_lib.sh; provider_config nonsense")
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_field_one_split_extracts_key_env_name(self) -> None:
+        """The bin/review-local.sh integration: pipe field 1 of
+        provider_config is the env-var name that holds the API key.
+        Pin the parsing convention here so a future refactor cannot
+        silently break bin/review-local.sh's ${KEY_NAME:-$API_KEY}
+        expansion.
+        """
+        r = _bash(
+            """
+            source lib/review_local_lib.sh
+            cfg=$(provider_config minimax)
+            echo "${cfg%%|*}"
+            """
+        )
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "MINIMAX_API_KEY"))
+
+
 def shq(s: str) -> str:
     """Single-quote a string for safe inclusion in a bash command line."""
     return "'" + s.replace("'", "'\\''") + "'"

@@ -94,19 +94,19 @@ shell calls cannot leak it via `/proc/<pid>/environ` or core dumps.
 
 ### What it does (mirrors `review.yml` step-by-step)
 
-| Step | Source line | Local equivalent |
+| Step | Source step name | Local equivalent |
 |---|---|---|
-| Resolve provider | `review.yml:99-117` | `lib/ci_setup.read_provider()` |
-| Set ANTHROPIC_* env | `review.yml:120-131` | `case "$PROVIDER" in ... export ...` |
-| Run `/dev-kit:review` | `review.yml:135-151` | `claude -p "/dev-kit:review --diff ..."` |
-| Run `/dev-kit:security` | `review.yml:292-307` | `claude -p "/dev-kit:security --diff ..."` |
-| Run `/dev-kit:maintenance` | `maintenance.yml:119-136` | `claude -p "/dev-kit:maintenance --diff ..."` |
-| Extract verdict | `review.yml:220-225` | capture `claude -p` stdout per skill, pipe to `python3 -m lib.maintenance_gate --extract-verdict-from-stdin` |
-| Bump-PR skip | `review.yml:75` | `startsWith "$PR_TITLE" "chore(release): bump dev-kit to v"` |
-| Combined verdict gate | `review.yml:539-561` | `rank()` + worst-of wins |
-| L3-evidence gate | `review.yml:471-491` | grep for `[0-9]+ (passed\|failed) in [0-9.]+s` |
-| Auto-approve | `review.yml:609-618` | `gh pr review --approve --body "..."` (only with `--auto-approve`) |
-| Audit comment | `review.yml:226-227` | `gh pr comment --body "<!-- dev-kit-verdict-audit --> ..."` |
+| Resolve provider | review.yml `Resolve PR + provider` step | `lib/ci_setup.read_provider()` |
+| Set ANTHROPIC_* env | review.yml `Run /dev-kit:review via …` env block | `provider_env_for "$PROVIDER"` (sourced from `lib/review_local_lib.sh`) |
+| Run `/dev-kit:review` | review.yml `Run /dev-kit:review via …` step | `claude -p "/dev-kit:review --diff ..."` |
+| Run `/dev-kit:security` | review.yml `Run /dev-kit:security via …` step | `claude -p "/dev-kit:security --diff ..."` |
+| Run `/dev-kit:maintenance` | maintenance.yml `Run /dev-kit:maintenance via …` step | `claude -p "/dev-kit:maintenance --diff ..."` |
+| Extract verdict | review.yml `Extract <skill> verdict` step | capture `claude -p` stdout per skill, pipe to `python3 -m lib.maintenance_gate --extract-verdict-from-stdin` |
+| Bump-PR skip | review.yml job-level `if:` filter | `is_bump_pr "$PR_TITLE"` (sourced from `lib/review_local_lib.sh`) |
+| Combined verdict gate | review.yml `Combined verdict gate` step | `rank()` (from `lib/review_local_lib.sh`) + worst-of wins |
+| L3-evidence gate | review.yml `L3 evidence gate (PR body must quote test count)` step | `extract_pytest_tail "$PR_BODY"` (from `lib/review_local_lib.sh`) |
+| Auto-approve | review.yml `Auto-approve on clean verdict` step | `gh pr review --approve --body "..."` (only with `--auto-approve`) |
+| Audit comment | review.yml `Extract <skill> verdict` audit line | `gh pr comment --body "<!-- dev-kit-verdict-audit --> ..."` |
 
 ### Caveats
 

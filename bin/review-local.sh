@@ -169,57 +169,37 @@ print('')
 API_KEY="$(read_provider_api_key)"
 
 # Process env can override the .env lookup so a CI runner can pass the
-# key via env: without writing to .env. Guard dropped intentionally:
-# the documented use case is ".env has no key", which is the case where
-# [ -n "$API_KEY" ] would be false. Without the guard, the env override
-# only fires when the .env lookup also succeeded.
-case "$PROVIDER" in
-  minimax)   API_KEY="${MINIMAX_API_KEY:-$API_KEY}" ;;
-  anthropic) API_KEY="${ANTHROPIC_API_KEY:-$API_KEY}" ;;
-  deepseek)  API_KEY="${DEEPSEEK_API_KEY:-$API_KEY}" ;;
-esac
+# key via env: without writing to .env. The KEY_NAME comes from
+# `provider_config` (single source of truth — same helper that
+# `provider_env_for` reads from) so adding a new provider is a
+# one-line edit in lib/review_local_lib.sh.
+PROVIDER_CFG="$(provider_config "$PROVIDER")"
+KEY_NAME="${PROVIDER_CFG%%|*}"
+API_KEY="$(eval "printf '%s' \"\${$KEY_NAME:-\$API_KEY}\"")"
 [ -n "$API_KEY" ] || die "no API key for provider '$PROVIDER' (set .env:${PROVIDER^^}_API_KEY or env var)"
 
 # ---------------------------------------------------------------------------
 # 2. Per-provider base URL / model mapping (mirrors review.yml:120-131
-#    + 175-181). The API KEY is NOT exported here -- it is scoped to the
-#    single `claude -p` invocation via `env KEY=... claude -p ...` so the
-#    key never enters the parent shell's persistent env (any subsequent
-#    subprocess, /proc/<pid>/environ reader, or core dump cannot leak
-#    it).
+#    + 175-181). Sourced from `lib/review_local_lib.sh::provider_env_for`
+#    so the case-statement lives in one place (tested hermetically in
+#    tests/test_review_local_lib.py::TestProviderEnvFor). The API KEY
+#    is NOT exported here -- it is scoped to the single `claude -p`
+#    invocation via `env KEY=... claude -p ...` so the key never enters
+#    the parent shell's persistent env (any subsequent subprocess,
+#    /proc/<pid>/environ reader, or core dump cannot leak it).
 # ---------------------------------------------------------------------------
-declare -a PROVIDER_ENV=()
-case "$PROVIDER" in
-  minimax)
-    PROVIDER_ENV=(
-      "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic"
-      "ANTHROPIC_MODEL=MiniMax-M3[1m]"
-      "ANTHROPIC_DEFAULT_SONNET_MODEL=MiniMax-M3[1m]"
-      "ANTHROPIC_DEFAULT_OPUS_MODEL=MiniMax-M3[1m]"
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL=MiniMax-M3[1m]"
-    )
-    ;;
-  deepseek)
-    PROVIDER_ENV=(
-      "ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic"
-      "ANTHROPIC_MODEL=deepseek-v4-pro"
-      "ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash"
-      "ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro"
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash"
-    )
-    ;;
-  anthropic)
-    : # Default Anthropic base URL; no MODEL override needed.
-    ;;
-esac
+PROVIDER_ENV=()
+while IFS= read -r line; do
+  PROVIDER_ENV+=("$line")
+done < <(provider_env_for "$PROVIDER")
 
 # Build the env prefix for a single `claude -p` invocation: provider
 # base URL / model vars + the API key scoped to this process only.
-# Guard against an empty PROVIDER_ENV (anthropic): `${ARR[@]:-}`
-# expands to a single empty token on an empty array, which makes
-# `env '' KEY=... cmd` fail because '' is not a valid VAR=.
+# Guard against an empty PROVIDER_ENV (anthropic): an empty array must
+# NOT contribute an empty token, otherwise `env '' KEY=... cmd` fails
+# because '' is not a valid VAR= assignment.
 claude_env_args=()
-if [ "${#PROVIDER_ENV[@]}" -gt 0 ]; then
+if [ "${#PROVIDER_ENV[@]}" -gt 0 ] && [ -n "${PROVIDER_ENV[0]}" ]; then
   claude_env_args+=("${PROVIDER_ENV[@]}")
 fi
 claude_env_args+=("ANTHROPIC_API_KEY=$API_KEY")
@@ -372,9 +352,25 @@ log "verdicts: review='${REVIEW_V:-<missing>}' security='${SECURITY_V:-<missing>
 # Default missing verdicts to Approve + warning (mirrors review.yml:521-522).
 # This is the lenient workflow policy; the stricter --auto-approve gate
 # below refuses on any missing verdict rather than synthesising one.
-[ -z "$REVIEW_V" ]      && { log "warning: review verdict missing; defaulting to Approve"; REVIEW_V="Approve"; }
-[ -z "$SECURITY_V" ]    && { log "warning: security verdict missing; defaulting to Approve"; SECURITY_V="Approve"; }
-[ -z "$MAINTENANCE_V" ] && { log "warning: maintenance verdict missing; defaulting to Approve"; MAINTENANCE_V="Approve"; }
+# Default missing verdicts to Approve + warning (mirrors review.yml:521-522).
+# This is the lenient workflow policy; the stricter --auto-approve gate
+# below refuses on any missing verdict rather than synthesising one.
+# The check + replacement go through `verdict_default_for` so the
+# canonical contract (empty → default-to-Approve) lives in one place
+# (lib/review_local_lib.sh), hermetically tested in
+# tests/test_review_local_lib.py::TestVerdictDefaultFor.
+if [ "$(verdict_default_for "${REVIEW_V:-}")" = "yes" ]; then
+  log "warning: review verdict missing; defaulting to Approve"
+  REVIEW_V="Approve"
+fi
+if [ "$(verdict_default_for "${SECURITY_V:-}")" = "yes" ]; then
+  log "warning: security verdict missing; defaulting to Approve"
+  SECURITY_V="Approve"
+fi
+if [ "$(verdict_default_for "${MAINTENANCE_V:-}")" = "yes" ]; then
+  log "warning: maintenance verdict missing; defaulting to Approve"
+  MAINTENANCE_V="Approve"
+fi
 
 # PARSE_FAILED → hard fail (mirrors review.yml:528-536).
 if [ "$REVIEW_V" = "PARSE_FAILED" ] || [ "$SECURITY_V" = "PARSE_FAILED" ] || [ "$MAINTENANCE_V" = "PARSE_FAILED" ]; then

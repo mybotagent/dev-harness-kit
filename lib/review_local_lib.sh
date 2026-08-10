@@ -31,6 +31,15 @@
 #       Print "yes" if the variable is empty/unset (i.e. the lenient
 #       default-to-Approve policy should apply), else "no". Mirrors
 #       review.yml:521-522.
+#
+#   provider_config <provider>
+#       Print a single line: `<api_key_env_name>|<base_url>|<model>`.
+#       Empty fields denote "no override" (anthropic has no base URL
+#       or model override; api_key_env_name is always set so the
+#       caller knows which env var to read). Mirrors the three near-
+#       identical `case "$PROVIDER"` blocks that review.yml embeds
+#       inline; collapsing them into one helper keeps the workflow
+#       and the local script aligned.
 
 # Guard against double-sourcing in test runners.
 if [ -n "${REVIEW_LOCAL_LIB_SOURCED:-}" ]; then
@@ -96,4 +105,23 @@ verdict_default_for() {
   else
     echo no
   fi
+}
+
+# Single source of truth for per-provider config. The output is a pipe-
+# separated triple: `<api_key_env_name>|<base_url>|<model>`. The first
+# field is always set (every provider has a key env name); the second
+# and third are empty for anthropic (which uses its default base URL
+# and lets the Claude CLI pick the default model).
+#
+# Callers that want the base-URL / model block should source
+# `provider_env_for` (which reads from this helper so the two paths
+# can never drift). Callers that want the API-key env name should
+# capture field 1 of this helper's output.
+provider_config() {
+  case "$1" in
+    minimax)   printf '%s|%s|%s\n' "MINIMAX_API_KEY" "https://api.minimax.io/anthropic" "MiniMax-M3[1m]" ;;
+    anthropic) printf '%s|%s|%s\n' "ANTHROPIC_API_KEY" "" "" ;;
+    deepseek)  printf '%s|%s|%s\n' "DEEPSEEK_API_KEY" "https://api.deepseek.com/anthropic" "deepseek-v4-pro" ;;
+    *) return 1 ;;
+  esac
 }
