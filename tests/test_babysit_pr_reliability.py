@@ -309,5 +309,97 @@ class TestClassifyCheck(unittest.TestCase):
             )
 
 
+class TestBuildCheckState(unittest.TestCase):
+    """build_check_state(checks) -- reduce a `gh pr checks` listing to a
+    compact {name: {conclusion, databaseId}} snapshot for change-detection
+    across babysit-pr iterations."""
+
+    def test_reduces_checks_to_name_keyed_state(self) -> None:
+        checks = [
+            {"name": "pytest", "conclusion": "failure", "databaseId": 111},
+            {"name": "ruff", "conclusion": "success", "databaseId": 222},
+        ]
+        self.assertEqual(
+            bpr.build_check_state(checks),
+            {
+                "pytest": {"conclusion": "failure", "databaseId": 111},
+                "ruff": {"conclusion": "success", "databaseId": 222},
+            },
+        )
+
+    def test_skips_entries_without_a_usable_name(self) -> None:
+        checks = [
+            {"conclusion": "failure", "databaseId": 111},  # no name
+            {"name": "", "conclusion": "success", "databaseId": 222},  # empty name
+            "not-a-dict",
+            {"name": "ruff", "conclusion": "success", "databaseId": 333},
+        ]
+        self.assertEqual(
+            bpr.build_check_state(checks),
+            {"ruff": {"conclusion": "success", "databaseId": 333}},
+        )
+
+    def test_empty_input_returns_empty_state(self) -> None:
+        self.assertEqual(bpr.build_check_state([]), {})
+
+
+class TestDiffCheckStates(unittest.TestCase):
+    """diff_check_states(prev_state, curr_checks) -- classify each current
+    check as "changed" (new, or conclusion/databaseId moved since the
+    cached snapshot) or "unchanged" (byte-identical to the cache).
+
+    babysit-pr's FETCH LOGS step (§Algorithm step 5) uses "unchanged" to
+    skip re-fetching a failing check's log when nothing has moved since
+    the last iteration -- the log content would be identical to what was
+    already diagnosed, so re-fetching wastes a `gh run view --log-failed`
+    round-trip per iteration.
+    """
+
+    def test_new_check_not_in_prev_state_is_changed(self) -> None:
+        prev = {}
+        curr = [{"name": "pytest", "conclusion": "failure", "databaseId": 111}]
+        result = bpr.diff_check_states(prev, curr)
+        self.assertEqual(result, {"changed": ["pytest"], "unchanged": []})
+
+    def test_identical_conclusion_and_database_id_is_unchanged(self) -> None:
+        prev = {"pytest": {"conclusion": "failure", "databaseId": 111}}
+        curr = [{"name": "pytest", "conclusion": "failure", "databaseId": 111}]
+        result = bpr.diff_check_states(prev, curr)
+        self.assertEqual(result, {"changed": [], "unchanged": ["pytest"]})
+
+    def test_conclusion_changed_is_changed(self) -> None:
+        prev = {"pytest": {"conclusion": "failure", "databaseId": 111}}
+        curr = [{"name": "pytest", "conclusion": "success", "databaseId": 111}]
+        result = bpr.diff_check_states(prev, curr)
+        self.assertEqual(result, {"changed": ["pytest"], "unchanged": []})
+
+    def test_database_id_changed_is_changed(self) -> None:
+        # Same conclusion, but a new workflow run (new databaseId) means
+        # the failure log content is a fresh run, not the one diagnosed
+        # last iteration -- must be re-fetched even though the conclusion
+        # string itself is unchanged.
+        prev = {"pytest": {"conclusion": "failure", "databaseId": 111}}
+        curr = [{"name": "pytest", "conclusion": "failure", "databaseId": 222}]
+        result = bpr.diff_check_states(prev, curr)
+        self.assertEqual(result, {"changed": ["pytest"], "unchanged": []})
+
+    def test_mixed_changed_and_unchanged_sorted(self) -> None:
+        prev = {
+            "pytest": {"conclusion": "failure", "databaseId": 111},
+            "ruff": {"conclusion": "success", "databaseId": 222},
+        }
+        curr = [
+            {"name": "pytest", "conclusion": "success", "databaseId": 333},  # changed
+            {"name": "ruff", "conclusion": "success", "databaseId": 222},  # unchanged
+            {"name": "validate", "conclusion": "failure", "databaseId": 444},  # new
+        ]
+        result = bpr.diff_check_states(prev, curr)
+        self.assertEqual(result["changed"], ["pytest", "validate"])
+        self.assertEqual(result["unchanged"], ["ruff"])
+
+    def test_empty_prev_state_and_empty_curr_checks(self) -> None:
+        self.assertEqual(bpr.diff_check_states({}, []), {"changed": [], "unchanged": []})
+
+
 if __name__ == "__main__":
     unittest.main()
