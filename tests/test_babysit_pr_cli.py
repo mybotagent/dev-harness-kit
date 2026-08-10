@@ -109,6 +109,53 @@ class TestParseBabysitArgs(unittest.TestCase):
         with self.assertRaises(SystemExit):
             bpc.parse_babysit_args(["--no-such-flag"])
 
+    # --- T22-T24: --local-verify / --local-test-cmd (additive flags) ---------
+    # Issue: gate babysit-pr iterations on local test passage without
+    # burning GH-Actions minutes. parse_babysit_args() gains two new
+    # fields; run_babysit_once() is unchanged (the runtime logic lives
+    # in the SKILL.md algorithm body, not here).
+    def test_local_verify_default_off(self) -> None:
+        """T22: --local-verify absent -> local_verify=False (regression
+        guard; the additive flag must NOT change existing defaults).
+        """
+        ns = bpc.parse_babysit_args([])
+        self.assertFalse(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "pytest -q")
+
+    def test_local_verify_sets_flag(self) -> None:
+        """T23: --local-verify -> local_verify=True.
+        """
+        ns = bpc.parse_babysit_args(["--local-verify"])
+        self.assertTrue(ns.local_verify)
+
+    def test_local_test_cmd_override(self) -> None:
+        """T24: --local-test-cmd captures the override verbatim. The
+        skill body runs the command via subprocess; the helper only
+        stores it (pure-function contract preserved).
+        """
+        ns = bpc.parse_babysit_args([
+            "--local-verify",
+            "--local-test-cmd", "pytest -x tests/",
+        ])
+        self.assertTrue(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "pytest -x tests/")
+
+    def test_local_verify_compatible_with_other_flags(self) -> None:
+        """--local-verify coexists with --pr and --operator-is-only-human /
+        --rationale; nothing in the parser mutually excludes them. The
+        skill's runtime still applies the human-gate-priority contract
+        (--operator-is-only-human runs first), so the two flags are
+        orthogonal at the parser level.
+        """
+        ns = bpc.parse_babysit_args([
+            "--pr", "42",
+            "--local-verify",
+            "--local-test-cmd", "make test",
+        ])
+        self.assertEqual(ns.pr, 42)
+        self.assertTrue(ns.local_verify)
+        self.assertEqual(ns.local_test_cmd, "make test")
+
 
 class TestParseCodeowners(unittest.TestCase):
     def setUp(self) -> None:
@@ -260,6 +307,94 @@ class TestFormatOwnershipConfirmedComment(unittest.TestCase):
         # semicolons inside rationale are preserved verbatim -- the
         # audit reader parses only the first two separators.
         self.assertIn("rationale=merge; do not; iterate", body)
+
+
+class TestLintLocalTestCmd(unittest.TestCase):
+    """T26-T29: caller-side shell-meta lint for --local-test-cmd."""
+
+    def test_empty_cmd_no_warnings(self) -> None:
+        self.assertEqual(bpc.lint_local_test_cmd(""), [])
+
+    def test_simple_cmd_no_warnings(self) -> None:
+        self.assertEqual(bpc.lint_local_test_cmd("pytest -q"), [])
+
+    def test_shell_meta_triggers_warning(self) -> None:
+        # Each metachar yields its own one-line warning so the operator
+        # sees the exact char, not a generic "looks dangerous".
+        warnings = bpc.lint_local_test_cmd("pytest -q && rm -rf /tmp/foo")
+        # `&` is in the metachar set; it surfaces as one warning per char.
+        self.assertTrue(any("&" in w for w in warnings), warnings)
+
+    def test_backtick_and_dollar_paren(self) -> None:
+        warnings = bpc.lint_local_test_cmd("echo `date` $(whoami)")
+        self.assertTrue(any("`" in w for w in warnings), warnings)
+        self.assertTrue(any("$" in w for w in warnings), warnings)
+        self.assertTrue(any("(" in w for w in warnings), warnings)
+        self.assertTrue(any(")" in w for w in warnings), warnings)
+
+
+class TestRunLocalVerify(unittest.TestCase):
+    """T30-T34: run_local_verify enforcement (issue: --local-verify was
+    prose-only; the gate is now real).
+
+    Each test runs the helper in a fresh tmpdir so subprocess cwd is
+    hermetic. The pytest-tail-line regex is the contract: exit 0 + no
+    tail line = passed=False (MUST-L3 enforcement).
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_empty_cmd_refuses(self) -> None:
+        r = bpc.run_local_verify(cmd="", cwd=self.tmp)
+        self.assertFalse(r.passed)
+        self.assertEqual(r.exit_code, None)
+        self.assertIn("empty", r.reason)
+
+    def test_passing_command_with_tail_line_passes(self) -> None:
+        # Bash one-liner that exits 0 and prints a pytest tail line.
+        cmd = (
+            'printf "%s\\n" "tests/test_x.py::test_a PASSED" "47 passed in 1.23s"; '
+            "exit 0"
+        )
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertTrue(r.passed, f"reason={r.reason!r} stderr={r.stderr!r}")
+        self.assertEqual(r.exit_code, 0)
+        self.assertIsNotNone(r.tail_line)
+        self.assertIn("passed in", r.tail_line)
+
+    def test_failing_command_refuses(self) -> None:
+        cmd = 'printf "%s\\n" "1 failed in 0.50s"; exit 1'
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertFalse(r.passed)
+        self.assertEqual(r.exit_code, 1)
+        self.assertIn("exit 1", r.reason)
+
+    def test_exit_zero_without_tail_line_refuses(self) -> None:
+        """MUST-L3: a green command that does NOT actually run the test
+        suite must NOT pass the gate. This is the regression guard for
+        a forged tail line.
+        """
+        cmd = 'printf "%s\\n" "all good"; exit 0'
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertFalse(r.passed, "exit 0 + no tail line must refuse (MUST-L3)")
+        self.assertEqual(r.exit_code, 0)
+        self.assertIsNone(r.tail_line)
+        self.assertIn("MUST-L3", r.reason)
+
+    def test_timeout_refuses(self) -> None:
+        # Sleep > exec_timeout_seconds with a no-output command.
+        cmd = "sleep 5"
+        r = bpc.run_local_verify(
+            cmd=cmd,
+            cwd=self.tmp,
+            exec_timeout_seconds=1,
+        )
+        self.assertFalse(r.passed)
+        self.assertTrue(r.timed_out)
+        self.assertIn("timeout", r.reason)
 
 
 class TestRunBabysitOnce(unittest.TestCase):

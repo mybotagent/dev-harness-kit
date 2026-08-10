@@ -37,10 +37,31 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
 PathLike = str | Path
+
+# MUST-L3 pytest tail line: the iteration records the command's quoted
+# `N passed in Ns` (or `N failed in Ns`) line so a subsequent audit can
+# verify the gate actually exercised the suite, not a no-op echo.
+# Matches `pytest -q` / `pytest -v` / `pytest --tb=short` output. Other
+# test runners (Go, JS) are out of scope for this default; operators
+# pass `--local-test-cmd` with a runner that emits a recognizable tail.
+PYTEST_TAIL_LINE_RE: str = (
+    r"\b\d+ (?:passed|failed)"
+    r"(?:, \d+ (?:skipped|xfailed|xpassed))?"
+    r" in [\d.]+s\b"
+)
+
+# Shell metacharacters in `--local-test-cmd` that suggest the operator
+# is using a compound expression rather than a single test command.
+# Caller-side lint only -- the orchestrator does NOT block on this,
+# because the operator owns the shell. The warning is a one-line hint
+# that the trust boundary is wider than the documented example.
+_SHELL_METACHARS: frozenset = frozenset(";|&><`$()")
 
 # Exit codes for `run_babysit_once`. Stable across the project so the
 # babysit-pr skill can switch on them deterministically.
@@ -134,6 +155,35 @@ def parse_babysit_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "Audit-trail justification for the bypass. Required when "
             "--operator-is-only-human is set; quoted into the PR comment."
+        ),
+    )
+    parser.add_argument(
+        "--local-verify",
+        action="store_true",
+        help=(
+            "Optional local-only mode (additive; default behavior unchanged). "
+            "After applying a fix in the skill's §Algorithm loop, run "
+            "--local-test-cmd (default: 'pytest -q') inside the worktree "
+            "BEFORE the commit + push. If the test command exits non-zero, "
+            "abort the iteration -- no git commit, no git push, no "
+            "GH-Actions run consumed. Lets operators gate iteration on "
+            "local test passage without burning GH-Actions minutes on a "
+            "known-failing commit. The §Algorithm step 8 'VERIFY LOCAL' "
+            "(re-run the specific failing check) is preserved alongside; "
+            "this flag adds a *broader* pre-commit check, not a replacement."
+        ),
+    )
+    parser.add_argument(
+        "--local-test-cmd",
+        default="pytest -q",
+        metavar="CMD",
+        help=(
+            "Shell command to run inside the worktree when "
+            "--local-verify is set. Defaults to 'pytest -q'. "
+            "The command's stdout+stderr MUST include a pytest-style "
+            "tail line ('<N> passed in <Ns>s' or '<N> failed in <Ns>s') "
+            "per MUST-L3; the MUST-L3 quoted-evidence contract is "
+            "enforced by the skill body, not by this helper."
         ),
     )
     ns = parser.parse_args(list(argv))
@@ -258,6 +308,149 @@ def format_ownership_confirmed_comment(operator: str, rationale: str, now_iso: s
     """
     op = operator.lstrip("@")
     return f"/ownership-confirmed by operator={op} at {now_iso}; rationale={rationale}"
+
+
+# ---------------------------------------------------------------------------
+# Local-verify enforcement (issue: --local-verify / --local-test-cmd were
+# parsed but consumed by nothing -- the advertised gate was prose-only).
+#
+# The pure helper below runs the operator's command, parses the
+# pytest-style tail line for MUST-L3 evidence, and returns a structured
+# verdict. The babysit-pr skill §Algorithm step 7.5 invokes it; the
+# iteration refuses to advance to commit/push unless passed=True.
+#
+# Threat model: operator-local. The operator already has shell access,
+# so `bash -c "$cmd"` is the documented execution mode. Shell-meta lint
+# is a caller-side warning, not a block -- the operator owns the
+# boundary.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class LocalVerifyResult:
+    """Structured result of `run_local_verify`.
+
+    Fields:
+      passed: True iff the command exited 0 AND a pytest tail line was
+              found in the combined stdout+stderr. Either failure on
+              its own is enough to refuse the gate (MUST-L3).
+      exit_code: Process exit code, or None on timeout.
+      tail_line: The matched pytest tail line (e.g. "47 passed in 1.23s"),
+                 or None if no match.
+      stdout: Captured stdout (text, may be empty).
+      stderr: Captured stderr (text, may be empty).
+      reason: One-line human-readable explanation of the verdict
+              ("ok", "exit 1", "timeout after 600s", "missing tail line").
+      timed_out: True if the command exceeded `exec_timeout_seconds`.
+    """
+
+    passed: bool
+    exit_code: int | None
+    tail_line: str | None
+    stdout: str
+    stderr: str
+    reason: str
+    timed_out: bool = False
+
+
+def lint_local_test_cmd(cmd: str) -> list[str]:
+    """Return a list of shell-metachar warnings for `cmd`.
+
+    The orchestrator does not block on this -- the operator owns the
+    shell -- but a one-line warning makes the trust boundary visible.
+    Empty input returns no warnings.
+    """
+    if not cmd:
+        return []
+    return [f"shell meta '{ch}' in --local-test-cmd" for ch in _SHELL_METACHARS if ch in cmd]
+
+
+def run_local_verify(
+    *,
+    cmd: str,
+    cwd: PathLike,
+    exec_timeout_seconds: int = 600,
+    tail_line_re: str = PYTEST_TAIL_LINE_RE,
+) -> LocalVerifyResult:
+    """Execute `cmd` inside `cwd` and enforce MUST-L3 evidence.
+
+    Behaviour:
+      1. Run `bash -c "$cmd"` with `cwd` as the worktree root.
+      2. On non-zero exit -> return `passed=False` (reason includes the
+         exit code; tail_line is whatever matched, may be None).
+      3. On timeout -> return `passed=False`, `timed_out=True`.
+      4. On exit 0 + no pytest tail line -> return `passed=False` with
+         reason "exit 0 but no pytest-tail line found (MUST-L3
+         enforcement)". A green command that doesn't actually run the
+         suite MUST NOT pass the gate -- the iteration log would lie
+         about its evidence.
+      5. On exit 0 + tail line found -> return `passed=True`.
+
+    Pure-ish: only side effect is the subprocess execution. No network,
+    no global state, no `gh` calls. Safe to call repeatedly in tests.
+    """
+    if not cmd:
+        return LocalVerifyResult(
+            passed=False,
+            exit_code=None,
+            tail_line=None,
+            stdout="",
+            stderr="",
+            reason="empty --local-test-cmd",
+        )
+
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=exec_timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return LocalVerifyResult(
+            passed=False,
+            exit_code=None,
+            tail_line=None,
+            stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else (exc.stdout.decode() if exc.stdout else ""),
+            stderr=(exc.stderr or "") if isinstance(exc.stderr, str) else (exc.stderr.decode() if exc.stderr else ""),
+            reason=f"timeout after {exec_timeout_seconds}s",
+            timed_out=True,
+        )
+
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+    combined = stdout + ("\n" + stderr if stderr else "")
+    match = re.search(tail_line_re, combined)
+    tail_line = match.group(0) if match else None
+
+    if completed.returncode != 0:
+        return LocalVerifyResult(
+            passed=False,
+            exit_code=completed.returncode,
+            tail_line=tail_line,
+            stdout=stdout,
+            stderr=stderr,
+            reason=f"exit {completed.returncode}",
+        )
+
+    if tail_line is None:
+        return LocalVerifyResult(
+            passed=False,
+            exit_code=completed.returncode,
+            tail_line=None,
+            stdout=stdout,
+            stderr=stderr,
+            reason="exit 0 but no pytest-tail line found (MUST-L3 enforcement)",
+        )
+
+    return LocalVerifyResult(
+        passed=True,
+        exit_code=completed.returncode,
+        tail_line=tail_line,
+        stdout=stdout,
+        stderr=stderr,
+        reason="ok",
+    )
 
 
 # ---------------------------------------------------------------------------

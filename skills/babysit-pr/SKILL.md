@@ -52,7 +52,9 @@ branch's PR is already closed or merged.
 ### CLI flags (issues #324, #527)
 
 ```
-/dev-kit:babysit-pr [--pr N] [--operator-is-only-human] [--rationale "<text>"]
+/dev-kit:babysit-pr [--pr N]
+                    [--operator-is-only-human] [--rationale "<text>"]
+                    [--local-verify [--local-test-cmd "<cmd>"]]
 ```
 
 | Flag                       | Effect |
@@ -61,6 +63,8 @@ branch's PR is already closed or merged.
 | `--pr N` | Babysit explicit PR `N`, overriding current-branch PR discovery. The target must be open; use this when the current branch's PR is closed or merged. |
 | `--operator-is-only-human` | Opt-out for single-operator repos. Refuses with exit 1 if `CODEOWNERS_PATH` OR `COLLABORATORS` list any handle other than `OPERATOR_HANDLE`. Requires `--rationale`. Posts the audit comment `/ownership-confirmed by operator=<handle> at <ISO-8601>; rationale=<text>` and hands off — it never merges the PR. Auto-merge into `main` is disabled by policy; the human operator runs `gh pr merge` themselves. |
 | `--rationale "<text>"`     | Required when `--operator-is-only-human` is set; quoted verbatim into the audit comment. The flag pair is the *only* canonical way to bypass the human-review gate. |
+| `--local-verify`           | **Optional additive flag** (default behavior unchanged when absent). After §Algorithm step 7 (APPLY FIX) and **before** step 9 (COMMIT + PUSH), run `--local-test-cmd` (default `pytest -q`) inside the worktree. If the test command exits non-zero, abort the iteration **before** `git add` / `git commit` / `git push` — no commit, no push, no GH-Actions run consumed. The §Algorithm step 8 (VERIFY LOCAL — re-run the specific failing check) is preserved alongside; this flag adds a *broader* pre-commit check, not a replacement. Use when GH-Actions minutes are tight and the operator wants to gate iteration on local test passage without burning CI on a known-failing commit. |
+| `--local-test-cmd "<cmd>"` | Shell command for `--local-verify` to run inside the worktree. Defaults to `pytest -q`. The command's stdout+stderr MUST include a pytest-style tail line (`<N> passed in <Ns>s` or `<N> failed in <Ns>s`) per MUST-L3; if the quoted line is missing, the iteration refuses to flip to "ready to push". |
 
 If `--pr N` is absent and `PR_NUMBER` is empty, print a one-line message and
 exit 1 explaining that an explicit `--pr N` or current-branch PR is required.
@@ -222,6 +226,21 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                     - secret detected    → abort (NEVER auto-remove secrets; user must decide)
                     - review feedback    → read review comments, apply reviewer-requested change
   7. APPLY FIX  — modify code (Edit/Write). One logical change per iteration.
+  7.5. LOCAL VERIFY (only when --local-verify set; opt-in flag) —
+       run `--local-test-cmd` (default `pytest -q`) inside the worktree
+       via `lib.babysit_pr_cli.run_local_verify(cmd=..., cwd=<worktree>)`.
+       MUST-L3: the iteration records the command's quoted pytest tail
+       line (`<N> passed in <Ns>s` or `<N> failed in <Ns>s`) returned in
+       `LocalVerifyResult.tail_line`. If the helper returns
+       `passed=False` — non-zero exit, timeout, or exit 0 without a tail
+       line — refuse to advance to step 9. Abort the iteration
+       **before** `git add` / `git commit` / `git push` — no commit, no
+       push, no GH-Actions run consumed. `lib.babysit_pr_cli.lint_local_test_cmd`
+       returns shell-meta warnings (informational only; the operator
+       owns the boundary). This is the broad pre-commit gate (full
+       pytest run); step 8 (below) is the narrow post-fix re-check of
+       the specific failing check. Default-absent path is unchanged:
+       skip this step entirely.
   8. VERIFY LOCAL — HARD GATE, re-run the same failing command locally;
                     quote exit code + test count.
                     - Local verify PASSES → proceed to step 9 (COMMIT).
@@ -425,6 +444,19 @@ drift, `tests/test_babysit_pr_cli.py` will fail.
 ```bash
 /dev-kit:babysit-pr --operator-is-only-human \
   --rationale "trivial README typo in docstring; no behavior change"
+```
+
+```bash
+# Local-only mode: run pytest before each iteration's push so a failing
+# local test aborts without burning GH-Actions minutes.
+# (Additive flag; default behavior is unchanged when --local-verify is absent.)
+/dev-kit:babysit-pr --local-verify
+```
+
+```bash
+# Local-only mode with a project-specific test command.
+# MUST-L3: stdout/stderr MUST include a pytest-style tail line.
+/dev-kit:babysit-pr --local-verify --local-test-cmd "make test"
 ```
 
 For the iron-law audit trail the rationale text appears verbatim in the
