@@ -82,11 +82,12 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 |---|---|---|
 | [`security`](security/SKILL.md) | `enforcement` | Full OWASP Top 10 2025 fan-out (A01–A10) with a verifier pass. Ten parallel subagents, one per category, return evidence-backed findings; a verification pass confirms or rejects each before a per-category breakdown tabl… |
 
-### `ship` (3)
+### `ship` (4)
 
 | Skill | α | Description |
 |---|---|---|
 | [`babysit-pr`](babysit-pr/SKILL.md) | `state` | 0-arg PR babysitter. Polls `gh pr checks`, fetches failing run logs, applies minimal fixes, commits + pushes, and re-iterates until review verdict = Approve and all required checks pass. Hard cap on iterations to preven… |
+| [`babysit-pr-local`](babysit-pr-local/SKILL.md) | `state` | 0-arg local-mode PR babysitter. Pre-push pytest gate + local LLM judge verdict loop; replaces `gh pr checks --watch` with `bin/review-local.sh`. Additive sibling of `babysit-pr`. |
 | [`bump`](bump/SKILL.md) | `state` | Explicit version bump of `.claude-plugin/plugin.json` + push of `chore/bump-vX.Y.Z`. Mirrors the auto-bump in `.github/workflows/version-bump.yml` but user-triggered for race recovery and pre-PR explicit bumps. |
 | [`ship`](ship/SKILL.md) | `state` | 0-arg. Release tag emit. Gate check only (hooks auto). Requires Review verdict=Approve + main-block pass. |
 
@@ -109,6 +110,7 @@ This index lists every skill shipped by the `dev-kit` plugin. Click into any ski
 | # | Skill | Category | α | Invocable |
 |---|---|---|---|---|
 | 1 | [`babysit-pr`](babysit-pr/SKILL.md) | `ship` | `state` | human |
+| 1a | [`babysit-pr-local`](babysit-pr-local/SKILL.md) | `ship` | `state` | human |
 | 2 | [`bootstrap`](bootstrap/SKILL.md) | `bootstrap` | `state` | human |
 | 3 | [`build`](build/SKILL.md) | `build` | `state` | human |
 | 4 | [`build-debug`](build-debug/SKILL.md) | `build` | `enforcement` | model |

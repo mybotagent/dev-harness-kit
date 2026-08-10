@@ -186,6 +186,16 @@ def parse_babysit_args(argv: Sequence[str]) -> argparse.Namespace:
             "enforced by the skill body, not by this helper."
         ),
     )
+    # Hidden routing flag for /dev-kit:babysit-pr-local (skill-only no-flag
+    # UX). Suppressed from --help so operators never see it; the
+    # babysit-pr-local skill body sets it before invoking the parser so
+    # the human-gate flow's default-exit-0 path still fires when no flag
+    # is set. `is_local_mode()` below is the canonical pre-scan reader.
+    parser.add_argument(
+        "--local-mode",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     ns = parser.parse_args(list(argv))
 
     # The rationale-required check lives in `run_babysit_once` rather
@@ -195,6 +205,25 @@ def parse_babysit_args(argv: Sequence[str]) -> argparse.Namespace:
     # orchestrator layer). Refusal raises SystemExit from the parser
     # only when the args fail to parse at all (unknown flag, etc.).
     return ns
+
+
+def is_local_mode(argv: Sequence[str]) -> bool:
+    """Return True iff argv contains the hidden `--local-mode` flag.
+
+    The flag is hidden from `parse_babysit_args --help` via
+    `argparse.SUPPRESS`, so operators never see it (L5 compliance for
+    the skill-only no-flag UX). The babysit-pr-local skill body calls
+    this helper at preflight to route to the local-mode algorithm
+    BEFORE invoking the parser — operators always run
+    `/dev-kit:babysit-pr-local` with no arguments, so the helper is
+    effectively a constant `True` for the new skill; it exists to
+    (a) keep the routing decision testable in isolation, (b) let other
+    callers (e.g. `tests/test_babysit_pr_local_cli.py`) pin the
+    contract without re-parsing, and (c) document the contract.
+
+    Pure function. No side effects, no I/O.
+    """
+    return "--local-mode" in list(argv)
 
 
 def parse_codeowners(path: PathLike) -> list[str]:

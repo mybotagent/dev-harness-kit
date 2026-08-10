@@ -217,17 +217,112 @@ green PRs.
 
 ---
 
+## `/dev-kit:babysit-pr-local` — local-mode babysit (additive sibling)
+
+When GH-Actions minutes are exhausted AND the operator wants the same
+iterative repair loop as `/dev-kit:babysit-pr`, but driven entirely by
+the local LLM-judge verdict instead of `gh pr checks --watch`, run
+this skill:
+
+```bash
+# No flags exposed to operators. Slash invocation is always 0-arg.
+/dev-kit:babysit-pr-local   # babysit current branch's PR
+```
+
+The skill is a 0-arg orchestrator. Behind the scenes, the §Algorithm
+step 4L invokes `bin/babysit-pr-local.sh <PR>` (refuses
+`--auto-appearing`), which execs `bin/review-local.sh --pr <PR>` to
+run `/dev-kit:review` + `/dev-kit:security` + `/dev-kit:maintenance`
+locally. The local audit comment (`<!-- dev-kit-verdict-audit
+-->` ... `verdict=Approve source=bin_review_local`) is the
+iteration's "green" signal; the local judge's stdout line
+(`combined verdict: <Word>`) is the MUST-L3 evidence quote.
+
+### Why a separate skill instead of a flag
+
+The user-facing UX contract — "operate only via skill, no options to
+remember" — drives the split:
+
+| | `/dev-kit:babysit-pr --local-verify` | `/dev-kit:babysit-pr-local` |
+|---|---|---|
+| `--local-verify` flag exposed | yes (operator types it) | no (always on) |
+| Review verdict source | GH-Actions CI | local `bin/review-local.sh` |
+| `gh pr checks --watch` | yes | no |
+| `--auto-approve` semantically possible | yes (the operator may pass it through babysit) | forbidden (refused with exit 2) |
+| Pre-push pytest gate | off by default | always on |
+
+The two skills are additive siblings — they share the lock-file
+protocol + `lib/babysit_pr_cli` helpers + worktree-detect plumbing,
+but the SKILL.md §Algorithm differs in five steps (see
+`skills/babysit-pr-local/SKILL.md` §"Step diff vs `/dev-kit:babysit-pr`").
+Operators who want local mode type exactly one command; operators
+who want CI mode keep using `/dev-kit:babysit-pr` unchanged.
+
+### Hidden flags (not in the slash description; power users + tests)
+
+- `--pr N` — babysit explicit PR number instead of current-branch
+  PR discovery. Use this when the PR was opened from another
+  worktree (e.g. `git worktree add .worktrees/<branch>` then push
+  from there).
+- `--local-test-cmd CMD` — override the pre-push pytest default
+  (`pytest -q`) with a project-specific runner. The command's
+  stdout+stderr MUST emit a pytest-style tail line
+  (`<N> passed in <Ns>s` or `<N> failed in <Ns>s`) per MUST-L3.
+  For Make / tox / nox / Go / JS projects, supply the runner that
+  emits that shape; otherwise the iteration refuses to push.
+- `--local-mode` — internal routing flag (already implied by the
+  slash invocation; kept so the parser doesn't double-parse).
+
+None appear in `--help`, `description`, or `argument-hint`. Operators
+always run `/dev-kit:babysit-pr-local` with no arguments.
+
+### Lock file
+
+`<worktree>/.dev-kit/babysit.lock` — **shared** with
+`/dev-kit:babysit-pr`. If both skills race on the same worktree, the
+second arrival sees a fresh lock and refuses with `already running`.
+The lock body appends `source=babysit-pr-local` so a post-mortem can
+tell which skill held the lock. The stale-lock TTL is the same
+30 minutes (`lib/babysit_pr_reliability.LOCK_TTL_SECONDS`).
+
+### Implementation
+
+- `bin/babysit-pr-local.sh` — single-call wrapper (≈30 lines) that
+  validates args (refuses `--auto-appearing`) and execs
+  `bin/review-local.sh --pr $PR_NUMBER`.
+- `lib/babysit_pr_cli.py::is_local_mode(argv)` + the hidden
+  `--local-mode` argparse field — routing helpers (the parser's
+  flag is suppressed from `--help` for L5 compliance).
+- `skills/babysit-pr-local/SKILL.md` — the algorithm body (≈365
+  lines); §Algorithm mirrors `/dev-kit:babysit-pr` with five
+  surgical substitutions (steps 3 / 4 / 4L / 7.5 / 11 / 12 in the
+  parent).
+- `skills/babysit-pr-local/recipes/canonical-wiring.md` — parent
+  preflight block + sub-agent prompt body.
+- `commands/babysit-pr-local.md` — slash command description
+  (mirrors `commands/review-local.md`).
+
+---
+
 ## Related
 
 - `bin/review-local.sh` — local equivalent of the GH-Actions review workflow.
-- `commands/review-local.md` — slash command wrapper.
-- `skills/babysit-pr/SKILL.md` — babysit-pr skill (additive `--local-verify` flag).
+- `bin/babysit-pr-local.sh` — local-mode babysit wrapper (executable; refuses `--auto-appearing`).
+- `commands/review-local.md` — slash command wrapper (one-shot local review).
+- `commands/babysit-pr-local.md` — slash command wrapper (local-mode babysit).
+- `skills/babysit-pr/SKILL.md` — babysit-pr skill (additive `--local-verify` flag, GH-Actions-driven).
+- `skills/babysit-pr-local/SKILL.md` — local-mode babysit skill (additive sibling; replaces `gh pr checks --watch` with `bin/review-local.sh`).
+- `skills/babysit-pr-local/recipes/canonical-wiring.md` — local-mode sub-agent prompt + parent preflight.
 - `lib/maintenance_gate.py` — verdict-extraction + combined-gate helper.
 - `lib/ci_setup.py` — provider resolution + secret name lookup.
+- `lib/babysit_pr_cli.py` — `is_local_mode`, `parse_babysit_args`, `run_local_verify`, `run_babysit_once`.
 - `bin/set-provider.sh` — local provider switch (`bin/set-provider.sh anthropic`).
 - `.github/workflows/review.yml` — GH-Actions equivalent (unchanged).
 - `.github/workflows/maintenance.yml` — GH-Actions equivalent (unchanged).
 - `scripts/ci-local.sh` — pre-existing local validator runner (no LLM review).
 - `tests/test_review_local_sh.py` — shell-level tests for `bin/review-local.sh`.
+- `tests/test_review_local_lib.py` — unit tests for `lib/review_local_lib.sh`.
 - `tests/test_babysit_pr_cli.py` — parser + orchestrator tests for babysit-pr.
+- `tests/test_babysit_pr_local_cli.py` — parser + `is_local_mode` tests for babysit-pr-local.
+- `tests/test_babysit_pr_local_sh.py` — shell-level tests for `bin/babysit-pr-local.sh`.
 - `tests/test_commands_install.py` — slash-command install governance.
