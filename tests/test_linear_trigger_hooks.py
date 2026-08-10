@@ -67,18 +67,21 @@ def _python_stub_env(stub_dir: Path, marker: Path) -> dict[str, str]:
     """Build a hermetic env with a `python3` stub first on PATH.
 
     The stub records the hook's argv + cwd to `marker`, then
-    execs the real `python3` (located via REAL_PYTHON) with the
-    same argv. Tests that place this stub first on PATH can
-    assert "the hook forked Python" by reading `marker` after
-    the hook returns. The existing `python3` (if any) is
-    shadowed; the stub is intentionally trivial so it cannot
-    accidentally make a real API call.
+    execs the real Python interpreter (whose path is hard-coded
+    into the stub at creation time) with the same argv. Tests
+    that place this stub first on PATH can assert "the hook
+    forked Python" by reading `marker` after the hook returns.
+    The existing `python3` (if any) is shadowed; the stub is
+    intentionally trivial so it cannot accidentally make a real
+    API call.
 
-    Implementation note: the inner recorder is a tiny `python -c`
-    invocation that writes `sys.argv[1:]` (the args the hook
-    passed) + `os.getcwd()` to a JSON file. We use a separate
-    inner Python rather than PYTHONSTARTUP because PYTHONSTARTUP
-    is site-policy-sensitive and varies across Python builds.
+    Why hard-code the path instead of resolving it inside the
+    stub: `command -v python3` resolves the stub itself
+    (the stub is named `python3` and is first on PATH), which
+    causes infinite recursion on the fallback branch. Passing
+    the real interpreter path as a literal in the stub is the
+    simplest correct fix; the path is baked in at stub creation
+    time, when `sys.executable` is the test runner's Python.
     """
     # Build the inner Python recorder as a separate file so we
     # can avoid f-string brace-escaping for the JSON dict literal.
@@ -90,26 +93,25 @@ def _python_stub_env(stub_dir: Path, marker: Path) -> dict[str, str]:
     recorder_path = stub_dir / "_recorder.py"
     recorder_path.write_text(recorder_src, encoding="utf-8")
 
+    real_python = sys.executable  # bake the real interpreter in
     stub = stub_dir / "python3"
+    # Quote each path so a Python install under "/usr/bin/..." or
+    # "/opt/homebrew/..." survives the shell. f-string the
+    # paths in; the recorder source uses no {} so no brace
+    # escaping is needed.
     stub.write_text(
         "#!/usr/bin/env bash\n"
         "# Test stub for hooks/linear-*.sh PATH-isolation tests.\n"
-        "python3_real=\"${REAL_PYTHON:-}\"\n"
-        "if [ -z \"$python3_real\" ] || [ ! -x \"$python3_real\" ]; then\n"
-        "    python3_real=$(command -v python3)\n"
-        "fi\n"
-        # Run the inner recorder with the hook's argv.
-        f"\"{sys.executable}\" \"{recorder_path}\" \"$@\"\n"
-        # Then exec the real python with the same argv. The hook
-        # doesn't care about the real python's exit code (it
-        # follows with `|| true`).
-        "exec \"$python3_real\" \"$@\"\n",
+        f"\"{real_python}\" \"{recorder_path}\" \"$@\"\n"
+        f"exec \"{real_python}\" \"$@\"\n",
         encoding="utf-8",
     )
     stub.chmod(0o755)
     env = _hermetic_env()
     env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
-    env["REAL_PYTHON"] = sys.executable
+    # The recorder path is hard-coded into the stub, so the
+    # env var is now informational only — keep it for diagnostics
+    # in case a future test wants to assert on it.
     env["_LINEAR_STUB_MARKER"] = str(marker)
     return env
 
