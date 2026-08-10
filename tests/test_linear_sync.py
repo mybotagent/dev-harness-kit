@@ -1481,5 +1481,241 @@ class TestDedupeSkipsTerminal(unittest.TestCase):
                 self.assertEqual(linear_sync.sync(), 0)
             self.assertEqual(archived, [])
 
+
+class TestIsRepoOwner(unittest.TestCase):
+    """Unit tests for `is_repo_owner` — the gate that decides whether
+    the auto-sync hooks (linear-autosync, linear-session-start,
+    linear-worktree-create, linear-task-change) fire for the current
+    user. The manual CLI path (`/dev-kit:linear`) intentionally does
+    not consult this gate.
+    """
+
+    def setUp(self):
+        # Reset the module-level cache so each test sees a clean state.
+        # The cache is process-local; a leftover True/False from a prior
+        # test would silently poison the next assertion.
+        linear_sync._OWNER_CACHE = {}
+
+    def tearDown(self):
+        linear_sync._OWNER_CACHE = {}
+
+    def test_env_var_true_bypasses_detection(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            with mock.patch.dict(os.environ, {"LINEAR_REPO_OWNER_AUTO_SYNC": "1"}, clear=False):
+                with mock.patch.object(linear_sync, "_resolve_gh_login") as gh:
+                    self.assertTrue(linear_sync.is_repo_owner(repo))
+                    gh.assert_not_called()
+
+    def test_env_var_false_bypasses_detection(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            with mock.patch.dict(os.environ, {"LINEAR_REPO_OWNER_AUTO_SYNC": "0"}, clear=False):
+                with mock.patch.object(linear_sync, "_resolve_gh_login") as gh:
+                    self.assertFalse(linear_sync.is_repo_owner(repo))
+                    gh.assert_not_called()
+
+    def test_detection_match_returns_true(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            with mock.patch.dict(os.environ, {}, clear=False):
+                # Remove any LINEAR_REPO_OWNER_AUTO_SYNC leftover from the host env.
+                os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+                with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="sh-ai-x"), \
+                     mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x"):
+                    self.assertTrue(linear_sync.is_repo_owner(repo))
+
+    def test_detection_match_is_case_insensitive(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="Sh-AI-X"), \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x"):
+                self.assertTrue(linear_sync.is_repo_owner(repo))
+
+    def test_detection_mismatch_returns_false(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="contributor"), \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x"):
+                self.assertFalse(linear_sync.is_repo_owner(repo))
+
+    def test_detection_no_gh_returns_false(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value=None), \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x"):
+                self.assertFalse(linear_sync.is_repo_owner(repo))
+
+    def test_detection_no_origin_returns_false(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="sh-ai-x"), \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value=None):
+                self.assertFalse(linear_sync.is_repo_owner(repo))
+
+    def test_result_is_cached_within_a_process(self):
+        with _fake_repo(linear_api_key="test-key") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="sh-ai-x") as gh, \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x") as origin:
+                self.assertTrue(linear_sync.is_repo_owner(repo))
+                self.assertTrue(linear_sync.is_repo_owner(repo))
+                # Both resolves are called once thanks to the cache.
+                self.assertEqual(gh.call_count, 1)
+                self.assertEqual(origin.call_count, 1)
+
+    def test_cache_is_keyed_per_repo(self):
+        # Two different `repo` paths in the same process must NOT share
+        # a cached answer. Regression for the previous module-global
+        # cache that was correct by accident (one repo per process)
+        # but unsound in principle.
+        with _fake_repo(linear_api_key="test-key", repo_dirname="repo-a") as repo_a, \
+             _fake_repo(linear_api_key="test-key", repo_dirname="repo-b") as repo_b:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="sh-ai-x") as gh, \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x") as origin:
+                # First call: cache miss → resolve fires.
+                self.assertTrue(linear_sync.is_repo_owner(repo_a))
+                # Second call, different repo: cache miss (different
+                # cache key) → resolve fires AGAIN.
+                self.assertTrue(linear_sync.is_repo_owner(repo_b))
+                # Third call: same as second → cache hit, no resolve.
+                self.assertTrue(linear_sync.is_repo_owner(repo_b))
+                # Two resolves, one per repo.
+                self.assertEqual(gh.call_count, 2)
+                self.assertEqual(origin.call_count, 2)
+
+
+class TestAutoSync(unittest.TestCase):
+    """Tests for the owner-gated auto-sync entry point used by
+    every Linear auto-trigger hook (linear-autosync,
+    linear-session-start, linear-worktree-create, linear-task-change).
+
+    The contract under test:
+      - When `is_repo_owner` is False, `auto_sync` bails without
+        forking a Linear round-trip (and without writing a handoff).
+      - When `is_repo_owner` is True, `auto_sync` delegates to
+        `sync()` exactly as before.
+      - The manual CLI path (`sync()`) is never gated.
+    """
+
+    def setUp(self):
+        linear_sync._OWNER_CACHE = {}
+
+    def tearDown(self):
+        linear_sync._OWNER_CACHE = {}
+
+    def test_non_owner_bails_silently_without_network(self):
+        with _fake_repo(linear_api_key="test-key", commit_subject="implement foo") as repo:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=False), \
+                 mock.patch("urllib.request.urlopen") as urlopen:
+                self.assertEqual(linear_sync.auto_sync(), 0)
+                urlopen.assert_not_called()
+                # No handoff is written on a gated bail.
+                self.assertEqual(
+                    list((repo / ".dev-kit" / "hand-off" / "linear").glob("*.json")),
+                    [],
+                )
+
+    def test_owner_delegates_to_sync(self):
+        with _fake_repo(linear_api_key="test-key", commit_subject="implement foo"):
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=True), \
+                 mock.patch.object(linear_sync, "sync", return_value=0) as sync:
+                self.assertEqual(linear_sync.auto_sync(), 0)
+                sync.assert_called_once()
+
+
+class TestTaskChangeSync(unittest.TestCase):
+    """Tests for the scope-change short-circuit used by
+    linear-task-change. The hook is meant to fire ONLY when the
+    current scope (branch + latest commit subject) differs from
+    the handoff's last-recorded scope. A same-scope prompt is a
+    continuation, not a change.
+    """
+
+    def setUp(self):
+        linear_sync._OWNER_CACHE = {}
+
+    def tearDown(self):
+        linear_sync._OWNER_CACHE = {}
+
+    def test_non_owner_bails_silently(self):
+        with _fake_repo(linear_api_key="test-key", commit_subject="implement foo",
+                        handoff={"scope": "feat/x::implement foo"}):
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=False), \
+                 mock.patch("urllib.request.urlopen") as urlopen:
+                self.assertEqual(linear_sync.task_change_sync(), 0)
+                urlopen.assert_not_called()
+
+    def test_same_scope_bails_without_network(self):
+        with _fake_repo(linear_api_key="test-key", branch="feat/x",
+                        commit_subject="implement foo",
+                        handoff={"scope": "feat/x::implement foo"}):
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=True), \
+                 mock.patch("urllib.request.urlopen") as urlopen:
+                self.assertEqual(linear_sync.task_change_sync(), 0)
+                urlopen.assert_not_called()
+
+    def test_changed_scope_triggers_auto_sync(self):
+        # Commit subject moved to a new task; handoff still has the old scope.
+        with _fake_repo(linear_api_key="test-key", commit_subject="implement bar",
+                        handoff={"scope": "feat/x::implement foo"}):
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=True), \
+                 mock.patch.object(linear_sync, "auto_sync", return_value=0) as auto:
+                self.assertEqual(linear_sync.task_change_sync(), 0)
+                auto.assert_called_once()
+
+    def test_missing_handoff_triggers_auto_sync(self):
+        # No prior handoff means the scope is "unknown" → always sync.
+        with _fake_repo(linear_api_key="test-key", commit_subject="implement foo",
+                        handoff=None):
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "is_repo_owner", return_value=True), \
+                 mock.patch.object(linear_sync, "auto_sync", return_value=0) as auto:
+                self.assertEqual(linear_sync.task_change_sync(), 0)
+                auto.assert_called_once()
+
+
+class TestLinearAutosyncHookCallsAutoSync(unittest.TestCase):
+    """Regression: the bash hook now calls `auto-sync` (owner-gated),
+    not bare `sync` (ungated). A non-owner must never see a Linear
+    round-trip from the Edit|Write path.
+    """
+
+    def test_hook_invokes_auto_sync_subcommand(self):
+        path = ROOT / "hooks" / "linear-autosync.sh"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("auto-sync", text,
+                      "linear-autosync.sh must call the owner-gated auto-sync entry point")
+        # Defense in depth: the bare subcommand (no owner gate) is
+        # still in the file via `if argv[0] == "sync"` in main(), but
+        # the hook must invoke `auto-sync` (not bare `sync`).
+        self.assertIn("linear_sync.py\" auto-sync", text,
+                      "the hook must pass auto-sync as the subcommand argument")
+
+    def test_session_start_hook_invokes_auto_sync(self):
+        path = ROOT / "hooks" / "linear-session-start.sh"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("linear_sync.py\" auto-sync", text,
+                      "the hook must pass auto-sync as the subcommand argument")
+
+    def test_worktree_create_hook_invokes_auto_sync(self):
+        path = ROOT / "hooks" / "linear-worktree-create.sh"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("linear_sync.py\" auto-sync", text,
+                      "the hook must pass auto-sync as the subcommand argument")
+        # The hook must parse the bash command for `git worktree add`.
+        self.assertIn("git worktree add", text)
+
+    def test_task_change_hook_invokes_task_change_sync(self):
+        path = ROOT / "hooks" / "linear-task-change.sh"
+        text = path.read_text(encoding="utf-8")
+        # task-change-sync is the scope-diff entry point; auto-sync
+        # would always fire and defeat the diff.
+        self.assertIn("linear_sync.py\" task-change-sync", text,
+                      "the hook must pass task-change-sync as the subcommand argument")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -276,6 +276,21 @@ if [ -f "$LOG_ON" ]; then
   (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_ON" >/dev/null 2>&1) || true
 fi
 
+# Linear bootstrap: trigger one auto-sync round in the new worktree
+# so the new branch's handoff is registered before the first
+# SessionStart or Edit|Write. The owner gate inside `auto_sync`
+# bails silently for non-owners (per the owner-only auto-trigger
+# contract from PR #linear-auto-sync-owner-gated). Falls through
+# silently if tools/linear_sync.py is missing.
+if [ -f "$WT_PATH/tools/linear_sync.py" ]; then
+  for py in python3 python py; do
+    if command -v "$py" >/dev/null 2>&1; then
+      (cd "$WT_PATH" && "$py" "$WT_PATH/tools/linear_sync.py" auto-sync) || true
+      break
+    fi
+  done
+fi
+
 # Build additionalContext — the harness consumes this as a client-specific
 # handoff envelope. The hook cannot call the host session or Agent API itself.
 CTX="worktree auto-cut ready
