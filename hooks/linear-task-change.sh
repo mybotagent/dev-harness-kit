@@ -73,8 +73,8 @@ fi
 # see tools/linear_sync.py::task_change_sync.
 for py in python3 python py; do
   if command -v "$py" >/dev/null 2>&1; then
-    "$py" "$PWD/tools/linear_sync.py" task-change-sync
-    exit $?
+    "$py" "$PWD/tools/linear_sync.py" task-change-sync || true
+    exit 0
   fi
 done
 

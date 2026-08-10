@@ -37,7 +37,23 @@ fi
 # call, not only successes).
 COMMAND="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)"
 RESPONSE="$(printf '%s' "$INPUT" | jq -r '.tool_response // ""' 2>/dev/null)"
+# Sanity: when the tool_response is missing, this Bash call did not
+# run (the hook should not have fired). Bail without any auto-sync.
 [ -z "$COMMAND" ] && exit 0
+[ -z "$RESPONSE" ] && exit 0
+# A failed `git worktree add` (or a dry-run via `--dry-run`) shows up
+# in tool_response as either:
+#   - a non-zero exit annotation (the harness prefixes failed tool
+#     responses with a marker line; we use the response's *absence*
+#     of the success marker to bail),
+#   - a stderr line that contains `fatal:` (git's own error prefix).
+# Either case means the worktree was NOT created. Falling back to
+# `git worktree list --porcelain` here would pick an arbitrary
+# pre-existing worktree and write a Linear handoff there — a
+# wrong-target write to the user's Linear workspace. Bail instead.
+if printf '%s' "$RESPONSE" | grep -qE '(^|[[:space:]])fatal:'; then
+  exit 0
+fi
 
 # Only fire on `git worktree add` — the matcher is "Bash" so any
 # command lands here. Avoid false positives on `git worktree list`,
@@ -105,14 +121,14 @@ for tok in $FRAGMENT; do
   esac
 done
 
-# Fallback: if the parse failed, take the most recent worktree
-# from `git worktree list --porcelain`. Each worktree is a 3-line
-# block (worktree <path>\nHEAD <sha>\nbranch <refs>); we want the
-# last block's first line.
-if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
-  WT_PATH="$(cd "$PWD" && git worktree list --porcelain 2>/dev/null \
-    | awk 'BEGIN{block=""} /^worktree /{block=$2} END{print block}')"
-fi
+# If the parse failed, bail silently. We deliberately do NOT fall
+# back to `git worktree list --porcelain` here — that would pick an
+# arbitrary pre-existing worktree and could write a Linear handoff
+# to the wrong target on a failed / dry-run / chained worktree
+# command. The contract is "auto-sync on a NEW worktree that we
+# can identify from the bash command"; if we cannot identify it, we
+# stay silent and let the next Edit|Write hook (or the
+# SessionStart hook in the new worktree) take over.
 [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ] && exit 0
 
 # Resolve to absolute path so the subsequent `cd` is unambiguous.

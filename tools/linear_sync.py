@@ -275,10 +275,16 @@ def _write_worktree_config(repo: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-# Cache for _is_repo_owner — the gh CLI call is expensive on every Edit.
-# Negative cache (None) means "we tried and the answer is no" — never re-try
-# in the same process; the user can re-run after a gh auth fix.
-_OWNER_CACHE: bool | None = None
+# Per-repo cache for `is_repo_owner`. Keyed on `str(repo.resolve())`
+# so a single Python process that handles multiple repos (e.g. a
+# shared `tools/save_log.py` invocation, or a future sibling-repo
+# helper) does not leak a "yes" for repo A into a "yes" for repo B.
+# The cache is process-local; every Edit|Write re-forks Python so the
+# lifetime is short in practice. `True` and `False` are both cached
+# so a confirmed-owner session does not re-run `gh api user` for
+# every keystroke; a key present in the dict — regardless of value —
+# is the "we already answered" sentinel.
+_OWNER_CACHE: dict[str, bool] = {}
 
 
 def _resolve_gh_login() -> str | None:
@@ -366,25 +372,26 @@ def is_repo_owner(repo: Path | None = None) -> bool:
     "stay silent", never "auto-sync anyway".
     """
     global _OWNER_CACHE
-    if _OWNER_CACHE is not None:
-        return _OWNER_CACHE
+    target = repo or _repo_root()
+    cache_key = str(target.resolve())
+    if cache_key in _OWNER_CACHE:
+        return _OWNER_CACHE[cache_key]
 
     override = os.environ.get("LINEAR_REPO_OWNER_AUTO_SYNC", "").strip().lower()
     if override in ("1", "true", "yes", "on"):
-        _OWNER_CACHE = True
+        _OWNER_CACHE[cache_key] = True
         return True
     if override in ("0", "false", "no", "off"):
-        _OWNER_CACHE = False
+        _OWNER_CACHE[cache_key] = False
         return False
 
-    target = repo or _repo_root()
     login = _resolve_gh_login()
     owner = _resolve_origin_owner(target)
     if not login or not owner:
-        _OWNER_CACHE = False
+        _OWNER_CACHE[cache_key] = False
         return False
-    _OWNER_CACHE = login.lower() == owner.lower()
-    return _OWNER_CACHE
+    _OWNER_CACHE[cache_key] = login.lower() == owner.lower()
+    return _OWNER_CACHE[cache_key]
 
 
 def _project_name_override(repo: Path) -> str:
@@ -1402,9 +1409,22 @@ def _last_handoff_scope(repo: Path) -> str | None:
 
     Used by `task_change_sync` to detect mid-session scope shifts
     (a new commit, a fresh prompt, a branch change) without
-    round-tripping to Linear on every prompt. Returns the empty
-    string when the handoff exists but carries no scope (a brand
-    new handoff after a stale-handoff replacement).
+    round-tripping to Linear on every prompt. Returns `None` when:
+
+      - the handoff is missing (no prior sync round),
+      - the handoff is unreadable (corrupt JSON),
+      - the handoff carries no `scope` key (brand-new handoff
+        after a stale-handoff replacement), or
+      - the `scope` value is the empty string (folded by the
+        `scope or None` short-circuit; the empty-vs-`None`
+        distinction is invisible to callers, which is the point —
+        both mean "treat as a fresh sync").
+
+    The empty-string case is intentionally collapsed to `None`:
+    a `None` last-scope combined with any non-`None` current-scope
+    is the "scope changed" trigger, and treating both "no record"
+    and "empty record" as `None` keeps the trigger logic to a
+    single `last != current` comparison.
     """
     handoff = _read_handoff(repo) or {}
     scope = handoff.get("scope")

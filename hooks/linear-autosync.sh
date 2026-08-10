@@ -63,8 +63,8 @@ fi
 # work explicitly via `/dev-kit:linear`.
 for py in python3 python py; do
   if command -v "$py" >/dev/null 2>&1; then
-    "$py" "$PROJECT_DIR/tools/linear_sync.py" auto-sync
-    exit $?
+    "$py" "$PROJECT_DIR/tools/linear_sync.py" auto-sync || true
+    exit 0
   fi
 done
 

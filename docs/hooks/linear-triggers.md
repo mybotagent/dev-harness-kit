@@ -97,8 +97,13 @@ refusing to ever touch the API.
 Both `hooks/hooks.json` (Claude Code) and
 `.codex-plugin/hooks/hooks.json` (Codex) register the three hooks
 in the same event matchers, so behavior is identical across
-runtimes. The `test_provider_divergence_wiring.py` test asserts
-the parity.
+runtimes. The parity is asserted by two regression tests:
+`tests/test_linear_trigger_hooks_wiring.py` (loops over BOTH
+JSONs and asserts every hook is wired under the expected
+event + matcher in each runtime) and
+`tests/test_provider_divergence_wiring.py` (asserts that the
+Claude runtime does not register a SessionStart hook that is
+absent from Codex).
 
 ## See also
 

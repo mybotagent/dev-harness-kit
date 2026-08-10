@@ -1494,10 +1494,10 @@ class TestIsRepoOwner(unittest.TestCase):
         # Reset the module-level cache so each test sees a clean state.
         # The cache is process-local; a leftover True/False from a prior
         # test would silently poison the next assertion.
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def tearDown(self):
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def test_env_var_true_bypasses_detection(self):
         with _fake_repo(linear_api_key="test-key") as repo:
@@ -1561,6 +1561,27 @@ class TestIsRepoOwner(unittest.TestCase):
                 self.assertEqual(gh.call_count, 1)
                 self.assertEqual(origin.call_count, 1)
 
+    def test_cache_is_keyed_per_repo(self):
+        # Two different `repo` paths in the same process must NOT share
+        # a cached answer. Regression for the previous module-global
+        # cache that was correct by accident (one repo per process)
+        # but unsound in principle.
+        with _fake_repo(linear_api_key="test-key", repo_dirname="repo-a") as repo_a, \
+             _fake_repo(linear_api_key="test-key", repo_dirname="repo-b") as repo_b:
+            os.environ.pop("LINEAR_REPO_OWNER_AUTO_SYNC", None)
+            with mock.patch.object(linear_sync, "_resolve_gh_login", return_value="sh-ai-x") as gh, \
+                 mock.patch.object(linear_sync, "_resolve_origin_owner", return_value="sh-ai-x") as origin:
+                # First call: cache miss → resolve fires.
+                self.assertTrue(linear_sync.is_repo_owner(repo_a))
+                # Second call, different repo: cache miss (different
+                # cache key) → resolve fires AGAIN.
+                self.assertTrue(linear_sync.is_repo_owner(repo_b))
+                # Third call: same as second → cache hit, no resolve.
+                self.assertTrue(linear_sync.is_repo_owner(repo_b))
+                # Two resolves, one per repo.
+                self.assertEqual(gh.call_count, 2)
+                self.assertEqual(origin.call_count, 2)
+
 
 class TestAutoSync(unittest.TestCase):
     """Tests for the owner-gated auto-sync entry point used by
@@ -1576,10 +1597,10 @@ class TestAutoSync(unittest.TestCase):
     """
 
     def setUp(self):
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def tearDown(self):
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def test_non_owner_bails_silently_without_network(self):
         with _fake_repo(linear_api_key="test-key", commit_subject="implement foo") as repo:
@@ -1611,10 +1632,10 @@ class TestTaskChangeSync(unittest.TestCase):
     """
 
     def setUp(self):
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def tearDown(self):
-        linear_sync._OWNER_CACHE = None
+        linear_sync._OWNER_CACHE = {}
 
     def test_non_owner_bails_silently(self):
         with _fake_repo(linear_api_key="test-key", commit_subject="implement foo",

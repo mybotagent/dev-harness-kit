@@ -14,6 +14,12 @@ runtime-test pattern for `linear-autosync.sh`):
   - `linear-worktree-create.sh` must not fire on a non-`git worktree
     add` command (the matcher is Bash, so every command lands here).
 
+For the bash half to be load-bearing, the worktree-create tests
+place a stub `python3` shim first on `$PATH` and assert the hook
+actually invokes it (catching the failure mode where the parser
+returns no `WT_PATH` and the hook bails silently — a returncode
+of 0 alone cannot distinguish that from a real fork).
+
 The integration-level verification — that the hook actually calls
 `auto-sync` from the right cwd, that the gate bails for non-owners
 — lives in `tests/test_linear_sync.py` (TestAutoSync + the
@@ -25,6 +31,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -46,11 +54,64 @@ def _hermetic_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("LINEAR_")}
 
 
-def _run_hook(hook: Path, payload: str = "") -> subprocess.CompletedProcess:
+def _run_hook(hook: Path, payload: str = "",
+              env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(hook)], input=payload,
-        capture_output=True, text=True, timeout=10, env=_hermetic_env(),
+        capture_output=True, text=True, timeout=10,
+        env=env if env is not None else _hermetic_env(),
     )
+
+
+def _python_stub_env(stub_dir: Path, marker: Path) -> dict[str, str]:
+    """Build a hermetic env with a `python3` stub first on PATH.
+
+    The stub records the hook's argv + cwd to `marker`, then
+    execs the real `python3` (located via REAL_PYTHON) with the
+    same argv. Tests that place this stub first on PATH can
+    assert "the hook forked Python" by reading `marker` after
+    the hook returns. The existing `python3` (if any) is
+    shadowed; the stub is intentionally trivial so it cannot
+    accidentally make a real API call.
+
+    Implementation note: the inner recorder is a tiny `python -c`
+    invocation that writes `sys.argv[1:]` (the args the hook
+    passed) + `os.getcwd()` to a JSON file. We use a separate
+    inner Python rather than PYTHONSTARTUP because PYTHONSTARTUP
+    is site-policy-sensitive and varies across Python builds.
+    """
+    # Build the inner Python recorder as a separate file so we
+    # can avoid f-string brace-escaping for the JSON dict literal.
+    recorder_src = (
+        "import json, os, sys\n"
+        "with open(os.environ['_LINEAR_STUB_MARKER'], 'w', encoding='utf-8') as fh:\n"
+        "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, fh)\n"
+    )
+    recorder_path = stub_dir / "_recorder.py"
+    recorder_path.write_text(recorder_src, encoding="utf-8")
+
+    stub = stub_dir / "python3"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Test stub for hooks/linear-*.sh PATH-isolation tests.\n"
+        "python3_real=\"${REAL_PYTHON:-}\"\n"
+        "if [ -z \"$python3_real\" ] || [ ! -x \"$python3_real\" ]; then\n"
+        "    python3_real=$(command -v python3)\n"
+        "fi\n"
+        # Run the inner recorder with the hook's argv.
+        f"\"{sys.executable}\" \"{recorder_path}\" \"$@\"\n"
+        # Then exec the real python with the same argv. The hook
+        # doesn't care about the real python's exit code (it
+        # follows with `|| true`).
+        "exec \"$python3_real\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = _hermetic_env()
+    env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["REAL_PYTHON"] = sys.executable
+    env["_LINEAR_STUB_MARKER"] = str(marker)
+    return env
 
 
 class TestLinearSessionStartHook(unittest.TestCase):
@@ -84,7 +145,7 @@ class TestLinearWorktreeCreateHook(unittest.TestCase):
         payload = json.dumps({
             "tool_name": "Bash",
             "tool_input": {"command": "git status"},
-            "tool_response": "",
+            "tool_response": "On branch main",
         })
         result = _run_hook(WORKTREE_CREATE_HOOK, payload=payload)
         self.assertEqual(result.returncode, 0)
@@ -99,27 +160,84 @@ class TestLinearWorktreeCreateHook(unittest.TestCase):
             payload = json.dumps({
                 "tool_name": "Bash",
                 "tool_input": {"command": cmd},
-                "tool_response": "",
+                "tool_response": "ok",
             })
             result = _run_hook(WORKTREE_CREATE_HOOK, payload=payload)
             self.assertEqual(result.returncode, 0, msg=cmd)
             self.assertEqual(result.stderr, "", msg=cmd)
 
+    def test_failed_worktree_add_response_does_not_invoke_python(self):
+        # A failed `git worktree add` leaves `fatal:` in the tool
+        # response. The hook MUST NOT auto-sync to an arbitrary
+        # pre-existing worktree — the reviewer flagged this as a
+        # wrong-target write. With a python3 stub on PATH, "the
+        # hook did not invoke python" is observable by checking
+        # the marker file is empty.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_dir = Path(tmp) / "stub"
+            marker = Path(tmp) / "marker.json"
+            stub_dir.mkdir()
+            env = _python_stub_env(stub_dir, marker)
+            env["LINEAR_API_KEY"] = "test-key"  # force past the env fast-path
+            # The parser will find `add -b fix/x .worktrees/fix/x`
+            # but the response says git failed; the hook must bail
+            # before forking.
+            payload = json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {"command": "git worktree add -b fix/x .worktrees/fix/x main"},
+                "tool_response": "fatal: a branch named 'fix/x' already exists",
+            })
+            result = _run_hook(WORKTREE_CREATE_HOOK, payload=payload, env=env)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(
+                marker.exists(),
+                f"hook must NOT fork python on a failed worktree-add "
+                f"response; marker was created at {marker}",
+            )
+
     def test_chained_command_with_worktree_add_is_detected(self):
         # The bash tool may chain `cd /tmp && git worktree add ...`.
         # The hook must find the worktree-add fragment in the chain.
-        payload = json.dumps({
-            "tool_name": "Bash",
-            "tool_input": {"command": "cd /tmp && git worktree add -b fix/x /tmp/x main"},
-            "tool_response": "",
-        })
-        # The hook may try to cd into /tmp/x; on a host without
-        # /tmp/x the path resolution falls through to `git worktree
-        # list --porcelain`, which will fail outside any repo. The
-        # contract is "exits 0"; stderr may be non-empty from the
-        # python fork attempt.
-        result = _run_hook(WORKTREE_CREATE_HOOK, payload=payload)
-        self.assertEqual(result.returncode, 0)
+        # With a python stub on PATH, a successful response
+        # (no `fatal:`) and a parseable path WILL trigger the
+        # auto-sync — the marker file is the observable signal.
+        with tempfile.TemporaryDirectory() as tmp:
+            wt_path = Path(tmp) / "wt-fix-x"
+            wt_path.mkdir()
+            # Minimal `tools/linear_sync.py` shim so the hook does
+            # not bail on the missing-toolkit guard.
+            (wt_path / "tools").mkdir()
+            (wt_path / "tools" / "linear_sync.py").write_text(
+                "# test shim\n", encoding="utf-8",
+            )
+            stub_dir = Path(tmp) / "stub"
+            marker = Path(tmp) / "marker.json"
+            stub_dir.mkdir()
+            env = _python_stub_env(stub_dir, marker)
+            payload = json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": f"cd {wt_path.parent} && git worktree add -b fix/x {wt_path} main",
+                },
+                "tool_response": "Preparing worktree (new branch 'fix/x')\nHEAD is now at abc1234",
+            })
+            result = _run_hook(WORKTREE_CREATE_HOOK, payload=payload, env=env)
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(
+                marker.exists(),
+                f"hook should fork python on a successful chained "
+                f"worktree-add; marker missing at {marker}",
+            )
+            record = json.loads(marker.read_text(encoding="utf-8"))
+            # macOS resolves /tmp to /private/tmp under the hood; the
+            # hook's `pwd -P` agrees with that, so we resolve the
+            # expected path the same way before comparing.
+            self.assertEqual(record["cwd"], str(wt_path.resolve()),
+                             "auto-sync must run with cwd = new worktree path")
+            # The hook should pass `auto-sync` as the subcommand.
+            joined = " ".join(record["argv"])
+            self.assertIn("auto-sync", joined,
+                          f"expected 'auto-sync' subcommand, got argv={record['argv']}")
 
 
 class TestLinearTaskChangeHook(unittest.TestCase):

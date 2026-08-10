@@ -72,8 +72,8 @@ fi
 # Disable-model-invocation users have no `python3` alias guaranteed.
 for py in python3 python py; do
   if command -v "$py" >/dev/null 2>&1; then
-    "$py" "$PWD/tools/linear_sync.py" auto-sync
-    exit $?
+    "$py" "$PWD/tools/linear_sync.py" auto-sync || true
+    exit 0
   fi
 done
 
