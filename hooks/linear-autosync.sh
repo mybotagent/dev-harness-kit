@@ -57,9 +57,13 @@ if [ -z "${LINEAR_API_KEY:-}" ] && \
 fi
 
 # Disable-model-invocation users have no `python3` alias guaranteed.
+# `auto-sync` (not bare `sync`) is the entry point that applies the
+# repo-owner gate — see tools/linear_sync.py::auto_sync. The CLI's
+# `sync` subcommand remains ungated so a non-owner can still register
+# work explicitly via `/dev-kit:linear`.
 for py in python3 python py; do
   if command -v "$py" >/dev/null 2>&1; then
-    "$py" "$PROJECT_DIR/tools/linear_sync.py"
+    "$py" "$PROJECT_DIR/tools/linear_sync.py" auto-sync
     exit $?
   fi
 done

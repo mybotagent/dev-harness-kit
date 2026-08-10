@@ -275,6 +275,118 @@ def _write_worktree_config(repo: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+# Cache for _is_repo_owner — the gh CLI call is expensive on every Edit.
+# Negative cache (None) means "we tried and the answer is no" — never re-try
+# in the same process; the user can re-run after a gh auth fix.
+_OWNER_CACHE: bool | None = None
+
+
+def _resolve_gh_login() -> str | None:
+    """Return the GitHub login of the authenticated `gh` user, or None.
+
+    Best-effort. Never raises. Bounded by a 3-second timeout so a slow or
+    hung `gh` cannot stall the Edit/Write path. Returns None on any
+    failure (gh not installed, not authenticated, network error,
+    JSON shape mismatch) so the caller can fall through to "not the
+    owner" and stay silent.
+    """
+    try:
+        gh_path = __import__("shutil").which("gh")
+    except (OSError, ValueError):
+        gh_path = None
+    if not gh_path:
+        return None
+    try:
+        out = subprocess.check_output(
+            ["gh", "api", "user", "--jq", ".login"],
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    login = out.decode("utf-8", "ignore").strip()
+    return login or None
+
+
+def _resolve_origin_owner(repo: Path) -> str | None:
+    """Return the OWNER segment of the GitHub origin remote, or None.
+
+    Mirrors `lib/ci_setup.detect_owner_repo`'s URL parser but is
+    self-contained so this script has no lib/ dependency. SSH and
+    HTTPS forms are both handled. Non-GitHub remotes return None so
+    the caller treats the user as non-owner.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(repo), stderr=subprocess.DEVNULL, timeout=2,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    url = out.decode("utf-8", "ignore").strip()
+    if not url:
+        return None
+    m = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    if not m:
+        return None
+    owner = m.group(1).strip()
+    return owner or None
+
+
+def is_repo_owner(repo: Path | None = None) -> bool:
+    """Return True iff the current user is the owner of this repository.
+
+    This is the gate that distinguishes "auto-sync triggers fire
+    automatically" (owner) from "Linear only updates when the user
+    explicitly invokes `/dev-kit:linear`" (everyone else). The
+    three new trigger hooks (worktree-create, session-start,
+    task-change) all bail when this returns False, so a contributor
+    who clones the repo never has their work silently registered in
+    the owner's Linear workspace.
+
+    Resolution order (first match wins):
+
+      1. `LINEAR_REPO_OWNER_AUTO_SYNC=1|true` — explicit opt-in,
+         bypasses detection (e.g. for forks where gh auth points at
+         the contributor, not the upstream).
+      2. `LINEAR_REPO_OWNER_AUTO_SYNC=0|false` — explicit opt-out,
+         never auto-syncs even if detection would say True.
+      3. Detection — `gh api user --jq .login` must match the OWNER
+         segment of `git remote get-url origin`. Case-insensitive
+         comparison (GitHub logins are case-insensitive).
+
+    Negative results are cached in `_OWNER_CACHE` for the lifetime
+    of the process; positive results are cached too. The user can
+    re-run after fixing `gh auth` by killing the Python process
+    (every Edit|Write re-forks it, so the cache is short-lived in
+    practice).
+
+    Never raises. Returns False on any failure (gh missing, no
+    remote, non-GitHub remote, timeout) — the safe default is
+    "stay silent", never "auto-sync anyway".
+    """
+    global _OWNER_CACHE
+    if _OWNER_CACHE is not None:
+        return _OWNER_CACHE
+
+    override = os.environ.get("LINEAR_REPO_OWNER_AUTO_SYNC", "").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        _OWNER_CACHE = True
+        return True
+    if override in ("0", "false", "no", "off"):
+        _OWNER_CACHE = False
+        return False
+
+    target = repo or _repo_root()
+    login = _resolve_gh_login()
+    owner = _resolve_origin_owner(target)
+    if not login or not owner:
+        _OWNER_CACHE = False
+        return False
+    _OWNER_CACHE = login.lower() == owner.lower()
+    return _OWNER_CACHE
+
+
 def _project_name_override(repo: Path) -> str:
     """Return the user-set project name override, or empty string.
 
@@ -1252,6 +1364,114 @@ def _build_issue_body(*, prompt: str, branch: str, repo: Path, scope: str) -> st
     return "\n\n".join(sections) + "\n"
 
 
+def auto_sync() -> int:
+    """Auto-sync entry point used by every hook.
+
+    Wraps `sync()` with the **repo-owner gate**: the hook-driven
+    auto-sync path only fires for the repository owner. The manual
+    CLI path (`/dev-kit:linear` → `sync()`) is intentionally
+    ungated, so a contributor who has configured Linear can still
+    register work explicitly.
+
+    Why a separate entry point instead of a flag in `sync()`:
+    keeps the gate decision out of the CLI surface, so a future
+    `sync()` change cannot accidentally weaken the owner-only
+    contract. The hook scripts (`hooks/linear-autosync.sh`,
+    `hooks/linear-session-start.sh`,
+    `hooks/linear-worktree-create.sh`,
+    `hooks/linear-task-change.sh`) all call
+    `python3 tools/linear_sync.py auto-sync`; the CLI never does.
+
+    Always returns 0 (non-blocking). On a non-owner, the gate bails
+    silently — no stderr noise, no extra Linear round-trip, the
+    hook just exits 0 and the user's edit proceeds.
+    """
+    repo = _repo_root()
+    if not is_repo_owner(repo):
+        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+            print(
+                f"[linear-sync] auto_sync: skipped (non-owner, repo={_repo_name(repo)})",
+                file=sys.stderr,
+            )
+        return 0
+    return sync()
+
+
+def _last_handoff_scope(repo: Path) -> str | None:
+    """Return the scope-key recorded in the handoff, or None.
+
+    Used by `task_change_sync` to detect mid-session scope shifts
+    (a new commit, a fresh prompt, a branch change) without
+    round-tripping to Linear on every prompt. Returns the empty
+    string when the handoff exists but carries no scope (a brand
+    new handoff after a stale-handoff replacement).
+    """
+    handoff = _read_handoff(repo) or {}
+    scope = handoff.get("scope")
+    if not isinstance(scope, str):
+        return None
+    return scope or None
+
+
+def _current_scope(repo: Path) -> str:
+    """Return the scope-key that *would* be used if sync() ran now.
+
+    Mirrors the prompt + branch resolution in `sync()` so the
+    `task_change_sync` check stays consistent with the eventual
+    sync round. Branch is read directly from git (cheap) and the
+    prompt from the latest commit subject, falling back to the
+    branch name when no commit exists yet on the branch.
+    """
+    prompt = _resolve_prompt(repo)
+    branch = _current_branch(repo)
+    return _scope_key(prompt, branch)
+
+
+def task_change_sync() -> int:
+    """Hook entry point for UserPromptSubmit (plan/task change).
+
+    Compares the current scope (branch + latest commit subject)
+    against the handoff's last-recorded scope. When they differ,
+    delegates to `auto_sync` (which re-validates against the
+    Linear API and creates / updates the matching issue). When
+    they match, returns 0 without forking a Linear round-trip —
+    the goal is "sync on change", not "sync on every prompt".
+
+    The handoff scope is the only signal we trust: the handoff
+    was written by a previous sync round and reflects the scope
+    that was last registered. A new prompt with the same scope
+    is a continuation, not a change.
+
+    Always returns 0 (non-blocking). On a non-owner, the gate
+    inside `auto_sync` bails silently — same contract as
+    `auto_sync`.
+    """
+    repo = _repo_root()
+    if not is_repo_owner(repo):
+        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+            print(
+                f"[linear-sync] task_change_sync: skipped (non-owner, repo={_repo_name(repo)})",
+                file=sys.stderr,
+            )
+        return 0
+    current = _current_scope(repo)
+    last = _last_handoff_scope(repo)
+    if last == current:
+        if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+            print(
+                f"[linear-sync] task_change_sync: scope unchanged ({current!r})",
+                file=sys.stderr,
+            )
+        return 0
+    if os.environ.get("LINEAR_DEBUG", "").strip() == "1":
+        print(
+            f"[linear-sync] task_change_sync: scope changed "
+            f"last={last!r} current={current!r}",
+            file=sys.stderr,
+        )
+    return auto_sync()
+
+
 def sync() -> int:
     """Entry point. Returns 0 always (non-blocking contract).
 
@@ -1418,6 +1638,10 @@ def main(argv: list[str] | None = None) -> int:
     _load_env_file(repo)
     if not argv or argv[0] == "sync":
         return sync()
+    if argv[0] == "auto-sync":
+        return auto_sync()
+    if argv[0] == "task-change-sync":
+        return task_change_sync()
     cmd, rest = argv[0], argv[1:]
     if cmd == "status":
         cfg = _read_worktree_config(repo)

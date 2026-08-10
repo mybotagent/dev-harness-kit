@@ -59,6 +59,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/worktree-auto-cut.sh",
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/linear-task-change.sh",
+            "timeout": 60
           }
         ]
       }
@@ -87,6 +92,14 @@
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/provider-divergence-check.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/linear-session-start.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -113,6 +126,10 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/loop-detect.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/linear-worktree-create.sh"
           }
         ]
       },

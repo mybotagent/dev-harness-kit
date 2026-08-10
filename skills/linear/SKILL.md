@@ -1,7 +1,7 @@
 ---
 name: linear
 category: config
-description: Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured.
+description: Optional Linear task tracker. Reconcile the current repository task with a canonical project and non-duplicate issue. Auto-syncs on every Claude Code edit when configured. Owner-gated auto-triggers also fire on worktree create, session start, and task change.
 alpha: state
 when_to_use: |
   - User types /dev-kit:linear
@@ -9,6 +9,9 @@ when_to_use: |
   - A workflow skill starts a new implementation, debugging, refactor, or plan task
   - The user asks to register, reconcile, or update work in Linear
   - Every Edit|Write|MultiEdit fires the auto-sync hook (when configured)
+  - A new worktree is created (fires linear-worktree-create)
+  - A new session starts in a worktree (fires linear-session-start)
+  - A UserPromptSubmit signals a scope change (fires linear-task-change)
 allowed-tools: Read Write Bash Glob
 model: sonnet
 disable-model-invocation: false
@@ -31,7 +34,7 @@ Resolve the current repository name and the user's Linear capability before maki
 
 ## Auto-sync trigger (every Edit|Write)
 
-When Linear is configured (`LINEAR_API_KEY` env var OR user-scope `~/.config/dev-kit/.env` OR per-worktree `.dev-kit/.env.linear` OR per-worktree `.dev-kit/linear-config.json:enabled` OR legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py` before every Edit|Write|MultiEdit. The script:
+When Linear is configured (`LINEAR_API_KEY` env var OR user-scope `~/.config/dev-kit/.env` OR per-worktree `.dev-kit/.env.linear` OR per-worktree `.dev-kit/linear-config.json:enabled` OR legacy `.dev-kit/.enabled.json:mcp.linear` ∈ {`auto`, `on`}), `hooks/linear-autosync.sh` runs `tools/linear_sync.py auto-sync` before every Edit|Write|MultiEdit. The script:
 
 1. Resolves the task description in priority order: the active hand-off's `prompt` field → the latest commit subject on the current branch → the branch name. The hand-off is keyed by worktree slug, so two parallel sessions in two worktrees never share or overwrite each other's state.
 2. Skips read-only / non-task prompts (`/`, `#`, `!`, `ls `, `cat `, `grep `, `git status`, and prompts that lack a work verb).
@@ -41,6 +44,33 @@ When Linear is configured (`LINEAR_API_KEY` env var OR user-scope `~/.config/dev
 6. Writes the updated handoff at `.dev-kit/hand-off/linear/<worktree-slug>.json` so the next edit reuses the same issue.
 
 The script always returns exit code 0. Transport errors, missing tokens, and GraphQL failures are logged to stderr and never block the edit (per #539: "Linear failures are non-blocking for implicit workflow calls."). Users without Linear configured are unaffected — the hook fast-paths on missing env var and config. Set `LINEAR_DEBUG=1` to surface every skip reason on stderr.
+
+### Owner-gated auto-trigger (worktree, session, task change)
+
+The Edit|Write hook is one of FOUR auto-trigger points. The other three — **worktree create, session start, task change** — fire on events that have no Edit|Write yet (the new worktree may sit idle, the session may open with a question first, the user may switch plans before saving). For each, a dedicated hook runs `auto-sync` from the right cwd so the Linear issue is registered immediately, without waiting for the user to type a work verb or for the next accidental save.
+
+| Trigger | Hook | Event | Sync cwd |
+|---|---|---|---|
+| Edit\|Write\|MultiEdit | `hooks/linear-autosync.sh` | PreToolUse | session cwd |
+| New worktree | `hooks/linear-worktree-create.sh` | PostToolUse:Bash (after `git worktree add`) | the new worktree path |
+| Auto-cut worktree | `hooks/worktree-auto-cut.sh` (extension) | UserPromptSubmit (after `git worktree add`) | the new worktree path |
+| Session start | `hooks/linear-session-start.sh` | SessionStart (worktree-only) | session cwd |
+| Plan / task change | `hooks/linear-task-change.sh` | UserPromptSubmit | session cwd |
+
+The four hooks all delegate to a single Python entry point: `tools/linear_sync.py auto-sync` (for the always-fire triggers) or `task-change-sync` (for the scope-diff trigger). Both entry points are **owner-gated** via `is_repo_owner()`:
+
+```text
+is_repo_owner(repo)
+  1. LINEAR_REPO_OWNER_AUTO_SYNC=1|true  → True  (explicit opt-in, e.g. for forks)
+  2. LINEAR_REPO_OWNER_AUTO_SYNC=0|false → False (explicit opt-out)
+  3. detection: gh api user --jq .login  == OWNER(remote.origin.url)
+        case-insensitive; 3s timeout; non-GitHub origin → False
+  4. anything fails (gh missing, no auth, no remote)  → False
+```
+
+The first two are the explicit escape hatches for forks (`gh auth` points at the contributor) and shared machines (the owner doesn't want auto-sync there). Detection compares the GitHub login of the authenticated `gh` user against the OWNER segment of `git remote get-url origin` — `sh-ai-x` for `https://github.com/sh-ai-x/dev-harness-kit.git`. A negative result is cached for the lifetime of the Python process (each Edit|Write re-forks, so the cache is short-lived in practice).
+
+The manual CLI path (`/dev-kit:linear` → `sync()`) is intentionally **ungated** — a contributor who has configured Linear can still register work explicitly. The gate is about implicit hook-driven updates, not about refusing to ever touch the API.
 
 ### Automatic transitions
 
