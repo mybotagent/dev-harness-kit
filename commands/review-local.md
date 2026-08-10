@@ -20,13 +20,20 @@ worktree. The script:
 
 1. Resolves the LLM provider from `--provider` flag → `CI_REVIEW_PROVIDER`
    env var → `.env` (via `lib/ci_setup.read_provider`).
-2. Exports the matching `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` +
-   `ANTHROPIC_MODEL*` env-var block (mirrors `review.yml:120-131`).
+2. Exports the matching `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL*`
+   env-var block (mirrors `review.yml:120-131`). The `ANTHROPIC_API_KEY`
+   is **scoped to the `claude -p` invocation only** (passed via the
+   `env KEY=... claude -p ...` prefix) so it never enters the parent
+   shell's persistent environment; subsequent `gh`/shell calls cannot
+   leak it via `/proc/<pid>/environ` or core dumps.
 3. Runs `claude -p "/dev-kit:review --diff <repo>/pull/<N>"` (and
    `/dev-kit:security`, `/dev-kit:maintenance` per the `--*-only` flags).
-4. Extracts each verdict from the corresponding claude[bot] PR comment
-   via `python3 -m lib.maintenance_gate --extract-verdict-from-stdin`
-   (the same helper the workflow shells out to).
+4. Captures each `claude -p "$prompt"` invocation's stdout into a
+   per-skill variable, then extracts the verdict by piping that stdout
+   to `python3 -m lib.maintenance_gate --extract-verdict-from-stdin`
+   (the same helper the workflow shells out to). The agent still posts
+   inline comments directly via `gh pr comment` for the human reviewer;
+   the captured stdout is what feeds the gate.
 5. Combines worst-of wins across the enabled judges.
 6. Enforces the L3-evidence gate (`<N> passed in <Ns>s` regex on the PR
    body) when the PR touches production code.

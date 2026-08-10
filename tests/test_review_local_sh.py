@@ -15,10 +15,23 @@ Coverage:
   - Non-numeric --pr exits non-zero with an error.
   - Unknown flag exits non-zero with --help hint.
   - The script is executable (mode includes the +x bit).
+  - Stub-binary behavioural coverage:
+      * Bump-PR title skip exits 0 with `source=bin_review_local
+        (bump-PR skip)` audit marker; no `claude` call.
+      * --auto-approve refuses on combined verdict != Approve
+        (does NOT call `gh pr review --approve`).
+      * --auto-approve refuses on L3-evidence gate failure.
+      * --auto-approve refuses on empty judge output.
+      * --no-touch-probe treats every PR as production-touching AND
+        still runs the L3 regex on the PR body.
 """
 from __future__ import annotations
 
+import json
+import os
+import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,13 +39,19 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SCRIPT = PROJECT_ROOT / "bin" / "review-local.sh"
 
 
-def _run(*args: str, check: bool = False) -> subprocess.CompletedProcess:
+def _run(*args: str, check: bool = False, env: dict | None = None, path: str | None = None) -> subprocess.CompletedProcess:
+    e = os.environ.copy()
+    if env:
+        e.update(env)
+    if path:
+        e["PATH"] = path
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
         check=check,
+        env=e,
     )
 
 
@@ -113,6 +132,302 @@ class TestReviewLocalShell(unittest.TestCase):
         # No "gh" or "python" in stderr — argv-only path.
         self.assertNotIn("gh ", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Stub-binary behavioural coverage.
+#
+# Tests in TestStubBinBehaviours install a tmpdir on PATH with stub
+# `gh`, `claude`, and `python3` binaries that return controlled outputs.
+# The script under test is then invoked as if it were talking to a real
+# provider; the assertions inspect what was called and what was posted.
+#
+# Each stub logs its invocations to a marker file so the test can assert
+# "gh pr review --approve was NOT called" / "claude was called N times"
+# without parsing the script's stdout.
+# ---------------------------------------------------------------------------
+class TestStubBinBehaviours(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.bindir = Path(self._tmp.name) / "bin"
+        self.bindir.mkdir()
+        self.call_log = self.bindir / "calls.log"
+        # Prepend the stub dir to PATH so the script picks up our `gh`,
+        # `claude`, and `python3` instead of the real ones. The script
+        # also shells out to `python3 -m lib.maintenance_gate`; we
+        # route that to the real interpreter by symlinking it AFTER
+        # the stubs, so `python3 lib.*` still works. The stubs only
+        # intercept the specific patterns the script uses.
+        self._real_path = os.environ.get("PATH", "")
+        self.new_path = f"{self.bindir}{os.pathsep}{self._real_path}"
+
+    def _write_stub(self, name: str, body: str) -> Path:
+        p = self.bindir / name
+        p.write_text(body, encoding="utf-8")
+        p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return p
+
+    def _stub_gh(
+        self,
+        *,
+        pr_state: str = "OPEN",
+        pr_title: str = "feat(ci): anything",
+        pr_body: str = "",
+        pr_files: list[str] | None = None,
+        repo_full: str = "owner/repo",
+    ) -> None:
+        file_list = pr_files if pr_files is not None else ["lib/x.py"]
+        # The script's `read_pr_field` python helper expects `files`
+        # to be a list of strings (the GH-Actions workflow jq filters
+        # down to `.files[].path`). The stub returns the post-jq shape
+        # so the test matches the production contract.
+        pr_json = json.dumps({
+            "state": pr_state,
+            "title": pr_title,
+            "body": pr_body,
+            "reviewDecision": "",
+            "files": list(file_list),
+        })
+        self._write_stub("gh", f"""#!/usr/bin/env bash
+echo "GH_CALLED: $*" >> '{self.call_log}'
+case "$1" in
+  pr)
+    case "$2" in
+      view)
+        printf '%s\\n' '{pr_json}'
+        exit 0
+        ;;
+      comment)
+        # gh pr comment <N> --body <body> -- shift past 4 args to land
+        # on the body text.
+        shift; shift; shift; shift  # pr comment <N> --body
+        BODY="$1"
+        echo "GH_PR_COMMENT: $BODY" >> '{self.call_log}'
+        exit 0
+        ;;
+      review)
+        echo "GH_PR_REVIEW: $*" >> '{self.call_log}'
+        exit 0
+        ;;
+    esac
+    ;;
+  repo)
+    echo '{repo_full}'
+    exit 0
+    ;;
+  api)
+    echo '[]'
+    exit 0
+    ;;
+esac
+exit 0
+""")
+
+    def _stub_claude(self, body: str = "**Verdict:** Approve\nSome prose.") -> None:
+        self._write_stub("claude", f"""#!/usr/bin/env bash
+echo "CLAUDE_CALLED: $*" >> '{self.call_log}'
+printf '%s\\n' '{body}'
+exit 0
+""")
+
+    def _stub_real_python3(self) -> None:
+        """Symlink the real python3 so `python3 -m lib.maintenance_gate`
+        still works. The stub bin/ dir comes first on PATH so its
+        `gh` and `claude` win, but `python3` resolves here.
+        """
+        # We don't actually need to symlink -- the test runner's python3
+        # is already on the unstubbed PATH. The script's calls go to
+        # `python3 -m lib.maintenance_gate ...`, which uses the real
+        # interpreter. No action needed.
+        return
+
+    def _run_with_stubs(self, *args: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+        """Run `bin/review-local.sh` with the stub binaries on PATH and
+        CI_REVIEW_PROVIDER + ANTHROPIC_API_KEY pre-set in env so the
+        script's provider/key resolution doesn't die before reaching
+        the gate under test.
+        """
+        env_overrides = {
+            "CI_REVIEW_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "sk-ant-fake-for-test",
+        }
+        if env_extra:
+            env_overrides.update(env_extra)
+        return _run(*args, path=self.new_path, env=env_overrides)
+
+    def _calls(self) -> list[str]:
+        if not self.call_log.exists():
+            return []
+        return self.call_log.read_text(encoding="utf-8").splitlines()
+
+    def test_bump_pr_skips_llm_and_emits_audit_marker(self) -> None:
+        """A bump-PR title short-circuits BEFORE any claude call.
+        The audit marker must show `source=bin_review_local
+        (bump-PR skip)` so downstream audits can grep for it.
+        """
+        self._stub_gh(pr_title="chore(release): bump dev-kit to v0.3.239")
+        self._stub_claude()
+        self._stub_real_python3()
+
+        r = self._run_with_stubs("--pr", "605")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        calls = self._calls()
+        # No claude call -- the bump-PR path skips the LLM judge.
+        self.assertFalse(
+            any(c.startswith("CLAUDE_CALLED") for c in calls),
+            "bump-PR must not invoke claude",
+        )
+        # Audit comment is posted with the bump-PR skip marker.
+        comments = [c for c in calls if c.startswith("GH_PR_COMMENT")]
+        self.assertEqual(len(comments), 1, f"expected one comment, got: {comments}")
+        self.assertIn("bump-PR skip", comments[0])
+
+    def test_auto_approve_refuses_on_non_approve_verdict(self) -> None:
+        """Security-judge finding: a Changes Requested verdict + --auto-approve
+        must REFUSE -- it must NOT call `gh pr review --approve`.
+        """
+        self._stub_gh(pr_files=["lib/babysit_pr_cli.py"])
+        # The maintenance judge returns Blocked; combined verdict != Approve.
+        # Use --maintenance-only so review + security don't override.
+        self._stub_claude(body="**Verdict:** Changes Requested\nMore findings.")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs(
+            "--pr", "605",
+            "--maintenance-only",
+            "--auto-approve",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("auto-approve refused", r.stderr)
+
+        calls = self._calls()
+        self.assertFalse(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"--auto-approve must not call `gh pr review --approve`; got: {calls}",
+        )
+
+    def test_auto_approve_refuses_on_l3_evidence_failure(self) -> None:
+        """Security-judge finding: PR body lacks pytest tail line AND
+        touches production code AND --auto-approve is set -- the gate
+        must REFUSE without calling gh pr review --approve.
+        """
+        self._stub_gh(
+            pr_title="feat(ci): local CI",
+            pr_body="",  # no pytest tail line
+            pr_files=["bin/review-local.sh"],
+        )
+        self._stub_claude(body="**Verdict:** Approve\nAll good.")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs(
+            "--pr", "605",
+            "--review-only",
+            "--auto-approve",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("L3-evidence", r.stderr)
+
+        calls = self._calls()
+        self.assertFalse(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"L3 failure must not allow auto-approve; got: {calls}",
+        )
+
+    def test_auto_approve_refuses_on_empty_judge_output(self) -> None:
+        """Maintenance-judge finding: empty judge output must REFUSE
+        --auto-approve. A gate that approves when its input is missing
+        is worse than no gate.
+        """
+        # `claude` returns only whitespace -- no `**Verdict:**` line.
+        # The extract step yields "" -- not "Approve".
+        self._stub_gh(pr_files=["bin/review-local.sh"], pr_body="47 passed in 1.23s")
+        self._stub_claude(body="\n\n")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs(
+            "--pr", "605",
+            "--review-only",
+            "--auto-approve",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        # Either "empty judge output" or "auto-approve refused" surfaces.
+        self.assertTrue(
+            "auto-approve refused" in r.stderr or "empty judge" in r.stderr,
+            f"expected auto-approve refusal; stderr={r.stderr!r}",
+        )
+
+        calls = self._calls()
+        self.assertFalse(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"empty verdict must not allow auto-approve; got: {calls}",
+        )
+
+    def test_no_touch_probe_runs_l3_strictly(self) -> None:
+        """Review-judge nit: --no-touch-probe must STILL run the L3
+        regex (force treats every PR as production-touching), not
+        disable the gate entirely.
+
+        Setup: PR body has NO pytest tail line; PR files are docs-only
+        (which would normally skip L3 because touches_prod=false).
+        --no-touch-probe forces L3 to run; the regex sees no tail
+        line, so the combined path returns exit 1, and --auto-approve
+        refuses with L3-evidence reason.
+        """
+        self._stub_gh(
+            pr_title="fix(docs): small doc edit",
+            pr_body="no pytest output here",
+            pr_files=["docs/local-ci.md"],
+        )
+        self._stub_claude(body="**Verdict:** Approve\nFine.")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs(
+            "--pr", "605",
+            "--review-only",
+            "--no-touch-probe",
+            "--auto-approve",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        # The L3 check fired (not bypassed), and auto-approve refused.
+        self.assertIn("L3-evidence", r.stderr)
+
+        calls = self._calls()
+        self.assertFalse(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"--no-touch-probe must not disable the L3 gate; got: {calls}",
+        )
+
+    def test_provider_flag_applied_before_api_key_resolution(self) -> None:
+        """Maintenance-judge finding: --provider must override .env
+        BEFORE the API key is resolved. We verify by setting
+        CI_REVIEW_PROVIDER=minimax in env (without MINIMAX_API_KEY)
+        and passing --provider anthropic with env:ANTHROPIC_API_KEY.
+        The script must NOT die on `no API key` -- it must pick up
+        the anthropic provider from the flag and the matching key
+        from env. (Previously the script resolved minimax from .env,
+        then swapped to anthropic after the key was already loaded,
+        silently sending the wrong key to the wrong endpoint.)
+        """
+        self._stub_gh(pr_files=["lib/x.py"], pr_body="47 passed in 1.23s")
+        self._stub_claude(body="**Verdict:** Approve\nFine.")
+        self._stub_real_python3()
+
+        env_extra = {
+            "CI_REVIEW_PROVIDER": "minimax",  # would-be fallback (no MINIMAX_API_KEY in env)
+            "ANTHROPIC_API_KEY": "sk-ant-fake-for-test",
+        }
+        r = self._run_with_stubs(
+            "--pr", "605",
+            "--review-only",
+            "--provider", "anthropic",
+            env_extra=env_extra,
+        )
+        # Exit 0 on clean verdict (no --auto-approve).
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # Belt-and-braces: no "no API key" die message.
+        self.assertNotIn("no API key", r.stderr)
 
 
 if __name__ == "__main__":

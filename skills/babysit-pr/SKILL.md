@@ -227,15 +227,20 @@ LOOP iter = 1 .. MAX_ITERS:  (hard increment at end of body — see L82 fallback
                     - review feedback    → read review comments, apply reviewer-requested change
   7. APPLY FIX  — modify code (Edit/Write). One logical change per iteration.
   7.5. LOCAL VERIFY (only when --local-verify set; opt-in flag) —
-       run `--local-test-cmd` (default `pytest -q`) inside the worktree.
+       run `--local-test-cmd` (default `pytest -q`) inside the worktree
+       via `lib.babysit_pr_cli.run_local_verify(cmd=..., cwd=<worktree>)`.
        MUST-L3: the iteration records the command's quoted pytest tail
-       line (`<N> passed in <Ns>s` or `<N> failed in <Ns>s`); if the line
-       is missing, refuse to advance to step 9. If the command exits
-       non-zero, abort the iteration **before** `git add` / `git commit` /
-       `git push` — no commit, no push, no GH-Actions run consumed.
-       This is the broad pre-commit gate (full pytest run); step 8
-       (below) is the narrow post-fix re-check of the specific failing
-       check. Default-absent path is unchanged: skip this step entirely.
+       line (`<N> passed in <Ns>s` or `<N> failed in <Ns>s`) returned in
+       `LocalVerifyResult.tail_line`. If the helper returns
+       `passed=False` — non-zero exit, timeout, or exit 0 without a tail
+       line — refuse to advance to step 9. Abort the iteration
+       **before** `git add` / `git commit` / `git push` — no commit, no
+       push, no GH-Actions run consumed. `lib.babysit_pr_cli.lint_local_test_cmd`
+       returns shell-meta warnings (informational only; the operator
+       owns the boundary). This is the broad pre-commit gate (full
+       pytest run); step 8 (below) is the narrow post-fix re-check of
+       the specific failing check. Default-absent path is unchanged:
+       skip this step entirely.
   8. VERIFY LOCAL — HARD GATE, re-run the same failing command locally;
                     quote exit code + test count.
                     - Local verify PASSES → proceed to step 9 (COMMIT).

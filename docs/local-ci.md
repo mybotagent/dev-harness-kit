@@ -86,9 +86,11 @@ DEEPSEEK_API_KEY=sk-...
 ```
 
 `bin/review-local.sh` reads the key via `lib/ci_setup.read_env_key()`
-and exports the same `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` /
-`ANTHROPIC_MODEL*` block as `review.yml:120-131` for the resolved
-provider.
+and passes the same `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` /
+`ANTHROPIC_MODEL*` block as `review.yml:120-131` to the `claude -p`
+invocation via the `env KEY=... claude -p ...` prefix. The key never
+enters the parent shell's persistent environment, so subsequent `gh` /
+shell calls cannot leak it via `/proc/<pid>/environ` or core dumps.
 
 ### What it does (mirrors `review.yml` step-by-step)
 
@@ -99,7 +101,7 @@ provider.
 | Run `/dev-kit:review` | `review.yml:135-151` | `claude -p "/dev-kit:review --diff ..."` |
 | Run `/dev-kit:security` | `review.yml:292-307` | `claude -p "/dev-kit:security --diff ..."` |
 | Run `/dev-kit:maintenance` | `maintenance.yml:119-136` | `claude -p "/dev-kit:maintenance --diff ..."` |
-| Extract verdict | `review.yml:220-225` | `python3 -m lib.maintenance_gate --extract-verdict-from-stdin` |
+| Extract verdict | `review.yml:220-225` | capture `claude -p` stdout per skill, pipe to `python3 -m lib.maintenance_gate --extract-verdict-from-stdin` |
 | Bump-PR skip | `review.yml:75` | `startsWith "$PR_TITLE" "chore(release): bump dev-kit to v"` |
 | Combined verdict gate | `review.yml:539-561` | `rank()` + worst-of wins |
 | L3-evidence gate | `review.yml:471-491` | grep for `[0-9]+ (passed\|failed) in [0-9.]+s` |
@@ -112,9 +114,11 @@ provider.
   `mcp__github_inline_comment__create_inline_comment` via
   `claude-code-action`. Local `claude -p` does not. The skill body
   falls back to `gh pr comment` (per `skills/review/SKILL.md`).
-- **Local API key exposure**: the script `export`s the key into the
-  `claude -p` env. Do NOT run it on a shared host where env-var
-  leakage is a concern.
+- **Local API key exposure**: the script scopes the key to the
+  `claude -p` invocation only (via `env KEY=... claude -p ...`). It
+  does NOT enter the parent shell's persistent env. Do NOT run it on
+  a shared host regardless -- the agent still processes PR content
+  with operator credentials.
 - **Cannot `gh pr merge`**: the script never merges. The operator
   runs `gh pr merge` manually after `--auto-approve` lands.
 - **No provider fallback**: `--provider` is strict; an unknown
@@ -151,9 +155,13 @@ APPLY FIX (step 7) and VERIFY LOCAL (step 8):
 
 ```
 7.5. LOCAL VERIFY (only when --local-verify set)
-     - run --local-test-cmd (default `pytest -q`) inside the worktree
-     - MUST-L3: quote the pytest tail line; if missing, refuse to push
-     - if exit non-zero, abort the iteration BEFORE git add / commit / push
+     - lib.babysit_pr_cli.run_local_verify(cmd=--local-test-cmd,
+                                          cwd=<worktree>)
+       executes the command via `bash -c "$cmd"` and returns a
+       LocalVerifyResult. The iteration proceeds only when
+       passed=True AND tail_line is the quoted pytest tail line.
+     - non-zero exit OR missing tail line OR timeout -> abort iteration
+       BEFORE git add / commit / push (MUST-L3 enforcement).
 ```
 
 The existing step 8 (VERIFY LOCAL — re-run the specific failing check)

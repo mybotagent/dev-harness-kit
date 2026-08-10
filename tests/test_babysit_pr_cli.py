@@ -309,6 +309,94 @@ class TestFormatOwnershipConfirmedComment(unittest.TestCase):
         self.assertIn("rationale=merge; do not; iterate", body)
 
 
+class TestLintLocalTestCmd(unittest.TestCase):
+    """T26-T29: caller-side shell-meta lint for --local-test-cmd."""
+
+    def test_empty_cmd_no_warnings(self) -> None:
+        self.assertEqual(bpc.lint_local_test_cmd(""), [])
+
+    def test_simple_cmd_no_warnings(self) -> None:
+        self.assertEqual(bpc.lint_local_test_cmd("pytest -q"), [])
+
+    def test_shell_meta_triggers_warning(self) -> None:
+        # Each metachar yields its own one-line warning so the operator
+        # sees the exact char, not a generic "looks dangerous".
+        warnings = bpc.lint_local_test_cmd("pytest -q && rm -rf /tmp/foo")
+        # `&` is in the metachar set; it surfaces as one warning per char.
+        self.assertTrue(any("&" in w for w in warnings), warnings)
+
+    def test_backtick_and_dollar_paren(self) -> None:
+        warnings = bpc.lint_local_test_cmd("echo `date` $(whoami)")
+        self.assertTrue(any("`" in w for w in warnings), warnings)
+        self.assertTrue(any("$" in w for w in warnings), warnings)
+        self.assertTrue(any("(" in w for w in warnings), warnings)
+        self.assertTrue(any(")" in w for w in warnings), warnings)
+
+
+class TestRunLocalVerify(unittest.TestCase):
+    """T30-T34: run_local_verify enforcement (issue: --local-verify was
+    prose-only; the gate is now real).
+
+    Each test runs the helper in a fresh tmpdir so subprocess cwd is
+    hermetic. The pytest-tail-line regex is the contract: exit 0 + no
+    tail line = passed=False (MUST-L3 enforcement).
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_empty_cmd_refuses(self) -> None:
+        r = bpc.run_local_verify(cmd="", cwd=self.tmp)
+        self.assertFalse(r.passed)
+        self.assertEqual(r.exit_code, None)
+        self.assertIn("empty", r.reason)
+
+    def test_passing_command_with_tail_line_passes(self) -> None:
+        # Bash one-liner that exits 0 and prints a pytest tail line.
+        cmd = (
+            'printf "%s\\n" "tests/test_x.py::test_a PASSED" "47 passed in 1.23s"; '
+            "exit 0"
+        )
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertTrue(r.passed, f"reason={r.reason!r} stderr={r.stderr!r}")
+        self.assertEqual(r.exit_code, 0)
+        self.assertIsNotNone(r.tail_line)
+        self.assertIn("passed in", r.tail_line)
+
+    def test_failing_command_refuses(self) -> None:
+        cmd = 'printf "%s\\n" "1 failed in 0.50s"; exit 1'
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertFalse(r.passed)
+        self.assertEqual(r.exit_code, 1)
+        self.assertIn("exit 1", r.reason)
+
+    def test_exit_zero_without_tail_line_refuses(self) -> None:
+        """MUST-L3: a green command that does NOT actually run the test
+        suite must NOT pass the gate. This is the regression guard for
+        a forged tail line.
+        """
+        cmd = 'printf "%s\\n" "all good"; exit 0'
+        r = bpc.run_local_verify(cmd=cmd, cwd=self.tmp)
+        self.assertFalse(r.passed, "exit 0 + no tail line must refuse (MUST-L3)")
+        self.assertEqual(r.exit_code, 0)
+        self.assertIsNone(r.tail_line)
+        self.assertIn("MUST-L3", r.reason)
+
+    def test_timeout_refuses(self) -> None:
+        # Sleep > exec_timeout_seconds with a no-output command.
+        cmd = "sleep 5"
+        r = bpc.run_local_verify(
+            cmd=cmd,
+            cwd=self.tmp,
+            exec_timeout_seconds=1,
+        )
+        self.assertFalse(r.passed)
+        self.assertTrue(r.timed_out)
+        self.assertIn("timeout", r.reason)
+
+
 class TestRunBabysitOnce(unittest.TestCase):
     """Pins the orchestrator's exit branches end-to-end."""
 
