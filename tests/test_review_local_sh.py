@@ -430,5 +430,176 @@ exit 0
         self.assertNotIn("no API key", r.stderr)
 
 
+# ---------------------------------------------------------------------------
+# No-explicit-provider local-auth fallback (operator finding, 2026-08-11):
+# an interactive local session almost always already has an authenticated
+# `claude` CLI (claude.ai login or a keychain-stored key) -- the CI-style
+# explicit ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL injection exists so a
+# GH-Actions runner (which has no interactive login) can authenticate.
+# Forcing the same requirement onto local operators who never asked for a
+# specific provider (no --provider flag, no CI_REVIEW_PROVIDER env, no
+# real .env — `.env.example`'s CI_REVIEW_PROVIDER=minimax is a committed
+# template default, not operator intent) breaks the "just works" case.
+# ---------------------------------------------------------------------------
+class TestLocalAuthFallback(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.bindir = Path(self._tmp.name) / "bin"
+        self.bindir.mkdir()
+        self.call_log = self.bindir / "calls.log"
+        self._real_path = os.environ.get("PATH", "")
+        self.new_path = f"{self.bindir}{os.pathsep}{self._real_path}"
+
+    def _write_stub(self, name: str, body: str) -> Path:
+        p = self.bindir / name
+        p.write_text(body, encoding="utf-8")
+        p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return p
+
+    def _stub_gh(self, pr_body: str = "") -> None:
+        pr_json = json.dumps({
+            "state": "OPEN",
+            "title": "feat(ci): anything",
+            "body": pr_body,
+            "reviewDecision": "",
+            "files": ["lib/x.py"],
+        })
+        self._write_stub("gh", f"""#!/usr/bin/env bash
+echo "GH_CALLED: $*" >> '{self.call_log}'
+case "$1" in
+  pr)
+    case "$2" in
+      view) printf '%s\\n' '{pr_json}'; exit 0 ;;
+      comment) echo "GH_PR_COMMENT" >> '{self.call_log}'; exit 0 ;;
+      review) echo "GH_PR_REVIEW: $*" >> '{self.call_log}'; exit 0 ;;
+    esac
+    ;;
+  repo) echo 'owner/repo'; exit 0 ;;
+  api)  echo '[]'; exit 0 ;;
+esac
+exit 0
+""")
+
+    def _stub_claude_capturing_env(self, body: str = "**Verdict:** Approve\nFine.") -> None:
+        """Stub `claude` that ALSO records which ANTHROPIC_* vars were
+        present in its own environment at call time -- this is how the
+        test distinguishes "provider env injected" from "bare inherited
+        env" (the fallback path under test)."""
+        self._write_stub("claude", f"""#!/usr/bin/env bash
+echo "CLAUDE_CALLED: $*" >> '{self.call_log}'
+env | grep -E '^ANTHROPIC_' | sort | sed 's/^/CLAUDE_SAW_ENV: /' >> '{self.call_log}' || echo "CLAUDE_SAW_ENV: (none)" >> '{self.call_log}'
+printf '%s\\n' '{body}'
+exit 0
+""")
+
+    def _run_clean(self, *args: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+        """Run the script with EVERY provider-related var explicitly
+        nulled out (empty string), regardless of what the host shell or
+        `.env.example` (a committed template, not operator config)
+        would otherwise supply -- guarantees hermetic "no signal" runs.
+        """
+        env = os.environ.copy()
+        for k in (
+            "CI_REVIEW_PROVIDER", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL", "MINIMAX_API_KEY", "DEEPSEEK_API_KEY",
+        ):
+            # Delete (not blank) -- an env var present with an empty
+            # value is still "present" to the child `claude` stub's
+            # `env | grep ANTHROPIC_` capture, which would falsely
+            # look like injection. A truly clean operator shell never
+            # set these keys at all.
+            env.pop(k, None)
+        env["PATH"] = self.new_path
+        if env_extra:
+            env.update(env_extra)
+        return subprocess.run(
+            ["bash", str(SCRIPT), *args],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def _calls(self) -> list[str]:
+        if not self.call_log.exists():
+            return []
+        return self.call_log.read_text(encoding="utf-8").splitlines()
+
+    def test_no_signal_falls_back_to_local_auth_no_die(self) -> None:
+        """No --provider flag, no CI_REVIEW_PROVIDER env, no real .env
+        (only the repo's committed .env.example declares a template
+        default) -- the script must NOT die on 'no API key' and must
+        still invoke claude (using its own local/inherited auth)."""
+        self._stub_gh(pr_body="47 passed in 1.23s")
+        self._stub_claude_capturing_env()
+
+        r = self._run_clean("--pr", "605", "--review-only")
+
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        self.assertNotIn("no API key", r.stderr)
+        self.assertNotIn("bad substitution", r.stderr)
+        calls = self._calls()
+        self.assertTrue(any(c.startswith("CLAUDE_CALLED:") for c in calls), calls)
+
+    def test_no_signal_skips_provider_env_injection(self) -> None:
+        """When falling back to local auth, the script must NOT inject
+        ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL
+        into the `claude -p` call -- an empty/fake override would
+        actively break a session that already has valid local auth.
+        """
+        self._stub_gh(pr_body="47 passed in 1.23s")
+        self._stub_claude_capturing_env()
+
+        r = self._run_clean("--pr", "605", "--review-only")
+
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        calls = self._calls()
+        env_lines = [c for c in calls if c.startswith("CLAUDE_SAW_ENV:")]
+        # Either no ANTHROPIC_* vars at all, or explicitly "(none)".
+        self.assertTrue(
+            env_lines == ["CLAUDE_SAW_ENV: (none)"] or env_lines == [],
+            f"expected no injected ANTHROPIC_* vars, got: {env_lines}",
+        )
+
+    def test_explicit_provider_flag_with_missing_key_still_dies(self) -> None:
+        """An EXPLICIT --provider ask that has no matching key is a real
+        misconfiguration -- unlike the no-signal case, this must still
+        fail loudly (the operator asked for something specific that
+        cannot be satisfied)."""
+        self._stub_gh()
+        self._stub_claude_capturing_env()
+
+        r = self._run_clean("--pr", "605", "--review-only", "--provider", "anthropic")
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no API key for provider 'anthropic'", r.stderr)
+        self.assertNotIn("bad substitution", r.stderr)
+
+    def test_explicit_env_provider_with_missing_key_still_dies(self) -> None:
+        """Same as above but the explicit signal comes from the
+        CI_REVIEW_PROVIDER process env instead of --provider."""
+        self._stub_gh()
+        self._stub_claude_capturing_env()
+
+        r = self._run_clean(
+            "--pr", "605", "--review-only",
+            env_extra={"CI_REVIEW_PROVIDER": "minimax"},
+        )
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no API key for provider 'minimax'", r.stderr)
+        self.assertNotIn("bad substitution", r.stderr)
+
+    def test_no_caret_caret_bashism_in_script(self) -> None:
+        """Portability regression guard: `${VAR^^}` (bash 4+ uppercase
+        expansion) is NOT valid on macOS's default bash (3.2, GPLv2
+        license freeze -- ships as /bin/bash). Any occurrence silently
+        breaks every code path that reaches it on a stock Mac. Assert
+        the pattern is gone for good."""
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("^^}", text, "found a bash-4-only ${VAR^^} uppercase expansion")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

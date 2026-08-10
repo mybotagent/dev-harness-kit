@@ -124,11 +124,27 @@ esac
 # resolved for the provider the operator actually wants (a previous
 # bug resolved the .env provider's key and then silently swapped
 # providers, leaking the wrong key to the wrong endpoint).
+#
+# PROVIDER_EXPLICIT tracks whether the operator ACTUALLY asked for a
+# specific provider (flag / process env / a real, operator-managed
+# `.env`) as opposed to `lib.ci_setup.read_provider()`'s silent
+# "minimax" fallback (which also matches the repo's committed
+# `.env.example:CI_REVIEW_PROVIDER=minimax` template default -- that
+# file exists so ci-doctor can audit a fresh clone; it is NOT operator
+# intent). An interactive local session almost always already has an
+# authenticated `claude` CLI (a claude.ai login or a keychain-stored
+# key) -- the ANTHROPIC_BASE_URL / API_KEY / AUTH_TOKEN injection below
+# exists so a GH-Actions runner (no interactive login) can authenticate.
+# Only an EXPLICIT provider ask with a missing key is a real
+# misconfiguration worth failing loudly on (§2 below).
 # ---------------------------------------------------------------------------
+PROVIDER_EXPLICIT=0
 if [ -n "$PROVIDER_FLAG" ]; then
   PROVIDER="$PROVIDER_FLAG"
+  PROVIDER_EXPLICIT=1
 elif [ -n "${CI_REVIEW_PROVIDER:-}" ]; then
   PROVIDER="$CI_REVIEW_PROVIDER"
+  PROVIDER_EXPLICIT=1
 else
   PROVIDER="$(python3 -c "
 import sys
@@ -137,6 +153,16 @@ sys.path.insert(0, 'lib')
 from ci_setup import read_provider
 print(read_provider(Path('${REPO_ROOT}')))
 ")"
+  if python3 -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, 'lib')
+from ci_setup import read_env_key
+v = read_env_key(Path('${REPO_ROOT}') / '.env', 'CI_REVIEW_PROVIDER')
+sys.exit(0 if v else 1)
+"; then
+    PROVIDER_EXPLICIT=1
+  fi
 fi
 
 case "$PROVIDER" in
@@ -176,10 +202,29 @@ API_KEY="$(read_provider_api_key)"
 PROVIDER_CFG="$(provider_config "$PROVIDER")"
 KEY_NAME="${PROVIDER_CFG%%|*}"
 API_KEY="$(eval "printf '%s' \"\${$KEY_NAME:-\$API_KEY}\"")"
-[ -n "$API_KEY" ] || die "no API key for provider '$PROVIDER' (set .env:${PROVIDER^^}_API_KEY or env var)"
 
 # ---------------------------------------------------------------------------
-# 2. Per-provider base URL / model mapping (mirrors review.yml:120-131
+# 2. No key found: EXPLICIT provider ask -> fail loudly (real
+#    misconfiguration). No signal at all -> fall back to the local
+#    `claude` CLI's own default authentication and skip the provider
+#    env injection entirely (§3 below leaves claude_env_args empty).
+#    Uppercasing via `tr` (not the bash-4-only caret-caret parameter
+#    expansion) for portability -- macOS ships bash 3.2 (GPLv2 license
+#    freeze), which lacks that operator; using it here would silently
+#    break this exact error path on a stock Mac.
+# ---------------------------------------------------------------------------
+USE_LOCAL_AUTH=0
+if [ -z "$API_KEY" ]; then
+  if [ "$PROVIDER_EXPLICIT" = "1" ]; then
+    PROVIDER_UPPER="$(printf '%s' "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
+    die "no API key for provider '$PROVIDER' (set .env:${PROVIDER_UPPER}_API_KEY or env var)"
+  fi
+  log "no provider explicitly configured and no API key found; falling back to local claude CLI auth (no key/base-url injection)"
+  USE_LOCAL_AUTH=1
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Per-provider base URL / model mapping (mirrors review.yml:120-131
 #    + 175-181). Sourced from `lib/review_local_lib.sh::provider_env_for`
 #    so the case-statement lives in one place (tested hermetically in
 #    tests/test_review_local_lib.py::TestProviderEnvFor). The API KEY
@@ -187,26 +232,31 @@ API_KEY="$(eval "printf '%s' \"\${$KEY_NAME:-\$API_KEY}\"")"
 #    invocation via `env KEY=... claude -p ...` so the key never enters
 #    the parent shell's persistent env (any subsequent subprocess,
 #    /proc/<pid>/environ reader, or core dump cannot leak it).
+#
+#    USE_LOCAL_AUTH=1 leaves claude_env_args EMPTY -- `env` with a zero-
+#    length array simply execs `claude` with the parent's inherited
+#    environment (its own pre-existing auth), matching the local-session
+#    fallback decided in §2.
 # ---------------------------------------------------------------------------
-PROVIDER_ENV=()
-while IFS= read -r line; do
-  PROVIDER_ENV+=("$line")
-done < <(provider_env_for "$PROVIDER")
-
-# Build the env prefix for a single `claude -p` invocation: provider
-# base URL / model vars + the API key scoped to this process only.
-# Guard against an empty PROVIDER_ENV (anthropic): an empty array must
-# NOT contribute an empty token, otherwise `env '' KEY=... cmd` fails
-# because '' is not a valid VAR= assignment.
 claude_env_args=()
-if [ "${#PROVIDER_ENV[@]}" -gt 0 ] && [ -n "${PROVIDER_ENV[0]}" ]; then
-  claude_env_args+=("${PROVIDER_ENV[@]}")
+if [ "$USE_LOCAL_AUTH" = "0" ]; then
+  PROVIDER_ENV=()
+  while IFS= read -r line; do
+    PROVIDER_ENV+=("$line")
+  done < <(provider_env_for "$PROVIDER")
+
+  # Guard against an empty PROVIDER_ENV (anthropic): an empty array must
+  # NOT contribute an empty token, otherwise `env '' KEY=... cmd` fails
+  # because '' is not a valid VAR= assignment.
+  if [ "${#PROVIDER_ENV[@]}" -gt 0 ] && [ -n "${PROVIDER_ENV[0]}" ]; then
+    claude_env_args+=("${PROVIDER_ENV[@]}")
+  fi
+  claude_env_args+=("ANTHROPIC_API_KEY=$API_KEY")
+  claude_env_args+=("ANTHROPIC_AUTH_TOKEN=$API_KEY")
 fi
-claude_env_args+=("ANTHROPIC_API_KEY=$API_KEY")
-claude_env_args+=("ANTHROPIC_AUTH_TOKEN=$API_KEY")
 
 # ---------------------------------------------------------------------------
-# 3. Resolve PR metadata + bump-PR skip (mirrors review.yml:75).
+# 4. Resolve PR metadata + bump-PR skip (mirrors review.yml:75).
 # ---------------------------------------------------------------------------
 PR_JSON="$(gh pr view "$PR_NUMBER" --json number,state,title,reviewDecision,body,files \
   --jq '{number, state, title, reviewDecision, body, files: [.files[].path]}' \
@@ -263,7 +313,7 @@ if [ "$(is_bump_pr "$PR_TITLE")" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Run the configured LLM-judge skills (mirrors review.yml:120-195).
+# 5. Run the configured LLM-judge skills (mirrors review.yml:120-195).
 #
 # Each skill's stdout is captured into a per-skill variable so the
 # verdict-extraction step (5) can pipe it directly into
@@ -287,8 +337,16 @@ run_skill() {
   fi
   # Capture stdout into LAST_SKILL_STDOUT AND echo to the operator's
   # terminal in real time so progress stays visible.
+  #
+  # `${claude_env_args[@]+"${claude_env_args[@]}"}` (not the bare
+  # `"${claude_env_args[@]}"`) -- under `set -u`, expanding an EMPTY
+  # array with `[@]` raises "unbound variable" on bash < 4.4 (macOS
+  # ships bash 3.2, GPLv2 license freeze). The `+` alternate-value form
+  # only expands the array when it has at least one element, which is
+  # exactly the local-auth-fallback case (USE_LOCAL_AUTH=1 leaves
+  # claude_env_args empty on purpose -- see §2/§3 above).
   local out
-  out="$(env "${claude_env_args[@]}" claude -p "$prompt" 2>&1)" \
+  out="$(env ${claude_env_args[@]+"${claude_env_args[@]}"} claude -p "$prompt" 2>&1)" \
     || die "$skill: claude -p exited non-zero (review the output above)"
   LAST_SKILL_STDOUT="$out"
   printf '%s\n' "$out"
@@ -340,7 +398,7 @@ The summary MUST begin with a single line exactly of the form:
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Extract verdicts from captured stdout (mirrors review.yml:220-225).
+# 6. Extract verdicts from captured stdout (mirrors review.yml:220-225).
 # ---------------------------------------------------------------------------
 # Reuses the same helper the workflow shells out to: extracts the LAST
 # `**Verdict:** <Word>` line from the captured judge output. Per-skill
@@ -361,7 +419,7 @@ fi
 log "verdicts: review='${REVIEW_V:-<missing>}' security='${SECURITY_V:-<missing>}' maintenance='${MAINTENANCE_V:-<missing>}'"
 
 # ---------------------------------------------------------------------------
-# 6. Combined verdict gate (mirrors review.yml:539-561).
+# 7. Combined verdict gate (mirrors review.yml:539-561).
 # ---------------------------------------------------------------------------
 # `rank()` is sourced from lib/review_local_lib.sh (unit-tested in
 # tests/test_review_local_lib.py).
@@ -401,7 +459,7 @@ done
 log "combined verdict: $WORST"
 
 # ---------------------------------------------------------------------------
-# 7. L3-evidence gate (mirrors review.yml:471-491).
+# 8. L3-evidence gate (mirrors review.yml:471-491).
 #
 # `--no-touch-probe` disables the auto-detect (file-path regex) but
 # still runs the L3 regex on the PR body -- the flag is a "treat every
@@ -433,7 +491,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Auto-approve (mirrors review.yml:609-618, only on the local opt-in).
+# 9. Auto-approve (mirrors review.yml:609-618, only on the local opt-in).
 #
 # --auto-approve is strict: it refuses on ANY missing judge verdict
 # (the lenient default-to-Approve above stays for non-auto-approve
@@ -473,7 +531,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Audit comment (mirrors review.yml:226-227).
+# 10. Audit comment (mirrors review.yml:226-227).
 # ---------------------------------------------------------------------------
 AUDIT_BODY="<!-- dev-kit-verdict-audit --> run=local-$$ job=review-local status=success verdict=$WORST review=$REVIEW_V security=$SECURITY_V maintenance=$MAINTENANCE_V provider=$PROVIDER source=bin_review_local"
 if [ "$DRY_RUN" = "1" ]; then
@@ -484,7 +542,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Final exit (mirrors review.yml:557-561).
+# 11. Final exit (mirrors review.yml:557-561).
 # ---------------------------------------------------------------------------
 case "$WORST" in
   Approve) exit 0 ;;
