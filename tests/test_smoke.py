@@ -37,6 +37,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # L4/L7 violations, F1/F2/F3/F6/F7/F8 in the multi-dim review; PR-repair
 # still owned by /dev-kit:babysit-pr + lib/repair_coordinator.py).
 # Added skills/research-plan-build/SKILL.md (3-phase binder, PR #563) (37 -> 38).
+# Replaced with skills/research-proposal-plan/SKILL.md (research -> proposal
+# -> plan; build removed from the binder). Net skill count unchanged.
 # PR-1 slim sweep removed skills/audit/SKILL.md (folded into /dev-kit:inspect
 # --secrets / --slop flags) and skills/bootstrap-full/SKILL.md (merged into
 # /dev-kit:bootstrap with runtime ci-setup prompt). (38 on this branch's baseline — PR-1 removes audit + bootstrap-full (-2); no new skills added.)

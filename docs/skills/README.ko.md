@@ -50,7 +50,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 |---|---|---|
 | [`plan`](plan.ko.md) | `state` | 아이디어 → 5-게이트 루프를 거쳐 `PRD.md` + `phases/<name>/`. |
 | [`build`](build.ko.md) | `state` | TDD + 자동 수정 루프가 통합된 스텝별 서브에이전트 위임. |
-| [`research-plan-build`](research-plan-build.md) | `state` | 3단계 바인더(research → plan → implement) — 여러 세션/여러 파일 작업을 위한 건너뛸 수 없는 파이프라인. |
+| [`research-proposal-plan`](research-proposal-plan.md) | `state` | 3단계 바인더(research → proposal → plan) — plan 분해 전에 사람 승인 게이트가 위치하는 건너뛸 수 없는 파이프라인. |
 
 ### Review → Ship
 
@@ -151,7 +151,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # 모델 호출 �
 | [`pr-verify`](pr-verify.md) | `ship` | `enforcement` | 사용자 |
 | [`refactor`](refactor.md) | `build` | `analysis` | 사용자 |
 | [`research`](research.md) | `design` | `enforcement` | 사용자 |
-| [`research-plan-build`](research-plan-build.md) | `build` | `state` | 사용자 |
+| [`research-proposal-plan`](research-proposal-plan.md) | `plan` | `state` | 사용자 |
 | [`review`](review.md) | `review` | `analysis` | 사용자 |
 | [`security`](security.md) | `security` | `enforcement` | 사용자 |
 | [`ship`](ship.md) | `ship` | `state` | 사용자 |

@@ -45,29 +45,37 @@ is `kill` or unresolved `hold`, the operator should not have invoked
 `build`. There is no auto-gate, no `--skip-valuation` flag, and no exit
 code based on the verdict.
 
-## Composition with /dev-kit:research-plan-build
+## Composition with /dev-kit:research-proposal-plan
 
-`/dev-kit:research-plan-build` is the 3-phase binder that wraps research
-+ plan + implement into one non-skippable pipeline. The trigger fires
-when ANY of:
+`/dev-kit:research-proposal-plan` is the 3-phase binder (research →
+proposal → plan) that wraps the pre-build surface into one non-
+skippable pipeline with the human approval gate BEFORE phase
+decomposition. The trigger fires when ANY of:
 
 - Task spans more than 1 session (multi-day work).
 - Task touches more than 3 files in its blast radius.
-- User explicitly typed `/dev-kit:research-plan-build <idea>`.
+- User explicitly typed `/dev-kit:research-proposal-plan <idea>`.
 
-When the trigger fires, hand off to `Skill("research-plan-build", <idea>)`
-BEFORE running `/dev-kit:plan`. The binder writes `research.md` + `plan.md`
-in `.dev-kit/hand-off/<session>/`, then `/dev-kit:plan` emits the
-canonical `phases/<name>/index.json` + `step<N>.md` artifacts. The
-build runner reads the phases artifacts (NOT `plan.md`); `plan.md` is
-the reviewer-facing companion the binder produced.
+When the trigger fires, hand off to
+`Skill("research-proposal-plan", <idea>)` BEFORE running `/dev-kit:plan`.
+The binder writes `research.md` in `.dev-kit/hand-off/<session>/`,
+renders `docs/proposals/<main>/<sub>.{yaml,html}`, and writes the
+`.dev-kit/hand-off/rpp→plan.md` hand-off. The plan skill is
+`disable-model-invocation: true` — the binder cannot invoke it; the
+human re-runs `/dev-kit:plan` after flipping the YAML
+`status: accepted`. The plan skill's Gate 5/5 auto-render collision
+is the signal that the binder already produced the HTML.
+
+Build is OUT of the binder. After `/dev-kit:plan` emits
+`PRD.md` + `phases/<name>/`, this skill runs end-to-end as the
+single executor.
 
 For single-session work (<=3 files), `/dev-kit:build` runs the direct
 `plan -> build` path - no binder. The threshold lives here so a user who
 calls `/dev-kit:build` for a multi-file task still gets the 3-phase
 pipeline.
 
-See `skills/research-plan-build/SKILL.md` for the per-phase contract.
+See `skills/research-proposal-plan/SKILL.md` for the per-phase contract.
 
 ## Behavior
 

@@ -1,7 +1,7 @@
 # Research: <topic>
 
-> Phase 1 of the research → plan → implement pipeline.
-> Source: `templates/research.md`. Consumed by `skills/research-plan-build/SKILL.md`.
+> Phase 1 of the research → proposal → plan pipeline.
+> Source: `templates/research.md`. Consumed by `skills/research-proposal-plan/SKILL.md`.
 > Citations must satisfy `skills/research/SKILL.md` Phase 0-3 escalation.
 
 ## Question
