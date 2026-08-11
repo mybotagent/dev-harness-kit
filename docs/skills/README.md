@@ -63,6 +63,7 @@ grep -lE '^user-invocable: false' skills/*/SKILL.md | wc -l   # model-invoked su
 | [`refactor`](refactor.md) | `analysis` | 3-phase cleanup chain: `inspect → build-refactor → review`. |
 | [`prune`](prune.md) | `analysis` | 4-phase deletion sweep: sweep → dependents → report → verify. |
 | [`babysit-pr`](babysit-pr.md) | `state` | PR babysitter loop: poll CI, fix, commit, re-iterate to a green Approve. |
+| [`babysit-pr-local`](babysit-pr-local.md) | `state` | Local-mode PR babysitter loop: pre-push pytest gate + local LLM judge instead of GH-Actions; additive sibling of `babysit-pr`. |
 | [`pr-verify`](pr-verify.md) | `enforcement` | Deterministic 5-gate PR verifier — fresh `gh` fetch per gate, structured verdict, no "stale CI" false positive. |
 | [`ship`](ship.md) | `state` | Release tag emit; gate check only. |
 | [`bump`](bump.md) | `state` | Explicit `plugin.json` version bump + push. |
