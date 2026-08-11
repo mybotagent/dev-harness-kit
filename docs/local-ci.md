@@ -92,6 +92,34 @@ invocation via the `env KEY=... claude -p ...` prefix. The key never
 enters the parent shell's persistent environment, so subsequent `gh` /
 shell calls cannot leak it via `/proc/<pid>/environ` or core dumps.
 
+#### No provider configured? It still works.
+
+`bin/set-provider.sh` + a `*_API_KEY` are for **CI runners** (GH-Actions
+has no interactive login, so it needs an explicit key injected). A
+local interactive session almost always already has an authenticated
+`claude` CLI (a `claude login` session or a keychain-stored key) — the
+script does **not** require `.env`, `CI_REVIEW_PROVIDER`, or any
+`*_API_KEY` to be set at all.
+
+If neither `--provider`, `CI_REVIEW_PROVIDER` (env or a real `.env`),
+nor a matching `*_API_KEY` is found, the script logs:
+
+```
+no provider explicitly configured and no API key found; falling back to local claude CLI auth (no key/base-url injection)
+```
+
+and calls `claude -p ...` **without** any `ANTHROPIC_BASE_URL` /
+`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` override — `claude -p`
+inherits the parent shell's existing auth exactly as if you'd run it
+by hand. This is the common case for a local `bin/babysit-pr-local.sh`
+run; explicit provider configuration is only needed when you want a
+*specific* non-default provider (e.g. testing `minimax` while your
+`claude` CLI's own login points at `anthropic`).
+
+An **explicit** ask (`--provider X`, or `CI_REVIEW_PROVIDER` set) with
+no matching key still fails loudly — that's a real misconfiguration,
+not the "just use my session" case.
+
 ### What it does (mirrors `review.yml` step-by-step)
 
 | Step | Source step name | Local equivalent |
