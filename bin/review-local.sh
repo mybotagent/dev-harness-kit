@@ -262,33 +262,41 @@ PR_JSON="$(gh pr view "$PR_NUMBER" --json number,state,title,reviewDecision,body
   --jq '{number, state, title, reviewDecision, body, files: [.files[].path]}' \
   2>/dev/null)" || die "gh pr view $PR_NUMBER failed (is gh authenticated? is the PR open?)"
 
-# One python call returns all five fields (newline-separated) so the
-# five callers below each capture one line of stdout. Single python
-# startup vs five.
+# One python call returns all five fields, NUL-separated, so the
+# five callers below each capture exactly one field regardless of how
+# many newlines it contains internally. Single python startup vs five.
+#
+# NUL (not newline) delimiting is required: `body` (a PR description)
+# and the files-join can each legitimately span many lines -- which
+# is virtually every real-world PR. A newline-counting parser that
+# caps at "first 5 lines total" cannot tell "line 4 of the body" from
+# "field 5, the files list" -- it silently truncates/misaligns BODY
+# and FILES for any body longer than ~1 line, which downgrades a
+# production-code PR's touch-probe to "docs/infra-only" and lets
+# --auto-approve pass without the required L3 evidence (a
+# false-positive approval; discovered live against a real PR).
 read_pr_fields() {
   python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
-print(d.get('state') or '')
-print(d.get('title') or '')
-print(d.get('reviewDecision') or '')
-print(d.get('body') or '')
-print('\n'.join(d.get('files') or []))
+parts = [
+    str(d.get('state') or ''),
+    str(d.get('title') or ''),
+    str(d.get('reviewDecision') or ''),
+    str(d.get('body') or ''),
+    '\n'.join(d.get('files') or []),
+]
+sys.stdout.write('\0'.join(parts))
 "
 }
-# Portable read loop (no `mapfile` -- bash 3.2 /bin/bash on macOS
-# lacks it). Appends to PR_FIELDS array -- but ONLY the FIRST five
-# non-empty lines, so the loop exits when the array is full instead
-# of waiting for stdin EOF (which can drop the last line under bash
-# 3.2's process-substitution buffering).
+# NUL-delimited read (bash 3.2 -- macOS default -- supports `read -d
+# ''`). `|| [ -n "$field" ]` is the standard idiom for catching the
+# FINAL field, which has no trailing NUL terminator (python's
+# `'\0'.join(...)` does not append one after the last element).
 PR_FIELDS=()
-while IFS= read -r line && [ "${#PR_FIELDS[@]}" -lt 5 ]; do
-  PR_FIELDS+=("$line")
+while IFS= read -r -d '' field || [ -n "$field" ]; do
+  PR_FIELDS+=("$field")
 done < <(printf '%s' "$PR_JSON" | read_pr_fields)
-# Pad to 5 if python returned fewer lines.
-while [ "${#PR_FIELDS[@]}" -lt 5 ]; do
-  PR_FIELDS+=("")
-done
 PR_STATE="${PR_FIELDS[0]:-}"
 PR_TITLE="${PR_FIELDS[1]:-}"
 PR_DECISION="${PR_FIELDS[2]:-}"

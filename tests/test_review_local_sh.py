@@ -429,6 +429,106 @@ exit 0
         # Belt-and-braces: no "no API key" die message.
         self.assertNotIn("no API key", r.stderr)
 
+    # -------------------------------------------------------------------
+    # read_pr_fields() NUL-delimiter regression (discovered live against
+    # a real PR): the line-counting parser capped PR_FIELDS at exactly
+    # 5 array elements total across ALL FIVE fields (state, title,
+    # reviewDecision, body, files-join). Any PR body longer than ~1
+    # line -- i.e. virtually every real PR -- pushed PR_BODY and
+    # PR_FILES to read garbage/truncated content, because bash's
+    # `read -r line` treats every embedded newline in `body` as its
+    # own array slot, consuming the budget meant for the trailing
+    # files-join field. The observed real-world effect: PR_FILES ended
+    # up empty, so the production-file touch-probe silently failed
+    # open -- a real code PR was misclassified as "docs/infra-only",
+    # downgrading the L3-evidence gate to advisory-only and letting
+    # --auto-approve pass WITHOUT the required pytest-tail evidence.
+    # -------------------------------------------------------------------
+    def test_multiline_body_prod_file_missing_evidence_refuses_auto_approve(self) -> None:
+        """Security-relevant regression: a multi-line PR body with NO
+        pytest tail line, touching a real production file
+        (bin/tool.sh, not the first entry in the files list), MUST
+        still refuse --auto-approve. Under the old line-counting
+        parser, the multi-line body silently truncated PR_FILES to
+        empty, the touch-probe fell through to 'docs/infra-only;
+        advisory only', and --auto-approve incorrectly SUCCEEDED
+        despite the missing evidence -- a false-positive approval.
+        """
+        long_body_no_tail = "\n".join([
+            "## Why",
+            "",
+            "This change does something.",
+            "",
+            "## What",
+            "",
+            "Some prose here across several lines, no test evidence below.",
+            "",
+            "## Notes",
+            "",
+            "Nothing quantitative here.",
+        ])
+        self._stub_gh(
+            pr_body=long_body_no_tail,
+            pr_files=["docs/readme.md", "bin/tool.sh"],
+        )
+        self._stub_claude(body="**Verdict:** Approve\nFine.")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs("--pr", "605", "--review-only", "--auto-approve")
+
+        self.assertNotEqual(
+            r.returncode, 0,
+            f"auto-approve must REFUSE (production file touched + missing "
+            f"L3 evidence in a multi-line body); "
+            f"stdout={r.stdout!r} stderr={r.stderr!r}",
+        )
+        self.assertIn("L3-evidence", r.stderr)
+        calls = self._calls()
+        self.assertFalse(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"must NOT auto-approve a production-file PR with missing "
+            f"L3 evidence; calls={calls}",
+        )
+
+    def test_multiline_body_late_tail_line_detected(self) -> None:
+        """Positive-path counterpart: the pytest tail line sits at the
+        END of a long multi-line body (line 11 of an 11-line body).
+        Correct parsing MUST find it (proving PR_BODY carries the
+        FULL body text, not a single truncated line) and the
+        production file (2nd of 2 in the files list, proving PR_FILES
+        is the real list, not truncated/misaligned garbage).
+        """
+        long_body_with_tail = "\n".join([
+            "## Why",
+            "",
+            "This change does something.",
+            "",
+            "## What",
+            "",
+            "Some prose here across several lines.",
+            "",
+            "## Verification",
+            "",
+            "47 passed in 1.23s",
+        ])
+        self._stub_gh(
+            pr_body=long_body_with_tail,
+            pr_files=["docs/readme.md", "bin/tool.sh"],
+        )
+        self._stub_claude(body="**Verdict:** Approve\nFine.")
+        self._stub_real_python3()
+
+        r = self._run_with_stubs("--pr", "605", "--review-only", "--auto-approve")
+
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+        calls = self._calls()
+        self.assertTrue(
+            any(c.startswith("GH_PR_REVIEW") for c in calls),
+            f"auto-approve should succeed: L3 evidence IS present (late "
+            f"in the body) and touches_prod correctly detects "
+            f"'bin/tool.sh'; calls={calls}",
+        )
+
 
 # ---------------------------------------------------------------------------
 # No-explicit-provider local-auth fallback (operator finding, 2026-08-11):
