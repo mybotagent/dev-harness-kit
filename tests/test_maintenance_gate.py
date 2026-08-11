@@ -134,6 +134,50 @@ class TestDocsUpdatedCheck(unittest.TestCase):
         )
         self.assertTrue(ok, reason)
 
+    # -------------------------------------------------------------------
+    # _PROD_ROOTS drift regression: this list independently duplicates
+    # bin/review-local.sh's touch-probe regex (which already includes
+    # bin/ and commands/ per a fix noted in its own comments) and
+    # review.yml's scope-job regex. All three drifted out of sync --
+    # this module's list was missing bin/, commands/, .claude/,
+    # .codex/, and .github/ entirely, so a PR that ONLY touches e.g.
+    # bin/*.sh was never flagged as needing a docs update.
+    # -------------------------------------------------------------------
+    def test_fails_for_bin_change_without_docs(self):
+        ok, reason = maintenance_gate.docs_updated_ok(
+            changed_files=["bin/review-local.sh"],
+            pr_body="",
+        )
+        self.assertFalse(ok, reason)
+
+    def test_passes_for_bin_change_with_docs(self):
+        ok, reason = maintenance_gate.docs_updated_ok(
+            changed_files=["bin/review-local.sh", "docs/local-ci.md"],
+            pr_body="",
+        )
+        self.assertTrue(ok, reason)
+
+    def test_fails_for_commands_change_without_docs(self):
+        ok, reason = maintenance_gate.docs_updated_ok(
+            changed_files=["commands/babysit-pr-local.md"],
+            pr_body="",
+        )
+        self.assertFalse(ok, reason)
+
+    def test_passes_for_commands_change_with_docs(self):
+        ok, reason = maintenance_gate.docs_updated_ok(
+            changed_files=["commands/babysit-pr-local.md", "docs/local-ci.md"],
+            pr_body="",
+        )
+        self.assertTrue(ok, reason)
+
+    def test_fails_for_github_workflow_change_without_docs(self):
+        ok, reason = maintenance_gate.docs_updated_ok(
+            changed_files=[".github/workflows/review.yml"],
+            pr_body="",
+        )
+        self.assertFalse(ok, reason)
+
 
 class TestCombinedVerdictDerivation(unittest.TestCase):
     """The gate combines (judge_verdict, docs_ok) into a single CI
