@@ -17,12 +17,15 @@
 작업을 진행한다:
 
 ```
-bootstrap → plan → build → review → ship
+bootstrap → evidence-plan? → plan → build → review → ship
 ```
 
-각 단계는 한 가지 일을 한다. `plan`은 아이디어를 명세서와 빌드 단계
-체크리스트로 바꾼다. `build`는 테스트를 돌리며 그 체크리스트를 한
-단계씩 처리한다. `review`와 `ship`은 결과를 검증하고 릴리스를 찍는다.
+각 단계는 한 가지 일을 한다. `evidence-plan`(선택)은 비용이 큰 5게이트
+PRD가 돌기 *전에* 의미 있는 아이디어를 잡아낸다 — 인용된 리서치, 사용자가
+확인하는 HTML 제안서, 그리고 `plan`으로의 핸드오프 순서다. `plan`은
+아이디어를 명세서와 빌드 단계 체크리스트로 바꾼다. `build`는 테스트를
+돌리며 그 체크리스트를 한 단계씩 처리한다. `review`와 `ship`은 결과를
+검증하고 릴리스를 찍는다.
 
 핵심은 가드레일이다. dev-kit은 **훅**(hook)을 설치한다 — 모든 파일 편집과
 셸 명령에서 자동으로 실행되는 작은 스크립트다. `main`에 바로 커밋하거나,
@@ -38,6 +41,36 @@ Claude Code와 Codex 둘 다에서 작동하며, 같은 명령은 양쪽에서 �
 설명하고 60초 투어를 제공한다. 이 README는 설치, 가장 많이 쓰는 명령,
 흐름이 일직선으로 흐르지 않을 때 무엇을 해야 하는지를 다룬다.
 
+### 보안 스코어카드
+
+빠르고 반복 가능한 저장소 지표가 필요하면 Claude Code나 Codex에서
+`/dev-kit:security-metrics`(또는 모델 호출 헬퍼 `$security-metrics`)를
+호출한다. `Read` / `Grep` / `Glob` / `Bash`만으로 저장소를 훑고
+(외부 스캐너 호출, 네트워크 호출 없음) OWASP Top 10 영역 **각각의
+결정적인 0–100 점수**를 계산한 뒤, 점수·발동된 규칙·감점 근거를 담은
+Markdown 리포트를 출력한다:
+
+```bash
+python3 skills/security-metrics/scripts/score_security.py . \
+  --output security-metrics.md
+```
+
+**점수 계약**(`skills/security-metrics/SKILL.md`에 고정됨):
+
+- 모든 영역은 100에서 시작해 결정적이고 소스 트리 전용의 감점만 적용한다.
+- 전체 점수는 10개 영역 점수의 산술 평균을 정수로 반올림한 값이다.
+- 각 체크는 `PASS`(규칙 미발동)와 `REVIEW`(하나 이상의 규칙 발동) 둘
+  중 하나로만 판정된다. 감점은 절대 억제되지 않으며, 오탐이 있어도
+  스코어러는 리포트에 사유를 적어 후속 작업의 근거로 남긴다.
+- 스킬은 `Read`-only다. 의존성을 설치하지 않고, 외부 스캐너를 호출하지
+  않으며, 작업 트리를 수정하지 않는다.
+
+이 스코어카드는 **분류(triage)용 지표이지 인증이 아니다**. 릴리스나
+대규모 리팩터 전에는 근거 기반의 전체 OWASP 리뷰를 위해
+`/dev-kit:security`를 사용한다. 전체 점수 규칙과 제한은
+[`docs/skills/security-metrics.md`](docs/skills/security-metrics.md)에
+있다.
+
 **MCP 통합은 의도적으로 범위 밖이다.** 이 플러그인은 슬래시 명령, 훅,
 라이브러리 함수를 출하하며 MCP 서버 엔트리는 포함하지 않는다. 근거는
 [docs/decisions/0001-no-mcp.ko.md](docs/decisions/0001-no-mcp.ko.md)에
@@ -47,7 +80,7 @@ Claude Code와 Codex 둘 다에서 작동하며, 같은 명령은 양쪽에서 �
 
 ## 설치
 
-Claude Code CLI가 필요하다. **`claude plugin …` 명령은 모두 Node 22에서 실행한다** —
+Claude Code와 Codex 둘 다 지원한다. Claude Code에서는 **`claude plugin …` 명령을 모두 Node 22에서 실행한다** —
 번들된 CLI는 Node 25 이상에서 크래시한다:
 
 ```bash
@@ -207,10 +240,37 @@ python3 tools/loop_engine.py verify --feature-list feature_list.json
 명확한 단계를 가진 다른 장기 실행 프로세스를 렌더링하는 데 같은
 방식을 쓸 수 있다.
 
+### 플러그인 한눈에
+
+6단계 추상화 뷰 전체는 code-viz 실행 후 `/tmp/code-viz.html`에 있다.
+아래 그림은 썸네일로 볼 가치가 있는 것들이다 — 멘탈 모델, 계획 계약,
+코드 리뷰 렌즈, PR 수정 상태 머신을 설명한다.
+
+| 다이어그램 | 내용 |
+|---|---|
+| L0 아키텍처 | 계층 토폴로지 — 사용자 → 스킬/명령 → 훅 → lib/tools/bin → 외부(GH Actions / MCP / CLI). |
+| [`/dev-kit:plan` 워크플로](docs/skills/plan.md) | 5게이트 파이프라인(frame → validate → non-goals → decompose → emit)과 emit에서 frame으로 돌아가는 모호성 루프 백엣지. |
+| [`/dev-kit:security` 워크플로](docs/skills/security.md) | OWASP Top-10(A01–A10) 병렬 팬아웃 — 코드 리뷰의 심층 보안 렌즈. |
+| [`/dev-kit:babysit-pr` 워크플로](docs/skills/babysit-pr.md) | 15단계 수정 상태 머신. `INCREMENT`에서 `SNAPSHOT`으로 가는 점선 백엣지가 CI 판정이 초록으로 뒤집힐 때까지 재폴링하는 제한된 반복 루프다. |
+
+![L0 아키텍처 개요 — 스킬/명령 → 훅 → lib/tools/bin → 외부](docs/screenshots/code-viz/diagram-00.png)
+
+![`/dev-kit:plan` — emit에서 frame으로 돌아가는 모호성 루프 백엣지를 가진 5게이트](docs/screenshots/code-viz/diagram-04.png)
+
+![`/dev-kit:security` — OWASP A01–A10 병렬 팬아웃](docs/screenshots/code-viz/diagram-06.png)
+
+![`/dev-kit:babysit-pr` — 재시도 → 1단계 백엣지를 가진 15단계 수정 루프](docs/screenshots/code-viz/diagram-11.png)
+
+> 로컬 재생성: `/dev-kit:code-viz --screenshots=docs/screenshots/code-viz --top-skills=20` (생성기는 `skills/code-viz/SKILL.md`에 내장된 스크립트다). PNG 세트는 스킬 본문, 훅 매트릭스, 워크플로 파일이 바뀔 때마다 갱신된다. 스크린샷을 손으로 수정하지 않는다. 각 임베드는 `<img … width="900" />`로 작성해서 GitHub가 1198-px 원본을 잘라내지 않게 한다.
+
 ### GitHub Actions 게이트 워크플로
 
 배포된 `review.yml`은 PR → review/security 팬아웃 → 게이트 판정
-시퀀스를 정의한다. code-viz는 이걸 `sequenceDiagram`으로 출력한다.
+시퀀스를 정의한다. code-viz는 이걸 `sequenceDiagram`으로 출력한다
+(시각화 도구와 함께 배포되는 것과 동일한 PNG):
+
+<img src="docs/screenshots/code-viz/diagram-26.png" alt="GH Actions 게이트 워크플로 — PR → review/security 팬아웃 → 게이트 판정" width="900" />
+
 같은 형태는 ```mermaid``` 펜스로 GitHub에서 깨끗하게 렌더링된다:
 
 ```mermaid
@@ -313,7 +373,7 @@ sequenceDiagram
 
 | 명령 | 하는 일 |
 |---|---|
-| [`/dev-kit:evidence-plan`](docs/skills/evidence-plan.md) | 아이디어 → 인용된 리서치 → HTML 제안서(사용자 확인) → `/dev-kit:plan` 핸드오프 — 비용이 큰 5-게이트 PRD 작업 전에 실행. |
+| [`/dev-kit:evidence-plan`](docs/skills/evidence-plan.md) | 의미 있는 아이디어의 프론트도어. 스킵 불가능한 세 단계를 순서대로 실행 — (1) `/dev-kit:research`로 인용 리서치, (2) `/dev-kit:proposal`로 만든 HTML 제안서(사용자 확인), (3) `/dev-kit:plan`으로의 핸드오프. 비용이 큰 5게이트 PRD는 사람이 제안서를 승인한 다음에만 시작된다. 내장 `safety_valve: 3` + `user_interrupt: true`. `/dev-kit:build`는 절대 호출하지 않는다. |
 | [`/dev-kit:plan`](docs/skills/plan.ko.md) | 아이디어를 `PRD.md` + 단계별 빌드 체크리스트로 바꾼다. |
 | [`/dev-kit:build`](docs/skills/build.ko.md) | 체크리스트를 한 단계씩 처리하며 테스트와 코드를 작성하고 각 단계를 검증. |
 | [`/dev-kit:build-debug`](docs/skills/build-debug.md) | 4단계 근본원인 디버깅(재현 → 격리 → 근본원인 → 수정). 단독 호출 시 근본원인을 인라인으로 고치는 대신 `/dev-kit:plan`으로 넘긴다. |
