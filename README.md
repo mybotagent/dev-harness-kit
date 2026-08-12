@@ -351,9 +351,10 @@ slash command is `/dev-kit:<name>`. Each links to its detailed page.
 
 | Command | What it does |
 |---|---|
+| [`/dev-kit:evidence-plan`](docs/skills/evidence-plan.md) | Idea → cited research → HTML proposal (you confirm) → `/dev-kit:plan` hand-off, before the expensive 5-gate PRD work runs. |
 | [`/dev-kit:plan`](docs/skills/plan.md) | Turns an idea into `PRD.md` + a step-by-step build checklist. |
 | [`/dev-kit:build`](docs/skills/build.md) | Works through the checklist one step at a time, writing tests and code and verifying each step. |
-| [`/dev-kit:research-plan-build`](docs/skills/research-plan-build.md) | 3-phase binder (research → plan → implement) — non-skippable pipeline for multi-session or multi-file tasks. |
+| [`/dev-kit:build-debug`](docs/skills/build-debug.md) | 4-phase root-cause debugging (reproduce → isolate → root cause → fix). Standalone invocation hands the root cause to `/dev-kit:plan` instead of fixing inline. |
 | [`/dev-kit:proposal`](docs/skills/proposal.md) | Renders a `docs/proposals/<main>/<sub>.yaml` to a self-contained HTML page with structured before/after + pros/cons/limitations for pre-impl review. |
 
 ### Getting a PR over the line
