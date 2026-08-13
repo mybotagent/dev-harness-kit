@@ -378,10 +378,15 @@ jobs:
             # (that case now flows through the PARSE_FAILED arm above).
             case "${{ job.status }}" in
               cancelled|failure)
-                echo "::warning::review verdict missing (job.status=${{ job.status }}, transient); defaulting to Approve"
-                verdict="Approve"
-                verdict_source="default-approve-job-${{ job.status }}"
-                agent_ran="true"
+                # Issue #638: cancelled/failed upstream agent is NOT
+                # default-Approve. agent_ran=false routes through the
+                # gate's "AI agent was skipped" hard-fail branch (gate
+                # L812-861); the empty-file `*)` arm below keeps its
+                # existing tolerance (file genuinely missing).
+                echo "::warning::review verdict missing (job.status=${{ job.status }}, transient); gate will hard-fail via agent_ran=false"
+                verdict=""
+                verdict_source="default-no-verdict-job-${{ job.status }}"
+                agent_ran="false"
                 ;;
               *)
                 echo "::warning::review verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
@@ -685,10 +690,15 @@ jobs:
             # above for the full rationale.
             case "${{ job.status }}" in
               cancelled|failure)
-                echo "::warning::security verdict missing (job.status=${{ job.status }}, transient); defaulting to Approve"
-                verdict="Approve"
-                verdict_source="default-approve-job-${{ job.status }}"
-                agent_ran="true"
+                # Issue #638 fix (symmetric with the review job above):
+                # a cancelled or failed upstream agent MUST be treated
+                # as agent_ran=false so the severity gate's "AI agent
+                # was skipped" hard-fail branch fires. Do NOT default-
+                # Approve on a missed upstream run.
+                echo "::warning::security verdict missing (job.status=${{ job.status }}, transient); gate will hard-fail via agent_ran=false"
+                verdict=""
+                verdict_source="default-no-verdict-job-${{ job.status }}"
+                agent_ran="false"
                 ;;
               *)
                 echo "::warning::security verdict missing (no agent output file at ${AGENT_OUTPUT}); defaulting to Approve"
