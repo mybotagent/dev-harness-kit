@@ -1535,10 +1535,15 @@ class TestSearchFlagEndToEnd(unittest.TestCase):
             # Run from the tempdir so discover_repo_root() falls back
             # to start (the tempdir) and build_model scans only the
             # tempdir's logs, not the entire dev-harness-kit log tree.
+            # --days 3650 (not 30) so the fixed cc-subagents.jsonl
+            # fixture timestamps stay inside the window regardless of
+            # when the suite runs (calendar-rot: the fixture's
+            # 2026-07-16 records aged out of a 30-day window on
+            # 2026-08-16, silently skipping the "matched 0 of" branch).
             cp = self._run(
                 root,
                 "--logs-dir", str(logs),
-                "--days", "30",
+                "--days", "3650",
                 "--filter", "zzz-no-match",
                 "--json",
             )
