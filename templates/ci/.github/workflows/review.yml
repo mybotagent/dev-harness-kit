@@ -404,15 +404,22 @@ jobs:
           # stands and the gate hard-fails with the remediation message.
           if [ "$file_verdict" = "PARSE_FAILED" ]; then
             CUTOFF="${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}"
-            comments_json=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login | startswith("claude")) | {body, createdAt}' 2>/dev/null || true)
-            if [ -n "$comments_json" ]; then
-              comment_verdict=$(printf '%s' "$comments_json" | VERDICT_COMMENT_CUTOFF="$CUTOFF" python3 "${{ github.workspace }}/.github/workflows/_verdict_from_comment.py" 2>/dev/null || true)
-              if [ -n "$comment_verdict" ]; then
-                verdict="$comment_verdict"
-                verdict_source="comments-fallback"
-                agent_ran="true"
-                echo "::notice::review verdict recovered from PR comments: ${verdict}"
-              fi
+            # Issue #625 retry-loop: claude-code-action posts the agent's
+            # verdict PR comment ASYNCHRONOUSLY after the agent-run step
+            # completes -- there is a ~30s race window in which this
+            # extract step ran but the agent's claude[bot] PR comment isn't
+            # yet visible. A single-shot lookup misses in that window and
+            # the gate hard-fails on what is actually a clean review.
+            # 6 attempts x 5s sleep (30s total budget, spans the full ~30s
+            # race window) closes the gap without burning CI minutes.
+            # The retry-loop is delegated to _verdict_comments_fallback.sh
+            # so the review + security jobs share a single SSOT (the
+            # pre-F1 fix copy-pasted this 25-line block into both jobs).
+            comment_verdict=$(CUTOFF="$CUTOFF" JOB_NAME=review WORKSPACE="${{ github.workspace }}" "${{ github.workspace }}/.github/workflows/_verdict_comments_fallback.sh" "$PR_NUMBER")
+            if [ -n "$comment_verdict" ]; then
+              verdict="$comment_verdict"
+              verdict_source="comments-fallback"
+              agent_ran="true"
             fi
           fi
           echo "review_verdict=${verdict}  source=${verdict_source}  agent_ran=${agent_ran}"
@@ -714,15 +721,14 @@ jobs:
           # PR comment. Cutoff filter avoids stale verdicts (issue #244).
           if [ "$file_verdict" = "PARSE_FAILED" ]; then
             CUTOFF="${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}"
-            comments_json=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login | startswith("claude")) | {body, createdAt}' 2>/dev/null || true)
-            if [ -n "$comments_json" ]; then
-              comment_verdict=$(printf '%s' "$comments_json" | VERDICT_COMMENT_CUTOFF="$CUTOFF" python3 "${{ github.workspace }}/.github/workflows/_verdict_from_comment.py" 2>/dev/null || true)
-              if [ -n "$comment_verdict" ]; then
-                verdict="$comment_verdict"
-                verdict_source="comments-fallback"
-                agent_ran="true"
-                echo "::notice::security verdict recovered from PR comments: ${verdict}"
-              fi
+            # Issue #625 retry-loop — delegated to _verdict_comments_fallback.sh
+            # so the review + security jobs share a single SSOT (the pre-F1
+            # fix copy-pasted this 25-line block into both jobs).
+            comment_verdict=$(CUTOFF="$CUTOFF" JOB_NAME=security WORKSPACE="${{ github.workspace }}" "${{ github.workspace }}/.github/workflows/_verdict_comments_fallback.sh" "$PR_NUMBER")
+            if [ -n "$comment_verdict" ]; then
+              verdict="$comment_verdict"
+              verdict_source="comments-fallback"
+              agent_ran="true"
             fi
           fi
           echo "security_verdict=${verdict}  source=${verdict_source}  agent_ran=${agent_ran}"
