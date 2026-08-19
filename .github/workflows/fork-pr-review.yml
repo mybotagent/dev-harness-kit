@@ -62,16 +62,6 @@ jobs:
       GH_HOST: github.com
       GH_REPO: ${{ github.repository }}
     steps:
-      # Checkout the BASE branch so `gh` can read `.git/config` and
-      # resolve the API host for path-only `gh api` calls (e.g.
-      # `repos/<owner>/<repo>/statuses/<sha>`). Without this, `gh` falls
-      # back to `git rev-parse`, fails with `not a git repository`, and
-      # the final-status step exits 1 under `set -e`. Safe under
-      # `pull_request_target` — the checkout defaults to the workflow's
-      # REF (the base branch), never the PR head.
-      - name: checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
       - name: Dispatch AI review workflows
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
