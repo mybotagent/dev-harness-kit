@@ -1,7 +1,24 @@
 # Hooks (SSOT)
 
-> Matrix state lives in `.dev-kit/.active-hooks.json` (MUST-13).
+> The active-hooks state lives in `.dev-kit/.active-hooks.json` (MUST-13).
 > Shells live in `hooks/*.sh` and are wired via `hooks/hooks.json`.
+> Two writers share the file via namespaced top-level keys:
+>   - `tools/regenerate_active_hooks.py` owns `schema_version`,
+>     `generated_at`, and `events` (event-keyed snapshot derived from
+>     `hooks/hooks.json`; one entry per `{name, path, when, fail_closed}`).
+>     `fail_closed` is read from the explicit `fail_closed: true|false`
+>     field on each `hooks/hooks.json` entry (no inference from script
+>     headers — the explicit field is the SSOT).
+>   - `lib/active_hooks_codec.py` owns `matrix` (stage-keyed
+>     activation grid) and `override` (override flags). The codec's
+>     `ensure_matrix` writes this slice on a fresh checkout.
+> The regen tool is run on every `SessionStart` by
+> `hooks/session-start-check.sh`. It preserves any pre-existing
+> `matrix` / `override` slice verbatim so neither writer ever clobbers
+> the other's slice — the two schemas coexist on the same file.
+> Regeneration is cheap, idempotent (sorted keys + sorted entries),
+> and best-effort (silent skip when `python3` is missing or
+> `hooks/hooks.json` is unreadable). Schema version: `1.0.0`.
 
 ## Hook matrix (per stage)
 
@@ -17,6 +34,7 @@
 | linear-session-start  |  ✅*   |  ✅*   |  ✅*   |  ✅*   |  ✅*   |  ✅*   |  ✅*   |
 | linear-worktree-create|  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
 | linear-task-change    |  -    |  ✅*   |  -    |  ✅*   |  -    |  -    |  -    |
+| l4-todo-scan           |  -    |  -    |  -    |  ✅    |  ✅    |  ✅    |  -    |
 | sub-agent-handoff     |  A    |  A    |  A    |  A    |  A    |  A    |  A    |
 ```
 (R = read-only) (* = fires only when Linear is configured.) (A = always-on with per-worktree opt-out via `.dev-kit/.sub-agent-handoff-disabled`.)
@@ -27,6 +45,7 @@
 |------|----------|---------|
 | `tdd-guard` | build | active when `lib/methodology/tdd.py` is loaded (MUST-48). |
 | `bash-guard` | build | blocks dangerous shell patterns (`rm -rf`, force-push, etc.). |
+| `l4-todo-scan` | build / review / security | PostToolUse deferred-work marker scan (Iron Law #4). Fails closed on TODO/FIXME/'we'll extend later' markers in non-allowed paths. Allowed paths: `*.md`, `tests/fixtures/**`, `docs/adoption/**`. `L4_STRICT=1` overrides the allowed-path exemption. |
 | `secret-scan` | build / review / security | PostToolUse credential-pattern grep. |
 | `slop-detector` | build / review / security | KO+EN banned-phrase scan. |
 | `stop-verify` | plan / design / build / review / security / ship | Stop hook: AC claim verification. |

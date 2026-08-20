@@ -29,6 +29,7 @@ per-runtime wiring differences), see
 | `bash-guard` | Denies destructive `git` / `rm` / shell escapes | Build |
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
+| `l4-todo-scan` | PostToolUse deferred-work marker scan (Iron Law L4): fails closed on TODO/FIXME/'we'll extend later'/starting-point/placeholder markers in `Write`/`Edit`/`MultiEdit` payloads outside allowed paths (`*.md`, `tests/fixtures/**`, `docs/adoption/**`). Strict mode via `L4_STRICT=1`. Marker bank SSOT: `hooks/references/l4/markers.md` | Build + Review + Security |
 | `loop-detect` | Warns after three consecutive identical Bash calls using per-session fingerprints | All |
 | `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
 | `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch (slot check extracted to `hooks/lib/slot-check.sh` for unit-testable truth table — see *Shared helpers* below) | All |
@@ -48,6 +49,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `tdd-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | TDD test-first enforcement | advisory / `--strict` |
 | `bash-guard.sh` | PreToolUse (Bash) | Block destructive commands | advisory / `--strict` |
 | `git-guard.sh` | PreToolUse (Bash) | Branch strategy enforcement | hard-block |
+| `pre-push` (.githooks/) | pre-push (local) | Block direct push to `main` + auto-SYNC (not auto-bump) `plugin.json:version` from origin/main on `local < origin/main`; refuses on uncommitted `plugin.json` edits; opt-in LLM-judge intent check via `DEV_KIT_PUSH_INTENT=1`. Calls `bin/sync-version.sh` for the actual version-only sync. | hard-block + auto-commit |
 | `worktree-guard.sh` | PreToolUse (Write\|Edit\|MultiEdit) | Block edits in main checkout | hard-block |
 | [`linear-autosync.sh`](linear-autosync.md) | PreToolUse (Write\|Edit\|MultiEdit) | Auto-sync every Edit into the user's Linear workspace via `tools/linear_sync.py` (silent-bail on non-dev-kit project dirs) | advisory (silent exit 0) |
 | `review-yml-isolation.sh` | PreToolUse (Bash) | Force `review.yml` changes into their own commit/PR | hard-block |
@@ -57,6 +59,7 @@ useful when you're debugging *why* a hook did or didn't run:
 | `provider-divergence-check.sh` | SessionStart | Nudge when `.env:CI_REVIEW_PROVIDER` is off-list, diverges, or missing | advisory |
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
 | `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop (phrase + structure + scoring, KO+EN) | advisory (opt-in strict) |
+| `l4-todo-scan.sh` | PostToolUse (Write\|Edit) | Fail-closed scan for TODO/FIXME deferred-work markers in `Write`/`Edit`/`MultiEdit` payloads; strict-mode via `L4_STRICT=1` (MUST-4) | hard-block (advisory under allowed-path exemption) |
 | `worktree-log-auto-install.sh` | PostToolUse (Bash) | Install loghooks into a newly-added worktree | advisory |
 | `loop-detect.sh` | PostToolUse (Bash) | Warn before another retry after repeated identical Bash calls | advisory (fails open) |
 | `notification-collapse.sh` | UserPromptSubmit | Stderr WARN when 2+ `<task-notification>` envelopes are in the prompt (harness `Monitor` / `run_in_background` bloat signal) | advisory (fails open) |
@@ -91,6 +94,54 @@ inside a PreToolUse shell script). Each helper carries its own
 | `loop-detect.sh` | `hooks/loop-detect.sh` | Append per-session Bash fingerprints and detect consecutive matches at the configured threshold |
 
 ---
+
+
+## Active-hooks state file (`.dev-kit/.active-hooks.json`)
+
+The single file `.dev-kit/.active-hooks.json` carries two writer-owned
+slices, namespace-separated by top-level key. Issue #676 originally
+shipped the regen tool writing a single payload that clobbered the
+codec's `matrix` slice on every SessionStart, which silently turned
+off the stage-gated hooks (`tdd-guard`, `bash-guard`, `secret-scan`,
+`slop-detector`, `stop-verify`, `pre_completion_checklist`). The
+current schema is two-slice:
+
+| Top-level key | Owner | Shape | Purpose |
+|---|---|---|---|
+| `schema_version` | regen (`tools/regenerate_active_hooks.py`) | string `"1.0.0"` | bumps only on breaking schema changes |
+| `generated_at` | regen | ISO-8601 UTC with `+00:00` | when the event-wiring slice was last regenerated |
+| `events` | regen | `{<event>: [{name, path, when, fail_closed}]}` | event-keyed snapshot of every entry in `hooks/hooks.json`; one entry per (matcher, command) tuple |
+| `matrix` | codec (`lib/active_hooks_codec.py`) | `{<stage>: {<hook>: bool|"read-only"}}` | stage-keyed activation grid consumed by `is_hook_active()` |
+| `override` | codec | `{disabled_hooks, strict_mode, env_override}` | runtime override flags consumed by `is_hook_active()` |
+
+**Why two writers, one file?** The regen snapshot (event-keyed) and
+the codec matrix (stage-keyed) answer different questions:
+
+- Regen answers *"which hook shells does `hooks/hooks.json` wire into
+  which Claude Code / Codex event?"* — derived purely from the wiring
+  manifest, deterministic across re-runs, used by tooling that walks
+  the wiring (e.g. coverage-gap reports).
+- Codec answers *"for the current dev-kit stage, which of those
+  wired-in hooks should actually run?"* — operator-tunable, mutates
+  across the session as `set_stage` / `disable_override` are called.
+
+**Writer order matters:**
+
+- The regen tool ALWAYS preserves the codec's `matrix` and `override`
+  slice verbatim when re-running. It reads the existing file via
+  `lib.atomic.read_json_or_default` and copies those two keys into
+  the new payload before overwriting.
+- The codec's `set_stage` / `disable_override` / `ensure_matrix`
+  read the file with `read_json_or_default` (defaults to a fresh
+  `matrix` payload) and write back; they do NOT touch `events`,
+  `schema_version`, or `generated_at`.
+
+**Regression coverage:** `tests/test_active_hooks_codec.py::TestCrossCodecCoexistence`
+pins the contract — ensure_matrix → regen → regen keeps the matrix
+slice byte-equal; regen → ensure_matrix → set_stage keeps the events
+slice byte-equal; the stage-gated hooks (`tdd-guard`, `bash-guard`,
+`secret-scan`, `slop-detector`, `stop-verify`) stay active after
+every transition.
 
 ## See also
 
