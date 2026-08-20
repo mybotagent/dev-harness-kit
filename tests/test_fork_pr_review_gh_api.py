@@ -7,20 +7,24 @@ Background:
   Result: the runner's working directory has no `.git` directory.
 
   The workflow posts commit-status updates via `gh api "repos/${{ github.repository }}/statuses/$SHA" -X POST`.
-  The URL is relative (no `https://api.github.com/` prefix) and no `--repo` flag is passed.
-  When `gh` resolves a relative URL, it walks a discovery chain:
-    1. `--repo` flag — not set
-    2. `GH_REPO` env var — not set
-    3. `git rev-parse` against the current `.git` directory — fails because none exists
-  Symptom: `failed to determine base repo: failed to run git: fatal: not a git
-  repository (or any of the parent directories): .git` (observed on PR #665,
-  run 32245678201, step "Post final AI-judge status to PR commit").
+  When `gh` resolves a relative URL on a runner with no `.git` directory, it
+  fails with "failed to determine base repo: failed to run git: fatal: not a
+  git repository (or any of the parent directories): .git" (observed on
+  PR #665, run 32245678201, step "Post final AI-judge status to PR commit").
 
-  The ONLY working fix is the absolute URL form:
-    `https://api.github.com/repos/${{ github.repository }}/statuses/$SHA`
-  Earlier PR #673 tried `--repo "${{ github.repository }}"` instead. `gh api`
-  does NOT accept `--repo`, so the run fails with `unknown flag: --repo`
-  (observed on PR #665, run 32255230444). This test rejects that form too.
+  Two wrong attempts to work around the missing `.git`:
+    (a) PR #673 added `--repo "${{ github.repository }}"` to every `gh api`
+        call. `gh api` does NOT accept `--repo` and exits with
+        `unknown flag: --repo` (PR #665, run 32255230444) — so the gate
+        stayed red.
+    (b) The earlier version of this test accepted either form
+        (`--repo` OR absolute URL), which let #673's broken form slip
+        through CI.
+  The ONLY working form, after PR #674, is the absolute URL
+  `https://api.github.com/repos/${{ github.repository }}/...` (with
+  `GH_HOST` + `GH_REPO` set at the job level as a redundant safety net
+  for the `gh run view/watch` calls). This test now pins that contract:
+  relative URLs AND `--repo` on `gh api` are both rejected.
 
 This test pins that contract so the workflow cannot drift back to relying on
 .git context discovery or to the rejected `--repo` flag.
@@ -28,7 +32,7 @@ This test pins that contract so the workflow cannot drift back to relying on
 Pin tests:
   T1: workflow file exists and parses as YAML.
   T2: every `gh api` invocation in any `run:` block uses an absolute URL
-      (`https://api.github.com/...`) AND does NOT pass `--repo`.
+      starting with `https://api.github.com/` AND does NOT pass `--repo`.
   T3: specifically, the four commits-status POST calls (Mark PR commit,
       Post per-judge, Post final) all meet T2.
   T4: workflow still triggers on `pull_request_target` (intentional — that's
