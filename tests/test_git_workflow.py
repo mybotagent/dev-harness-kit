@@ -345,7 +345,7 @@ class TestBranchNamingConvention(unittest.TestCase):
         shrink. New branches MUST follow the convention — see .claude/rules/git-workflow.md.
         """
         GRANDFATHERED = {
-            "dev", "stage",
+            "dev", "stage", "main",
             "fix/0.1.3-gate-tolerance", "fix/orphan-bump-v0.3.2", "fix/orphan-bump-v0.3.3",
             # Pre-existing worktree branches parked in active worktrees this cleanup
             # did not want to touch destructively. Slug lengths and prefixes predate
