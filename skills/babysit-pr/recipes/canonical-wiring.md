@@ -15,7 +15,7 @@ isolation; this recipe is the only place the slash-arguments-reach-the-helper
 contract lives.
 
 ```python
-import sys, os, json
+import sys, os, json, time, subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
@@ -74,6 +74,57 @@ pr_number = int(pr_snapshot["number"])
 if pr_snapshot.get("state") != "OPEN":
     print(f"PR #{pr_number} is {pr_snapshot.get('state')}; pass an open --pr N.", file=sys.stderr)
     sys.exit(1)
+
+# Durable control-plane wiring: snapshot before classification and persist
+# the phase before choosing wait/repair/approval actions. The repair path
+# calls bpc.persist_loop_outcome(...) after local verification; both helpers
+# load the prior state and atomically save the transition.
+checks = json.loads(subprocess.run(
+    ["gh", "pr", "checks", str(pr_number), "--json",
+     "name,state,conclusion,databaseId,startedAt,updatedAt"],
+    check=True, capture_output=True, text=True).stdout)
+loop_state = bpc.persist_loop_snapshot(
+    parent_pr=pr_number,
+    current_pr=pr_number,
+    head_sha=subprocess.run(
+        ["gh", "pr", "view", str(pr_number), "--json", "headRefOid",
+         "-q", ".headRefOid"], check=True, capture_output=True,
+        text=True).stdout.strip(),
+    review_verdict=subprocess.run(
+        ["gh", "pr", "view", str(pr_number), "--json", "reviewDecision",
+         "-q", ".reviewDecision"], check=True, capture_output=True,
+        text=True).stdout.strip() or None,
+    checks=checks,
+    now_epoch=time.time(),
+    now_iso=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+    github_tracker_issue=(
+        int(os.environ["BABYSIT_GITHUB_TRACKER_ISSUE"])
+        if os.environ.get("BABYSIT_GITHUB_TRACKER_ISSUE") else None
+    ),
+    linear_issue=os.environ.get("BABYSIT_LINEAR_ISSUE", ""),
+)
+print(f"babysit phase={loop_state.phase} strategy={loop_state.strategy}", flush=True)
+
+# Publish only the transition key, never every polling cycle. The adapter
+# checks that marker on both trackers before creating a comment, so a worker
+# restart is safe. A tracker outage is non-blocking: the durable local state
+# remains authoritative and the next invocation retries the same key.
+transition_key = f"{loop_state.parent_pr}:{loop_state.head_sha}:{loop_state.context_epoch}:{loop_state.phase}"
+if loop_state.github_tracker_issue:
+  subprocess.run([
+    "python3", "tools/babysit_tracker_sync.py",
+    "--repo", repo_full,
+    "--github-issue", str(loop_state.github_tracker_issue),
+    "--linear-issue", loop_state.linear_issue,
+    "--key", transition_key,
+    "--pr", str(pr_number),
+    "--phase", loop_state.phase,
+    "--strategy", loop_state.strategy,
+    "--head-sha", loop_state.head_sha,
+    "--context-epoch", str(loop_state.context_epoch),
+    "--review", pr_snapshot.get("reviewDecision") or "REVIEW_REQUIRED",
+    "--checks", f"{sum(1 for c in checks if c.get('bucket') in {'pass', 'skipping'})}/{len(checks)} green",
+  ], check=False)
 
 rc = bpc.run_babysit_once(
     argv=argv,
