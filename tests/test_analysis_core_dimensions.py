@@ -202,6 +202,7 @@ class TestDimensionImmutability(unittest.TestCase):
             self.assertTrue(
                 hasattr(dim, "__slots__") and dim.__slots__,
                 f"{name}: dimension must use __slots__ (from slots=True)",
+
             )
 
 
