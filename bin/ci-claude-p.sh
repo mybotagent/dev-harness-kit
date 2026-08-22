@@ -85,6 +85,7 @@ esac
 : "${ANTHROPIC_MODEL:?ANTHROPIC_MODEL must be set by the workflow (model id for the active provider)}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set (workflow always sets it)}"
 : "${GH_TOKEN:?GH_TOKEN must be set so the assistant can call gh pr comment}"
+: "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must be set (workflow always checks out the PR head here)}"
 
 # ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN -- accept either name (claude
 # code reads API_KEY by default, ANTHROPIC_AUTH_TOKEN works for newer
