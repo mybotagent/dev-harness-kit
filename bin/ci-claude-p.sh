@@ -88,6 +88,12 @@ esac
 : "${GH_TOKEN:?GH_TOKEN must be set so the assistant can call gh pr comment}"
 : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must be set (workflow always checks out the PR head here)}"
 
+# Note: GITHUB_WORKSPACE is a runner-provided env var that GitHub Actions
+# always sets on the runner image (see
+# https://docs.github.com/actions/learn-github-actions/variables#default-environment-variables).
+# The env guard above is a defensive check that surfaces a clear error if
+# the script is ever invoked outside an Actions context (e.g. local dev).
+
 # ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN -- accept either name (claude
 # code reads API_KEY by default, ANTHROPIC_AUTH_TOKEN works for newer
 # providers). Error out if neither is set.
