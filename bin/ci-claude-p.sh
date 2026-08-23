@@ -56,6 +56,7 @@
 #   ANTHROPIC_API_KEY      Provider API key (or ANTHROPIC_AUTH_TOKEN).
 #   GITHUB_REPOSITORY      owner/repo slug.
 #   GH_TOKEN               PAT for `gh pr comment`, `gh pr diff`, etc.
+#   GITHUB_WORKSPACE       Runner checkout dir; used as plugin source root.
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
