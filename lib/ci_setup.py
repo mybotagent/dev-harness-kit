@@ -139,6 +139,12 @@ _CI_PATHS_AFTER_HOOKS: tuple[str, ...] = (
     "lib/maintenance_gate.py",  # Python, invoked by bin/review-local.sh:96,439
     "lib/atomic.py",            # Python, dep of lib/maintenance_gate.py
     "lib/__init__.py",          # Python package marker (already exists at repo root)
+    # read_env_key.py — single-source-of-truth dotenv parser (issue #711).
+    # Both `bin/set-provider.sh` (via python3 -c) and `lib/ci_setup.read_env_key`
+    # delegate to it. Without this in EXPECTED_PATHS, consumers never receive
+    # the file -> the import in ci_setup.py raises ModuleNotFoundError on
+    # first install.
+    "lib/read_env_key.py",
     # Linear auto-registration entrypoints. Every Linear hook
     # (hooks/linear-*.sh, hooks/worktree-auto-cut.sh) guards on the
     # presence of tools/linear_sync.py; without these in EXPECTED_PATHS,
