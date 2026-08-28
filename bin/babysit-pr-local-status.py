@@ -163,7 +163,16 @@ def _parse_audit_quartet(body: str) -> dict[str, str]:
     lib/maintenance_gate.py. Missing keys default to absent (caller
     treats empty as "no audit yet").
     """
-    KNOWN = ("verdict", "review", "security", "maintenance", "provider", "source")
+    # `head_sha` is emitted by review.yml / maintenance.yml but the
+    # local status script does NOT consume it (the script surfaces CI
+    # check buckets + verdict, not run-provenance). However, it MUST
+    # appear in KNOWN so the position-based slice for `source` is
+    # bounded correctly — without `head_sha` here, a payload like
+    # `... source=lib.maintenance_gate head_sha=newsha` would parse
+    # `source='lib.maintenance_gate head_sha=newsha'` (corrupted),
+    # because `source`'s `val_end` is `len(payload)` for the LAST
+    # key in KNOWN. Adding `head_sha` (any position) bounds the slice.
+    KNOWN = ("verdict", "review", "security", "maintenance", "provider", "source", "head_sha")
     out: dict[str, str] = {}
     # Drop the leading HTML sentinel so we only parse the key=value
     # payload that follows.
