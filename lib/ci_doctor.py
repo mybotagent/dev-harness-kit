@@ -745,10 +745,9 @@ def _check_gh_auth() -> Check:
     gh, degraded = gh_available(timeout=5)
     if not gh:
         return Check("gh CLI", "SKIP", degraded or "gh not on PATH")
-    return Check(
-        "gh auth", "PASS",
-        "" if not degraded else degraded,
-    )
+    if degraded:
+        return Check("gh auth", "FAIL", degraded)
+    return Check("gh auth", "PASS", "")
 
 
 # ---- Workflow diagnostics (WARN/INFO only — verdict-neutral) ----------
