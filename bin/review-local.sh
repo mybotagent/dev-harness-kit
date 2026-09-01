@@ -960,7 +960,7 @@ if [ "$RUN_INJECTION_SCAN" = "1" ]; then
   if [ "$DRY_RUN" = "1" ]; then
     log "would run: python3 tools/prompt_injection_scan.py --file <pr-diff>"
   else
-    PR_BODY_LOCAL="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body // ""' 2>/dev/null || echo "")"
+    PR_BODY_LOCAL="$(gh pr view "$PR_NUMBER" --repo "$REPO_FULL" --json body --jq '.body // ""' 2>/dev/null || echo "")"
     # Mirror CI's `PR_DIFF=""` -- exclude the diff from the local
     # scan. Reason: the scanner's own PR (this PR, plus any future
     # pattern-table update) contains literal adversarial strings in
@@ -972,7 +972,7 @@ if [ "$RUN_INJECTION_SCAN" = "1" ]; then
     # BABYSIT_INCLUDE_DIFF_IN_SCAN=1.)
     PR_DIFF_LOCAL=""
     if [ "${BABYSIT_INCLUDE_DIFF_IN_SCAN:-0}" = "1" ]; then
-      PR_DIFF_LOCAL="$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true)"
+      PR_DIFF_LOCAL="$(gh pr diff "$PR_NUMBER" --repo "$REPO_FULL" 2>/dev/null || true)"
     fi
     # PARITY NOTE: the fallback `|| echo ...` is intentional fail-OPEN
     # for the local mirror -- a scanner crash (missing tool, syntax
