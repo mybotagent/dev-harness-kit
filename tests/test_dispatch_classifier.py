@@ -416,3 +416,72 @@ class TestWritesShapeNormalization(unittest.TestCase):
             d.mode, "sequential",
             f"./src and src must normalize; got mode={d.mode!r} reason={d.reason!r}",
         )
+
+
+class TestEmptyStringWritesEdgeCase(unittest.TestCase):
+    """Regression: writes=[""] (empty string) must not be treated as
+    a real file path. Without filtering, frozenset({''}) is truthy,
+    causing two steps both with writes=[""] to incorrectly trigger the
+    overlap rule (sequential instead of parallel for N>=4 with
+    clean isolation). Empty strings also cause writes=[] and
+    writes=[""] to behave identically — both represent "no files".
+    """
+
+    def test_empty_string_writes_does_not_trigger_overlap(self):
+        """Two steps with writes=[""] must not be classified as overlap.
+
+        An empty string is not a real file — two steps both declaring
+        no real files have no actual collision and should be eligible
+        for parallel execution when they meet Rule 4 criteria.
+        """
+        steps = [
+            _step(1, partition="a", writes=[""]),
+            _step(2, partition="b", writes=[""]),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        # Empty-string writes are not real files; no overlap → parallel.
+        self.assertEqual(d.mode, "parallel")
+
+    def test_empty_string_in_writes_list_is_filtered(self):
+        """writes=["file.py", ""] must normalize to frozenset({"file.py"})."""
+        steps = [
+            _step(1, partition="a", writes=["src/a.py", ""]),
+            _step(2, partition="b", writes=["src/b.py"]),
+            _step(3, partition="c"),
+            _step(4, partition="d"),
+        ]
+        d = classify(steps)
+        # The empty string must not participate in overlap detection.
+        self.assertEqual(d.mode, "parallel",
+                         f"empty string must not cause false overlap; got {d.mode!r}")
+
+    def test_writes_empty_list_is_semantically_none(self):
+        """writes=[] (empty list) and writes=None must behave identically.
+
+        An empty writes list represents "no files to write", which is
+        semantically equivalent to not declaring writes at all.
+        """
+        steps_none = [
+            {"step": 1, "partition": "a"},
+            {"step": 2, "partition": "b"},
+            {"step": 3, "partition": "c"},
+            {"step": 4, "partition": "d"},
+        ]
+        steps_empty_list = [
+            _step(1, partition="a", writes=[]),
+            _step(2, partition="b", writes=[]),
+            _step(3, partition="c", writes=[]),
+            _step(4, partition="d", writes=[]),
+        ]
+        d_none = classify(steps_none)
+        d_empty_list = classify(steps_empty_list)
+        # Both should return parallel (Rule 4: clean isolation, N>=4).
+        self.assertEqual(d_none.mode, "parallel")
+        self.assertEqual(d_empty_list.mode, "parallel",
+                         f"writes=[] must be equivalent to writes=None; got {d_empty_list.mode!r}")
+
+
+if __name__ == "__main__":
+    unittest.main()

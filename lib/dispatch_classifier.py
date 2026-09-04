@@ -65,6 +65,10 @@ def _normalize_writes(writes: object) -> frozenset[str] | None:
     Accepts: list[str], tuple[str], scalar str (treated as a 1-path
     list), and None / empty (treated as "no declared writes").
 
+    Empty strings ("" or empty-string-only paths) are filtered out —
+    they represent no actual file and must not participate in the
+    overlap or isolation checks.
+
     Path normalization: strips leading "./" so "./src/x" and "src/x"
     are treated as the same file. Does not resolve ".." or absolute
     paths — that's a separate concern (the runner cd's into the worktree
@@ -91,6 +95,10 @@ def _normalize_writes(writes: object) -> frozenset[str] | None:
         p = x
         if p.startswith("./"):
             p = p[2:]
+        # Filter empty strings — they are no-ops in both isolation
+        # and overlap checks and must not participate in either gate.
+        if not p:
+            continue
         paths.append(p)
     return frozenset(paths)
 
