@@ -415,6 +415,28 @@ class TestEvaluateWarnings(unittest.TestCase):
         self.assertIn("9%", low.evidence)
         self.assertIn("85%", low.evidence)
 
+    def test_heavy_context_does_not_inherit_cache_miss_reclaim(self):
+        # HEAVY_CONTEXT (total_input > 500K) must set reclaim_axis="" AND
+        # estimated_save_usd=0.0 — its savings come from /compact or
+        # delegation, NOT from the cache_miss axis.  Regression: a prior
+        # revision passed reclaim_cache_miss verbatim, double-counting the
+        # cache-miss reclaim as context-size reclaim.
+        s = _make_session(
+            session_id="sid-heavy-ctx",
+            input_tokens=400_000, cache_read_tokens=200_000,  # total 600K
+            model="claude-sonnet-5",
+        )
+        sc = score_session(s)
+        # Pass non-zero cache_miss reclaim to prove it is NOT inherited.
+        warns = evaluate_warnings(s, sc, reclaim_cache_miss=1.23, reclaim_dup_read=0.0, reclaim_downgrade=0.0)
+        codes = [w.code for w in warns]
+        self.assertIn("HEAVY_CONTEXT", codes)
+        hc = next(w for w in warns if w.code == "HEAVY_CONTEXT")
+        self.assertEqual(hc.reclaim_axis, "")
+        self.assertEqual(hc.estimated_save_usd, 0.0)
+        self.assertEqual(hc.session_id, "sid-heavy-ctx")
+        self.assertIn("600,000", hc.evidence)
+
     def test_read_heavy_fires_with_dup_read_attribution(self):
         # Repeatedly reading the same file should trigger READ_HEAVY.
         s = _make_session(

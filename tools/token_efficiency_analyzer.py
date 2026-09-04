@@ -1762,7 +1762,7 @@ def evaluate_warnings(s: dict, score: dict,
                 "메인 세션에는 요약본만 넘기세요. 장기 세션의 경우 /compact "
                 "명령으로 적시에 컨텍스트를 압축해야 합니다."
             ),
-            estimated_save_usd=round(reclaim_cache_miss, 2),
+            estimated_save_usd=0.0,  # /compact or delegation savings are not pre-computed here
             priority=3,
             reclaim_axis="",  # context-size axis; reclaim comes from /compact or delegation, not cache alignment
             session_id=s["session_id"],
