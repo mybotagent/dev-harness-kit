@@ -143,13 +143,12 @@ def is_stale_lock(
 
     A lock is stale when it is older than `ttl_seconds` (default 30
     minutes, generous for babysit-pr's per-iteration push cycle), OR the
-    recorded pid no longer exists.
+    recorded pid no longer exists, OR the lock file is absent.
 
-    Missing `path` returns False -- there is nothing to be stale -- so
-    callers can short-circuit without a try/except dance:
-
-        if not is_stale_lock(".dev-kit/babysit.lock"):
-            return already_running_error
+    Missing `path` returns True -- the lock is effectively stale and the
+    next caller may acquire it. This also signals the caller to clean up
+    any orphaned `.lock.d` sibling left by ``try_acquire_pr_lock``'s
+    partial-acquisition rollback path.
 
     The `now_epoch` parameter is for tests only.
     """
@@ -157,7 +156,13 @@ def is_stale_lock(
     try:
         st = p.stat()
     except FileNotFoundError:
-        return False
+        # Lock file is gone — either the previous holder released it
+        # normally, or a crash/eviction cleaned it up. Either way it is
+        # not holding a lock and the next caller may acquire it.
+        # Return True so the caller (babysit-pr-local.sh) also removes
+        # the orphaned .lock.d sibling left by try_acquire_pr_lock's
+        # partial-acquisition rollback path.
+        return True
     except OSError:
         return False
 

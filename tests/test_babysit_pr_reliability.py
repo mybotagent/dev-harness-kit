@@ -112,8 +112,12 @@ class TestIsStaleLock(unittest.TestCase):
         self.lock = self.root / "babysit.lock"
 
     # T1
-    def test_missing_returns_false(self) -> None:
-        self.assertFalse(bpr.is_stale_lock(self.lock))
+    def test_missing_returns_true(self) -> None:
+        # FileNotFoundError is treated as stale: the lock is absent (either
+        # released normally or cleaned up after a crash), so the next
+        # caller may acquire. Also signals the shell caller to sweep any
+        # orphaned .lock.d sibling left by try_acquire_pr_lock rollback.
+        self.assertTrue(bpr.is_stale_lock(self.lock))
 
     # T2
     def test_fresh_lock_with_running_pid_is_not_stale(self) -> None:
