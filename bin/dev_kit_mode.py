@@ -99,7 +99,7 @@ def _read_env(settings_file: Path) -> str | None:
     if not settings_file.is_file():
         return None
     try:
-        body = json.loads(settings_file.read_text())
+        body = json.loads(settings_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
     env = body.get("env") or {}
@@ -114,7 +114,7 @@ def _enabled_plugins(settings_file: Path) -> bool:
     if not settings_file.is_file():
         return False
     try:
-        body = json.loads(settings_file.read_text())
+        body = json.loads(settings_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
     plugins = body.get("enabledPlugins") or {}
@@ -162,7 +162,7 @@ def cmd_write(args) -> int:
     body: dict = {}
     if target.is_file():
         try:
-            body = json.loads(target.read_text())
+            body = json.loads(target.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             print(f"warning: {target} exists but is not valid JSON; rewriting",
                   file=sys.stderr)
@@ -174,7 +174,7 @@ def cmd_write(args) -> int:
     body["env"]["DEV_KIT_MODE"] = args.mode
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(body, indent=2) + "\n")
+    target.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
 
     print(f"wrote DEV_KIT_MODE={args.mode} to {target.relative_to(proj_root)}")
     return 0
