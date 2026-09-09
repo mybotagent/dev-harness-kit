@@ -174,6 +174,29 @@ def test_blocked_outcome_is_a_valid_closure(root: Path) -> None:
     assert env.counts["paired"] == 1
 
 
+def test_controller_close_alone_does_not_close_unit(root: Path) -> None:
+    """controller_close without observed_terminal must leave the unit open.
+
+    Per proposal §3, a unit is only ``closed`` when the executor reports
+    an ``observed_terminal`` transition. ``controller_close`` is a paired
+    mirror of the executor's terminal (it tracks when the controller
+    itself stopped, not when the step outcome was observed). A
+    ``controller_close`` alone leaves the unit ``unresolved`` with
+    ``missing_terminal=1``.
+    """
+    TRANSITION_CONTROLLER_CLOSE = "controller_close"
+    enroll(root, run_id="r", workflow_id="w", subject_id="s", attempt_id="a")
+    observe(root, run_id="r", workflow_id="w", subject_id="s", attempt_id="a",
+            transition=TRANSITION_OBSERVED_START, outcome="started")
+    # controller_close WITHOUT observed_terminal — must NOT close the unit
+    observe(root, run_id="r", workflow_id="w", subject_id="s", attempt_id="a",
+            transition=TRANSITION_CONTROLLER_CLOSE, outcome="completed")
+    env = collect(root)
+    assert env.counts["enrolled"] == 1
+    assert env.counts["closed"] == 0          # NOT closed — no observed_terminal
+    assert env.counts["missing_terminal"] == 1  # still unresolved
+
+
 # ---------------------------------------------------------------------------
 # 3. Outcomes that are NOT closed
 # ---------------------------------------------------------------------------

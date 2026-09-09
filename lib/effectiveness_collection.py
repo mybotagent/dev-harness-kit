@@ -552,10 +552,10 @@ def _reduce_unit(records: Sequence[Record]) -> Dict[str, Any]:
             TRANSITION_CONTROLLER_FINAL,
         )
     ]
-    closed = bool(terminals)
     conflicting: List[Tuple[str, str]] = []
     obs_terminals = [t for t in terminals if t[0] == TRANSITION_OBSERVED_TERMINAL]
     ctrl_finals = [t for t in terminals if t[0] == TRANSITION_CONTROLLER_FINAL]
+    closed = bool(obs_terminals)
     if obs_terminals and ctrl_finals:
         obs_set = {o for _, o in obs_terminals}
         ctrl_set = {c for _, c in ctrl_finals}
