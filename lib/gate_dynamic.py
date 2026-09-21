@@ -80,6 +80,11 @@ RISK_FLOOR = 3.0
 # RISK_FLOOR` and forces skip=False — fail-closed on incomplete LLM
 # output, matching the CONFIDENCE_FLOOR / SKIP_THRESHOLD posture for
 # the other two axes.
+#
+# Doubles as the dataclass default for `GateDecision.risk_level` so
+# legacy cache entries written before v1.1 (no `risk_level` field) load
+# without raising TypeError, and the sentinel value keeps rule #6's
+# fail-closed veto intact for those entries.
 MISSING_RISK_LEVEL_SENTINEL = 11.0
 
 # Body truncation budget for `diff_sample` in the LLM prompt.
@@ -119,8 +124,11 @@ class GateDecision:
     skip: bool
     reasoning: str
     confidence: float                 # 0.0-1.0
-    risk_level: float                # 0.0-10.0, lower_is_better
-    raw_score: dict
+    # Default sentinel keeps v1.0 cache entries loadable: when a legacy
+    # JSON payload omits `risk_level`, `GateDecision(**payload)` succeeds
+    # and rule #6 still vetoes (sentinel > RISK_FLOOR → skip=False).
+    risk_level: float = MISSING_RISK_LEVEL_SENTINEL  # 0.0-10.0, lower_is_better
+    raw_score: dict = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)

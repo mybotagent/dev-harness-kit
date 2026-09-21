@@ -361,6 +361,47 @@ class TestDecisionIO(unittest.TestCase):
             (target / ".dev-kit" / "gates.json").write_text("{}")
             self.assertIsNone(gate_dynamic.load_decision("abc123", target))
 
+    def test_load_legacy_cache_without_risk_level_fails_closed(self) -> None:
+        """Cached decisions written before the v1.1 `risk_level` field
+        must load without raising and apply the fail-closed veto
+        (`MISSING_RISK_LEVEL_SENTINEL > RISK_FLOOR` → skip=False via
+        rule #6). Reproduces the MAJOR review finding: prior to the
+        default-value fix, `GateDecision(**d)` raised TypeError on
+        legacy cache entries and crashed every babysit-pr cache-hit
+        path.
+        """
+        import json
+
+        legacy_payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.9,
+                    "raw_score": {},
+                    # NOTE: no `risk_level` key — pre-v1.1 schema
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-15T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(legacy_payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        dec = loaded.decisions[0]
+        # Legacy entry gets the sentinel default — fail-closed posture
+        # means this is above RISK_FLOOR, so rule #6 vetoes skip=True.
+        self.assertEqual(dec.risk_level, gate_dynamic.MISSING_RISK_LEVEL_SENTINEL)
+        self.assertGreater(dec.risk_level, gate_dynamic.RISK_FLOOR)
+
+
 
 class TestPruneStale(unittest.TestCase):
     def test_prunes_files_older_than_ttl(self) -> None:
