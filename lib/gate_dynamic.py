@@ -63,11 +63,24 @@ SKIP_THRESHOLD = 7.0
 
 # Risk ceiling for `risk_level`. The LLM judge emits 0-10; a gate
 # with risk_level > RISK_FLOOR is never skipped regardless of how high
-# gate_skippable or confidence scores are. Default 3.0 means "low risk
-# only" — a relaxed ceiling for a v1.1 feature (per OE-1 philosophy).
-# This also prevents the 0.0 default (no LLM response) from accidentally
-# bypassing the risk rule on the first legitimate call.
+# gate_skippable or confidence scores are. Default 3.0 keeps "zero
+# risk" (0-2 per the judge rubric) plus the borderline-low edge
+# eligible for skip — a relaxed-but-bounded ceiling for a v1.1
+# feature (per OE-1 philosophy). A MISSING `risk_level` key (partial
+# LLM response) is handled separately at the call site via
+# `MISSING_RISK_LEVEL_SENTINEL`, not via a 0.0 default — 0.0 is the
+# safest possible score and would incorrectly PASS this rule, letting
+# an incomplete judge response bypass the risk veto instead of
+# failing closed.
 RISK_FLOOR = 3.0
+
+# Sentinel used for `risk_level` when the LLM response omits the key
+# entirely (as opposed to explicitly scoring it 0.0). Chosen above the
+# judge's 0-10 scale so a missing key always fails `risk_level <=
+# RISK_FLOOR` and forces skip=False — fail-closed on incomplete LLM
+# output, matching the CONFIDENCE_FLOOR / SKIP_THRESHOLD posture for
+# the other two axes.
+MISSING_RISK_LEVEL_SENTINEL = 11.0
 
 # Body truncation budget for `diff_sample` in the LLM prompt.
 # ~2 KB is enough for the judge to ground its scope-discipline
@@ -520,7 +533,15 @@ def select_gates(
         skip_score = float(scores.get("gate_skippable", 0.0))
         confidence_raw = float(scores.get("confidence", 0.0))
         confidence = confidence_raw / 10.0
-        risk_level = float(scores.get("risk_level", 0.0))
+        # A missing `risk_level` key (partial LLM response) must fail
+        # closed: defaulting to 0.0 would be the SAFEST possible score
+        # and would incorrectly PASS the risk_level <= RISK_FLOOR
+        # check below, letting an incomplete judge response bypass
+        # the risk veto. Use MISSING_RISK_LEVEL_SENTINEL (11.0, above
+        # the judge's 0-10 scale) so a missing key always vetoes the
+        # skip via rule #6, same fail-closed posture as the other two
+        # axes' floors.
+        risk_level = float(scores.get("risk_level", MISSING_RISK_LEVEL_SENTINEL))
         # Skip iff all three: skip_score >= SKIP_THRESHOLD AND
         # confidence >= CONFIDENCE_FLOOR AND risk_level <= RISK_FLOOR.
         skip = (

@@ -13,7 +13,7 @@ or troubleshooting a flapping judge.
 
 ## Hard rules (bypass the LLM)
 
-The orchestrator (`lib/gate_dynamic.apply_hard_rules`) applies 4
+The orchestrator (`lib/gate_dynamic.apply_hard_rules`) applies 6
 deterministic rules AFTER the LLM call. The LLM cannot overrule them.
 
 | Rule | Condition | Effect |
@@ -22,6 +22,8 @@ deterministic rules AFTER the LLM call. The LLM cannot overrule them.
 | 2. Operator override | `forced_run: true` on the gate | `skip=False`. The field is documented as "never SKIP this gate" — it does NOT mean "force the gate to RUN". |
 | 3. Critical gate in scope | `gate_name in {review, security}` AND `scope_globs` matches a diff file | `skip=False`. Critical gates are LLM-skipped only when the diff doesn't touch their scope. |
 | 4. Low-confidence veto | `LLM confidence < 0.7` | `skip=False`. The LLM is a recommender; low confidence means "I don't know — run the gate". |
+| 5. Opt-in required | `gates.<name>.dynamic_eligible != true` | `skip=False`. Default is `False` for every gate — an operator must explicitly opt a gate into LLM-driven skip (see "Per-gate opt-in" below). |
+| 6. High-risk veto | `risk_level > RISK_FLOOR` (default 3.0) | `skip=False`. `risk_level` is a 3rd judge axis (0-10, lower_is_better) alongside `gate_skippable` and `confidence`. A missing key in a partial LLM response fails closed (defaults to a sentinel above the floor, not to 0.0), so an incomplete judge response can never bypass this veto. |
 
 When the orchestrator is invoked from a standalone
 `bin/review-local.sh --dynamic-skip` call (no prior
@@ -78,7 +80,7 @@ Shape:
   "head_sha": "abc123def",
   "decisions": [
     {"gate_name": "review", "skip": false, "reasoning": "...",
-     "confidence": 0.0, "raw_score": {}}
+     "confidence": 0.0, "risk_level": 0.0, "raw_score": {}}
   ],
   "llm_raw": {"scores": {...}, "raw": "..."},
   "gates_hash": "<sha256 of gates.json>",
@@ -127,6 +129,14 @@ All three live under `/dev-kit:gate-select`. The implementation is
 
 - **Confidence floor (default 0.7)**: `lib/gate_dynamic.CONFIDENCE_FLOOR`.
   Lower = more aggressive skips; higher = more conservative.
+- **Risk ceiling (default 3.0)**: `lib/gate_dynamic.RISK_FLOOR`. A gate
+  with `risk_level > RISK_FLOOR` is never skipped (hard rule #6),
+  regardless of how high `gate_skippable` or `confidence` score.
+  Lower = more conservative (fewer skips allowed); higher = more
+  aggressive. A missing `risk_level` key in the LLM response defaults
+  to `lib/gate_dynamic.MISSING_RISK_LEVEL_SENTINEL` (11.0, above the
+  0-10 scale) so an incomplete response fails closed instead of
+  bypassing the veto.
 - **TTL (default 7 days)**: `lib/gate_dynamic.DYNAMIC_AUDIT_TTL_DAYS`.
 - **Temperature (default 0)**: `lib/llm_judge.call_judge(temperature=0)`
   is hard-coded in `lib/gate_dynamic.invoke_judge`. Do NOT raise it —

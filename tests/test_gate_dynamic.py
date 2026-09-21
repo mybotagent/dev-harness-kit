@@ -433,6 +433,30 @@ class TestSelectGates(unittest.TestCase):
             "usage": {},
         }
 
+    def test_missing_risk_level_key_fails_closed(self) -> None:
+        # Partial LLM response: gate_skippable and confidence both pass
+        # their floors, but `risk_level` is omitted entirely (distinct
+        # from an explicit 0.0). A 0.0 default would be the SAFEST
+        # possible risk_level and would incorrectly PASS Rule #6,
+        # letting an incomplete judge response skip the gate. The fix
+        # must default the missing key to MISSING_RISK_LEVEL_SENTINEL
+        # (above RISK_FLOOR) so this fails closed — no skip.
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            with mock.patch.object(
+                llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    "gate_skippable": 9, "confidence": 9,
+                    # "risk_level" intentionally omitted.
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            self.assertEqual(
+                [d.gate_name for d in decision.decisions if d.skip],
+                [],
+            )
+
 
 class TestCliSelect(unittest.TestCase):
     def test_select_dry_run_prints_json(self) -> None:
