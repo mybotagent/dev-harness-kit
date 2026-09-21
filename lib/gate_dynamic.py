@@ -38,6 +38,7 @@ import datetime as _dt
 import fnmatch
 import hashlib
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -48,6 +49,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gates_state  # noqa: E402
 import llm_judge  # noqa: E402
 from atomic import atomic_write_json  # noqa: E402
+
+# Module-level logger for S1 (silent-exception fix). The wrapper
+# `select_gates` body must `logger.exception(...)` on any failure
+# so a silent fail-open is debuggable from logs; this logger is the
+# single sink for the gate-dynamic layer's runtime errors.
+logger = logging.getLogger(__name__)
 
 # Audit-trail location, sibling of `.dev-kit/gates.json`.
 DYNAMIC_AUDIT_DIR = Path(".dev-kit") / "gate-dynamic"
@@ -351,20 +358,34 @@ def save_decision(decision: GateSkipDecision, root: Optional[Path] = None) -> Pa
 
 
 def _clamp_risk_level_for_load(d: dict) -> dict:
-    """S-1 fix: validate + clamp `risk_level` on cache load.
+    """S-1 + S-2 fix: validate + clamp `risk_level` on cache load.
 
-    A poisoned cache file with an out-of-range value (`risk_level=-1`,
-    `risk_level=99`, `risk_level="high"`) would otherwise survive
-    `GateDecision(**d)` and bypass rule #6: rule #6 checks `risk >
-    RISK_CEILING`, so a negative value does not trigger the veto,
-    and the cached `skip=True` survives the cache-hit re-application.
-    Clamp any value outside `[0.0, 10.0]` (or non-numeric) to
+    S-1 (range validation): a poisoned cache file with an
+    out-of-range value (`risk_level=-1`, `risk_level=99`,
+    `risk_level="high"`) would otherwise survive `GateDecision(**d)`
+    and bypass rule #6: rule #6 checks `risk > RISK_CEILING`, so a
+    negative value does not trigger the veto, and the cached
+    `skip=True` survives the cache-hit re-application. Clamp any
+    value outside `[0.0, 10.0]` (or non-numeric) to
     `MISSING_RISK_LEVEL_SENTINEL` so rule #6 fires and the gate
     fails closed. Tag the audit reason so operators can distinguish
-    the legacy_cache path from missing_key / coerced_response.
+    the legacy_cache path from missing_key / coerced_response /
+    coerced_response_cache.
+
+    S-2 (combined-score re-application): a poisoned cache entry with
+    in-range but coerced values (`skip=True, gate_skippable=9,
+    risk_level=0.5`) bypasses rule #6 but should have been caught
+    by the LLM-parse-time combined-score check. An attacker who
+    hand-crafts the cache JSON can skip that check entirely.
+    Re-apply the combined-score check at load time using
+    `raw_score["gate_skippable"]` + `risk_level`; if the combined-
+    score trips, upgrade `risk_level` to the sentinel and tag
+    `audit_reason="coerced_response_cache"` so operators can
+    distinguish this path.
     """
     out = dict(d)  # do not mutate caller's dict
     rl_raw = out.get("risk_level")
+    rl = None
     try:
         rl = float(rl_raw) if rl_raw is not None else MISSING_RISK_LEVEL_SENTINEL
         if not (0.0 <= rl <= 10.0):
@@ -375,6 +396,24 @@ def _clamp_risk_level_for_load(d: dict) -> dict:
     except (TypeError, ValueError):
         out["risk_level"] = MISSING_RISK_LEVEL_SENTINEL
         out["audit_reason"] = "legacy_cache"
+
+    # S-2: re-apply the combined-score coerced-response check at
+    # load time. A legitimate cache entry where the original
+    # LLM-parse-time check fired would have `risk_level ==
+    # MISSING_RISK_LEVEL_SENTINEL`; if we see a cache entry with
+    # in-range `risk_level` AND combined-score >= threshold,
+    # the parse-time check was bypassed — clamp to sentinel.
+    # Only re-apply when `raw_score["gate_skippable"]` is present
+    # (legacy v1.1 cache entries may lack it).
+    rs = out.get("raw_score") or {}
+    try:
+        gs = float(rs.get("gate_skippable", 0.0))
+    except (TypeError, ValueError):
+        gs = 0.0
+    cur_rl = out.get("risk_level", MISSING_RISK_LEVEL_SENTINEL)
+    if isinstance(cur_rl, (int, float)) and gs + (10.0 - cur_rl) >= COERCED_RESPONSE_COMBINED_FLOOR:
+        out["risk_level"] = MISSING_RISK_LEVEL_SENTINEL
+        out["audit_reason"] = "coerced_response_cache"
     return out
 
 
@@ -704,33 +743,60 @@ def select_gates(
 
         return decision
     except Exception:
-        # A10 fix: any exception in the gate-dynamic body must fail
-        # closed, not propagate. `select_gates` is called from
-        # babysit-pr / bin/review-local.sh / interactive flows; a
-        # crash here would crash the calling loop. The no-skip
+        # A10 fix + S-1 fix: any exception in the gate-dynamic body
+        # must fail closed, not propagate. `select_gates` is called
+        # from babysit-pr / bin/review-local.sh / interactive flows;
+        # a crash here would crash the calling loop. The no-skip
         # decision preserves all six hard rules (every gate runs)
-        # — the safest possible default.
-        return _no_skip_decision(context, root)
+        # — the safest possible default. S-1 fix: log the exception
+        # via `logger.exception(...)` so a silent fail-open is
+        # debuggable from logs, and tag the decision's audit_reason
+        # as `exception_fail_closed` so operators can distinguish
+        # this path from a healthy llm-unavailable decision.
+        logger.exception(
+            "select_gates body raised; failing closed to no-skip decision"
+        )
+        return _no_skip_decision(
+            context, root,
+            reason="select_gates exception",
+            audit_reason="exception_fail_closed",
+        )
 
 
-def _no_skip_decision(context: GateContext, root: Path) -> GateSkipDecision:
-    """Build a deterministic no-skip decision (LLM unavailable path)."""
+def _no_skip_decision(
+    context: GateContext,
+    root: Path,
+    *,
+    reason: str = "llm unavailable",
+    audit_reason: str = "llm_unavailable",
+) -> GateSkipDecision:
+    """Build a deterministic no-skip decision.
+
+    `reason` controls the per-decision reasoning string; `audit_reason`
+    is the `GateDecision.audit_reason` value, distinct from the
+    reasoning string. The default (`"llm unavailable"`) is the
+    graceful-degradation path when the LLM is unreachable. The
+    exception-fail-closed path passes `audit_reason="exception_fail_closed"`
+    so operators can tell a crashed gate-dynamic call apart from a
+    healthy no-skip path (S-1 fix).
+    """
     from gates_state import VALID_GATE_KEYS
     decisions = tuple(
         GateDecision(
             gate_name=g,
             skip=False,
-            reasoning="llm unavailable; defaulting to no-skip",
+            reasoning=f"{reason}; defaulting to no-skip",
             confidence=0.0,
             risk_level=0.0,
             raw_score={},
+            audit_reason=audit_reason,
         )
         for g in VALID_GATE_KEYS
     )
     return GateSkipDecision(
         head_sha=context.head_sha,
         decisions=decisions,
-        llm_raw={"scores": {}, "raw": "", "note": "llm_unavailable"},
+        llm_raw={"scores": {}, "raw": "", "note": audit_reason},
         gates_hash=hash_gates_state(root),
         decided_at_iso=_now_utc_iso(),
     )

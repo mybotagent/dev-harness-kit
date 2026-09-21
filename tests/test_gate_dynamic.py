@@ -977,15 +977,163 @@ class TestSelectGates(unittest.TestCase):
                 "exception in select_gates body must fail closed "
                 "to no-skip decision (A10)",
             )
-            # Reasoning string should mark the path.
+            # Reasoning string should mark the exception path distinctly.
             maint = next(d for d in decision.decisions
                          if d.gate_name == "maintenance")
             self.assertIn(
-                "unavailable",
+                "exception",
                 maint.reasoning,
-                "no-skip fallback reasoning must mark the path "
-                "('llm unavailable; defaulting to no-skip')",
+                "no-skip fallback reasoning must mark the exception "
+                "path distinctly (S-1 fix)",
             )
+
+    def test_select_gates_exception_path_logs_and_tags(self) -> None:
+        """S1 fix: the top-level `except Exception` must (a) emit a
+        `logger.exception(...)` call so the failure is debuggable,
+        and (b) tag the returned no-skip decision's `audit_reason`
+        as a distinct sentinel so operators can tell exception-fail-
+        closed apart from llm-unavailable. Without this, a silent
+        fail-open is indistinguishable from a healthy no-skip path.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic, "load_decision",
+                side_effect=RuntimeError("disk on fire"),
+            ), patch.object(
+                gate_dynamic, "prune_stale",
+                return_value=0,
+            ), patch.object(
+                gate_dynamic.logger, "exception",
+            ) as mock_log:
+                decision = gate_dynamic.select_gates(ctx, target)
+            # Logger must have been invoked with the exception.
+            self.assertTrue(
+                mock_log.called,
+                "select_gates exception path must call logger.exception",
+            )
+            # audit_reason must distinguish exception fail-closed
+            # from llm-unavailable (default).
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertEqual(
+                maint.audit_reason,
+                "exception_fail_closed",
+                "audit_reason must mark the exception-fail-closed "
+                "path distinctly",
+            )
+
+    def test_load_decision_reapplies_combined_score_check(self) -> None:
+        """S2 fix: a poisoned cache entry with `skip=True` and
+        `gate_skippable=9, risk_level=0.5` (combined-score = 18.5)
+        survives the load-time clamp (0.5 is in [0, 10]) and
+        survives rule six (0.5 > 3.0 is False). The coerced-response
+        check was only applied at LLM parse time, not at cache
+        load — so the poisoned skip survives the cache-hit
+        re-application. Pin: load_decision must re-apply the
+        combined-score check at load time and clamp to sentinel
+        with audit_reason="coerced_response_cache".
+        """
+        import json
+        payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.9,
+                    # risk_level in range but combined-score trips
+                    "risk_level": 0.5,
+                    # raw_score feeds the combined-score check.
+                    # gate_skippable=9, risk=0.5 → 9 + (10-0.5) = 18.5
+                    # → coerced. The original LLM-parse check would
+                    # have upgraded risk_level to the sentinel; this
+                    # poisoned cache entry skips that upgrade.
+                    "raw_score": {
+                        "gate_skippable": 9,
+                        "confidence": 9,
+                        "risk_level": 0.5,
+                    },
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-15T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        dec = loaded.decisions[0]
+        self.assertEqual(
+            dec.risk_level,
+            gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+            "poisoned cache with combined-score >= 17 must be "
+            "clamped to sentinel at load time (S2)",
+        )
+        self.assertEqual(
+            dec.audit_reason,
+            "coerced_response_cache",
+            "coerced-response cache-load path must be tagged "
+            "distinctly so operators can tell it apart from "
+            "missing_key / coerced_response / legacy_cache",
+        )
+
+    def test_load_decision_preserves_legitimate_skip(self) -> None:
+        """S2 negative test: a legitimate cache entry with
+        `gate_skippable=7, risk_level=3` (combined-score = 14) must
+        NOT trigger the combined-score coercion upgrade. The
+        cache-load check must not over-trigger on legitimate
+        skips — only on the poisoned-skip signature.
+        """
+        import json
+        payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.8,
+                    # risk_level in range; combined-score = 14
+                    # (below 17). Legitimate skip survives.
+                    "risk_level": 3.0,
+                    "raw_score": {
+                        "gate_skippable": 7,
+                        "confidence": 8,
+                        "risk_level": 3.0,
+                    },
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-15T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        dec = loaded.decisions[0]
+        self.assertEqual(
+            dec.risk_level,
+            3.0,
+            "legitimate skip (combined=14) must survive cache load "
+            "without coercion upgrade",
+        )
+        self.assertEqual(
+            dec.audit_reason,
+            "ok",
+            "legitimate-skip cache load must retain 'ok' audit_reason",
+        )
 
 
 
