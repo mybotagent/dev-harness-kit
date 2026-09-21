@@ -191,7 +191,7 @@ class TestHardRules(unittest.TestCase):
         self.assertFalse(maint.skip)
 
     def test_high_risk_veto_no_skip(self) -> None:
-        # Rule 6: risk_level > RISK_FLOOR (3.0) → skip=False even when
+        # Rule 6: risk_level > RISK_CEILING (3.0) → skip=False even when
         # gate_skippable and confidence are both high.
         ctx = _make_ctx(iteration=2)
         llm_decisions = [
@@ -238,6 +238,56 @@ class TestHardRules(unittest.TestCase):
         out = gate_dynamic.apply_hard_rules(ctx, llm_decisions)
         for d in out:
             self.assertFalse(d.skip, f"Rule #3 should veto {d.gate_name} on empty scope")
+
+    def test_risk_ceiling_polarity_pinned(self) -> None:
+        """A-1 fix: pin the polarity of the risk ceiling (renamed
+        from `RISK_CEILING`). The constant semantically is a CEILING
+        (rule fires when `risk > ceiling`); the docstring on
+        `RISK_CEILING` even opened with the word "ceiling", but the
+        suffix invited future contributors to invert the comparison.
+        Pins:
+          - risk > CEILING → veto
+          - risk == CEILING → no veto
+          - risk < CEILING → no veto
+        If someone inverts the comparison to `<`, this test fails.
+        """
+        ceiling = gate_dynamic.RISK_CEILING  # name kept for back-compat
+        # Alias assertion: the constant must equal the documented
+        # default of 3.0 (so the polarity test is reproducible).
+        self.assertEqual(ceiling, 3.0)
+
+        # risk > ceiling → veto
+        ctx = _make_ctx(iteration=2)
+        d_above = gate_dynamic.GateDecision(
+            "maintenance", skip=True, reasoning="r", confidence=0.9,
+            risk_level=ceiling + 1.0, raw_score={},
+        )
+        out_above = gate_dynamic.apply_hard_rules(ctx, [d_above])
+        self.assertFalse(
+            out_above[0].skip,
+            f"risk={ceiling + 1.0} (above ceiling={ceiling}) must veto",
+        )
+        # risk == ceiling → no veto
+        d_equal = gate_dynamic.GateDecision(
+            "maintenance", skip=True, reasoning="r", confidence=0.9,
+            risk_level=ceiling, raw_score={},
+        )
+        out_equal = gate_dynamic.apply_hard_rules(ctx, [d_equal])
+        self.assertTrue(
+            out_equal[0].skip,
+            f"risk={ceiling} (at ceiling) must NOT veto — boundary case",
+        )
+        # risk < ceiling → no veto
+        d_below = gate_dynamic.GateDecision(
+            "maintenance", skip=True, reasoning="r", confidence=0.9,
+            risk_level=ceiling - 1.0, raw_score={},
+        )
+        out_below = gate_dynamic.apply_hard_rules(ctx, [d_below])
+        self.assertTrue(
+            out_below[0].skip,
+            f"risk={ceiling - 1.0} (below ceiling) must NOT veto",
+        )
+
 
 
 class TestInvokeJudgeTemperature(unittest.TestCase):
@@ -349,6 +399,86 @@ class TestDecisionIO(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             self.assertIsNone(gate_dynamic.load_decision("nope", Path(td)))
 
+    def test_load_decision_clamps_out_of_range_risk_level(self) -> None:
+        """S-1 fix: `load_decision` must range-check `risk_level`.
+        An out-of-range value (e.g. -1.0, 99.0 from a poisoned cache
+        file) would otherwise survive rule #6 unchanged: rule #6
+        checks `risk > 3.0`, so `risk=-1.0` doesn't fire and the
+        cached `skip=True` survives the re-application. Clamp
+        out-of-range values to MISSING_RISK_LEVEL_SENTINEL so rule
+        #6 fires.
+        """
+        import json
+        for bad_value in (-1.0, 99.0, -100.0, 1000.0, float("inf")):
+            with self.subTest(bad_value=bad_value):
+                payload = {
+                    "head_sha": "abc",
+                    "gates_hash": "",
+                    "decisions": [
+                        {
+                            "gate_name": "maintenance",
+                            "skip": True,
+                            "reasoning": "r",
+                            "confidence": 0.9,
+                            "risk_level": bad_value,
+                            "raw_score": {},
+                        }
+                    ],
+                    "llm_raw": {},
+                    "decided_at_iso": "2026-09-15T00:00:00Z",
+                }
+                with tempfile.TemporaryDirectory() as td:
+                    target = Path(td)
+                    audit_dir = target / ".dev-kit" / "gate-dynamic"
+                    audit_dir.mkdir(parents=True)
+                    (audit_dir / "abc.json").write_text(json.dumps(payload))
+                    loaded = gate_dynamic.load_decision("abc", target)
+                self.assertIsNotNone(loaded)
+                dec = loaded.decisions[0]
+                self.assertEqual(
+                    dec.risk_level,
+                    gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+                    f"out-of-range risk_level={bad_value!r} must be "
+                    f"clamped to MISSING_RISK_LEVEL_SENTINEL",
+                )
+
+    def test_load_decision_clamps_non_numeric_risk_level(self) -> None:
+        """S-1 follow-up: a non-numeric `risk_level` (poisoned cache
+        with `"high"` string) must also be clamped rather than
+        crashing on `GateDecision(**d)`. Clamp to sentinel; do not
+        let the load fail.
+        """
+        import json
+        payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.9,
+                    "risk_level": "high",  # non-numeric
+                    "raw_score": {},
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-15T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(
+            loaded.decisions[0].risk_level,
+            gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+            "non-numeric risk_level must be clamped to sentinel, "
+            "not raise TypeError",
+        )
+
     def test_load_invalidates_on_gates_hash_mismatch(self) -> None:
         # Operator changes .dev-kit/gates.json between iterations →
         # the cached decision's gates_hash no longer matches → invalidate.
@@ -403,7 +533,7 @@ class TestDecisionIO(unittest.TestCase):
         dec = loaded.decisions[0]
         # Dataclass property: legacy entry gets the sentinel default.
         self.assertEqual(dec.risk_level, gate_dynamic.MISSING_RISK_LEVEL_SENTINEL)
-        self.assertGreater(dec.risk_level, gate_dynamic.RISK_FLOOR)
+        self.assertGreater(dec.risk_level, gate_dynamic.RISK_CEILING)
         # Security invariant: after apply_hard_rules, the rule #6 veto
         # must override the cached `skip=True` to `skip=False`. This is
         # what `select_gates` now relies on when it re-applies hard
@@ -495,7 +625,7 @@ class TestSelectGates(unittest.TestCase):
         # possible risk_level and would incorrectly PASS Rule #6,
         # letting an incomplete judge response skip the gate. The fix
         # must default the missing key to MISSING_RISK_LEVEL_SENTINEL
-        # (above RISK_FLOOR) so this fails closed — no skip.
+        # (above RISK_CEILING) so this fails closed — no skip.
         with tempfile.TemporaryDirectory() as td:
             target = Path(td)
             ctx = _make_ctx(iteration=2)
@@ -517,7 +647,7 @@ class TestSelectGates(unittest.TestCase):
         before returning. Closes the A01/A06 short-circuit finding:
         previously `select_gates` returned the cached
         `GateSkipDecision` verbatim, letting a pre-rule-#6 entry
-        (cached with risk_level above RISK_FLOOR + skip=True) bypass
+        (cached with risk_level above RISK_CEILING + skip=True) bypass
         the v1.1 risk veto.
 
         Invariant: `select_gates(..., cache-hit)` decisions must equal
@@ -532,7 +662,7 @@ class TestSelectGates(unittest.TestCase):
             "gates_hash": "",
             "decisions": [
                 {
-                    # risk_level=11.0 (> RISK_FLOOR=3.0). The cached
+                    # risk_level=11.0 (> RISK_CEILING=3.0). The cached
                     # skip=True must be vetoed by rule #6 after
                     # re-applying hard rules. Pre-fix code returns
                     # the cached tuple verbatim, so skip=True leaks.
@@ -606,6 +736,91 @@ class TestSelectGates(unittest.TestCase):
                 [d.skip for d in expected],
                 "cache-hit decisions must equal apply_hard_rules(...) "
                 "of the raw cached decisions (re-application invariant)",
+            )
+
+    def test_coerced_response_combined_score_fails_closed(self) -> None:
+        """LLM01 follow-up: a sub-extreme coerced triple
+        `(skip=8.5, risk=1.5, conf=7.5)` slips past the original
+        AND-only check (skip=8.5 < 9 → check does not fire) but still
+        passes the skip predicate (skip ≥ 7, conf ≥ 0.7, risk ≤ 3).
+        The fix is a combined-score check:
+        `skip_score + (10 - risk_level) >= 17` — an attacker must
+        push BOTH axes to the extremes; lowering one alone is
+        insufficient.
+
+        Pins the LLM01 follow-up finding from the second push's
+        security judge.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic.llm_judge, "load_config",
+                return_value={"provider": "x", "api_key": "x",
+                              "model": "x", "base_url": "x"},
+            ), patch.object(
+                gate_dynamic.llm_judge, "format_prompt",
+                return_value="t",
+            ), patch.object(
+                gate_dynamic.llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    # Sub-extreme coerced triple — combined-score = 17.
+                    "gate_skippable": 8.5,
+                    "confidence": 7.5,
+                    "risk_level": 1.5,
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            # Combined-score >= 17 must trigger the coercion upgrade.
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertEqual(
+                maint.risk_level,
+                gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+                "combined-score coerced triple (skip=8.5, risk=1.5) "
+                "must upgrade risk_level to the sentinel so rule 6 fires",
+            )
+            self.assertFalse(
+                maint.skip,
+                "sub-extreme coerced triple must not skip the gate",
+            )
+
+    def test_combined_score_allows_legitimate_skip(self) -> None:
+        """Combined-score sanity check must NOT over-trigger on a
+        legitimate response that lands safely below the threshold.
+        Real LLM: skip=7, risk=3 → combined-score=14 (well below 17).
+        The check must not fire and the skip must survive.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic.llm_judge, "load_config",
+                return_value={"provider": "x", "api_key": "x",
+                              "model": "x", "base_url": "x"},
+            ), patch.object(
+                gate_dynamic.llm_judge, "format_prompt",
+                return_value="t",
+            ), patch.object(
+                gate_dynamic.llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    # Below combined-score threshold (7+7=14 < 17).
+                    # Legitimate "skip this gate" recommendation.
+                    "gate_skippable": 7,
+                    "confidence": 8,
+                    "risk_level": 3.0,
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertTrue(
+                maint.skip,
+                "legitimate skip (skip=7, risk=3, combined=14) must "
+                "survive — combined-score sanity check is not allowed "
+                "to over-trigger",
             )
 
     def test_coerced_response_sanity_check_fails_closed(self) -> None:
@@ -697,6 +912,81 @@ class TestSelectGates(unittest.TestCase):
                 "non-coerced moderate skip (skip=8 risk=2 conf=7) "
                 "must skip — sanity check is not allowed to over-trigger",
             )
+
+    def test_coercion_recorded_in_audit(self) -> None:
+        """A09 fix: when the coerced-response check fires, the audit
+        trail must record the reason — not silently log "missing key"
+        or "legacy cache" with the same byte-stream. `audit_reason`
+        on the GateDecision must be set to "coerced_response" so an
+        operator reviewing `.dev-kit/gate-dynamic/<sha>.json` can
+        distinguish prompt-injection from partial-LLM-response.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic.llm_judge, "load_config",
+                return_value={"provider": "x", "api_key": "x",
+                              "model": "x", "base_url": "x"},
+            ), patch.object(
+                gate_dynamic.llm_judge, "format_prompt",
+                return_value="t",
+            ), patch.object(
+                gate_dynamic.llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    "gate_skippable": 10,
+                    "confidence": 8,
+                    "risk_level": 0.0,
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertEqual(
+                maint.audit_reason,
+                "coerced_response",
+                "audit_reason must record the coerced-response path "
+                "distinctly from 'missing_key' / 'legacy_cache'",
+            )
+
+    def test_select_gates_fails_closed_on_load_decision_exception(self) -> None:
+        """A10 fix: `select_gates` body must self-fail-closed on any
+        exception in the cache-hit or LLM path. Pin by raising from
+        `load_decision` and asserting the returned decision is the
+        no-skip fallback (all gates skip=False, confidence=0.0).
+        Without the wrapper, the exception propagates and the
+        babysit-pr loop crashes on the gate-dynamic call.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic, "load_decision",
+                side_effect=RuntimeError("disk on fire"),
+            ), patch.object(
+                gate_dynamic, "prune_stale",
+                return_value=0,
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            # All gates must be skip=False (the no-skip fallback).
+            self.assertEqual(
+                [d.gate_name for d in decision.decisions if d.skip],
+                [],
+                "exception in select_gates body must fail closed "
+                "to no-skip decision (A10)",
+            )
+            # Reasoning string should mark the path.
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertIn(
+                "unavailable",
+                maint.reasoning,
+                "no-skip fallback reasoning must mark the path "
+                "('llm unavailable; defaulting to no-skip')",
+            )
+
 
 
 
