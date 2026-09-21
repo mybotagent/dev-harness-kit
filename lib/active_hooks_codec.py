@@ -109,6 +109,15 @@ def load_matrix(project_root: Path) -> Dict:
     `is_hook_active` once per PreToolUse event) pays one disk read per
     `mtime` change instead of one read per invocation. Cache is
     invalidated when the file's `st_mtime` changes.
+
+    In addition, mutating writers (`set_stage`, `disable_override`)
+    explicitly evict every cache entry whose path matches the write's
+    `project_root` after `atomic_write_json` returns, so the next read
+    is forced against disk even on filesystems where `os.replace`
+    leaves `st_mtime` unchanged (NFS, some Docker overlay layers,
+    coarse-mtime mounts). This explicit-invalidate contract is what
+    `test_set_stage_invalidates_cache_even_when_mtime_unchanged`
+    pins — see that test for the regression scenario.
     """
     path = project_root / ".dev-kit" / ".active-hooks.json"
     try:
