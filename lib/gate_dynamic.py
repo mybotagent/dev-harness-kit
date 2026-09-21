@@ -129,14 +129,6 @@ COERCED_RESPONSE_COMBINED_FLOOR = 17.0
 # 7-8, well below 9.0) so the new check does not over-trigger.
 COERCED_RESPONSE_NEAR_MAX_SKIP = 9.0
 
-# Coerced-response sanity-check thresholds (v1.1 legacy).
-# Retained as no-op aliases for backward compat with downstream
-# callers that may import them; the v1.1.1 logic uses
-# `COERCED_RESPONSE_COMBINED_FLOOR` above (combined-score check)
-# instead of these individual axis thresholds.
-COERCED_RESPONSE_SKIP_FLOOR = 9.0
-COERCED_RESPONSE_RISK_CEILING = 1.0
-
 # Body truncation budget for `diff_sample` in the LLM prompt.
 # ~2 KB is enough for the judge to ground its scope-discipline
 # judgment without blowing the input-token budget on long diffs.
@@ -195,8 +187,9 @@ class GateDecision:
     #   - "coerced_response_cache" — cache-load combined-score OR near-
     #                               max-skip check fired; sentinel
     #                               applied at load time.
-    #   - "llm_unavailable"       — LLM seam unreachable (not currently
-    #                               emitted; reserved for follow-up).
+    #   - "llm_unavailable"       — LLM seam unreachable; emitted by
+    #                               `_no_skip_decision`'s default when
+    #                               `invoke_judge` returns empty.
     #   - "exception_fail_closed" — exception in `select_gates`; sentinel
     #                               applied by the top-level wrapper.
     # Empty string is treated as "ok" (backward compat with v1.1

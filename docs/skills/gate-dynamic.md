@@ -177,7 +177,8 @@ All three live under `/dev-kit:gate-select`. The implementation is
   `"coerced_response_cache"` (combined-score OR near-max-skip
   check fired at cache-load time), `"legacy_cache"` (load-time
   range clamp OR empty-`raw_score` defense-in-depth),
-  `"llm_unavailable"` (reserved; not currently emitted),
+  `"llm_unavailable"` (LLM seam unreachable; emitted by
+  `_no_skip_decision`'s default when `invoke_judge` returns empty),
   `"exception_fail_closed"` (exception in `select_gates` top-level
   wrapper). Operators reviewing `.dev-kit/gate-dynamic/<sha>.json`
   after a babysit-pr cycle can tell prompt-injection from
