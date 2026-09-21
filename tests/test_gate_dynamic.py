@@ -1135,6 +1135,208 @@ class TestSelectGates(unittest.TestCase):
             "legitimate-skip cache load must retain 'ok' audit_reason",
         )
 
+    def test_near_max_skip_coerced_response_fails_closed(self) -> None:
+        """v1.1.3 follow-up: the LLM01 high finding identified a
+        `(skip=9.99, risk=3.0)` attack triple that the combined-score
+        check missed (16.99 < 17.0). The new near-max-skip check fires
+        when `skip_score >= 9.0 AND risk_level >= RISK_CEILING` — the
+        signature of a coerced judge response pushing skip to near-max
+        while keeping risk at the documented borderline-low edge.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic.llm_judge, "load_config",
+                return_value={"provider": "x", "api_key": "x",
+                              "model": "x", "base_url": "x"},
+            ), patch.object(
+                gate_dynamic.llm_judge, "format_prompt",
+                return_value="t",
+            ), patch.object(
+                gate_dynamic.llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    # Near-max-skip coerced triple. Combined-score =
+                    # 9.99 + (10 - 3.0) = 16.99 < 17, so the prior
+                    # combined-score check does NOT fire. The new
+                    # near-max-skip check (skip>=9 AND risk>=3) does.
+                    "gate_skippable": 9.99,
+                    "confidence": 9.0,
+                    "risk_level": 3.0,
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            # Near-max-skip check must trigger the coercion upgrade.
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertEqual(
+                maint.risk_level,
+                gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+                "near-max-skip coerced triple (skip=9.99, risk=3.0) "
+                "must upgrade risk_level to the sentinel so rule 6 fires",
+            )
+            self.assertEqual(
+                maint.audit_reason,
+                "coerced_response",
+                "near-max-skip coerced-response must be tagged "
+                "distinctly so operators can tell it apart from "
+                "missing_key / legacy_cache / coerced_response_cache",
+            )
+            self.assertFalse(
+                maint.skip,
+                "near-max-skip coerced triple must not skip the gate",
+            )
+
+    def test_near_max_skip_allows_legitimate_high_skip(self) -> None:
+        """Negative test for the near-max-skip check: a legitimate
+        judge response with `gate_skippable=8, risk_level=2` (clean
+        diff, low risk, no coercion signature) must NOT trigger the
+        new check. Combined-score = 8 + (10 - 2) = 16 < 17 (also
+        safe), and skip_score < 9 so the near-max-skip check is
+        inert. The skip must survive.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            ctx = _make_ctx(iteration=2)
+            from unittest.mock import patch
+            with patch.object(
+                gate_dynamic.llm_judge, "load_config",
+                return_value={"provider": "x", "api_key": "x",
+                              "model": "x", "base_url": "x"},
+            ), patch.object(
+                gate_dynamic.llm_judge, "format_prompt",
+                return_value="t",
+            ), patch.object(
+                gate_dynamic.llm_judge, "_http_post",
+                return_value=self._mock_http_response({
+                    # Legitimate high-skip / low-risk recommendation.
+                    # Both new and old sanity checks are inert here.
+                    "gate_skippable": 8,
+                    "confidence": 9,
+                    "risk_level": 2.0,
+                }),
+            ):
+                decision = gate_dynamic.select_gates(ctx, target)
+            maint = next(d for d in decision.decisions
+                         if d.gate_name == "maintenance")
+            self.assertEqual(
+                maint.audit_reason,
+                "ok",
+                "legitimate high-skip / low-risk response must not be "
+                "tagged as coerced",
+            )
+            self.assertTrue(
+                maint.skip,
+                "legitimate (skip=8, risk=2) must survive both the "
+                "combined-score and near-max-skip checks",
+            )
+
+    def test_load_decision_reapplies_near_max_skip_check(self) -> None:
+        """S3 fix: a poisoned cache with `gate_skippable=9.5,
+        risk_level=3.0` bypasses the combined-score check (combined
+        = 9.5 + (10 - 3.0) = 16.5 < 17) but matches the near-max-skip
+        signature (gs=9.5 >= 9, rl=3.0 >= RISK_CEILING). Pin:
+        load_decision must apply the same near-max-skip check at load
+        time and clamp to sentinel with audit_reason=
+        "coerced_response_cache".
+        """
+        import json
+        payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.9,
+                    # Combined-score = 16.5 < 17 (combined-score check
+                    # falls through); near-max-skip signature (gs=9.5
+                    # >= 9 AND rl=3.0 >= 3.0) trips the new check.
+                    "risk_level": 3.0,
+                    "raw_score": {
+                        "gate_skippable": 9.5,
+                        "confidence": 9,
+                        "risk_level": 3.0,
+                    },
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-21T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        dec = loaded.decisions[0]
+        self.assertEqual(
+            dec.risk_level,
+            gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+            "poisoned cache with near-max-skip signature must be "
+            "clamped to sentinel at load time (S3)",
+        )
+        self.assertEqual(
+            dec.audit_reason,
+            "coerced_response_cache",
+            "near-max-skip cache-load path must be tagged "
+            "distinctly",
+        )
+
+    def test_load_decision_empty_raw_score_fails_closed(self) -> None:
+        """S4 fix: a poisoned cache with empty `raw_score` AND
+        `risk_level <= RISK_CEILING` is the A06/A08 cache-poisoning
+        signature. A legitimate cache entry always writes
+        `raw_score={"gate_skippable": X, ...}`, so an empty
+        `raw_score` paired with a skip-range `risk_level` is
+        anomalous. Clamp to sentinel + tag `legacy_cache` so rule #6
+        vetoes.
+        """
+        import json
+        payload = {
+            "head_sha": "abc",
+            "gates_hash": "",
+            "decisions": [
+                {
+                    "gate_name": "maintenance",
+                    "skip": True,
+                    "reasoning": "r",
+                    "confidence": 0.9,
+                    # In-range risk + empty raw_score = anomalous.
+                    # Combined-score check falls through (gs=0.0),
+                    # near-max-skip check falls through (gs<9).
+                    # S-4 catches this signature.
+                    "risk_level": 2.5,
+                    "raw_score": {},
+                }
+            ],
+            "llm_raw": {},
+            "decided_at_iso": "2026-09-21T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            audit_dir = target / ".dev-kit" / "gate-dynamic"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "abc.json").write_text(json.dumps(payload))
+            loaded = gate_dynamic.load_decision("abc", target)
+        self.assertIsNotNone(loaded)
+        dec = loaded.decisions[0]
+        self.assertEqual(
+            dec.risk_level,
+            gate_dynamic.MISSING_RISK_LEVEL_SENTINEL,
+            "poisoned cache with empty raw_score + skip-range risk "
+            "must be clamped to sentinel at load time (S4)",
+        )
+        self.assertEqual(
+            dec.audit_reason,
+            "legacy_cache",
+            "empty-raw_score cache-load defense-in-depth must be "
+            "tagged as legacy_cache",
+        )
+
 
 
 

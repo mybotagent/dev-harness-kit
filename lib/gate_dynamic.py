@@ -115,6 +115,20 @@ MISSING_RISK_LEVEL_SENTINEL = 11.0
 # sub-extreme `(skip=8.5, risk=1.5)` attack triple).
 COERCED_RESPONSE_COMBINED_FLOOR = 17.0
 
+# Near-max-skip coerced-response sanity check (v1.1.3 follow-up).
+# Closes the LLM01 high finding where the combined-score check still
+# let through the `(skip=9.99, risk=3.0)` attack triple: 9.99 + (10 - 3.0)
+# = 16.99 < 17.0, so the combined-score check did NOT fire, and the
+# skip predicate (`skip_score >= 7`, `confidence >= 0.7`,
+# `risk_level <= RISK_CEILING`) all passed — SKIP granted on a coerced
+# response. The signature of this attack is "skip_score pushed to
+# near-max AND risk_level at the documented borderline-low edge".
+# If skip_score is near max (>= 9.0) AND risk_level is at the ceiling
+# (>= RISK_CEILING), force risk_level to the sentinel so rule #6 vetoes.
+# Legitimate borderline-low skips have moderate skip_score (typically
+# 7-8, well below 9.0) so the new check does not over-trigger.
+COERCED_RESPONSE_NEAR_MAX_SKIP = 9.0
+
 # Coerced-response sanity-check thresholds (v1.1 legacy).
 # Retained as no-op aliases for backward compat with downstream
 # callers that may import them; the v1.1.1 logic uses
@@ -165,15 +179,26 @@ class GateDecision:
     # and rule #6 still vetoes (sentinel > RISK_CEILING → skip=False).
     risk_level: float = MISSING_RISK_LEVEL_SENTINEL  # 0.0-10.0, lower_is_better
     raw_score: dict = dataclasses.field(default_factory=dict)
-    # A09 audit trail. Distinguishes the four paths that can land
+    # A09 audit trail. Distinguishes the seven paths that can land
     # `risk_level` on the fail-closed sentinel:
-    #   - "ok"            — LLM returned a value in [0.0, 10.0].
-    #   - "missing_key"   — LLM response omitted `risk_level`. Sentinel
-    #                       applied at parse time.
-    #   - "coerced_response" — combined-score sanity check fired; sentinel
-    #                       applied as the fail-closed reaction.
-    #   - "legacy_cache"  — `load_decision` clamped an out-of-range cached
-    #                       value to the sentinel.
+    #   - "ok"                    — LLM returned a value in [0.0, 10.0].
+    #   - "missing_key"           — LLM response omitted `risk_level`.
+    #                               Sentinel applied at parse time.
+    #   - "coerced_response"      — combined-score OR near-max-skip
+    #                               sanity check fired; sentinel applied
+    #                               as the fail-closed reaction.
+    #   - "legacy_cache"          — `load_decision` clamped an out-of-
+    #                               range cached value, OR an empty
+    #                               `raw_score` paired with a skip-range
+    #                               `risk_level` (cache-poisoning
+    #                               signature), to the sentinel.
+    #   - "coerced_response_cache" — cache-load combined-score OR near-
+    #                               max-skip check fired; sentinel
+    #                               applied at load time.
+    #   - "llm_unavailable"       — LLM seam unreachable (not currently
+    #                               emitted; reserved for follow-up).
+    #   - "exception_fail_closed" — exception in `select_gates`; sentinel
+    #                               applied by the top-level wrapper.
     # Empty string is treated as "ok" (backward compat with v1.1
     # audit JSON that did not record the field).
     audit_reason: str = "ok"
@@ -414,6 +439,38 @@ def _clamp_risk_level_for_load(d: dict) -> dict:
     if isinstance(cur_rl, (int, float)) and gs + (10.0 - cur_rl) >= COERCED_RESPONSE_COMBINED_FLOOR:
         out["risk_level"] = MISSING_RISK_LEVEL_SENTINEL
         out["audit_reason"] = "coerced_response_cache"
+    # S-3 (v1.1.3 follow-up): re-apply the near-max-skip check at
+    # load time. Mirrors the parse-time check above — closes the LLM01
+    # high finding for cache-poisoned entries with `raw_score` empty
+    # (which makes `gs=0.0` in the S-2 check above, so combined-score
+    # never trips even when risk_level is at the borderline-low edge).
+    # Only fires when gs is itself at the near-max threshold (defense-
+    # in-depth: requires an attacker who both poisoned gs to >= 9 AND
+    # chose a coerced risk_level).
+    elif (
+        isinstance(cur_rl, (int, float))
+        and gs >= COERCED_RESPONSE_NEAR_MAX_SKIP
+        and cur_rl >= RISK_CEILING
+    ):
+        out["risk_level"] = MISSING_RISK_LEVEL_SENTINEL
+        out["audit_reason"] = "coerced_response_cache"
+    # S-4 (v1.1.3 follow-up): empty raw_score + risk in skip range is
+    # anomalous. A legitimate cache entry always writes
+    # `raw_score={"gate_skippable": X, ...}`; an empty `raw_score`
+    # paired with `risk_level <= RISK_CEILING` is the A06/A08 cache-
+    # poisoning signature (attacker chose risk_level at the borderline-
+    # low edge AND omitted `gate_skippable` to make the combined-score
+    # check fall through with `gs=0.0`). Clamp to sentinel so rule #6
+    # vetoes; legitimate v1.1 cache entries with `gate_skippable=7+
+    # risk_level=3` always have a populated `raw_score` so they are
+    # unaffected.
+    elif (
+        isinstance(cur_rl, (int, float))
+        and not rs
+        and cur_rl <= RISK_CEILING
+    ):
+        out["risk_level"] = MISSING_RISK_LEVEL_SENTINEL
+        out["audit_reason"] = "legacy_cache"
     return out
 
 
@@ -703,6 +760,21 @@ def select_gates(
             if (
                 skip_score + (10.0 - risk_level)
                 >= COERCED_RESPONSE_COMBINED_FLOOR
+            ):
+                risk_level = MISSING_RISK_LEVEL_SENTINEL
+                audit_reason = "coerced_response"
+            # v1.1.3 follow-up: near-max-skip coerced-response sanity
+            # check. Closes the LLM01 high finding where the combined-
+            # score check missed the `(skip=9.99, risk=3.0)` attack
+            # triple. A genuine judge response on a clean diff lands
+            # skip_score in the 7-8 range (the SKIP_THRESHOLD zone);
+            # an attacker driving skip_score to >= 9.0 AND keeping
+            # risk_level at the documented borderline-low edge is the
+            # signature of a coerced response. Force risk_level to the
+            # sentinel so rule #6 vetoes.
+            elif (
+                skip_score >= COERCED_RESPONSE_NEAR_MAX_SKIP
+                and risk_level >= RISK_CEILING
             ):
                 risk_level = MISSING_RISK_LEVEL_SENTINEL
                 audit_reason = "coerced_response"
