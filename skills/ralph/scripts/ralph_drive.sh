@@ -2,7 +2,7 @@
 # ralph_drive.sh — bash glue for /dev-kit:ralph
 #
 # Chains 4 gates + 1 attended execution phase. Reads/writes durable
-# state at every hop via python3 -m lib.ralph_chain state.
+# state at every hop via python3 -m skills.ralph.lib.ralph_state.
 # NEVER invokes AskUserQuestion directly — that is the orchestrator's
 # job, gated by the state machine's can_ask_question() invariant.
 #
@@ -77,26 +77,26 @@ cmd_init() {
         exit 1
     fi
     require_python
-    python3 -m lib.ralph_chain \
+    python3 -m skills.ralph.lib.ralph_state \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
-        state init "$idea"
+        init "$idea"
 }
 
 cmd_status() {
     require_python
-    python3 -m lib.ralph_chain \
+    python3 -m skills.ralph.lib.ralph_state \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
-        state show
+        show
 }
 
 cmd_can_ask() {
     require_python
-    if python3 -m lib.ralph_chain \
+    if python3 -m skills.ralph.lib.ralph_state \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
-        state can-ask; then
+        can-ask; then
         exit 0
     fi
     exit 2
@@ -127,10 +127,10 @@ cmd_advance() {
         exit 1
     fi
     require_python
-    python3 -m lib.ralph_chain \
+    python3 -m skills.ralph.lib.ralph_state \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
-        state transition "$target" --action "$action"
+        transition "$target" --action "$action"
 }
 
 cmd_rewind() {
@@ -162,10 +162,10 @@ cmd_rewind() {
         exit 1
     fi
     require_python
-    python3 -m lib.ralph_chain \
+    python3 -m skills.ralph.lib.ralph_state \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
-        state rewind "$target" --reason "$reason"
+        rewind "$target" --reason "$reason"
 }
 
 cmd_run_attended() {
@@ -202,7 +202,7 @@ cmd_run_attended() {
     #   0 = DONE / USER_MERGE_REQUIRED (success — babysit landed)
     #   2 = RECOVERY_REQUIRED (recovery surface, operator reviews)
     #   non-zero (1, 3) = CLI usage / environment error
-    python3 -m lib.ralph_chain \
+    python3 -m skills.ralph.lib.ralph_chain \
         --project-root "$PROJECT_ROOT" \
         --session "$SESSION" \
         run-attended --dispatch "$dispatch"

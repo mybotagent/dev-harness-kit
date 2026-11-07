@@ -22,7 +22,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).parent.parent
 # SKILL_COUNT tracks skills/ directory entries via rglob("SKILL.md").
 # Bump alongside any new skills/*/SKILL.md (Phase 1.11 added skills/lcs/SKILL.md,
-# Phase 3.6 added skills/evaluate/SKILL.md,
+# Phase 3.6 added skills/evaluate/SKILL.md, Phase 4 added skills/valuate/SKILL.md,
 # Phase 5 added skills/research/SKILL.md, Phase 6 added skills/interview/SKILL.md).
 # Phase 7.4 added skills/harness-audit/SKILL.md (39 -> 40).
 # PR #463 dropped skills/lcs/SKILL.md alongside the LCS substrate (40 -> 39).
@@ -44,8 +44,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # (38 -> 39).
 # Removed skills/research-plan-build/SKILL.md; build-debug/SKILL.md
 # absorbed its standalone-entry role in place instead of adding a new
-# skill (40 -> 39). build-debug itself was deleted by the
-# prune/build-debug PR (49 = 50 minus skills/build-debug/SKILL.md).
+# skill (40 -> 39).
 # Added skills/evidence-plan/SKILL.md (research -> proposal.html
 # (human confirms) -> /dev-kit:plan hand-off) (39 -> 40).
 # Added skills/sync-version/SKILL.md (pre-push auto-sync primitive,
@@ -60,7 +59,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # should equal this constant at HEAD (excluding worktrees of in-flight PRs).
 # feat/team-toggle: +1 for the `team` skill (DEV_KIT_TEAM toggle, orthogonal
 # to DEV_KIT_MODE). Mirrors `mode` shape; see skills/team/SKILL.md.
-SKILL_COUNT = 48  # 49 minus skills/code-viz/SKILL.md (drop-code-viz-skill)
+SKILL_COUNT = 52  # 56 (+gate-artifacts, PR #883) minus three redundant model-only build skills + learn removed
 HOOK_SCRIPTS = {
     "tdd-guard.sh",
     "bash-guard.sh",
@@ -130,17 +129,17 @@ class TestSmoke(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"bash syntax error in {path}: {r.stderr.decode()}")
 
     def test_iron_laws_in_iron_laws_index(self):
-        """Iron Laws SSOT lives at rules/iron-laws.md (lazy-loaded by CLAUDE.md).
+        """Iron Laws SSOT lives at iron-laws/index.md (lazy-loaded by CLAUDE.md).
 
         Bumped from L1-L5 to L1-L8 after issue #263 (alpha-declare + alpha-location
         + prose-trim laws were added).
         """
-        laws_md = (PROJECT_ROOT / "rules" / "iron-laws.md").read_text(encoding="utf-8")
-        for i in range(1, 10):
+        laws_md = (PROJECT_ROOT / "iron-laws" / "index.md").read_text(encoding="utf-8")
+        for i in range(1, 9):
             # Iron law may be "**L1 Title**" or "**L1** Title:" — accept both forms
             self.assertTrue(
                 f"**L{i}" in laws_md or f"L{i}**" in laws_md,
-                f"L{i} missing from rules/iron-laws.md",
+                f"L{i} missing from iron-laws/index.md",
             )
 
     def test_marketplace_plugin_name(self):

@@ -9,7 +9,7 @@ note summarizing the T's read-only scope.
 This module owns:
 
   * `ACPDispatcher` — fills the seven placeholders in the canonical
-    template at `lib/sub-agent-prompt.md`, runs a parallel
+    template at `skills/_acp/sub-agent-prompt.md`, runs a parallel
     `git worktree add` loop (mirroring `hooks/worktree-auto-cut.sh:247-269`),
     and writes each dispatch envelope to disk.
   * `DispatchResult` — value object returned per PR; the M reads these
@@ -18,10 +18,10 @@ This module owns:
     `(branch_slug, task_summary)` tuples for the dispatcher's input list.
 
 Reuses (do not duplicate):
-  * `lib/sub-agent-prompt.md` (canonical template)
+  * `skills/_acp/sub-agent-prompt.md` (canonical template)
   * `hooks/worktree-auto-cut.sh:247-269` (cut + boot + envelope pattern)
   * `hooks/lib/worktree-detect.sh` (`worktree_detect` helper)
-  * `hooks/acp-cwd-discipline.sh` (cwd discipline hook, sibling PR)
+  * `hooks/acp-tier-assert.sh`, `hooks/acp-cwd-discipline.sh`
 """
 from __future__ import annotations
 
@@ -34,12 +34,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Dual-import so consumer installs that ship `lib/*.py` flat (no
-# `__init__.py` in the consumer `lib/`) keep working.
-try:
-    from .git_worktree import cut_worktree  # type: ignore
-except ImportError:
-    from git_worktree import cut_worktree  # type: ignore  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from git_worktree import cut_worktree  # noqa: E402 — canonical helper (issue #310)
 
 # ---------------------------------------------------------------------------
 # Constants — single source of truth, mirror docs/architecture/acp-harness.md §3.2.
@@ -59,7 +55,7 @@ SEVEN_PLACEHOLDERS: tuple[str, ...] = (
 )
 
 # Default template path (relative to repo root).
-DEFAULT_TEMPLATE_PATH = Path("lib/sub-agent-prompt.md")
+DEFAULT_TEMPLATE_PATH = Path("skills/_acp/sub-agent-prompt.md")
 
 
 
@@ -178,7 +174,7 @@ def _read_template(template_path: Path) -> str:
     if not template_path.is_file():
         raise FileNotFoundError(
             f"ACP template not found at {template_path}. "
-            f"Expected at lib/sub-agent-prompt.md relative to repo root."
+            f"Expected at skills/_acp/sub-agent-prompt.md relative to repo root."
         )
     return template_path.read_text(encoding="utf-8")
 
@@ -234,7 +230,7 @@ class ACPDispatcher:
         dispatching.
     template_path : Path | None
         Override the canonical template path. Defaults to
-        `lib/sub-agent-prompt.md` relative to `repo_root`.
+        `skills/_acp/sub-agent-prompt.md` relative to `repo_root`.
     dry_run : bool
         When True, no `git worktree add` runs and no envelope file is
         written — only the rendered envelopes are returned so the M can

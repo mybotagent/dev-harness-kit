@@ -34,7 +34,7 @@ RESEARCH_GATE → PROPOSAL_GATE → PLAN_GATE → SHIP_CONFIRM_GATE → ATTENDED
 After SHIP_CONFIRM_GATE exits Approve, the chain enters **ATTENDED_RUN**
 with `attended_lock=True`. From that point forward, the orchestrator
 refuses every `AskUserQuestion` invocation at the state-machine layer
-(`lib/ralph_chain.py::RalphState.can_ask_question()`; the state machine was inlined into `ralph_chain` after the `refactor/ralph-babysit-collapse` collapse).
+(`skills/ralph/lib/ralph_state.py::RalphState.can_ask_question()`).
 This is an invariant, not convention.
 
 ## The 4 gates + 1 attended execution
@@ -87,7 +87,7 @@ After SHIP_CONFIRM_GATE approves and `attended_lock` flips to True,
 the chain MUST walk the unattended execution phase without ever
 calling `AskUserQuestion`. Two layers enforce this:
 
-### Layer 1 — state machine invariant (`lib/ralph_chain.py::RalphState`)
+### Layer 1 — state machine invariant (`lib/ralph_state.py`)
 
 `RalphState.can_ask_question()` returns False once `attended_lock=True`
 or `current_stage=ATTENDED_RUN`. The orchestrator MUST call
@@ -99,7 +99,7 @@ machine records `last_blocked_ask` for forensics.
 
 `hooks/hooks.json` wires the AskUserQuestion matcher to
 `hooks/ralph-attended-lock.sh`. The hook reads
-`.dev-kit/ralph/<session>.json` via the canonical `ralph_chain`
+`.dev-kit/ralph/<session>.json` via the canonical `ralph_state`
 module and exits 2 with a deny JSON envelope whenever
 `attended_lock=True` or `current_stage=ATTENDED_RUN`. Toolchain-missing
 fails OPEN with a stderr WARN — the state-machine layer still enforces
@@ -157,7 +157,7 @@ JSON is the recovery source-of-truth, not the assistant's memory.
 ### CLI surface
 
 ```bash
-python3 -m lib.ralph_chain \
+python3 -m skills.ralph.lib.ralph_chain \
   --project-root . --session default \
   run-attended --dispatch noop   # dry-run: SHIP exits 0 → USER_MERGE_REQUIRED
 ```
@@ -167,7 +167,7 @@ that bypasses subprocess and returns a successful SHIP-owned
 USER_MERGE_REQUIRED landing; useful for state-machine smoke tests without spawning
 babysit-pr. `tests/test_ralph_chain.py::test_cli_dry_run_*` pins this.
 
-## State machine — `lib/ralph_chain.py::RalphState`
+## State machine — `skills/ralph/lib/ralph_state.py`
 
 Pure Python dataclass. No subprocess at import time. Persists to
 `.dev-kit/ralph/<session>.json` on every transition via
@@ -187,11 +187,11 @@ GATE_ORDER = [RESEARCH_GATE, PROPOSAL_GATE, PLAN_GATE,
 CLI:
 
 ```bash
-python3 -m lib.ralph_chain --project-root . state init "add a hello-world skill"
-python3 -m lib.ralph_chain --project-root . state show
-python3 -m lib.ralph_chain --project-root . state transition PLAN_GATE --action "user approved proposal"
-python3 -m lib.ralph_chain --project-root . state rewind PROPOSAL_GATE --reason "user edits ambiguity A2"
-python3 -m lib.ralph_chain --project-root . state can-ask  # exits 0 if Ask allowed, 1 if locked
+python3 -m skills.ralph.lib.ralph_state --project-root . init "add a hello-world skill"
+python3 -m skills.ralph.lib.ralph_state --project-root . show
+python3 -m skills.ralph.lib.ralph_state --project-root . transition PLAN_GATE --action "user approved proposal"
+python3 -m skills.ralph.lib.ralph_state --project-root . rewind PROPOSAL_GATE --reason "user edits ambiguity A2"
+python3 -m skills.ralph.lib.ralph_state --project-root . can-ask  # exits 0 if Ask allowed, 1 if locked
 ```
 
 ## Linear is OUT OF SCOPE
@@ -236,26 +236,6 @@ blockers, operator-readable one-liner.
 | 3-consecutive-no-progress | `skills/babysit-pr/SKILL.md` | babysit-pr polls 3× with no change → RECOVERY_REQUIRED |
 | MAX_ITERS=1000 | `skills/babysit-pr/SKILL.md` | babysit-pr hits watchdog cap → RECOVERY_REQUIRED |
 | same-stage-repeat=2 | ralph itself | same sub-stage re-enters twice → RECOVERY_REQUIRED |
-
-## Thin meta-harness integration
-
-The runtime contract is intentionally smaller than the surrounding proposal:
-
-- In `ATTENDED_RUN`, a normal worker Stop is a checkpoint and successful return
-  to the next RALPH cycle; it is not workflow completion.
-- `SessionEnd`, exit 0, and assistant prose cannot create `COMPLETED`; the
-  existing `ralph-promote` boundary must publish a validated completion receipt.
-- Harness improvement runs offline through the existing evaluate/meta-eval
-  path: `observe → diagnose → propose → replay → holdout → canary → rollback`.
-- Safety, kernel, metric, protected-holdout, retry, and product-code changes
-  are never self-promoted. Normal model reasoning, Tool choice, and delegation
-  remain unconstrained.
-
-The formulas and thresholds live in
-`docs/observability/meta-harness-metrics.md`; fault classification lives in
-`docs/observability/meta-harness-fault-triage.md`. The state machine in
-`lib/ralph_chain.py::RalphState` remains the authority for attended lock and
-terminal transitions.
 
 ## What this skill does NOT do
 

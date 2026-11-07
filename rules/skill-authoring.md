@@ -48,9 +48,9 @@ user-invocable: true             # expose as /dev-kit:build
 
 ```yaml
 ---
-name: interview
-category: design
-description: 5-field Socratic interview. Internal sub-skill of /dev-kit:plan.
+name: valuate
+category: build
+description: Red-Green-Refactor cycle. Internal sub-skill of /dev-kit:build.
 disable-model-invocation: false  # model may auto-invoke
 user-invocable: false            # hidden from /dev-kit: skill list
 safety:
@@ -100,7 +100,7 @@ counts in this rule; inspect `skills/*/SKILL.md` when needed.
 
 ## L6 skill gate — the alpha must be enforceable
 
-See `iron-laws.md` L6 + L7 for the rule + the `state | enforcement | analysis`
+See `iron-laws/index.md` L6 + L7 for the rule + the `state | enforcement | analysis`
 allow-list. This file adds only the SKILL.md-authoring specifics:
 
 - **Every new `SKILL.md` (added after `origin/main`) MUST declare

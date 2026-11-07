@@ -30,11 +30,14 @@ per-runtime wiring differences), see
 | `destructive-confirm` | Ask-tier human confirmation (`permissionDecision: "ask"`) on credential-file writes, bare `git worktree remove`, `--force-with-lease`, and first `git push -u`. Opt out via `DEV_KIT_NO_CONFIRM=1`; the babysit loops additionally set session-scoped `push_confirm=off` for both push asks | All |
 | `secret-scan` | Redacts credential patterns in tool inputs | All |
 | `slop-detector` | Catches AI-typical patterns across phrase + structure banks (KO+EN) | Build + Review + Security |
+| `l4-todo-scan` | PostToolUse deferred-work marker scan (Iron Law L4): fails closed on TODO/FIXME/'we'll extend later'/starting-point/placeholder markers in `Write`/`Edit`/`MultiEdit` payloads outside allowed paths (`*.md`, `tests/fixtures/**`, `docs/adoption/**`). Strict mode via `L4_STRICT=1`. Marker bank SSOT: `hooks/references/l4/markers.md` | Build + Review + Security |
+| `loop-detect` | Warns after three consecutive identical Bash calls using per-session fingerprints | All |
 | `worktree-guard` | Hard-blocks Edit/Write in the main checkout; on deny, prints the live worktree list via `git worktree list --porcelain` | All |
 | `git-guard` | Enforces branch strategy: blocks commit/push to main, force-push, `gh pr merge`; verifies `plugin.json` slot on `git push` to a feature branch (slot check extracted to `hooks/lib/slot-check.sh` for unit-testable truth table — see *Shared helpers* below). Prefers the PreToolUse payload's `.cwd` over the hook process cwd so hook runners whose process cwd is in a worktree still target the parent session checkout | All |
 | `worktree-auto-cut` | Creates the per-task worktree + branch | All |
 | `stop-verify` | Quoted exit codes / test counts + 5-item intent checklist (`lib/pre_completion_checklist.py`) before session end | Plan + Design + Build + Review + Security + Ship |
 | `review-yml-isolation` | Forces `review.yml` PRs to be `review.yml`-only | All |
+| `notification-collapse` | Stderr WARN when ≥ 2 `<task-notification>` envelopes are in a UserPromptSubmit payload (the `Monitor` / `run_in_background` bloat pattern from the 2026-08-11 `/dev-kit:token-analyzer` diagnostic) | All |
 | `context-window-guard` | Stderr tiered WARN (100K / 200K / 300K cumulative input tokens) recommending `/compact` per `rules/session-hygiene.md` Iron Law 4; thresholds tunable via `CONTEXT_WINDOW_*_KB` env vars | All |
 | `pr-create-route` | Deterministic actor classification on every `gh pr create` via `lib/actor_classifier`; writes `.dev-kit/.pr-route.json` breadcrumb + prints one-line route to stderr; silent by default, opt-in ask via `fork_pr_confirm=on` in `.dev-kit/guard-mode.session.json`. Mirrors the `push_confirm` opt-in pattern. | All |
 
@@ -43,16 +46,10 @@ per-runtime wiring differences), see
 The same hooks, indexed by the Claude Code / Codex event that fires them —
 useful when you're debugging *why* a hook did or didn't run:
 
-The manifests register 25 command entries per runtime (was 27 before
-PR 941's hook prune). SessionStart has one registered command,
-`session-start.sh`; it fans out to independently testable child modules
-and returns one combined advisory envelope. This trims registration
-overhead without removing any retained SessionStart behavior.
-
-> Removed 2026-09-30 (PR 941): `l4-todo-scan`, `sub-agent-handoff`,
-> `provider-divergence-check` — each was redundant with model evolution or a
-> manual operator surface (`bin/set-provider.sh`). See `rules/iron-laws.md`
-> L7 ("skill alpha lives in parts the model can't self-impose").
+The manifests register 27 command entries per runtime. SessionStart has one
+registered command, `session-start.sh`; it fans out to independently testable
+child modules and returns one combined advisory envelope. This trims
+registration overhead without removing any retained SessionStart behavior.
 
 | Hook | Event | Purpose | Mode |
 |---|---|---|---|
@@ -67,14 +64,20 @@ overhead without removing any retained SessionStart behavior.
 | `worktree-auto-cut.sh` | UserPromptSubmit | Auto-cut a worktree for a new-task prompt in main | advisory (fails open) |
 | `session-start.sh` | SessionStart | Dispatch the lifecycle bundle and combine child context | advisory / fail-open |
 | `session-start-check.sh` (child) | SessionStart via `session-start.sh` | Remind about the worktree rule and regenerate active-hook state | advisory |
-| `log-on-session-start.sh` (child) | (no longer wired since #945) | Loghooks auto-install script; opt-in via `/dev-kit:log on` | advisory |
+| `log-on-session-start.sh` (child) | SessionStart via `session-start.sh` | Auto-install loghooks each session (idempotent) | advisory |
+| `provider-divergence-check.sh` (child) | SessionStart via `session-start.sh` | Nudge when `.env:CI_REVIEW_PROVIDER` is off-list, diverges, or missing | advisory |
 | `linear-session-start.sh` (child) | SessionStart via `session-start.sh` | Sync a Linear-configured worktree at session start | advisory |
 | `worktree-janitor-session-start.sh` (child) | SessionStart via `session-start.sh` | Nudge when merged-into-main or stale `fix/classify-request-*` worktrees are present; opt-out via `DEV_KIT_JANITOR_OFF=1` (issue #717). Optional auto-apply when `DEV_KIT_JANITOR_AUTO_PRUNE=1` *and* `DEV_KIT_JANITOR_AUTO_PRUNE_YES=1` are exported (capped at `DEV_KIT_JANITOR_AUTO_PRUNE_MAX`, default 50/session) — restricted to stale-classify predicate only, skips current + main worktree, requires clean `git status`, drops `--force`. Audit log at `.dev-kit/janitor-audit.log`. | advisory |
 | `secret-scan.sh` | PostToolUse (Write\|Edit) | Detect credentials in edits | hard-block |
 | `slop-detector.sh` | PostToolUse (Write\|Edit) | Block AI slop (phrase + structure + scoring, KO+EN) | advisory (opt-in strict) |
-| `worktree-log-auto-install.sh` | (no longer wired since #945) | Loghooks auto-install for fresh worktrees; opt-in via `/dev-kit:log on` | advisory |
+| `l4-todo-scan.sh` | PostToolUse (Write\|Edit) | Fail-closed scan for TODO/FIXME deferred-work markers in `Write`/`Edit`/`MultiEdit` payloads; strict-mode via `L4_STRICT=1` (MUST-4) | hard-block (advisory under allowed-path exemption) |
+| `worktree-log-auto-install.sh` | PostToolUse (Bash) | Install loghooks into a newly-added worktree | advisory |
+| `loop-detect.sh` | PostToolUse (Bash) | Warn before another retry after repeated identical Bash calls | advisory (fails open) |
+| `notification-collapse.sh` | UserPromptSubmit | Stderr WARN when 2+ `<task-notification>` envelopes are in the prompt (harness `Monitor` / `run_in_background` bloat signal) | advisory (fails open) |
 | `context-window-guard.sh` | UserPromptSubmit | Stderr tiered WARN at 100K / 200K / 300K cumulative input tokens recommending `/compact` | advisory (fails open) |
+| `acp-tier-assert.sh` | PreToolUse (`*`) | Enforce ACP agent tier-assertion line on first tool call (M/T/L) | hard-block |
 | `stop-verify.sh` | Stop | Run regression tests + pre-completion intent checklist on session end | hard-block |
+| `sub-agent-handoff.sh` | PostToolUse (Agent) | Verify sub-agent response carries STATUS / EVIDENCE / NEXT-ACTION pieces; advisory; fail-closed on jq missing | advisory (fail-closed on missing jq) |
 | `pr-create-route.sh` | PreToolUse (Bash) | Classify `gh pr create` via `lib/actor_classifier`; persist `.dev-kit/.pr-route.json`; one-line route to stderr; opt-in ask via `fork_pr_confirm`. Non-blocking, 120s timeout, fail-closed per `feedback-tmux-long-running-safety.md`. | advisory (silent default, opt-in ask) |
 
 **Reading the "Mode" column:** `hard-block` means the tool call is denied
@@ -100,25 +103,28 @@ inside a PreToolUse shell script). Each helper carries its own
 | `locale-utf8.sh` | preamble-using hooks | One-shot `LC_ALL=C.UTF-8` / `LANG=C.UTF-8` setup |
 | `slot-check.sh` | `git-guard.sh` | `slot_should_deny <claude> <codex> <expected>` truth table for the `plugin.json` version-slot check (added 2026-08-03, inspect finding #2) |
 | `stage-gate.sh` | `stop-verify.sh` | `hook_stage_active` + `pre_completion_checklist_active` stage-activation helpers (the second follows stop-verify's stage + override rules so the intent checklist fires under the same gate) |
+| `loop-detect.sh` | `hooks/loop-detect.sh` | Append per-session Bash fingerprints and detect consecutive matches at the configured threshold |
 
 ## Reference data banks (`hooks/references/`)
 
-`slop-detector.sh` loads its detection patterns from runtime data files
-under [`hooks/references/`](../../hooks/references/) instead of inlining
-EREs in shell. Despite the `.md` extension, those files are
-**machine-readable data**, not user-facing docs — the top-level
+Two hooks (`slop-detector.sh`, `l4-todo-scan.sh`) load their detection
+patterns from runtime data files under [`hooks/references/`](../../hooks/references/)
+instead of inlining EREs in shell. Despite the `.md` extension, those files
+are **machine-readable data**, not user-facing docs — the top-level
 [`hooks/references/README.md`](../../hooks/references/README.md) explains
 the loader contract (POSIX ERE, line-delimited, `#` comments skipped) and
 which consumer reads which bank.
 
 | Bank | Consumer | Purpose | Fallback |
 |---|---|---|---|
-| *(none — the slop regex banks were replaced by `eval/prompts/judge-slop.md` in v3; new banks land here only when a hook needs data the LLM can't generate)* | | | |
+| `hooks/references/l4/markers.md` | `l4-todo-scan.sh` | TODO/FIXME/XXX/HACK + KO soft markers (`나중에`, `임시`, `스텁`, …) | None — fails closed |
+| `hooks/references/slop/phrases.md` | `slop-detector.sh` (T1) + `inspect --slop` | High-signal n-gram bank (KO + EN) | Inline v1 single regex (degraded; WARN printed) |
+| `hooks/references/slop/structures.md` | `slop-detector.sh` (T2) + `inspect --slop` | Structural regex bank (binary contrast, false agency, Wh-starters, KO structure) | Inline v1 single regex |
+| `hooks/references/slop/scoring.md` | `inspect --slop` (only) | 1-10 × 5-dim rubric (Directness / Rhythm / Trust / Authenticity / Density) | None |
+| `hooks/references/slop/examples.md` | `inspect --slop` (reference only) | Before/after fixtures for human reviewers; real fixtures live in `tests/fixtures/slop/` | None |
 
-v3 `slop-detector.sh` consumes the `slop` dim of `lib/llm_judge.py`
-(prompt at `eval/prompts/judge-slop.md`) instead of regex tiers — the
-regex bank drifted silently with model improvements, the LLM judge
-stays aligned without per-bank curation.
+`hooks/references/slop/README.md` is the per-bank README (severity tier,
+`SLOP_LEVEL` / `SLOP_QUIET` / `SLOP_STRICT` env vars, fallback contract).
 
 ---
 
@@ -175,7 +181,7 @@ every transition.
 - [Hook coverage gaps](hook-coverage-gaps.md) — known gaps in this matrix and per-runtime wiring differences (Claude Code vs. Codex).
 - [`linear-autosync.sh`](linear-autosync.md) — per-edit Linear auto-sync hook (PROJECT_DIR guard, env fast-path, non-blocking contract).
 - [`rules/git-workflow.md`](../../rules/git-workflow.md) — the worktree + branch rules `worktree-guard` and `git-guard` enforce.
-- The same hooks run under both Claude Code and Codex via the `DEV_KIT_AGENT` env prefix and the `tests/test_hooks_json_parity.py` regression — see the `Codex compatibility` paragraph in the root README.
+- [`docs/architecture/RUNTIME-PORTABILITY.md`](../architecture/RUNTIME-PORTABILITY.md) — how the same hooks run under both Claude Code and Codex.
 - Main [`README.md`](../../README.md) — the short version, under "Under the hood".
 
 ## Timeout policy

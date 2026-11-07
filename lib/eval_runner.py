@@ -27,47 +27,25 @@ import argparse
 import hashlib
 import json
 import logging
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Dual-import so consumer installs that ship `lib/*.py` flat (no
-# `__init__.py` in the consumer `lib/`) keep working. Single block —
-# the fallback uses FLAT imports only; if the relative branch failed
-# ``lib`` is not a package, so ``from lib.X`` would also fail (review
-# #920 round-2: prior version mixed ``from atomic`` with
-# ``from lib.eval`` in the same except, structurally broken). The
-# `noqa: I001` on each except-branch import opts out of the
-# sort-import rule because the parenthesized `from eval import (...)`
-# block interleaved with simple imports triggers a contradiction
-# between the project .ruff.toml config and the CI-pinned ruff
-# 0.15.16 (review #920 round-6).
-try:
-    from . import llm_judge  # type: ignore
-    from .atomic import atomic_write_json, now_iso  # type: ignore
-    from .eval import (  # type: ignore  -- single SSOT after PR-E extraction
-        CaseResult,
-        RubricRegistry,  # noqa: F401  -- re-exported; tests reference eval_runner.RubricRegistry
-        _coerce_score,
-        exception_rot,
-        mock_drift_warning,
-        mock_skipped,
-        real_result,
-    )
-    from .harness_effectiveness import build_report as build_effectiveness_report  # type: ignore
-except ImportError:
-    import llm_judge  # type: ignore  # noqa: E402, I001
-    from atomic import atomic_write_json, now_iso  # noqa: E402, I001
-    from eval import (  # noqa: E402, I001  -- single SSOT after PR-E extraction
-        CaseResult,
-        RubricRegistry,  # noqa: F401  -- re-exported; tests reference eval_runner.RubricRegistry
-        _coerce_score,
-        exception_rot,
-        mock_drift_warning,
-        mock_skipped,
-        real_result,
-    )
-    from harness_effectiveness import build_report as build_effectiveness_report  # noqa: E402, I001
+sys.path.insert(0, str(Path(__file__).parent))
+import llm_judge  # type: ignore
+from atomic import atomic_write_json, now_iso  # noqa: E402
+
+from lib.eval import (  # noqa: E402  -- single SSOT after PR-E extraction
+    RUBRIC_REGISTRY,  # noqa: F401  -- re-exported; tests reference eval_runner.RUBRIC_REGISTRY
+    CaseResult,
+    _coerce_score,
+    exception_rot,
+    mock_drift_warning,
+    mock_skipped,
+    real_result,
+)
+from lib.harness_effectiveness import build_report as build_effectiveness_report  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +73,7 @@ SESSION_AXES: tuple = (
 )
 
 
-# ---------- RubricRegistry (Phase 3) ----------
+# ---------- RUBRIC_REGISTRY (Phase 3) ----------
 #
 # Class-level registry of named eval rubrics. Each entry pairs a YAML
 # rubric path with the judge prompt path used to score it. The default
@@ -543,7 +521,7 @@ def _tally_and_emit(project_root: Path, results: List[CaseResult], config: Dict)
     try:
         from effectiveness_collection import collect as _eff_collect  # noqa: WPS433 — local import
         envelope = _eff_collect(project_root)
-        measurement_envelope = envelope
+        measurement_envelope = envelope.to_dict()
     except Exception:  # noqa: BLE001
         measurement_envelope = None
     write_report(
@@ -1021,13 +999,6 @@ def _golden_index(project_root: Path) -> Dict[str, Dict]:
         dim = data.get("dim", "")
         cid = data.get("case_id", "")
         if not dim or not cid:
-            continue
-        # Goldens for non-eval dims (e.g. maintenance-* used by
-        # lib/maintenance_gate.py) live in eval/golden/ but are not
-        # part of run_eval's case set. Without this filter, run_golden_diff
-        # reports them as `removed` and the gate fails even when nothing
-        # regressed. Skip them so each gate only diffs its own scope.
-        if dim not in SUPPORTED_DIMS:
             continue
         out[f"{dim}/{cid}"] = data
     return out

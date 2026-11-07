@@ -11,12 +11,6 @@
 # advisory in this hook. worktree-guard.sh is the hard-block layer.
 
 # Source the shared preamble (set -uo pipefail, INPUT=$(cat),
-
-# Source the shared HOOK_CWD extractor (inspect-pass4 finding
-# p10-p18). Sets HOOK_CWD from the payload; caller decides
-# the cd failure mode.
-# shellcheck source=lib/hook-cwd.sh
-source "${BASH_SOURCE[0]%/*}/lib/hook-cwd.sh"
 # worktree_detect, jq-missing warning).
 HOOK_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=lib/hook-preamble.sh
@@ -32,10 +26,7 @@ fi
 
 # extract_hook_cwd — read HOOK_CWD from stdin payload and cd into it.
 # Falls back to current $PWD if the payload cwd is missing or not a directory.
-# HOOK_CWD extraction + cd (shared via lib/hook-cwd.sh, see
-# inspect-pass4 finding p10). The failure mode is `|| true`
-# (advisory hook).
-extract_hook_cwd
+HOOK_CWD="$(printf '%s' "${INPUT:-$(cat 2>/dev/null)}" | jq -r '.cwd // ""' 2>/dev/null)"
 if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || true
 fi
@@ -81,17 +72,6 @@ if [ -n "$SESSION_ID" ] && [ -n "$EFFECTIVE_CWD" ]; then
     --outcome started --source "hook:trace-session-start" \
     --evidence-json "$(jq -nc --arg sid "$SESSION_ID" '{session_id:$sid, hook_event:"SessionStart"}')" \
     >/dev/null 2>&1 || true
-  # Auto-populate first_pass_quality evidence (issue: harness metric
-  # needs executor telemetry that's missing in non-build worktrees).
-  # The smoke probe emits one write.observed → verify.passed chain per
-  # session start, parented correctly so lib.harness_effectiveness._first_pass
-  # accepts the chain. Best-effort: never blocks session start.
-  if command -v python3 >/dev/null 2>&1; then
-    PYTHONPATH="$HOOK_DIR/../lib:$EFFECTIVE_CWD" \
-      python3 -m lib.smoke_probe \
-        --root "$EFFECTIVE_CWD" --session-id "$SESSION_ID" \
-        >/dev/null 2>&1 || true
-  fi
   # Bounded journal enrollment + observed_start (proposal §3, PR #817).
   # The hook enrolls once at session start; the matching terminal is
   # recorded by trace-session-end.sh on actual SessionEnd, not Stop.

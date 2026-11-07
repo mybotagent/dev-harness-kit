@@ -11,15 +11,14 @@ disallowed-tools: WebFetch
 model: opus
 user-invocable: true
 ---
-> [← Skills index](../../README.md)
+> [← Skills index](../../README.md) · Algorithm SSOT: [docs/skills/babysit-pr.md](../../docs/skills/babysit-pr.md)
 
 # `/dev-kit:babysit-pr`
 
-Before acting, read [`skills/babysit-pr/SKILL.md`](.) (this file)
-end-to-end. The durable-loop algorithm, state schema, and operator bypass
-contract live here and in `lib/babysit_pr_cli` / `lib/babysit_pr_reliability`
-(this section keeps the invocation and non-negotiable safety gates visible
-to the orchestrator).
+Before acting, read `docs/skills/babysit-pr.md`; it contains the complete
+algorithm, state schema, tracker behavior, and operator bypass contract. This
+file keeps the invocation and non-negotiable safety gates visible to the
+orchestrator.
 
 ## Target resolution: evidence only
 

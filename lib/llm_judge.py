@@ -21,8 +21,6 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
-from lib.read_env_key import read_env_dict
-
 JUDGE_AXES: Tuple[str, ...] = (
     "semantic_drift", "completeness", "correctness", "consistency",
 )
@@ -63,6 +61,19 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "rollback_capability",
         "escalation_path",
         "audit_trail",
+    ),
+    # Phase 4 (issue #371): plan_value 0-5 axis scores. The judge prompt
+    # (eval/prompts/judge-plan-value.md) returns six scores; the
+    # 4-way verdict (proceed/revise/hold/kill) is computed by
+    # lib/valuation_engine.py:decide() from these six, so the verdict
+    # is NOT an axis here.
+    "plan_value": (
+        "problem_fit",
+        "roi_estimate",
+        "existing_solution_edge",
+        "team_capability",
+        "risk_vs_reward",
+        "measurability",
     ),
     # Phase 5 (issue #378, merged via PR #443): research_source +
     # research_claim axes for /dev-kit:research.
@@ -122,20 +133,17 @@ DIM_AXES: Dict[str, Tuple[str, ...]] = {
         "confidence",
         "risk_level",
     ),
-    # Phase 9 (refactor/slop-detector-llm-judge): single-axis LLM
-    # judgment that replaces the v2 regex tier ladder. Higher = cleaner
-    # prose (less AI slop). Hook maps the score to severity:
-    #   ≥8 OK (silent), ≥5 LOW, ≥2 MEDIUM, <2 HIGH.
-    "slop": (
-        "slop_score",
-    ),
 }
 
 # Per-dim score range. Most dims are 0-10 (higher = better, with the
 # polarity override for lower_is_better dims handled in
-# ``AXIS_POLARITY``).
+# ``AXIS_POLARITY``). The plan_value dim is 0-5 because the valuation
+# engine's SCORE_MIN/SCORE_MAX are pinned to that range; a judge
+# emitting 6-10 for plan_value would crash the engine on validate().
 # Default: 0-10 for unknown dims.
-DIM_SCORE_RANGE: Dict[str, Tuple[float, float]] = {}
+DIM_SCORE_RANGE: Dict[str, Tuple[float, float]] = {
+    "plan_value": (0.0, 5.0),
+}
 
 
 def score_range_for_dim(dim: str) -> Tuple[float, float]:
@@ -159,11 +167,17 @@ def load_config(project_root: Path) -> Dict[str, str]:
     """Load judge config from env (or .env parser). Empty values fall back to defaults."""
     env = dict(os.environ)
     env_path = project_root / ".env"
-    # .env only populates keys not already in os.environ. read_env_dict
-    # is the SSOT .env parser (issue #711); the inline version here used
-    # to drift silently on `export` prefixes.
-    for k, v in read_env_dict(env_path).items():
-        env.setdefault(k, v)
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                cur = env.get(k.strip())
+                # .env only populates if not already in os.environ
+                if not cur:
+                    env[k.strip()] = v.strip().strip('"').strip("'")
 
     provider = _env_get(env, "JUDGE_PROVIDER", "minimax")
     api_key_var = "MINIMAX_API_KEY" if provider == "minimax" else "ANTHROPIC_API_KEY"
@@ -259,9 +273,10 @@ def call_judge(
     this alignment the judge receives contradictory axis lists between
     system and user and returns unreliable / axis-zero scores.
 
-    `dim` is the parent dim name (e.g. "review", "research_source"). When
+    `dim` is the parent dim name (e.g. "review", "plan_value"). When
     provided, the system prompt states the per-dim score range from
-    ``DIM_SCORE_RANGE``. Defaults to 0-10 when the dim is unknown.
+    ``DIM_SCORE_RANGE`` (e.g. "each 0-5" for plan_value). Defaults to
+    0-10 when the dim is unknown.
 
     `temperature` (v1.1.0) — defaults to 1.0 (provider default) for
     backward compat with all existing callers. Pass `0.0` to pin

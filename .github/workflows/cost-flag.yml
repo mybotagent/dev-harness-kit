@@ -104,7 +104,7 @@ jobs:
           PY
 
       - name: Upload state artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
           name: cost-gate-state
           path: .dev-kit/.cost-gate/state.json
@@ -119,7 +119,7 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Download state artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cost-gate-state
           path: .dev-kit/.cost-gate
@@ -131,18 +131,17 @@ jobs:
       - name: Read decision
         id: decision
         run: |
-          python3 - <<'PYEOF'
+          python3 -c "
           import json
           s = json.load(open('.dev-kit/.cost-gate/state.json'))
           apply = s['status'] == 'warn' and s['totals']['cost_usd'] >= s['thresholds_usd']['pr_flag']
           missing = bool(s['warnings']) and 'missing telemetry' in s['warnings'][0]
-          total = s['totals']['cost_usd']
-          print(f"apply={apply}  missing_telemetry={missing}  total=${total:.2f}")
-          with open(__import__('os').environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"apply={'true' if apply else 'false'}\n")
-              f.write(f"missing={'true' if missing else 'false'}\n")
-              f.write(f"total={total:.2f}\n")
-          PYEOF
+          print(f\"apply={apply}  missing_telemetry={missing}  total=\\${s['totals']['cost_usd']:.2f}\")
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f\"apply={'true' if apply else 'false'}\n\")
+              f.write(f\"missing={'true' if missing else 'false'}\n\")
+              f.write(f\"total={s['totals']['cost_usd']:.2f}\n\")
+          "
 
       - name: Apply label when over threshold
         if: steps.decision.outputs.apply == 'true'
@@ -165,18 +164,18 @@ jobs:
         run: |
           if [ "$MISSING" = "true" ]; then
             BODY="<!-- dev-kit:cost-gate -->
-            ### cost-gate: telemetry missing
+### cost-gate: telemetry missing
 
-            No \`Cost-gate:\` trailers found in the PR's commit range. Run
-            \`/dev-kit:cost-gate --footer\` in each contributing session and append
-            the two-line block to your commit messages so this gate can aggregate.
-            "
+No \`Cost-gate:\` trailers found in the PR's commit range. Run
+\`/dev-kit:cost-gate --footer\` in each contributing session and append
+the two-line block to your commit messages so this gate can aggregate.
+"
           else
             BODY="<!-- dev-kit:cost-gate -->
-            ### cost-gate: cumulative session cost \$$TOTAL
+### cost-gate: cumulative session cost \$$TOTAL
 
-            Threshold: \$20.00. When total >= \$20.00 the \`cost-flag\` label is applied.
-            "
+Threshold: \$20.00. When total >= \$20.00 the \`cost-flag\` label is applied.
+"
           fi
           # Upsert: edit existing comment if present, else create.
           # `--paginate` ensures we search ALL comments, not just page 1

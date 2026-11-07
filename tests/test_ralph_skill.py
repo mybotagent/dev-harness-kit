@@ -2,8 +2,8 @@
 
 Covers the chain order, 4-gate contract, Edit-then-approve rewind,
 attended_lock invariant, --dry-run determinism, and Ralph-loop
-safety valves. Imports ``lib.ralph_chain`` (which inlines the state
-machine) as a pure module — no subprocess, no gh CLI.
+safety valves. Imports ``skills.ralph.lib.ralph_state`` as a pure
+module — no subprocess, no gh CLI.
 """
 
 from __future__ import annotations
@@ -17,12 +17,11 @@ import pytest
 # Make ``skills.ralph.lib`` importable when pytest is invoked from
 # the project root.
 ROOT = Path(__file__).resolve().parents[1]
-LIB_DIR = ROOT / "lib"  # promoted from skills/ralph/lib/ in
-        # inspect-pass4 finding a1
+SKILL_LIB = ROOT / "skills" / "ralph" / "lib"
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(LIB_DIR))
+sys.path.insert(0, str(SKILL_LIB))
 
-import ralph_chain as rs  # noqa: E402, I001 — state machine inlined here
+import ralph_state as rs  # noqa: E402, I001
 
 
 # ============================================================================

@@ -12,15 +12,6 @@
 # worktree_detect, jq-missing warning).
 # shellcheck source=lib/hook-preamble.sh
 source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
-# shellcheck source=lib/find-python.sh
-source "${BASH_SOURCE[0]%/*}/lib/find-python.sh"
-
-# Source the shared HOOK_CWD extractor (inspect-pass4 finding
-# p10-p18). Sets HOOK_CWD from the payload; caller decides
-# the cd failure mode.
-# shellcheck source=lib/hook-cwd.sh
-source "${BASH_SOURCE[0]%/*}/lib/hook-cwd.sh"
-
 
 # Hooks are advisory, but a silent fallback makes the next edit look like an
 # unrelated hard failure from worktree-guard.sh. Always return a handoff
@@ -47,9 +38,7 @@ PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)"
 [ -z "$PROMPT" ] && exit 0
 
 # Prefer cwd from the hook payload; fall back to PWD.
-# HOOK_CWD extraction + cd (shared via lib/hook-cwd.sh, see
-# inspect-pass4 finding p14).
-extract_hook_cwd
+HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
 if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
@@ -274,30 +263,18 @@ then
   exit 0
 fi
 
-# Per-repo gate: propagate source repo's log-on state to the new
-# worktree. See hooks/lib/log_state.sh for the detection rationale
-# (managed entries + script presence). At this point the hook has
-# already gated on WORKTREE_DETECT=main (see case-statement above),
-# so $PWD is the main checkout = the source repo.
-# shellcheck source=hooks/lib/log_state.sh
-source "$PLUGIN_ROOT/hooks/lib/log_state.sh" 2>/dev/null || true
+# Bootstrap: run /dev-kit:log setup + /dev-kit:log on inside the new
+# worktree so the delegated subagent's work is captured. Falls
+# through silently if either script is missing (e.g. dev-kit plugin
+# not yet installed in the consumer project).
+LOG_SETUP="$PLUGIN_ROOT/skills/log/scripts/log-setup.sh"
+LOG_ON="$PLUGIN_ROOT/skills/log/scripts/log-on.sh"
 
-if ! is_source_log_on "$PWD"; then
-  echo "worktree-auto-cut: source repo log is OFF; skipping auto-install in $WT_PATH" >&2
-else
-  # Bootstrap: run /dev-kit:log setup + /dev-kit:log on inside the new
-  # worktree so the delegated subagent's work is captured. Falls
-  # through silently if either script is missing (e.g. dev-kit plugin
-  # not yet installed in the consumer project).
-  LOG_SETUP="$PLUGIN_ROOT/skills/log/scripts/log-setup.sh"
-  LOG_ON="$PLUGIN_ROOT/skills/log/scripts/log-on.sh"
-
-  if [ -f "$LOG_SETUP" ]; then
-    (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_SETUP" >/dev/null 2>&1) || true
-  fi
-  if [ -f "$LOG_ON" ]; then
-    (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_ON" >/dev/null 2>&1) || true
-  fi
+if [ -f "$LOG_SETUP" ]; then
+  (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_SETUP" >/dev/null 2>&1) || true
+fi
+if [ -f "$LOG_ON" ]; then
+  (cd "$WT_PATH" && TARGET_DIR="$WT_PATH" bash "$LOG_ON" >/dev/null 2>&1) || true
 fi
 
 # Linear bootstrap: trigger one auto-sync round in the new worktree
@@ -307,10 +284,12 @@ fi
 # contract from PR #linear-auto-sync-owner-gated). Falls through
 # silently if tools/linear_sync.py is missing.
 if [ -f "$WT_PATH/tools/linear_sync.py" ]; then
-  # Resolve Python 3 via lib/find-python.sh (inspect-pass4 finding p7).
-  if PY="$(find_python)"; then
-    (cd "$WT_PATH" && "$PY" "$WT_PATH/tools/linear_sync.py" auto-sync) || true
-  fi
+  for py in python3 python py; do
+    if command -v "$py" >/dev/null 2>&1; then
+      (cd "$WT_PATH" && "$py" "$WT_PATH/tools/linear_sync.py" auto-sync) || true
+      break
+    fi
+  done
 fi
 
 # Build additionalContext — the harness consumes this as a client-specific

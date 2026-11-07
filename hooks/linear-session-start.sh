@@ -25,18 +25,6 @@
 # worktree_detect, jq-missing warning).
 # shellcheck source=lib/hook-preamble.sh
 source "${BASH_SOURCE[0]%/*}/lib/hook-preamble.sh"
-# Source the shared HOOK_CWD extractor (inspect-pass4 finding
-# p10-p18). Sets HOOK_CWD from the payload; caller decides
-# the cd failure mode.
-# shellcheck source=lib/hook-cwd.sh
-source "${BASH_SOURCE[0]%/*}/lib/hook-cwd.sh"
-
-
-# Source the shared linear fast-path (activation-source guard +
-# python3 lookup). Extracted in inspect-pass2 (2026-09-23) to
-# eliminate the 4-copy duplication across the linear-* hooks.
-# shellcheck source=lib/linear-fast-path.sh
-source "${BASH_SOURCE[0]%/*}/lib/linear-fast-path.sh"
 
 # Fail open with a stderr warning if jq is missing — the preamble
 # already populated $WORKTREE_DETECT="" so the case below treats
@@ -48,9 +36,7 @@ fi
 
 # Prefer cwd from the hook payload (more authoritative than $PWD),
 # fall back to PWD if missing.
-# HOOK_CWD extraction + cd (shared via lib/hook-cwd.sh, see
-# inspect-pass4 finding p12).
-extract_hook_cwd
+HOOK_CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)"
 if [ -n "$HOOK_CWD" ] && [ -d "$HOOK_CWD" ]; then
   cd "$HOOK_CWD" || exit 0
 fi
@@ -70,4 +56,25 @@ if [ ! -f "$PWD/tools/linear_sync.py" ]; then
   exit 0
 fi
 
-linear_fast_path "$PWD" "auto-sync"
+# Fast-path mirror of hooks/linear-autosync.sh: bail before forking
+# Python when no activation source is present. The owner-gate +
+# enabled checks live in Python; this is just a micro-optimization.
+USER_ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+USER_ENV="$USER_ENV_DIR/dev-kit/.env"
+if [ -z "${LINEAR_API_KEY:-}" ] && \
+   [ ! -f "$USER_ENV" ] && \
+   [ ! -f "$PWD/.dev-kit/.env.linear" ] && \
+   [ ! -f "$PWD/.dev-kit/linear-config.json" ] && \
+   [ ! -f "$PWD/.dev-kit/.enabled.json" ]; then
+  exit 0
+fi
+
+# Disable-model-invocation users have no `python3` alias guaranteed.
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1; then
+    "$py" "$PWD/tools/linear_sync.py" auto-sync || true
+    exit 0
+  fi
+done
+
+exit 0

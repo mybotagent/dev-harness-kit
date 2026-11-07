@@ -97,9 +97,9 @@ Eight+ hooks fire automatically on every tool call, in both runtimes:
   commands deny unconditionally — even `DEV_KIT_STRICT=1` cannot
   override them) and a recoverable tier (destructive-but-reversible
   commands deny under strict mode).
-- `secret-scan` / `slop-detector` — pattern banks loaded from
-  `hooks/references/` that block credential leaks and high-signal
-  "AI slop" patterns.
+- `secret-scan` / `slop-detector` / `l4-todo-scan` — pattern banks
+  loaded from `hooks/references/` that block credential leaks,
+  high-signal "AI slop" patterns, and TODO/FIXME markers.
 - `stop-verify` — at `SessionEnd`/`Stop`, re-runs the regression test
   before the model is allowed to declare "done".
 
@@ -108,15 +108,20 @@ and the matrix in [`hooks/index.md`](../../hooks/index.md).
 
 ### Stateful layer — stage machine
 
-The same plugin pins a stage spec — see [`docs/stages/STAGES.md`](../stages/STAGES.md)
-for the canonical sequence. Each stage owns its own slash
-(`/dev-kit:plan`, `/dev-kit:build`, `/dev-kit:review`, etc.), reads from a
-deterministic input, and writes a deterministic output (a `PRD.md`, a
-`phases/<name>/index.json`, a verdict JSON envelope). Re-running a stage
-is always safe — it picks up from the first step that isn't `completed`.
+The same plugin pins a stage spec:
+
+```
+bootstrap → (evidence-plan?) → plan → valuate → build → review → security → ship
+```
+
+Each stage owns its own slash (`/dev-kit:plan`, `/dev-kit:build`,
+`/dev-kit:review`, etc.), reads from a deterministic input, and writes
+a deterministic output (a `PRD.md`, a `phases/<name>/index.json`, a
+verdict JSON envelope). Re-running a stage is always safe — it picks
+up from the first step that isn't `completed`.
 
 The stage spec is the single source of truth; the prose is just
-orientation.
+orientation. See [`docs/stages/STAGES.md`](../stages/STAGES.md).
 
 ### Verifiable layer — the Eval-Repair loop
 
@@ -183,6 +188,5 @@ would weaken the core guarantees:
 - Looking for the architectural decisions behind specific choices?
   [`docs/adr/`](../adr/) holds the full ADR series.
 - Looking for one specific stage? [`docs/stages/STAGES.md`](../stages/STAGES.md)
-  pins the stage spec; the per-skill contract for every skill is in
-  its `skills/<name>/SKILL.md` (or browse the auto-generated
-  [`skills/README.md`](../../skills/README.md)).
+  pins the stage spec; the per-skill pages live under
+  [`docs/skills/`](../skills/).

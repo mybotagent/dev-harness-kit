@@ -9,6 +9,7 @@ sections are heavier and their cross-references don't justify the split
 yet (see the inspect report for the future-PR plan).
 """
 from ._rubric import (  # noqa: F401
+    RUBRIC_REGISTRY,
     CaseResult,
     RubricRegistry,
     _coerce_score,

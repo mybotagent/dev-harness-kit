@@ -39,21 +39,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Dual-import so consumer installs that ship `lib/*.py` flat (no
-# `__init__.py` in the consumer `lib/`) keep working.
-try:
-    from .atomic import atomic_write_json  # type: ignore
-except ImportError:
-    from atomic import atomic_write_json  # type: ignore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# gh presence + auth probe. Centralized in lib/gh_cli.py (re-instated after
-# the YAGNI sweep; 4 inlined copies across ci_doctor / ci_setup /
-# gates_state / proposal_orch_issue_pr re-created the byte-identical
-# duplication the original lib/gh_cli.py docstring warned against).
+from atomic import atomic_write_json  # noqa: E402
+
+# Dual-import gh_cli so consumer installs that land `lib/gh_cli.py` next to
+# `lib/gates_state.py` (the flat-bundle layout) keep working. Mirrors the
+# shim pattern in `lib/ci_setup.py:82-102`.
 try:
-    from lib.gh_cli import _gh_available  # type: ignore
+    from lib.gh_cli import gh_available  # type: ignore
 except ImportError:
-    from gh_cli import _gh_available  # type: ignore
+    from gh_cli import gh_available  # type: ignore
 
 STATE_REL_PATH = Path(".dev-kit") / "gates.json"
 SCHEMA_VERSION = "1.1.0"
@@ -540,7 +536,7 @@ def sync(
     out: dict = {"results": {}, "repo": repo or ""}
     gh_path = _gh
     if gh_path is None and not _degraded:
-        gh_path, _degraded = _gh_available(timeout=5)
+        gh_path, _degraded = gh_available(timeout=5)
     if not gh_path:
         out["gh_path"] = None
         out["degraded"] = _degraded or "gh not on PATH"

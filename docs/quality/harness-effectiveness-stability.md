@@ -7,11 +7,9 @@ field without diffing the source.
 
 The stability submetric is intentionally **not** a 6th top-level component.
 Adding it as a top-level entry would shift `COMPONENT_WEIGHTS` and change the
-`overall_score` formula that every existing consumer reads. As a
+5-component `overall_score` formula that every existing consumer reads. As a
 nested submetric it is opt-in: consumers that don't know about
-`schema_version: 2` continue to render the legacy table unchanged. (Note:
-the legacy 5-component table referenced below was tightened to 4 components
-in a follow-up change; see the amendment at the bottom of this doc.)
+`schema_version: 2` continue to render the legacy 5-component table unchanged.
 
 ## Where to find it
 
@@ -50,7 +48,7 @@ in a follow-up change; see the amendment at the bottom of this doc.)
 
 Consumers that ignore `schema_version` continue to work. Consumers that opt
 into `schema_version >= 2` can read the new submetric and ignore it without
-breaking the legacy `overall_score`.
+breaking the legacy 5-component `overall_score`.
 
 ## The five dimensions
 
@@ -98,7 +96,7 @@ CI run populates the submetric without any per-producer wiring.
 | Signal | Producer | Notes |
 |---|---|---|
 | Identity fields | `lib.trace_log.append_event` | Auto-stamps `agent`/`provider`/`model` from `DEV_KIT_AGENT` / `DEV_KIT_PROVIDER` / `DEV_KIT_MODEL` (defaults `""` / `""` / `""` — empty defaults so the reducer treats unset as "no identity recorded" and a non-Claude runner is NOT silently mis-attributed to claude-code). Uses `setdefault`, so an explicit value passed by the caller always wins. |
-| `contract.test` | `tests/conftest.py` | `pytest_sessionfinish` appends one event per pytest run. **Always-on** by default — opt out per-invocation with `DEV_KIT_TRACE_LOCAL=0` (e.g. `DEV_KIT_TRACE_LOCAL=0 pytest ...`). The earlier `CI=true` gate was broken because CI ephemeral filesystems discarded the emitted events; only the user's local `.dev-kit/trace/events.jsonl` survives, so the only design that actually wires the metric is to emit on every run. The filename must stay `conftest.py` — pytest auto-registers hooks from no other name. |
+| `contract.test` | `tests/conftest.py` | `pytest_sessionfinish` appends one event per run. **CI-gated** (`CI=true`) so local `pytest` runs do not inflate a developer's trace log. The filename must stay `conftest.py` — pytest auto-registers hooks from no other name. |
 | `ground_truth` on guard events | `hooks/lib/payload-parse.sh::emit_guard_event` | Defaults to `"unknown"` for every outcome (no claim about correctness — a trigger-mirroring default would make the prevention_quality reducer trivially score 100% precision/recall against the same hook that emits the event). The reducer skips `unknown` events, so the metric only scores guards the operator has explicitly classified via `DEV_KIT_GROUND_TRUTH`. Override values are validated against the `unsafe` / `legitimate` / `pending` / `unknown` allowlist; anything else is rejected. |
 
 ### Who actually sets `DEV_KIT_AGENT`
@@ -112,9 +110,10 @@ real worktree even though the plumbing existed. Two producers now set it:
   (Codex) prefix each event-emitting hook's command line with
   `DEV_KIT_AGENT=claude-code` / `DEV_KIT_AGENT=codex` respectively — the
   manifests are runtime-specific by construction, so the stamp is exact,
-  not a guess. `tests/test_hooks_json_parity.py` normalizes the prefix
-  away before comparing CC/Codex hook signatures, so it isn't flagged as
-  manifest drift.
+  not a guess. `tools/portability_check.py` and
+  `tests/test_hooks_json_parity.py` normalize the prefix away before
+  comparing CC/Codex hook signatures, so it isn't flagged as manifest
+  drift.
 - `lib/execute.py::_emit_effectiveness_event` stamps `agent` from
   `DEV_KIT_BUILD_AGENT` (the same env var `_agent_command` already reads
   to pick the step runner), normalized to the `claude-code`/`codex`
@@ -127,12 +126,11 @@ payload, so the Stop-vs-SessionEnd terminal-event firing rate (which
 drives `subject_observability`, see `docs/quality/harness-effectiveness-stability.md`'s
 sibling submetric) is diagnosable from the trace log itself.
 
-`prevention_quality`, `first_pass_quality`, and `recovery_quality` are
-unaffected by this wiring — they need real `/dev-kit:build` activity
-and operator-supplied `DEV_KIT_GROUND_TRUTH` labels, neither of which
-this change adds. (`learning_quality` was later removed because its
-cohort-tagging evidence class was unreachable — see the amendment
-below.)
+`prevention_quality`, `first_pass_quality`, `recovery_quality`, and
+`learning_quality` are unaffected by this wiring — they need real
+`/dev-kit:build` activity, operator-supplied `DEV_KIT_GROUND_TRUTH`
+labels, and the (unbuilt) Phase-4 shadow-mode cohort respectively, none
+of which this change adds.
 
 ### Causal chaining in the executor
 
@@ -177,31 +175,17 @@ for the contract tests (14 cases).
 |---|---|---|---|
 | `harness_effectiveness.build_report` `schema_version` | `1` | `2` | Advertises the new submetric |
 | `lib.trace_log.EVENT_SCHEMA_VERSION` | `1` | `1` (unchanged) | `agent` / `provider` / `model` are additive top-level fields; `validate_event` already accepts unknown keys |
-| `COMPONENT_WEIGHTS` (5-component at the time) | sums to 1.0 | sums to 1.0 (unchanged) | Stability is a submetric, not a 6th component |
+| `COMPONENT_WEIGHTS` (5-component) | sums to 1.0 | sums to 1.0 (unchanged) | Stability is a submetric, not a 6th component |
 
 ## Backward compatibility
 
-- 5-component-at-the-time `overall_score` (sum of `COMPONENT_WEIGHTS *
-  component_score`) is bit-identical when no consumer reads the new
-  submetric. (The 5-component contract was later tightened to 4
-  components; see the amendment below.)
+- 5-component `overall_score` (sum of `COMPONENT_WEIGHTS * component_score`)
+  is bit-identical when no consumer reads the new submetric.
 - A consumer that ignores unknown `schema_version` continues to operate.
 - A consumer that wants the stability report reads
   `components.measurement_integrity.submetrics.stability` (opt-in).
-- The `learning_quality` zero-weight entry was later removed (see
-  amendment below); consumer code that ignores unknown keys continues
-  to operate.
-
-## Amendment: `learning_quality` removal
-
-`learning_quality` was removed in a follow-up change because its
-evidence class (`learning.outcome` with `cohort=treatment|control`) is
-unreachable from current producers. The removal tightened the
-`COMPONENT_WEIGHTS` map to four shippable components that partition
-the unit weight proportionally; `schema_version` bumped from 3 → 4 to
-advertise the removal. Existing consumers that ignore unknown
-versions continue to operate unchanged. See
-`skills/harness-effectiveness/SKILL.md` for the current contract.
+- The `learning_quality` zero-weight entry remains in the rendered output so
+  visibility is unchanged.
 
 ## Why "nested submetric" instead of "6th component"
 
@@ -209,7 +193,7 @@ The original proposal
 ([`docs/proposals/harness-effectiveness/00-index.yaml`](../proposals/harness-effectiveness/00-index.yaml))
 left the choice open between "submetric under `measurement_integrity`" and
 "versioned sixth component". The submetric shape was chosen because the 6th
-component shape would break the `overall_score` contract for every
+component shape would break the 5-component `overall_score` contract for every
 existing consumer on day one.
 
 ## Related
@@ -219,6 +203,5 @@ existing consumer on day one.
 - `tests/test_harness_stability.py` — 14 contract tests.
 - `skills/harness-effectiveness/SKILL.md` — operator-facing wrapper around the
   same reducer.
-- `skills/harness-effectiveness/SKILL.md` — operator-facing wrapper doc for
-  the harness-effectiveness skill. Was a 5-component doc at issue #663
-  time; tightened to 4 components in the follow-up amendment.
+- `docs/skills/harness-effectiveness.md` — pre-existing 5-component doc (now
+  extended by the SKILL.md update on this PR).

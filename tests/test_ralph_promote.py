@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import sys
@@ -97,108 +96,6 @@ def test_promote_copies_bundle_and_renders_auditable_summary(tmp_path: Path) -> 
     assert "0.42" in summary
     assert "pytest tests/test_feature.py -q" in summary
     assert "src/feature.py" in summary
-    receipt = json.loads(
-        (destination / "COMPLETION_RECEIPT.json").read_text(encoding="utf-8")
-    )
-    assert receipt["certificate_type"] == "ralph.completion-receipt"
-    assert receipt["completion_status"] == "verified"
-    assert receipt["verifier_kind"] == "declared"
-    assert receipt["harness_candidate"] == "working-tree"
-    assert receipt["acceptance_checks"]["terminal_state"] is True
-    assert len(receipt["artifact_hash"]) == 64
-    # The receipt references a manifest that carries the identity fields
-    # (harness_candidate, verifier_kind, terminal_state, completion_status)
-    # inside the integrity boundary.
-    assert receipt["manifest_file"] == "RECEIPT_MANIFEST.json"
-    manifest = json.loads(
-        (destination / "RECEIPT_MANIFEST.json").read_text(encoding="utf-8")
-    )
-    assert manifest["certificate_type"] == "ralph.receipt-manifest"
-    assert manifest["harness_candidate"] == "working-tree"
-    assert manifest["verifier_kind"] == "declared"
-    assert manifest["terminal_state"] == "USER_MERGE_REQUIRED"
-    assert manifest["completion_status"] == "verified"
-
-
-def test_promote_artifact_hash_covers_receipt_manifest(tmp_path: Path) -> None:
-    _write_runtime(tmp_path)
-
-    result = promote.promote(
-        tmp_path, plan_id="demo-plan", phase="0-mvp", session="run-1"
-    )
-    destination = result.destination
-    artifact_hash = json.loads(
-        (destination / "COMPLETION_RECEIPT.json").read_text(encoding="utf-8")
-    )["artifact_hash"]
-
-    # Recompute the hash independently over the published files. The
-    # manifest is inside the boundary; the receipt itself is excluded.
-    files: dict[str, bytes] = {}
-    for path in destination.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = str(path.relative_to(destination))
-        if rel == "COMPLETION_RECEIPT.json":
-            continue
-        files[rel] = path.read_bytes()
-    digest = hashlib.sha256()
-    for rel in sorted(files):
-        digest.update(rel.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(files[rel])
-        digest.update(b"\0")
-    assert digest.hexdigest() == artifact_hash
-
-
-def test_promote_verifier_kind_requires_explicit_opt_in(tmp_path: Path) -> None:
-    # Default: declared, never inferred from step output.
-    default_root = tmp_path / "default"
-    default_root.mkdir()
-    _write_runtime(default_root)
-    result = promote.promote(
-        default_root, plan_id="demo-plan", phase="0-mvp", session="run-1"
-    )
-    receipt = json.loads(
-        (result.destination / "COMPLETION_RECEIPT.json").read_text(encoding="utf-8")
-    )
-    assert receipt["verifier_kind"] == "declared"
-    manifest = json.loads(
-        (result.destination / "RECEIPT_MANIFEST.json").read_text(encoding="utf-8")
-    )
-    assert manifest["verifier_kind"] == "declared"
-
-    # Explicit opt-in to independent is honored.
-    independent_root = tmp_path / "independent"
-    independent_root.mkdir()
-    _write_runtime(independent_root)
-    result = promote.promote(
-        independent_root,
-        plan_id="demo-plan",
-        phase="0-mvp",
-        session="run-1",
-        verifier_kind="independent",
-    )
-    receipt = json.loads(
-        (result.destination / "COMPLETION_RECEIPT.json").read_text(encoding="utf-8")
-    )
-    assert receipt["verifier_kind"] == "independent"
-    manifest = json.loads(
-        (result.destination / "RECEIPT_MANIFEST.json").read_text(encoding="utf-8")
-    )
-    assert manifest["verifier_kind"] == "independent"
-
-    # Bogus value is rejected.
-    bogus_root = tmp_path / "bogus"
-    bogus_root.mkdir()
-    _write_runtime(bogus_root)
-    with pytest.raises(promote.RalphPromoteError, match="verifier_kind"):
-        promote.promote(
-            bogus_root,
-            plan_id="demo-plan",
-            phase="0-mvp",
-            session="run-1",
-            verifier_kind="bogus",
-        )
 
 
 def test_promote_is_idempotent(tmp_path: Path) -> None:
@@ -245,7 +142,7 @@ def test_dry_run_validates_without_writing(tmp_path: Path) -> None:
 def test_missing_step_output_fails_closed_without_partial_bundle(tmp_path: Path) -> None:
     _write_runtime(tmp_path, include_output=False)
 
-    with pytest.raises(promote.RalphPromoteError, match="step1-output.json"):
+    with pytest.raises(promote.PromotionError, match="step1-output.json"):
         promote.promote(
             tmp_path, plan_id="demo-plan", phase="0-mvp", session="run-1"
         )
@@ -255,7 +152,7 @@ def test_missing_step_output_fails_closed_without_partial_bundle(tmp_path: Path)
 def test_unsafe_plan_id_is_rejected(tmp_path: Path) -> None:
     _write_runtime(tmp_path)
 
-    with pytest.raises(promote.RalphPromoteError, match="plan_id"):
+    with pytest.raises(promote.PromotionError, match="plan_id"):
         promote.promote(
             tmp_path, plan_id="../escape", phase="0-mvp", session="run-1"
         )
@@ -288,37 +185,13 @@ def test_shell_entrypoint_supports_dry_run(tmp_path: Path) -> None:
     assert not (tmp_path / "docs" / "build-evidence").exists()
 
 
-def test_completion_receipt_candidate_is_validated(tmp_path: Path) -> None:
-    _write_runtime(tmp_path)
-    result = promote.promote(
-        tmp_path,
-        plan_id="demo-plan",
-        phase="0-mvp",
-        session="run-1",
-        harness_candidate="candidate-v1",
-    )
-    receipt = json.loads(
-        (result.destination / "COMPLETION_RECEIPT.json").read_text(encoding="utf-8")
-    )
-    assert receipt["harness_candidate"] == "candidate-v1"
-
-    with pytest.raises(promote.RalphPromoteError):
-        promote.promote(
-            tmp_path,
-            plan_id="other-plan",
-            phase="0-mvp",
-            session="run-1",
-            harness_candidate="../escape",
-        )
-
-
 def test_differing_existing_destination_is_not_overwritten(tmp_path: Path) -> None:
     _write_runtime(tmp_path)
     promote.promote(tmp_path, plan_id="demo-plan", phase="0-mvp", session="run-1")
     summary = tmp_path / "docs" / "build-evidence" / "demo-plan" / "SUMMARY.md"
     summary.write_text("operator-owned record\n", encoding="utf-8")
 
-    with pytest.raises(promote.RalphPromoteError, match="different content"):
+    with pytest.raises(promote.PromotionError, match="different content"):
         promote.promote(tmp_path, plan_id="demo-plan", phase="0-mvp", session="run-1")
     assert summary.read_text(encoding="utf-8") == "operator-owned record\n"
 
@@ -330,5 +203,5 @@ def test_nonterminal_session_fails_closed(tmp_path: Path) -> None:
     state["current_stage"] = "ATTENDED_RUN"
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
-    with pytest.raises(promote.RalphPromoteError, match="must be terminal"):
+    with pytest.raises(promote.PromotionError, match="must be terminal"):
         promote.promote(tmp_path, plan_id="demo-plan", phase="0-mvp", session="run-1")

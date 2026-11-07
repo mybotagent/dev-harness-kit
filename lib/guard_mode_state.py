@@ -25,12 +25,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Dual-import so consumer installs that ship `lib/*.py` flat (no
-# `__init__.py` in the consumer `lib/`) keep working.
-try:
-    from .atomic import atomic_write_json  # type: ignore
-except ImportError:
-    from atomic import atomic_write_json  # type: ignore
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from atomic import atomic_write_json  # noqa: E402
 
 STATE_REL_PATH = Path(".dev-kit") / "guard-mode.session.json"
 

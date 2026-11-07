@@ -41,7 +41,23 @@ enabled or available. Continue normally on `LINEAR_SKIP` or an implicit
 
 Refuses to start if `.dev-kit/ci-config.json` is absent. Run `/dev-kit:ci-setup` (or `/dev-kit:ci-setup --force` to refresh stale templates) first. No version comparison — presence of the marker is the only precondition; dev-kit does not gate consumer builds on a plugin-version floor.
 
-## Composition with /dev-kit:research
+## Pre-flight valuation gate (Phase 4, issue #373)
+
+> **Removed in #463.** The build stage's hard auto-gate that read the
+> valuation verdict and refused non-PROCEED verdicts was tied to the LCS
+> substrate that backed the URI. The LCS substrate is gone; the
+> auto-gate went with it. Operators run `/dev-kit:valuate` explicitly
+> before invoking `/dev-kit:build`; a non-PROCEED verdict is the
+> operator's signal to halt, not a hard block.
+
+The verdict envelope (when it exists) is at
+`.dev-kit/valuations/<plan-id>.json`. If `/dev-kit:valuate` was run,
+the build proceeds and the verdict is operator context; if the verdict
+is `kill` or unresolved `hold`, the operator should not have invoked
+`build`. There is no auto-gate, no `--skip-valuation` flag, and no exit
+code based on the verdict.
+
+## Composition with /dev-kit:research and /dev-kit:build-debug
 
 For net-new feature ideas that need cited evidence before planning,
 run `/dev-kit:research` directly, then `/dev-kit:plan` — Gate 2.1
@@ -49,17 +65,23 @@ run `/dev-kit:research` directly, then `/dev-kit:plan` — Gate 2.1
 No binder skill sits between them; `/dev-kit:plan` is a single
 `Skill` hop away from a research result.
 
-For bug reports that need a root-cause investigation instead of a quick
-self-fix, invoke `mattpocock-skills:diagnosing-bugs` (it ships the same
-reproduce → isolate → root-cause phases). Like the research path, it
-**never invokes `/dev-kit:build`** — that stays a separate, explicit,
-user-typed command, reached only after `/dev-kit:plan`'s Gate 5/5
-auto-renders `proposal.html` and the user reviews it.
+For bug reports that need a proper plan instead of a quick self-fix,
+invoke `/dev-kit:build-debug` standalone (outside any active build
+step). It runs the same reproduce → isolate → root-cause phases it
+already uses for the in-build self-fix loop, but its Phase 4 branches:
+standalone, it calls `Skill("plan", <root cause>)` instead of patching
+code inline. Like the research path, **it never invokes
+`/dev-kit:build` — that stays a separate, explicit, user-typed
+command**, reached only after `/dev-kit:plan`'s Gate 5/5 auto-renders
+`proposal.html` and the user reviews it.
 
 For single-session, non-bug work, `/dev-kit:build` runs the direct
 `plan -> build` path — no binder. `/dev-kit:plan` emits the canonical
 `phases/<name>/index.json` + `step<N>.md` artifacts either way; the
 build runner reads those (NOT any binder-owned file).
+
+See `skills/build-debug/SKILL.md` §"Two invocation contexts" for the
+per-phase contract.
 
 ## Behavior
 

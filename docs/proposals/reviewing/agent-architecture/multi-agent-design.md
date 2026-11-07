@@ -31,4 +31,6 @@ reports removal candidates. Neither runs `git worktree remove`; the
 orchestrator reads the report and a human runs the removal command.
 
 For the orchestrated subagent dispatch contract (two envelopes — dispatch
-+ report) informing this proposal, see `lib/dispatch_classifier.py`.
++ report) and the multi-agent architecture research informing this
+proposal, see
+[`../../architecture/multi-agent-orchestration-research.md`](../../architecture/multi-agent-orchestration-research.md).

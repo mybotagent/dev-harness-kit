@@ -64,12 +64,7 @@ pr_arg = bpc.parse_babysit_args(argv).pr
 pr_view_target = str(pr_arg) if pr_arg is not None else ""
 pr_view = subprocess.run(
     ["gh", "pr", "view", *(([pr_view_target]) if pr_view_target else []),
-     # v1.2.0 — `mergeable` and `mergeStateStatus` feed the
-     # `persist_loop_snapshot()` merge-conflict classifier so the
-     # babysit step 6.5 (RESOLVE CONFLICT) can detect a CONFLICTING
-     # PR before CI wastes `MAX_ITERS` waiting on workflows that
-     # GitHub Actions silently refuses to run (issue #249).
-     "--json", "number,state,mergeable,mergeStateStatus", "-q", "."],
+     "--json", "number,state", "-q", "."],
     capture_output=True, text=True)
 if pr_view.returncode != 0:
     print("No open PR resolved. Pass --pr N or run from a PR worktree.", file=sys.stderr)
@@ -79,11 +74,6 @@ pr_number = int(pr_snapshot["number"])
 if pr_snapshot.get("state") != "OPEN":
     print(f"PR #{pr_number} is {pr_snapshot.get('state')}; pass an open --pr N.", file=sys.stderr)
     sys.exit(1)
-# v1.2.0 — capture merge state for the snapshot classifier. Default
-# to "" so a missing field (older gh versions) does not break the
-# snapshot seam.
-pr_mergeable = (pr_snapshot.get("mergeable") or "")
-pr_merge_state = (pr_snapshot.get("mergeStateStatus") or "")
 
 # Durable control-plane wiring: snapshot before classification and persist
 # the phase before choosing wait/repair/approval actions. The repair path
@@ -112,11 +102,6 @@ loop_state = bpc.persist_loop_snapshot(
         if os.environ.get("BABYSIT_GITHUB_TRACKER_ISSUE") else None
     ),
     linear_issue=os.environ.get("BABYSIT_LINEAR_ISSUE", ""),
-    # v1.2.0 — thread merge state into the snapshot so the classifier
-    # can stamp `failure_signature="merge_conflict:1"` and route the
-    # algorithm to step 6.5 (RESOLVE CONFLICT).
-    mergeable=pr_mergeable,
-    merge_state_status=pr_merge_state,
 )
 print(f"babysit phase={loop_state.phase} strategy={loop_state.strategy}", flush=True)
 
@@ -125,8 +110,21 @@ print(f"babysit phase={loop_state.phase} strategy={loop_state.strategy}", flush=
 # restart is safe. A tracker outage is non-blocking: the durable local state
 # remains authoritative and the next invocation retries the same key.
 transition_key = f"{loop_state.parent_pr}:{loop_state.head_sha}:{loop_state.context_epoch}:{loop_state.phase}"
-# Note: tools/babysit_tracker_sync.py has been removed (2026-10 prune).
-# Update this snippet if the canonical wiring changes.
+if loop_state.github_tracker_issue:
+  subprocess.run([
+    "python3", "tools/babysit_tracker_sync.py",
+    "--repo", repo_full,
+    "--github-issue", str(loop_state.github_tracker_issue),
+    "--linear-issue", loop_state.linear_issue,
+    "--key", transition_key,
+    "--pr", str(pr_number),
+    "--phase", loop_state.phase,
+    "--strategy", loop_state.strategy,
+    "--head-sha", loop_state.head_sha,
+    "--context-epoch", str(loop_state.context_epoch),
+    "--review", pr_snapshot.get("reviewDecision") or "REVIEW_REQUIRED",
+    "--checks", f"{sum(1 for c in checks if c.get('bucket') in {'pass', 'skipping'})}/{len(checks)} green",
+  ], check=False)
 
 rc = bpc.run_babysit_once(
     argv=argv,

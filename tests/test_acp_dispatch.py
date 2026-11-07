@@ -17,7 +17,7 @@ Closes #282. Verifies:
 Each test uses a throwaway git repo (init + linked worktree) so the
 `git worktree add` call in `ACPDispatcher._cut_worktree` runs against a
 real `.git` directory without polluting the host repo. The canonical
-template is copied into the throwaway repo at `lib/`
+template is copied into the throwaway repo at `skills/_acp/`
 so the dispatcher reads it from its expected relative path.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ from lib.acp_dispatch import (  # noqa: E402  (sys.path tweak above)
     parse_pr_spec,
 )
 
-REPO_TEMPLATE = ROOT / "lib" / "sub-agent-prompt.md"
+REPO_TEMPLATE = ROOT / "skills" / "_acp" / "sub-agent-prompt.md"
 
 
 def _init_throwaway_repo() -> "tempfile.TemporaryDirectory":
@@ -62,10 +62,10 @@ def _init_throwaway_repo() -> "tempfile.TemporaryDirectory":
     subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
     # Seed the template at the canonical relative path so the dispatcher
     # finds it without an explicit --template override.
-    template_dest = root / "lib"
+    template_dest = root / "skills" / "_acp"
     template_dest.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO_TEMPLATE, template_dest / "sub-agent-prompt.md")
-    subprocess.run(["git", "-C", str(root), "add", "lib"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "skills"], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "seed template"], check=True)
     # Create a file:// origin so worktree-add's origin/main resolves.
     origin_dir = root.parent / f"{root.name}-origin"
@@ -152,32 +152,6 @@ class FillPlaceholders(unittest.TestCase):
                 template_text,
                 f"canonical template is missing placeholder {placeholder}",
             )
-
-    def test_tier_assert_literal_survives_placeholder_fill(self) -> None:
-        # Closes the dispatcher half of the tier-cognition contract
-        # after the C-decision lateral_think (2026-10) deleted
-        # `hooks/acp-tier-assert.sh`. _fill_placeholders must not
-        # touch the [tier-assert] / [tier-done] literal substrings —
-        # those are sentinels the dispatched T reads to know its role,
-        # not template placeholders.
-        template_text = REPO_TEMPLATE.read_text(encoding="utf-8")
-        values = {
-            "TASK": "tier-assert literal survives",
-            "BRANCH": "feat/sample",
-            "WORKTREE_PATH": "/tmp/sample",
-            "CWD": "/tmp/sample",
-            "PLUGIN_VERSION_TARGET": "0.0.0",
-            "LOCK_FILE": "/tmp/sample.lock",
-            "PARENT_SESSION_CWD": "/tmp",
-        }
-        rendered = _fill_placeholders(template_text, values)
-        # Tier-cognition sentinels must be present in the rendered output.
-        self.assertIn("[tier-assert]", rendered, "[tier-assert] sentinel stripped by placeholder fill")
-        self.assertIn("[tier-done]", rendered, "[tier-done] sentinel stripped by placeholder fill")
-        # And the substituted worktree path must appear in the rendered
-        # body so the sentinel's resolved form is real, not just literal
-        # text the agent has to fill in.
-        self.assertIn("/tmp/sample", rendered)
 
 
 class DispatchDryRun(unittest.TestCase):
